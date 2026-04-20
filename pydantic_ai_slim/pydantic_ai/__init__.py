@@ -11,6 +11,7 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
+from .agent.spec import AgentSpec
 from .builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
@@ -21,6 +22,7 @@ from .builtin_tools import (
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
 )
 from .concurrency import (
     AbstractConcurrencyLimiter,
@@ -64,6 +66,7 @@ from .messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
@@ -77,6 +80,7 @@ from .messages import (
     ImageFormat,
     ImageMediaType,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -91,6 +95,7 @@ from .messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -106,6 +111,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
@@ -132,12 +138,15 @@ from .toolsets import (
     AgentToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
+    DeferredLoadingToolset,
     ExternalToolset,
     FilteredToolset,
     FunctionToolset,
+    IncludeReturnSchemasToolset,
     PrefixedToolset,
     PreparedToolset,
     RenamedToolset,
+    SetMetadataToolset,
     ToolsetFunc,
     ToolsetTool,
     WrapperToolset,
@@ -149,6 +158,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
@@ -194,6 +204,7 @@ __all__ = (
     'BuiltinToolCallPart',
     'BuiltinToolReturnPart',
     'CachePoint',
+    'CompactionPart',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
@@ -208,6 +219,7 @@ __all__ = (
     'ImageMediaType',
     'ImageUrl',
     'BinaryImage',
+    'InstructionPart',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -222,6 +234,7 @@ __all__ = (
     'PartStartEvent',
     'RetryPromptPart',
     'SystemPromptPart',
+    'TextContent',
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
@@ -256,12 +269,15 @@ __all__ = (
     'AgentToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
+    'DeferredLoadingToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',
+    'IncludeReturnSchemasToolset',
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
+    'SetMetadataToolset',
     'ToolsetFunc',
     'ToolsetTool',
     'WrapperToolset',
@@ -275,6 +291,7 @@ __all__ = (
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     # output
     'ToolOutput',
     'NativeOutput',
@@ -285,6 +302,8 @@ __all__ = (
     'TemplateStr',
     # format_prompt
     'format_as_xml',
+    # models
+    'ModelRequestContext',
     # settings
     'ModelSettings',
     # usage

@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_ai._spec import CapabilitySpec
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 from .wrapper import WrapperCapability
@@ -42,12 +44,12 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
         return 'PrefixTools'
 
     @classmethod
-    def from_spec(cls, *, prefix: str, capability: dict[str, Any] | str) -> PrefixTools[Any]:
+    def from_spec(cls, *, prefix: str, capability: CapabilitySpec) -> PrefixTools[Any]:
         """Create from spec with a nested capability specification.
 
         Args:
-            prefix: The prefix to add to tool names (e.g. ``'mcp'`` turns ``'search'`` into ``'mcp_search'``).
-            capability: A capability spec (same format as entries in the ``capabilities`` list).
+            prefix: The prefix to add to tool names (e.g. `'mcp'` turns `'search'` into `'mcp_search'`).
+            capability: A capability spec (same format as entries in the `capabilities` list).
         """
         from pydantic_ai.agent.spec import load_capability_from_nested_spec
 
@@ -62,6 +64,4 @@ class PrefixTools(WrapperCapability[AgentDepsT]):
             # Pyright can't narrow Callable type aliases out of unions after isinstance check
             return PrefixedToolset(toolset, prefix=self.prefix)  # pyright: ignore[reportUnknownArgumentType]
         # ToolsetFunc callable — wrap in DynamicToolset so PrefixedToolset can delegate
-        from pydantic_ai.toolsets._dynamic import DynamicToolset
-
         return PrefixedToolset(DynamicToolset[AgentDepsT](toolset_func=toolset), prefix=self.prefix)

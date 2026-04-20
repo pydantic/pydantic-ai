@@ -2,42 +2,68 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from collections.abc import AsyncIterable, AsyncIterator
+import threading
+from collections.abc import AsyncIterable, AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._spec import NamedSpec
+from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    CapabilityOrdering,
     ImageGeneration,
+    IncludeToolReturnSchemas,
     PrefixTools,
+    SetToolMetadata,
     Thinking,
+    ThreadExecutor,
     Toolset,
     WebFetch,
     WebSearch,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCap
+from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
-from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
+from pydantic_ai.exceptions import (
+    ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -54,7 +80,10 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr, try_import
+
+with try_import() as xai_imports:
+    from pydantic_ai.models.xai import XSearch
 
 pytestmark = [
     pytest.mark.anyio,
@@ -66,8 +95,10 @@ def test_capability_types() -> None:
         {
             'BuiltinTool': BuiltinTool,
             'ImageGeneration': ImageGeneration,
+            'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
@@ -94,6 +125,45 @@ def test_agent_from_spec_no_capabilities():
     """Test Agent.from_spec with no capabilities."""
     agent = Agent.from_spec({'model': 'test'})
     assert agent.model is not None
+
+
+def test_agent_from_spec_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'ImageGeneration': {'local': False}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.local is False
+
+
+def test_agent_from_spec_web_fetch():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, WebFetch))
+    assert cap.allowed_domains == ['example.com']
+    assert cap.max_uses == 5
+
+
+def test_agent_from_spec_mcp():
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search']}}],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, MCP))
+    assert cap.url == 'https://mcp.example.com/sse'
+    assert cap.allowed_tools == ['search']
 
 
 def test_agent_from_spec_unknown_capability():
@@ -125,6 +195,16 @@ class CustomCapability(AbstractCapability[None]):
     greeting: str = 'hello'
 
 
+@dataclass
+class CapabilityWithCallbackParam(AbstractCapability[None]):
+    """Custom capability with a mix of serializable and non-serializable params."""
+
+    max_retries: int = 3
+    on_error: Callable[..., Any] = lambda: None  # purely Callable, filtered from schema
+    verbose: Callable[..., Any] | bool = False  # Callable | bool, only bool survives in schema
+    hooks: Callable[..., Any] | Callable[..., None] = lambda: None  # union of all non-serializable, entirely filtered
+
+
 def test_agent_from_spec_custom_capability():
     """Test Agent.from_spec with a custom capability type."""
     agent = Agent.from_spec(
@@ -145,7 +225,7 @@ def test_agent_from_spec_with_agent_spec_object():
         model='test',
         instructions='You are helpful.',
         capabilities=[
-            NamedSpec(name='WebSearch', arguments=None),
+            CapabilitySpec(name='WebSearch', arguments=None),
         ],
     )
     agent = Agent.from_spec(spec)
@@ -359,40 +439,1082 @@ def test_agent_from_spec_capabilities_merged():
 
 
 def test_model_json_schema_with_capabilities():
+    pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
+    assert schema == snapshot(
+        {
+            '$defs': {
+                'CodeExecutionTool': {
+                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'title': 'CodeExecutionTool',
+                    'type': 'object',
+                },
+                'FileSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
+                        'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
+                    },
+                    'required': ['file_store_ids'],
+                    'title': 'FileSearchTool',
+                    'type': 'object',
+                },
+                'ImageGenerationTool': {
+                    'properties': {
+                        'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'background': {
+                            'default': 'auto',
+                            'enum': ['transparent', 'opaque', 'auto'],
+                            'title': 'Background',
+                            'type': 'string',
+                        },
+                        'input_fidelity': {
+                            'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Input Fidelity',
+                        },
+                        'moderation': {
+                            'default': 'auto',
+                            'enum': ['auto', 'low'],
+                            'title': 'Moderation',
+                            'type': 'string',
+                        },
+                        'output_compression': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Output Compression',
+                        },
+                        'output_format': {
+                            'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Output Format',
+                        },
+                        'partial_images': {'default': 0, 'title': 'Partial Images', 'type': 'integer'},
+                        'quality': {
+                            'default': 'auto',
+                            'enum': ['low', 'medium', 'high', 'auto'],
+                            'title': 'Quality',
+                            'type': 'string',
+                        },
+                        'size': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Size',
+                        },
+                        'aspect_ratio': {
+                            'anyOf': [
+                                {
+                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Aspect Ratio',
+                        },
+                    },
+                    'title': 'ImageGenerationTool',
+                    'type': 'object',
+                },
+                'KnownModelName': {
+                    'enum': [
+                        'anthropic:claude-3-haiku-20240307',
+                        'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-preview',
+                        'anthropic:claude-haiku-4-5',
+                        'anthropic:claude-opus-4-0',
+                        'anthropic:claude-opus-4-1',
+                        'anthropic:claude-opus-4-1-20250805',
+                        'anthropic:claude-opus-4-20250514',
+                        'anthropic:claude-opus-4-5-20251101',
+                        'anthropic:claude-opus-4-5',
+                        'anthropic:claude-opus-4-6',
+                        'anthropic:claude-opus-4-7',
+                        'anthropic:claude-sonnet-4-0',
+                        'anthropic:claude-sonnet-4-20250514',
+                        'anthropic:claude-sonnet-4-5-20250929',
+                        'anthropic:claude-sonnet-4-5',
+                        'anthropic:claude-sonnet-4-6',
+                        'bedrock:amazon.titan-text-express-v1',
+                        'bedrock:amazon.titan-text-lite-v1',
+                        'bedrock:amazon.titan-tg1-large',
+                        'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+                        'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
+                        'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
+                        'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+                        'bedrock:anthropic.claude-3-opus-20240229-v1:0',
+                        'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
+                        'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:anthropic.claude-instant-v1',
+                        'bedrock:anthropic.claude-opus-4-20250514-v1:0',
+                        'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
+                        'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'bedrock:anthropic.claude-sonnet-4-6',
+                        'bedrock:anthropic.claude-v2:1',
+                        'bedrock:anthropic.claude-v2',
+                        'bedrock:cohere.command-light-text-v14',
+                        'bedrock:cohere.command-r-plus-v1:0',
+                        'bedrock:cohere.command-r-v1:0',
+                        'bedrock:cohere.command-text-v14',
+                        'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+                        'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'bedrock:eu.anthropic.claude-sonnet-4-6',
+                        'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'bedrock:meta.llama3-1-405b-instruct-v1:0',
+                        'bedrock:meta.llama3-1-70b-instruct-v1:0',
+                        'bedrock:meta.llama3-1-8b-instruct-v1:0',
+                        'bedrock:meta.llama3-70b-instruct-v1:0',
+                        'bedrock:meta.llama3-8b-instruct-v1:0',
+                        'bedrock:mistral.mistral-7b-instruct-v0:2',
+                        'bedrock:mistral.mistral-large-2402-v1:0',
+                        'bedrock:mistral.mistral-large-2407-v1:0',
+                        'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
+                        'bedrock:us.amazon.nova-2-lite-v1:0',
+                        'bedrock:us.amazon.nova-lite-v1:0',
+                        'bedrock:us.amazon.nova-micro-v1:0',
+                        'bedrock:us.amazon.nova-pro-v1:0',
+                        'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
+                        'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+                        'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                        'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
+                        'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
+                        'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
+                        'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+                        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
+                        'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'bedrock:us.anthropic.claude-sonnet-4-6',
+                        'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
+                        'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+                        'cerebras:gpt-oss-120b',
+                        'cerebras:llama3.1-8b',
+                        'cerebras:qwen-3-235b-a22b-instruct-2507',
+                        'cerebras:zai-glm-4.7',
+                        'cohere:c4ai-aya-expanse-32b',
+                        'cohere:c4ai-aya-expanse-8b',
+                        'cohere:command-nightly',
+                        'cohere:command-r-08-2024',
+                        'cohere:command-r-plus-08-2024',
+                        'cohere:command-r7b-12-2024',
+                        'deepseek:deepseek-chat',
+                        'deepseek:deepseek-reasoner',
+                        'gateway/anthropic:claude-3-haiku-20240307',
+                        'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-preview',
+                        'gateway/anthropic:claude-haiku-4-5',
+                        'gateway/anthropic:claude-opus-4-0',
+                        'gateway/anthropic:claude-opus-4-1',
+                        'gateway/anthropic:claude-opus-4-1-20250805',
+                        'gateway/anthropic:claude-opus-4-20250514',
+                        'gateway/anthropic:claude-opus-4-5-20251101',
+                        'gateway/anthropic:claude-opus-4-5',
+                        'gateway/anthropic:claude-opus-4-6',
+                        'gateway/anthropic:claude-opus-4-7',
+                        'gateway/anthropic:claude-sonnet-4-0',
+                        'gateway/anthropic:claude-sonnet-4-20250514',
+                        'gateway/anthropic:claude-sonnet-4-5-20250929',
+                        'gateway/anthropic:claude-sonnet-4-5',
+                        'gateway/anthropic:claude-sonnet-4-6',
+                        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
+                        'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                        'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
+                        'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
+                        'gateway/google-vertex:gemini-2.5-flash-image',
+                        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google-vertex:gemini-2.5-flash-lite',
+                        'gateway/google-vertex:gemini-2.5-flash',
+                        'gateway/google-vertex:gemini-2.5-pro',
+                        'gateway/google-vertex:gemini-3-flash-preview',
+                        'gateway/google-vertex:gemini-3-pro-image-preview',
+                        'gateway/google-vertex:gemini-3.1-flash-image-preview',
+                        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
+                        'gateway/google-vertex:gemini-3.1-pro-preview',
+                        'gateway/groq:llama-3.1-8b-instant',
+                        'gateway/groq:llama-3.3-70b-versatile',
+                        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
+                        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
+                        'gateway/groq:openai/gpt-oss-120b',
+                        'gateway/groq:openai/gpt-oss-20b',
+                        'gateway/groq:openai/gpt-oss-safeguard-20b',
+                        'gateway/openai:gpt-3.5-turbo-0125',
+                        'gateway/openai:gpt-3.5-turbo-1106',
+                        'gateway/openai:gpt-3.5-turbo-16k',
+                        'gateway/openai:gpt-3.5-turbo',
+                        'gateway/openai:gpt-4-0613',
+                        'gateway/openai:gpt-4-turbo-2024-04-09',
+                        'gateway/openai:gpt-4-turbo',
+                        'gateway/openai:gpt-4.1-2025-04-14',
+                        'gateway/openai:gpt-4.1-mini-2025-04-14',
+                        'gateway/openai:gpt-4.1-mini',
+                        'gateway/openai:gpt-4.1-nano-2025-04-14',
+                        'gateway/openai:gpt-4.1-nano',
+                        'gateway/openai:gpt-4.1',
+                        'gateway/openai:gpt-4',
+                        'gateway/openai:gpt-4o-2024-05-13',
+                        'gateway/openai:gpt-4o-2024-08-06',
+                        'gateway/openai:gpt-4o-2024-11-20',
+                        'gateway/openai:gpt-4o-mini-2024-07-18',
+                        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
+                        'gateway/openai:gpt-4o-mini-search-preview',
+                        'gateway/openai:gpt-4o-mini',
+                        'gateway/openai:gpt-4o-search-preview-2025-03-11',
+                        'gateway/openai:gpt-4o-search-preview',
+                        'gateway/openai:gpt-4o',
+                        'gateway/openai:gpt-5-2025-08-07',
+                        'gateway/openai:gpt-5-chat-latest',
+                        'gateway/openai:gpt-5-mini-2025-08-07',
+                        'gateway/openai:gpt-5-mini',
+                        'gateway/openai:gpt-5-nano-2025-08-07',
+                        'gateway/openai:gpt-5-nano',
+                        'gateway/openai:gpt-5.1-2025-11-13',
+                        'gateway/openai:gpt-5.1-chat-latest',
+                        'gateway/openai:gpt-5.1',
+                        'gateway/openai:gpt-5.2-2025-12-11',
+                        'gateway/openai:gpt-5.2-chat-latest',
+                        'gateway/openai:gpt-5.2',
+                        'gateway/openai:gpt-5.4-mini-2026-03-17',
+                        'gateway/openai:gpt-5.4-mini',
+                        'gateway/openai:gpt-5.4-nano-2026-03-17',
+                        'gateway/openai:gpt-5.4-nano',
+                        'gateway/openai:gpt-5.4',
+                        'gateway/openai:gpt-5',
+                        'gateway/openai:o1-2024-12-17',
+                        'gateway/openai:o1',
+                        'gateway/openai:o3-2025-04-16',
+                        'gateway/openai:o3-mini-2025-01-31',
+                        'gateway/openai:o3-mini',
+                        'gateway/openai:o3',
+                        'gateway/openai:o4-mini-2025-04-16',
+                        'gateway/openai:o4-mini',
+                        'google-gla:gemini-2.0-flash-lite',
+                        'google-gla:gemini-2.0-flash',
+                        'google-gla:gemini-2.5-flash-image',
+                        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-gla:gemini-2.5-flash-lite',
+                        'google-gla:gemini-2.5-flash-preview-09-2025',
+                        'google-gla:gemini-2.5-flash',
+                        'google-gla:gemini-2.5-pro',
+                        'google-gla:gemini-3-flash-preview',
+                        'google-gla:gemini-3-pro-image-preview',
+                        'google-gla:gemini-3-pro-preview',
+                        'google-gla:gemini-3.1-flash-image-preview',
+                        'google-gla:gemini-3.1-flash-lite-preview',
+                        'google-gla:gemini-3.1-pro-preview',
+                        'google-gla:gemini-flash-latest',
+                        'google-gla:gemini-flash-lite-latest',
+                        'google-vertex:gemini-2.0-flash-lite',
+                        'google-vertex:gemini-2.0-flash',
+                        'google-vertex:gemini-2.5-flash-image',
+                        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-vertex:gemini-2.5-flash-lite',
+                        'google-vertex:gemini-2.5-flash-preview-09-2025',
+                        'google-vertex:gemini-2.5-flash',
+                        'google-vertex:gemini-2.5-pro',
+                        'google-vertex:gemini-3-flash-preview',
+                        'google-vertex:gemini-3-pro-image-preview',
+                        'google-vertex:gemini-3-pro-preview',
+                        'google-vertex:gemini-3.1-flash-image-preview',
+                        'google-vertex:gemini-3.1-flash-lite-preview',
+                        'google-vertex:gemini-3.1-pro-preview',
+                        'google-vertex:gemini-flash-latest',
+                        'google-vertex:gemini-flash-lite-latest',
+                        'grok:grok-2-image-1212',
+                        'grok:grok-2-vision-1212',
+                        'grok:grok-3-fast',
+                        'grok:grok-3-mini-fast',
+                        'grok:grok-3-mini',
+                        'grok:grok-3',
+                        'grok:grok-4-0709',
+                        'grok:grok-4-latest',
+                        'grok:grok-4-1-fast-non-reasoning',
+                        'grok:grok-4-1-fast-reasoning',
+                        'grok:grok-4-1-fast',
+                        'grok:grok-4-fast-non-reasoning',
+                        'grok:grok-4-fast-reasoning',
+                        'grok:grok-4-fast',
+                        'grok:grok-4',
+                        'grok:grok-code-fast-1',
+                        'xai:grok-3',
+                        'xai:grok-3-fast',
+                        'xai:grok-3-fast-latest',
+                        'xai:grok-3-latest',
+                        'xai:grok-3-mini',
+                        'xai:grok-3-mini-fast',
+                        'xai:grok-3-mini-fast-latest',
+                        'xai:grok-4',
+                        'xai:grok-4-0709',
+                        'xai:grok-4-1-fast',
+                        'xai:grok-4-1-fast-non-reasoning',
+                        'xai:grok-4-1-fast-non-reasoning-latest',
+                        'xai:grok-4-1-fast-reasoning',
+                        'xai:grok-4-1-fast-reasoning-latest',
+                        'xai:grok-4-fast',
+                        'xai:grok-4-fast-non-reasoning',
+                        'xai:grok-4-fast-non-reasoning-latest',
+                        'xai:grok-4-fast-reasoning',
+                        'xai:grok-4-fast-reasoning-latest',
+                        'xai:grok-4-latest',
+                        'xai:grok-code-fast-1',
+                        'groq:llama-3.1-8b-instant',
+                        'groq:llama-3.3-70b-versatile',
+                        'groq:meta-llama/llama-guard-4-12b',
+                        'groq:openai/gpt-oss-120b',
+                        'groq:openai/gpt-oss-20b',
+                        'groq:whisper-large-v3',
+                        'groq:whisper-large-v3-turbo',
+                        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+                        'groq:meta-llama/llama-4-scout-17b-16e-instruct',
+                        'groq:meta-llama/llama-prompt-guard-2-22m',
+                        'groq:meta-llama/llama-prompt-guard-2-86m',
+                        'groq:moonshotai/kimi-k2-instruct-0905',
+                        'groq:openai/gpt-oss-safeguard-20b',
+                        'groq:playai-tts',
+                        'groq:playai-tts-arabic',
+                        'groq:qwen/qwen-3-32b',
+                        'heroku:claude-3-5-haiku',
+                        'heroku:claude-3-5-sonnet-latest',
+                        'heroku:claude-3-7-sonnet',
+                        'heroku:claude-3-haiku',
+                        'heroku:claude-4-5-haiku',
+                        'heroku:claude-4-5-sonnet',
+                        'heroku:claude-4-6-sonnet',
+                        'heroku:claude-4-sonnet',
+                        'heroku:claude-opus-4-5',
+                        'heroku:claude-opus-4-6',
+                        'heroku:deepseek-v3-2',
+                        'heroku:glm-4-7',
+                        'heroku:glm-4-7-flash',
+                        'heroku:gpt-oss-120b',
+                        'heroku:kimi-k2-5',
+                        'heroku:kimi-k2-thinking',
+                        'heroku:minimax-m2',
+                        'heroku:minimax-m2-1',
+                        'heroku:qwen3-235b',
+                        'heroku:qwen3-coder-480b',
+                        'heroku:nova-2-lite',
+                        'heroku:nova-lite',
+                        'heroku:nova-pro',
+                        'huggingface:deepseek-ai/DeepSeek-R1',
+                        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
+                        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+                        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
+                        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+                        'huggingface:Qwen/Qwen3-235B-A22B',
+                        'huggingface:Qwen/Qwen3-32B',
+                        'huggingface:Qwen/QwQ-32B',
+                        'mistral:codestral-latest',
+                        'mistral:mistral-large-latest',
+                        'mistral:mistral-moderation-latest',
+                        'mistral:mistral-small-latest',
+                        'moonshotai:kimi-k2-0711-preview',
+                        'moonshotai:kimi-latest',
+                        'moonshotai:kimi-thinking-preview',
+                        'moonshotai:moonshot-v1-128k-vision-preview',
+                        'moonshotai:moonshot-v1-128k',
+                        'moonshotai:moonshot-v1-32k-vision-preview',
+                        'moonshotai:moonshot-v1-32k',
+                        'moonshotai:moonshot-v1-8k-vision-preview',
+                        'moonshotai:moonshot-v1-8k',
+                        'openai:computer-use-preview-2025-03-11',
+                        'openai:computer-use-preview',
+                        'openai:gpt-3.5-turbo-0125',
+                        'openai:gpt-3.5-turbo-0301',
+                        'openai:gpt-3.5-turbo-0613',
+                        'openai:gpt-3.5-turbo-1106',
+                        'openai:gpt-3.5-turbo-16k-0613',
+                        'openai:gpt-3.5-turbo-16k',
+                        'openai:gpt-3.5-turbo',
+                        'openai:gpt-4-0314',
+                        'openai:gpt-4-0613',
+                        'openai:gpt-4-turbo-2024-04-09',
+                        'openai:gpt-4-turbo',
+                        'openai:gpt-4.1-2025-04-14',
+                        'openai:gpt-4.1-mini-2025-04-14',
+                        'openai:gpt-4.1-mini',
+                        'openai:gpt-4.1-nano-2025-04-14',
+                        'openai:gpt-4.1-nano',
+                        'openai:gpt-4.1',
+                        'openai:gpt-4',
+                        'openai:gpt-4o-2024-05-13',
+                        'openai:gpt-4o-2024-08-06',
+                        'openai:gpt-4o-2024-11-20',
+                        'openai:gpt-4o-audio-preview-2024-12-17',
+                        'openai:gpt-4o-audio-preview-2025-06-03',
+                        'openai:gpt-4o-audio-preview',
+                        'openai:gpt-4o-mini-2024-07-18',
+                        'openai:gpt-4o-mini-audio-preview-2024-12-17',
+                        'openai:gpt-4o-mini-audio-preview',
+                        'openai:gpt-4o-mini-search-preview-2025-03-11',
+                        'openai:gpt-4o-mini-search-preview',
+                        'openai:gpt-4o-mini',
+                        'openai:gpt-4o-search-preview-2025-03-11',
+                        'openai:gpt-4o-search-preview',
+                        'openai:gpt-4o',
+                        'openai:gpt-5-2025-08-07',
+                        'openai:gpt-5-chat-latest',
+                        'openai:gpt-5-codex',
+                        'openai:gpt-5-mini-2025-08-07',
+                        'openai:gpt-5-mini',
+                        'openai:gpt-5-nano-2025-08-07',
+                        'openai:gpt-5-nano',
+                        'openai:gpt-5-pro-2025-10-06',
+                        'openai:gpt-5-pro',
+                        'openai:gpt-5.1-2025-11-13',
+                        'openai:gpt-5.1-chat-latest',
+                        'openai:gpt-5.1-codex-max',
+                        'openai:gpt-5.1-codex',
+                        'openai:gpt-5.1',
+                        'openai:gpt-5.2-2025-12-11',
+                        'openai:gpt-5.2-chat-latest',
+                        'openai:gpt-5.2-pro-2025-12-11',
+                        'openai:gpt-5.2-pro',
+                        'openai:gpt-5.2',
+                        'openai:gpt-5.3-chat-latest',
+                        'openai:gpt-5.4-mini-2026-03-17',
+                        'openai:gpt-5.4-mini',
+                        'openai:gpt-5.4-nano-2026-03-17',
+                        'openai:gpt-5.4-nano',
+                        'openai:gpt-5.4',
+                        'openai:gpt-5',
+                        'openai:o1-2024-12-17',
+                        'openai:o1-pro-2025-03-19',
+                        'openai:o1-pro',
+                        'openai:o1',
+                        'openai:o3-2025-04-16',
+                        'openai:o3-deep-research-2025-06-26',
+                        'openai:o3-deep-research',
+                        'openai:o3-mini-2025-01-31',
+                        'openai:o3-mini',
+                        'openai:o3-pro-2025-06-10',
+                        'openai:o3-pro',
+                        'openai:o3',
+                        'openai:o4-mini-2025-04-16',
+                        'openai:o4-mini-deep-research-2025-06-26',
+                        'openai:o4-mini-deep-research',
+                        'openai:o4-mini',
+                        'test',
+                    ],
+                    'type': 'string',
+                },
+                'MCPServerTool': {
+                    'properties': {
+                        'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
+                        'id': {'title': 'Id', 'type': 'string'},
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'authorization_token': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Authorization Token',
+                        },
+                        'description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Description',
+                        },
+                        'allowed_tools': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Tools',
+                        },
+                        'headers': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Headers',
+                        },
+                    },
+                    'required': ['id', 'url'],
+                    'title': 'MCPServerTool',
+                    'type': 'object',
+                },
+                'MemoryTool': {
+                    'properties': {'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'}},
+                    'title': 'MemoryTool',
+                    'type': 'object',
+                },
+                'ModelSettings': {
+                    'description': """\
+Settings to configure an LLM.
 
-    assert schema['type'] == 'object'
-    assert 'model' in schema['properties']
-    assert 'capabilities' in schema['properties']
-    assert '$schema' in schema['properties']
+Here we include only settings which apply to multiple models / model providers,
+though not all of these settings are supported by all models.\
+""",
+                    'properties': {
+                        'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
+                        'temperature': {'title': 'Temperature', 'type': 'number'},
+                        'top_p': {'title': 'Top P', 'type': 'number'},
+                        'timeout': {'title': 'Timeout', 'type': 'number'},
+                        'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'seed': {'title': 'Seed', 'type': 'integer'},
+                        'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
+                        'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
+                        'logit_bias': {
+                            'additionalProperties': {'type': 'integer'},
+                            'title': 'Logit Bias',
+                            'type': 'object',
+                        },
+                        'stop_sequences': {'items': {'type': 'string'}, 'title': 'Stop Sequences', 'type': 'array'},
+                        'extra_headers': {
+                            'additionalProperties': {'type': 'string'},
+                            'title': 'Extra Headers',
+                            'type': 'object',
+                        },
+                        'thinking': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Thinking',
+                        },
+                        'extra_body': {'title': 'Extra Body'},
+                    },
+                    'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'UrlContextTool': {
+                    'deprecated': True,
+                    'properties': {
+                        'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'UrlContextTool',
+                    'type': 'object',
+                },
+                'WebFetchTool': {
+                    'properties': {
+                        'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'WebFetchTool',
+                    'type': 'object',
+                },
+                'WebSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
+                        'search_context_size': {
+                            'default': 'medium',
+                            'enum': ['low', 'medium', 'high'],
+                            'title': 'Search Context Size',
+                            'type': 'string',
+                        },
+                        'user_location': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchUserLocation'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Blocked Domains',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed Domains',
+                        },
+                        'max_uses': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Uses',
+                        },
+                    },
+                    'title': 'WebSearchTool',
+                    'type': 'object',
+                },
+                'WebSearchUserLocation': {
+                    'additionalProperties': False,
+                    'description': """\
+Allows you to localize search results based on a user's location.
 
-    # Capabilities should be a list with anyOf containing default types
-    cap_schema = schema['properties']['capabilities']
-    assert cap_schema['type'] == 'array'
-    any_of = cap_schema['items']['anyOf']
+Supported by:
 
-    # Collect all capability names referenced in the schema (both const literals and object keys)
-    capability_names: set[str] = set()
-    for entry in any_of:
-        if 'const' in entry:
-            capability_names.add(entry['const'])
-        elif '$ref' in entry:  # pragma: no branch
-            # Extract the name from refs like '#/$defs/spec_Instructions'
-            ref = entry['$ref']
-            ref_name = ref.rsplit('/', 1)[-1]
-            for prefix in ('spec_', 'short_spec_'):
-                if ref_name.startswith(prefix):
-                    capability_names.add(ref_name[len(prefix) :])
-
-    assert capability_names == {
-        'BuiltinTool',
-        'ImageGeneration',
-        'MCP',
-        'PrefixTools',
-        'Thinking',
-        'WebFetch',
-        'WebSearch',
-    }
+* Anthropic
+* OpenAI Responses\
+""",
+                    'properties': {
+                        'city': {'title': 'City', 'type': 'string'},
+                        'country': {'title': 'Country', 'type': 'string'},
+                        'region': {'title': 'Region', 'type': 'string'},
+                        'timezone': {'title': 'Timezone', 'type': 'string'},
+                    },
+                    'title': 'WebSearchUserLocation',
+                    'type': 'object',
+                },
+                'XSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'default': False,
+                            'title': 'Enable Image Understanding',
+                            'type': 'boolean',
+                        },
+                        'enable_video_understanding': {
+                            'default': False,
+                            'title': 'Enable Video Understanding',
+                            'type': 'boolean',
+                        },
+                        'include_output': {
+                            'default': False,
+                            'title': 'Include Output',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'XSearchTool',
+                    'type': 'object',
+                },
+                'short_spec_BuiltinTool': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'BuiltinTool': {
+                            'anyOf': [
+                                {
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/XSearchTool'},
+                                        {'$ref': '#/$defs/CodeExecutionTool'},
+                                        {'$ref': '#/$defs/WebFetchTool'},
+                                        {'$ref': '#/$defs/UrlContextTool'},
+                                        {'$ref': '#/$defs/ImageGenerationTool'},
+                                        {'$ref': '#/$defs/MemoryTool'},
+                                        {'$ref': '#/$defs/MCPServerTool'},
+                                        {'$ref': '#/$defs/FileSearchTool'},
+                                    ]
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Builtintool',
+                        }
+                    },
+                    'title': 'short_spec_BuiltinTool',
+                    'type': 'object',
+                },
+                'short_spec_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'IncludeToolReturnSchemas': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Includetoolreturnschemas',
+                        }
+                    },
+                    'title': 'short_spec_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
+                'short_spec_MCP': {
+                    'additionalProperties': False,
+                    'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
+                    'required': ['MCP'],
+                    'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_SetToolMetadata': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'SetToolMetadata': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Settoolmetadata',
+                        }
+                    },
+                    'title': 'short_spec_SetToolMetadata',
+                    'type': 'object',
+                },
+                'short_spec_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'Thinking': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Thinking',
+                        }
+                    },
+                    'title': 'short_spec_Thinking',
+                    'type': 'object',
+                },
+                'spec_ImageGeneration': {
+                    'additionalProperties': False,
+                    'properties': {'ImageGeneration': {'$ref': '#/$defs/spec_params_ImageGeneration'}},
+                    'required': ['ImageGeneration'],
+                    'title': 'spec_ImageGeneration',
+                    'type': 'object',
+                },
+                'spec_MCP': {
+                    'additionalProperties': False,
+                    'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
+                    'required': ['MCP'],
+                    'title': 'spec_MCP',
+                    'type': 'object',
+                },
+                'spec_PrefixTools': {
+                    'additionalProperties': False,
+                    'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
+                    'required': ['PrefixTools'],
+                    'title': 'spec_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_WebFetch': {
+                    'additionalProperties': False,
+                    'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
+                    'required': ['WebFetch'],
+                    'title': 'spec_WebFetch',
+                    'type': 'object',
+                },
+                'spec_WebSearch': {
+                    'additionalProperties': False,
+                    'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
+                    'required': ['WebSearch'],
+                    'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_ImageGeneration': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/ImageGenerationTool'},
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Model',
+                        },
+                        'background': {
+                            'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Background',
+                        },
+                        'input_fidelity': {
+                            'anyOf': [{'enum': ['high', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Input Fidelity',
+                        },
+                        'moderation': {
+                            'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Moderation',
+                        },
+                        'output_compression': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Output Compression',
+                        },
+                        'output_format': {
+                            'anyOf': [{'enum': ['png', 'webp', 'jpeg'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Output Format',
+                        },
+                        'quality': {
+                            'anyOf': [{'enum': ['low', 'medium', 'high', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Quality',
+                        },
+                        'size': {
+                            'anyOf': [
+                                {
+                                    'enum': ['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Size',
+                        },
+                        'aspect_ratio': {
+                            'anyOf': [
+                                {
+                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'type': 'string',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Aspect Ratio',
+                        },
+                    },
+                    'title': 'spec_params_ImageGeneration',
+                    'type': 'object',
+                },
+                'spec_params_MCP': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'url': {'title': 'Url', 'type': 'string'},
+                        'builtin': {
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'authorization_token': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Authorization Token',
+                        },
+                        'headers': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Headers',
+                        },
+                        'allowed_tools': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Tools',
+                        },
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'required': ['url'],
+                    'title': 'spec_params_MCP',
+                    'type': 'object',
+                },
+                'spec_params_PrefixTools': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'prefix': {'title': 'Prefix', 'type': 'string'},
+                        'capability': {
+                            'anyOf': [
+                                {'const': 'BuiltinTool', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'ImageGeneration', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ImageGeneration'},
+                                {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                                {'$ref': '#/$defs/short_spec_MCP'},
+                                {'$ref': '#/$defs/spec_MCP'},
+                                {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'SetToolMetadata', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_SetToolMetadata'},
+                                {'const': 'Thinking', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'const': 'WebFetch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_WebFetch'},
+                                {'const': 'WebSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_WebSearch'},
+                            ]
+                        },
+                    },
+                    'required': ['prefix', 'capability'],
+                    'title': 'spec_params_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_params_WebFetch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/WebFetchTool'},
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Domains',
+                        },
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Blocked Domains',
+                        },
+                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'enable_citations': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Citations',
+                        },
+                        'max_content_tokens': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Max Content Tokens',
+                        },
+                    },
+                    'title': 'spec_params_WebFetch',
+                    'type': 'object',
+                },
+                'spec_params_WebSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'builtin': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/WebSearchTool'},
+                                {'type': 'boolean'},
+                            ],
+                            'title': 'Builtin',
+                        },
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'search_context_size': {
+                            'anyOf': [{'enum': ['low', 'medium', 'high'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Search Context Size',
+                        },
+                        'user_location': {'anyOf': [{'$ref': '#/$defs/WebSearchUserLocation'}, {'type': 'null'}]},
+                        'blocked_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Blocked Domains',
+                        },
+                        'allowed_domains': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed Domains',
+                        },
+                        'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                    },
+                    'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+            },
+            'additionalProperties': False,
+            'properties': {
+                'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
+                'description': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Description',
+                },
+                'instructions': {
+                    'anyOf': [{'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Instructions',
+                },
+                'deps_schema': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Deps Schema',
+                },
+                'output_schema': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Output Schema',
+                },
+                'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
+                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'output_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Output Retries',
+                },
+                'end_strategy': {
+                    'default': 'early',
+                    'enum': ['early', 'graceful', 'exhaustive'],
+                    'title': 'End Strategy',
+                    'type': 'string',
+                },
+                'tool_timeout': {
+                    'anyOf': [{'type': 'number'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Tool Timeout',
+                },
+                'instrument': {
+                    'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Instrument',
+                },
+                'metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Metadata',
+                },
+                'capabilities': {
+                    'default': [],
+                    'items': {
+                        'anyOf': [
+                            {'const': 'BuiltinTool', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'ImageGeneration', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ImageGeneration'},
+                            {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                            {'$ref': '#/$defs/short_spec_MCP'},
+                            {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'SetToolMetadata', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_SetToolMetadata'},
+                            {'const': 'Thinking', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'const': 'WebFetch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebFetch'},
+                            {'const': 'WebSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_WebSearch'},
+                        ]
+                    },
+                    'title': 'Capabilities',
+                    'type': 'array',
+                },
+                '$schema': {'type': 'string'},
+            },
+            'title': 'AgentSpec',
+            'type': 'object',
+        }
+    )
 
 
 def test_model_json_schema_with_custom_capabilities():
@@ -416,6 +1538,34 @@ def test_model_json_schema_with_custom_capabilities():
     assert 'CustomCapability' in capability_names
     # Default capabilities should still be present
     assert 'WebSearch' in capability_names
+
+
+def test_model_json_schema_filters_non_serializable_params():
+    """Custom capabilities with non-serializable __init__ params get filtered in schema."""
+    schema = AgentSpec.model_json_schema_with_capabilities(
+        custom_capability_types=[CapabilityWithCallbackParam],
+    )
+    any_of = schema['properties']['capabilities']['items']['anyOf']
+
+    # String form: all remaining params are optional
+    has_string_form = any(e.get('const') == 'CapabilityWithCallbackParam' for e in any_of)
+    assert has_string_form
+
+    # Long form: max_retries and verbose survive; on_error (purely Callable) is filtered out
+    spec_ref = next(
+        (e for e in any_of if '$ref' in e and 'spec_CapabilityWithCallbackParam' in e['$ref']),
+        None,
+    )
+    assert spec_ref is not None
+    params_def = schema['$defs']['spec_params_CapabilityWithCallbackParam']
+    assert 'max_retries' in params_def['properties']
+    assert 'verbose' in params_def['properties']
+    # on_error should not appear — purely Callable, entirely filtered out
+    assert 'on_error' not in params_def['properties']
+    # hooks should not appear — union of only non-serializable types, entirely filtered out
+    assert 'hooks' not in params_def['properties']
+    # verbose should be boolean only (Callable member was stripped from the union)
+    assert params_def['properties']['verbose'] == {'title': 'Verbose', 'type': 'boolean'}
 
 
 def test_agent_spec_schema_field_parity():
@@ -885,6 +2035,148 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     assert new_per_run.run_id == 1
 
 
+async def test_combined_capability_for_run_cancels_siblings_on_failure():
+    """When one child's for_run fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    @dataclass
+    class FailingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            raise RuntimeError('boom')
+
+    @dataclass
+    class SlowCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return self  # pragma: no cover
+
+    combined = CombinedCapability([FailingCap(), SlowCap()])
+    ctx = _build_run_context()
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.for_run(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
+
+
+def test_apply_single_capability():
+    """AbstractCapability.apply() visits just the capability itself."""
+
+    @dataclass
+    class MyCap(AbstractCapability[None]):
+        pass
+
+    cap = MyCap()
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+    assert visited == [cap]
+
+
+def test_apply_combined_capability():
+    """CombinedCapability.apply() recursively visits all leaf capabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    combined = CombinedCapability([cap_a, cap_b])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == [cap_a, cap_b]
+
+
+def test_apply_nested_combined_capability():
+    """CombinedCapability.apply() flattens nested CombinedCapabilities."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapC(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    cap_c = CapC()
+    inner = CombinedCapability([cap_a, cap_b])
+    outer = CombinedCapability([inner, cap_c])
+
+    visited: list[AbstractCapability[None]] = []
+    outer.apply(visited.append)
+    assert visited == [cap_a, cap_b, cap_c]
+
+
+def test_apply_wrapper_capability():
+    """WrapperCapability.apply() delegates to the wrapped capability."""
+    inner = Thinking()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    visited: list[AbstractCapability[None]] = []
+    wrapper.apply(visited.append)
+    assert visited == [inner]
+
+
+def test_apply_prefix_tools():
+    """PrefixTools (a WrapperCapability) delegates apply() to the wrapped capability."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+
+    visited: list[AbstractCapability[None]] = []
+    prefixed.apply(visited.append)
+    assert visited == [thinking]
+
+
+def test_apply_finds_capability_by_type():
+    """Realistic usage: use apply() to check if a specific capability type is present."""
+    thinking = Thinking()
+    web_search = WebSearch()
+    combined = CombinedCapability([thinking, web_search])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, WebFetch) for c in visited)
+
+
+def test_apply_finds_wrapped_capability_by_type():
+    """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+    thinking = Thinking()
+    prefixed = PrefixTools(wrapped=thinking, prefix='ns')
+    combined = CombinedCapability([prefixed, WebSearch()])
+
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+
+    assert any(isinstance(c, Thinking) for c in visited)
+    assert any(isinstance(c, WebSearch) for c in visited)
+    assert not any(isinstance(c, PrefixTools) for c in visited)
+
+
+def test_apply_empty_combined():
+    """CombinedCapability with no children visits nothing."""
+    combined = CombinedCapability[None]([])
+    visited: list[AbstractCapability[None]] = []
+    combined.apply(visited.append)
+    assert visited == []
+
+
 async def test_for_run_with_different_toolset():
     """When for_run returns a capability with a different get_toolset(), the per-run toolset is used."""
     toolset_a = FunctionToolset(id='a')
@@ -995,7 +2287,7 @@ class _ReplacingCapability(AbstractCapability[Any]):
     replaced: bool = field(default=False, init=False)
 
     async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai._agent_graph import ModelRequestNode
+        from pydantic_ai import ModelRequestNode
 
         if isinstance(node, ModelRequestNode) and not self.replaced:
             self.replaced = True
@@ -1031,6 +2323,11 @@ async def tool_calling_stream_function(
         return
 
     yield 'no tools available'  # pragma: no cover
+
+
+# Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
+class SingleBaseModelArg(BaseModel):
+    label: str = 'default'
 
 
 def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1363,6 +2660,151 @@ class TestModelRequestHooks:
         result = await agent.run('hello')
         assert result.output == 'skipped model'
 
+    async def test_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_wrap_model_request_swaps_model(self):
+        call_log: list[str] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_before_model_request_swaps_model_streaming(self):
+        call_log: list[str] = []
+
+        async def swap_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            call_log.append('swap_stream')
+            yield 'from swap stream'
+
+        swap_target = FunctionModel(stream_function=swap_stream_fn)
+
+        @dataclass
+        class SwapModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[SwapModelCap()],
+        )
+        async with agent.run_stream('hello') as stream:
+            output = await stream.get_output()
+        assert output == 'from swap stream'
+        assert call_log == ['swap_stream']
+
+    async def test_run_context_model_unchanged_after_swap(self):
+        observed_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        original_model = FunctionModel(simple_model_function)
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapAndObserveCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                observed_models.append(ctx.model)
+                request_context.model = swap_target
+                return request_context
+
+        agent = Agent(original_model, capabilities=[SwapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert observed_models[0] is original_model
+
+    async def test_hooks_before_model_request_swaps_model(self):
+        call_log: list[str] = []
+        hooks = Hooks()
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            call_log.append('swap_model')
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @hooks.on.before_model_request
+        async def _(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            request_context.model = swap_target
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert call_log == ['swap_model']
+
+    async def test_after_model_request_sees_wrap_swap(self):
+        """after_model_request sees the model swapped during wrap_model_request."""
+        after_models: list[Any] = []
+
+        def swap_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('from swap model')
+
+        swap_target = FunctionModel(swap_model_fn)
+
+        @dataclass
+        class SwapInWrapAndObserveCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                request_context.model = swap_target
+                return await handler(request_context)
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                after_models.append(request_context.model)
+                return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SwapInWrapAndObserveCap()])
+        result = await agent.run('hello')
+        assert result.output == 'from swap model'
+        assert after_models[0] is swap_target
+
 
 class TestToolValidateHooks:
     async def test_tool_validate_hooks_fire(self):
@@ -1561,6 +3003,104 @@ class TestToolExecuteHooks:
 
         await agent.run('call tool')
         assert cap.caught_error == 'tool failed'
+
+    async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
+        """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
+
+        The JSON schema sent to the model unwraps the BaseModel, so the model generates its fields at the
+        top level. Pydantic's validator returns a BaseModel instance directly, but the framework wraps it
+        as `{param_name: model}` so hooks and `call_tool` always see a dict.
+        """
+        captured_args: list[tuple[str, dict[str, Any]]] = []
+
+        @dataclass
+        class CapturingCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                captured_args.append(('validate', args))
+                return args
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                captured_args.append(('execute', args))
+                return await handler(args)
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CapturingCap()])
+
+        @agent.tool_plain
+        def my_tool(payload: SingleBaseModelArg) -> str:
+            return f'got {payload.label}'
+
+        await agent.run('call the tool')
+        assert captured_args == [
+            ('validate', {'payload': SingleBaseModelArg()}),
+            ('execute', {'payload': SingleBaseModelArg()}),
+        ]
+
+    async def test_tool_hooks_skip_output_tools(self):
+        """Tool hooks don't fire for internal output tools (#5111).
+
+        Output tools deliver structured output to the user via `result.output`; they're not
+        user-facing tool calls. Firing hooks on them lets e.g. `after_tool_execute` return a
+        `ToolReturn` that leaks through to `result.output` instead of the typed value.
+        """
+
+        class MyOutput(BaseModel):
+            answer: str
+
+        hooks = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def wrap_result(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> ToolReturn:
+            return ToolReturn(return_value=result, content='extra context')
+
+        cap = LoggingCapability()
+        agent = Agent(
+            TestModel(custom_output_args={'answer': 'hi'}),
+            output_type=MyOutput,
+            capabilities=[cap, hooks],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool and answer')
+
+        # Function tool still fires every tool hook.
+        assert 'before_tool_validate:my_tool' in cap.log
+        assert 'after_tool_validate:my_tool' in cap.log
+        assert 'wrap_tool_validate:my_tool:before' in cap.log
+        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert 'before_tool_execute:my_tool' in cap.log
+        assert 'after_tool_execute:my_tool' in cap.log
+        assert 'wrap_tool_execute:my_tool:before' in cap.log
+        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        # Output tool does not appear in any hook log entry.
+        assert all('final_result' not in entry for entry in cap.log)
+        # Regression for #5111: the ToolReturn from `after_tool_execute` would have corrupted
+        # `result.output` if output tool hooks still fired.
+        assert result.output == MyOutput(answer='hi')
 
 
 class TestCompositionOrder:
@@ -2037,6 +3577,32 @@ class TestWrapRunEventStream:
             await stream.get_output()
         assert len(observed_events) > 0
 
+    async def test_wrap_run_event_stream_fires_in_run_without_handler(self):
+        """wrap_run_event_stream fires in run() even without an event_stream_handler."""
+        observed_events: list[AgentStreamEvent] = []
+
+        @dataclass
+        class ObserverCap(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                async for event in stream:
+                    observed_events.append(event)
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ObserverCap()],
+        )
+
+        # No event_stream_handler — hook should still fire via forced streaming
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert any(isinstance(e, PartStartEvent) for e in observed_events)
+
 
 class TestWrapRunShortCircuit:
     """Test short-circuiting wrap_run via iter() and run_stream()."""
@@ -2458,26 +4024,220 @@ class TestWebSearchCapability:
         assert isinstance(cap.local, Tool)
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+class TestXSearchCapability:
+    def test_xsearch_default(self):
+        """XSearch() with defaults → builtin XSearchTool, no local."""
+        cap = XSearch()
+        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is None
+
+    def test_xsearch_with_all_constraints(self):
+        """XSearch with all constraint fields → XSearchTool configured."""
+        cap = XSearch(
+            allowed_x_handles=['handle1'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+            include_output=True,
+        )
+        assert cap.get_builtin_tools() == snapshot(
+            [
+                XSearchTool(
+                    allowed_x_handles=['handle1'],
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                    enable_image_understanding=True,
+                    enable_video_understanding=True,
+                    include_output=True,
+                )
+            ]
+        )
+
+    def test_xsearch_requires_builtin_with_handles(self):
+        """XSearch with handle constraints requires builtin."""
+        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
+            [XSearchTool(excluded_x_handles=['h'])]
+        )
+
+    def test_xsearch_builtin_false_local_false_raises(self):
+        """XSearch(builtin=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            XSearch(builtin=False, local=False)
+
+    def test_xsearch_builtin_false_with_constraints_raises(self):
+        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            XSearch(builtin=False, allowed_x_handles=['handle1'])
+
+
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin, no default local fallback."""
+        """WebFetch() provides builtin and default local fallback."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # No default local fallback — user must provide their own
-        assert cap.local is None
-        assert cap.get_toolset() is None
+        # Default local fallback is auto-detected (markdownify-based)
+        assert cap.local is not None
+        assert cap.get_toolset() is not None
 
-    def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
-        """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
+    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><head><title>Test</title></head><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch()])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch something')
+        # Verify the web_fetch fallback tool was actually called
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
+        agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
+    def test_webfetch_builtin_false(self):
+        """WebFetch(builtin=False) → only local, no builtin registered."""
+        cap = WebFetch(builtin=False)
+        assert cap.get_builtin_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+
+    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+        """WebFetch(max_uses=...) with non-supporting model → UserError."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
+        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=info.function_tools[0].name,
+                            args='{"url": "https://example.com"}',
+                            tool_call_id='c1',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+        mock_response = httpx.Response(
+            200,
+            text='<html><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://example.com'),
+        )
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            result = agent.run_sync('fetch example.com')
+        # Verify the web_fetch fallback tool was actually called with domain filtering
+        tool_calls = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelResponse)
+            for part in msg.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert len(tool_calls) == 1
+        assert tool_calls[0].tool_name == 'web_fetch'
+
+    def test_webfetch_both_false_raises(self):
+        """WebFetch(builtin=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            WebFetch(builtin=False, local=False)
+
+    def test_webfetch_builtin_false_with_max_uses_raises(self):
+        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebFetch(builtin=False, max_uses=5)
+
+    def test_webfetch_local_callable(self):
+        """WebFetch(local=some_function) → bare callable wrapped in Tool."""
+        from pydantic_ai.tools import Tool
+
+        def my_fetch(url: str) -> str:
+            return f'fetched {url}'  # pragma: no cover
+
+        cap = WebFetch(local=my_fetch)
+        assert isinstance(cap.local, Tool)
+
 
 class TestImageGenerationCapability:
+    def test_image_gen_init_params_match_builtin_tool(self):
+        """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
+        import dataclasses
+        import inspect
+
+        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        builtin_fields = {
+            f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
+        }
+        init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
+            'self',
+            'builtin',
+            'local',
+            'fallback_model',
+        }
+        assert init_params == builtin_fields
+
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
@@ -2498,6 +4258,374 @@ class TestImageGenerationCapability:
         cap = ImageGeneration(local=my_gen)
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
+
+    def test_image_generation_with_fallback_model(self):
+        """ImageGeneration(fallback_model=...) creates a local fallback tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], ImageGenerationTool)
+
+    def test_image_generation_forwards_config_to_builtin(self):
+        """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
+        cap = ImageGeneration(
+            background='opaque',
+            input_fidelity='high',
+            moderation='low',
+            output_compression=80,
+            output_format='jpeg',
+            quality='high',
+            size='1024x1024',
+            aspect_ratio='16:9',
+        )
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        tool = builtins[0]
+        assert isinstance(tool, ImageGenerationTool)
+        assert tool.background == 'opaque'
+        assert tool.input_fidelity == 'high'
+        assert tool.moderation == 'low'
+        assert tool.output_compression == 80
+        assert tool.output_format == 'jpeg'
+        assert tool.quality == 'high'
+        assert tool.size == '1024x1024'
+        assert tool.aspect_ratio == '16:9'
+
+    def test_image_generation_fallback_merges_custom_builtin_with_overrides(self):
+        """Custom builtin settings are merged with capability-level overrides for the fallback."""
+        from pydantic_ai.tools import Tool
+
+        custom_builtin = ImageGenerationTool(quality='high', size='1024x1024')
+        cap = ImageGeneration(
+            builtin=custom_builtin,
+            fallback_model='openai-responses:gpt-5.4',
+            output_format='jpeg',  # capability-level override
+        )
+        # The local fallback should exist and contain the merged config
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_callable_builtin_with_fallback(self):
+        """When builtin is a callable, the fallback local tool still gets created."""
+        from pydantic_ai.tools import Tool
+
+        cap = ImageGeneration(
+            builtin=lambda ctx: ImageGenerationTool(quality='high'),
+            fallback_model='openai-responses:gpt-5.4',
+        )
+        # Callable builtin can't be resolved at init time, but local fallback is still created
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    def test_image_generation_fallback_model_and_local_conflict(self):
+        """ImageGeneration(fallback_model=..., local=func) raises UserError."""
+
+        def my_gen(prompt: str) -> str:
+            return 'image_url'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
+
+    def test_image_generation_fallback_model_with_local_false(self):
+        """ImageGeneration(fallback_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
+
+    async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
+        """ImageGeneration with async callable fallback_model resolves the model per-run."""
+        from pydantic_ai.messages import BinaryImage, FilePart
+
+        image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=image_data, media_type='image/png'))])
+
+        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
+
+        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
+        result = await agent.run('Generate a test image')
+        assert result.output == 'done'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=54, output_tokens=6),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
+        """Callable fallback_model returning an image-only model name is caught at call time."""
+
+        def model_factory(ctx: RunContext[None]) -> str:
+            return 'openai-responses:gpt-image-1'
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            await agent.run('Generate a test image')
+
+    async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
+        """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
+
+        # FunctionModel that returns text but no image — triggers UnexpectedModelBehavior
+        def no_image_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='No image generated.')])
+
+        inner_model = FunctionModel(no_image_model_fn, profile=ModelProfile(supports_image_output=True))
+
+        call_count = 0
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        result = await agent.run('Generate a test image')
+        assert result.output == 'gave up'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "test"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=5),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Exceeded maximum retries (1) for output validation',
+                            tool_name='generate_image',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='gave up')],
+                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_image_generation_rejects_image_only_model(self):
+        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
+        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
+            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+
+    @pytest.mark.vcr()
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
+        """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
+        from pydantic_ai.messages import BinaryImage
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # If we see a tool return, the image was generated — return final text
+            if any(
+                isinstance(part, ToolReturnPart)
+                for msg in messages
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+            ):
+                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+
+            # First call: invoke the generate_image tool
+            assert info.function_tools, 'Expected generate_image tool to be available'
+            tool = info.function_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
+
+        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(
+            outer_model,
+            capabilities=[
+                ImageGeneration(fallback_model=inner_model),
+            ],
+        )
+        result = await agent.run('Generate an image of a cute baby sea otter')
+        assert result.output == 'Here is the generated image.'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "A cute baby sea otter"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Here is the generated image.')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=15),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    @pytest.mark.vcr()
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
+        """ImageGeneration fallback with Google image model."""
+        pytest.importorskip('google.genai', reason='google extra not installed')
+        from pydantic_ai.messages import BinaryImage
+        from pydantic_ai.models.google import GoogleModel
+        from pydantic_ai.providers.google import GoogleProvider
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
+            assert info.function_tools, 'Expected generate_image tool to be available'
+            tool = info.function_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
+
+        inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
+        result = await agent.run('Generate an image of a cute baby sea otter')
+        assert result.output == 'Here is the generated image.'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='generate_image',
+                            args='{"prompt": "A cute baby sea otter"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=59, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='generate_image',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Here is the generated image.')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=15),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 try:
@@ -2567,7 +4695,7 @@ class TestMCPCapability:
 
     def test_mcp_url_required(self):
         """MCP without url raises TypeError."""
-        with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
+        with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
 
 
@@ -3167,7 +5295,7 @@ class TestGetWrapperToolsetHook:
         )
 
     async def test_wrapper_chaining_order(self):
-        """Multiple capabilities' wrappers compose by nesting: first wraps innermost."""
+        """Multiple capabilities' wrappers compose by nesting: first wraps outermost."""
         from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
@@ -3191,8 +5319,8 @@ class TestGetWrapperToolsetHook:
             return 'r'  # pragma: no cover
 
         result = await agent.run('hello')
-        # First cap wraps innermost (a_tool), then second wraps that (b_a_tool)
-        assert result.output == "tools: ['b_a_tool']"
+        # First cap wraps outermost (matching wrap_* hooks): a_b_tool
+        assert result.output == "tools: ['a_b_tool']"
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -3201,7 +5329,7 @@ class TestGetWrapperToolsetHook:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content="tools: ['b_a_tool']")],
+                    parts=[TextPart(content="tools: ['a_b_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
@@ -3460,7 +5588,7 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Constraint fields require builtin
+    # Only max_uses requires builtin (domains are handled locally)
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
@@ -3468,6 +5596,13 @@ def test_web_fetch_unique_id():
     """WebFetch returns the correct builtin unique_id."""
     cap = WebFetch()
     assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+def test_xsearch_unique_id():
+    """XSearch returns the correct builtin unique_id."""
+    cap = XSearch()
+    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
@@ -3494,7 +5629,7 @@ def test_web_search_with_constraints():
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() returns None when duckduckgo is not installed."""
+    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
     import builtins
 
     original_import = builtins.__import__
@@ -3505,8 +5640,27 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    cap = WebSearch(builtin=False)
+    with pytest.warns(UserWarning, match='duckduckgo'):
+        cap = WebSearch(builtin=False)
     # With builtin disabled and no duckduckgo, local is None
+    assert cap.local is None
+
+
+def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.warns(UserWarning, match='web-fetch'):
+        cap = WebFetch(builtin=False)
+    # With builtin disabled and no markdownify, local is None
     assert cap.local is None
 
 
@@ -3533,10 +5687,21 @@ def test_builtin_or_local_base_no_default_builtin():
 
 def test_builtin_tool_from_spec_no_args():
     """BuiltinTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinTool as BuiltinToolCapDirect
+    from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCapDirect
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
         BuiltinToolCapDirect.from_spec()
+
+
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_builtin_or_local_no_default_local():
+    """BuiltinOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+
+    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    # Base class _default_local() returns None — no local fallback
+    assert cap.local is None
+    assert cap.get_toolset() is None
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
@@ -4421,6 +6586,45 @@ class TestHooksCapability:
             await stream.get_output()
         assert len(events_seen) > 0
 
+    async def test_on_event_hook_fires_in_run(self):
+        """on.event fires in run() even without an event_stream_handler."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.event
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+            events_seen.append(type(event).__name__)
+            return event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert 'PartStartEvent' in events_seen
+
+    async def test_wrap_run_event_stream_fires_in_run(self):
+        """on.run_event_stream fires in run() even without an event_stream_handler."""
+        hooks = Hooks()
+        events_seen: list[str] = []
+
+        @hooks.on.run_event_stream
+        async def observe_stream(
+            ctx: RunContext[Any], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                events_seen.append(type(event).__name__)
+                yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert 'PartStartEvent' in events_seen
+
     async def test_on_event_with_run_event_stream(self):
         """on.event and on.run_event_stream can be used together."""
         hooks = Hooks()
@@ -4945,7 +7149,7 @@ async def test_prefix_tools_from_spec():
 
 async def test_prefix_tools_from_spec_direct():
     """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
-    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')
+    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')  # pyright: ignore[reportArgumentType]
     assert isinstance(cap, PrefixTools)
     assert cap.prefix == 'ws'
 
@@ -5440,3 +7644,1728 @@ class TestNodeStreamingWithHooks:
                 pass
 
         assert error_log == ['CallToolsNode']
+
+
+# --- ModelRetry from hooks tests ---
+
+
+class TestModelRetryFromHooks:
+    """Tests for raising ModelRetry from capability hooks."""
+
+    async def test_after_model_request_model_retry(self):
+        """after_model_request raises ModelRetry — model is called again with retry prompt."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('bad response')
+            return make_text_response('good response')
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        cap = RetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'good response'
+        assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='bad response')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Response was bad, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=66, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_after_model_request_model_retry_max_retries(self):
+        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+
+        @dataclass
+        class AlwaysRetryCap(AbstractCapability[Any]):
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                raise ModelRetry('always bad')
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[AlwaysRetryCap()],
+            output_retries=2,
+        )
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+            await agent.run('hello')
+
+    async def test_after_model_request_model_retry_streaming(self):
+        """after_model_request raises ModelRetry during streaming with tool calls — model is called again."""
+        call_count = 0
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: return a tool call that after_model_request will reject
+                yield {0: DeltaToolCall(name='my_tool', json_args='{}', tool_call_id='call-1')}
+            elif call_count == 2:
+                # Second call (after retry): return text
+                yield 'good response'
+            else:
+                yield 'unexpected'  # pragma: no cover
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Response was bad, please try again')
+                return response
+
+        cap = RetryCap()
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=stream_fn),
+            capabilities=[cap],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Response was bad, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry_streaming_short_circuit(self):
+        """wrap_model_request raises ModelRetry without calling handler during streaming."""
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'good response'
+
+        @dataclass
+        class ShortCircuitRetryCap(AbstractCapability[Any]):
+            call_count: int = 0
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                self.call_count += 1
+                if self.call_count == 1:
+                    # Short-circuit: don't call handler, raise ModelRetry
+                    raise ModelRetry('Short-circuit retry')
+                return await handler(request_context)
+
+        cap = ShortCircuitRetryCap()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert cap.call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Short-circuit retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry_streaming_after_handler(self):
+        """wrap_model_request raises ModelRetry after calling handler during streaming (tool call scenario)."""
+        call_count = 0
+
+        async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: tool call that wrap hook will reject
+                yield {0: DeltaToolCall(name='my_tool', json_args='{}', tool_call_id='call-1')}
+            else:
+                yield 'good response'
+
+        @dataclass
+        class AfterHandlerRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Post-handler retry')
+                return response
+
+        cap = AfterHandlerRetryCap()
+        agent = Agent(FunctionModel(simple_model_function, stream_function=stream_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        async with agent.run_stream('hello') as streamed:
+            result = await streamed.get_output()
+        assert result == 'good response'
+        assert call_count == 2
+        assert streamed.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Post-handler retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good response')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function:simple_model_function:stream_fn',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry(self):
+        """wrap_model_request raises ModelRetry after calling handler — triggers retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_text_response('first attempt')
+            return make_text_response('second attempt')
+
+        @dataclass
+        class WrapRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Wrap says retry')
+                return response
+
+        cap = WrapRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'second attempt'
+        assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='first attempt')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Wrap says retry',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='second attempt')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_model_request_model_retry_skips_on_error(self):
+        """wrap_model_request raising ModelRetry should NOT call on_model_request_error."""
+        on_error_called = False
+
+        @dataclass
+        class WrapRetrySkipErrorCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                raise ModelRetry('retry please')
+
+            async def on_model_request_error(  # pragma: no cover — verifying this is NOT called
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                error: Exception,
+            ) -> ModelResponse:
+                nonlocal on_error_called
+                on_error_called = True
+                raise error
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+            await agent.run('hello')
+        assert not on_error_called
+
+    async def test_on_model_request_error_model_retry(self):
+        """on_model_request_error raises ModelRetry to recover via retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError('model failed')
+            return make_text_response('recovered response')
+
+        @dataclass
+        class ErrorRetryCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                error: Exception,
+            ) -> ModelResponse:
+                raise ModelRetry('Model failed, please try again')
+
+        cap = ErrorRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        result = await agent.run('hello')
+        assert result.output == 'recovered response'
+        assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Model failed, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='recovered response')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_after_tool_execute_model_retry(self):
+        """after_tool_execute raises ModelRetry — tool retry prompt sent to model, tool retried on success."""
+        tool_call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Always call the tool — after retry, the hook won't raise again
+            if info.function_tools:
+                # Check if we already got a tool return (second call succeeded)
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class AfterExecRetryCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                if not self.retried:
+                    self.retried = True
+                    raise ModelRetry('Tool result is bad, try again')
+                return result
+
+        cap = AfterExecRetryCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert result.output == 'got: tool result'
+        assert tool_call_count == 2  # Tool called twice: first rejected by hook, second succeeds
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Tool result is bad, try again',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_before_tool_execute_model_retry(self):
+        """before_tool_execute raises ModelRetry — tool execution is skipped, then succeeds on retry."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Always call the tool — after retry, the hook won't raise again
+            if info.function_tools:
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        hooks = Hooks[Any]()
+        hook_called = False
+
+        @hooks.on.before_tool_execute
+        async def reject_first(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+        ) -> dict[str, Any]:
+            nonlocal hook_called
+            if not hook_called:
+                hook_called = True
+                raise ModelRetry('Not ready to execute, try again')
+            return args
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert result.output == 'got: tool result'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Not ready to execute, try again',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=67, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_wrap_tool_execute_model_retry_skips_on_error(self):
+        """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
+        on_error_called = False
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class WrapExecRetryCap(AbstractCapability[Any]):
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                raise ModelRetry('Wrap says retry tool')
+
+            async def on_tool_execute_error(  # pragma: no cover — verifying this is NOT called
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                nonlocal on_error_called
+                on_error_called = True
+                raise error
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry'
+        assert not on_error_called
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Wrap says retry tool',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got retry')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_on_tool_execute_error_model_retry(self):
+        """on_tool_execute_error raises ModelRetry to recover via retry."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got retry after error')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class ErrorRetryCap(AbstractCapability[Any]):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                raise ModelRetry('Tool errored, please retry')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+        assert result.output == 'got retry after error'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Tool errored, please retry',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got retry after error')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_after_tool_validate_model_retry(self):
+        """after_tool_validate raises ModelRetry — validation retry sent to model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got validation retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class AfterValRetryCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                raise ModelRetry('Validated args are bad')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got validation retry'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Validated args are bad',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got validation retry')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_before_tool_validate_model_retry(self):
+        """before_tool_validate raises ModelRetry — validation retry sent to model."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, RetryPromptPart):
+                        return make_text_response('got pre-validation retry')
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class BeforeValRetryCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: str | dict[str, Any],
+            ) -> str | dict[str, Any]:
+                raise ModelRetry('Args look bad before validation')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'  # pragma: no cover
+
+        result = await agent.run('call tool')
+        assert result.output == 'got pre-validation retry'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Args look bad before validation',
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got pre-validation retry')],
+                    usage=RequestUsage(input_tokens=64, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+
+class TestCtxAgentInCapability:
+    """Test that ctx.agent is available in capability hooks."""
+
+    async def test_ctx_agent_in_hooks(self):
+        hook_agent_names: list[str | None] = []
+
+        @dataclass
+        class AgentTrackingCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                assert ctx.agent is not None
+                hook_agent_names.append(ctx.agent.name)
+
+            async def before_model_request(
+                self,
+                ctx: RunContext[Any],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                assert ctx.agent is not None
+                hook_agent_names.append(ctx.agent.name)
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
+        await agent.run('hello')
+        assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+# region --- Compaction capability tests ---
+
+
+class TestCompaction:
+    def test_compaction_part_serialization(self):
+        """CompactionPart round-trips through Pydantic serialization."""
+        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
+
+        # Anthropic-style (text content)
+        anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
+        assert anthropic_part.has_content()
+        assert anthropic_part.part_kind == 'compaction'
+
+        # OpenAI-style (encrypted, no content)
+        openai_part = CompactionPart(
+            content=None,
+            id='cmp_123',
+            provider_name='openai',
+            provider_details={'encrypted_content': 'abc123', 'type': 'compaction'},
+        )
+        assert not openai_part.has_content()
+        assert openai_part.part_kind == 'compaction'
+
+        # Round-trip through serialization
+        response = ModelResponse(parts=[anthropic_part, openai_part])
+        messages: list[ModelMessage] = [response]
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+        assert len(deserialized) == 1
+        assert isinstance(deserialized[0], ModelResponse)
+        parts = deserialized[0].parts
+        assert len(parts) == 2
+        assert isinstance(parts[0], CompactionPart)
+        assert parts[0].content == 'Summary of conversation'
+        assert parts[0].provider_name == 'anthropic'
+        assert isinstance(parts[1], CompactionPart)
+        assert parts[1].content is None
+        assert parts[1].id == 'cmp_123'
+        assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
+
+    async def test_openai_compaction_with_wrong_model(self):
+        """OpenAICompaction raises UserError when used with a non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    async def test_openai_compaction_with_wrapped_wrong_model(self):
+        """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        wrapped = WrapperModel(FunctionModel(simple_model_function))
+        agent = Agent(
+            wrapped,
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    def test_openai_compaction_should_compact_with_trigger(self):
+        """OpenAICompaction._should_compact delegates to custom trigger."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')]),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+        )
+
+    def test_openai_compaction_should_compact_no_config(self):
+        """Bare `OpenAICompaction()` is stateful mode and never triggers the before_model_request hook."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction()
+        assert cap.stateless is False
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_mode_inference(self):
+        """`stateless` is inferred from which mode-specific fields are passed."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction().stateless is False
+        assert OpenAICompaction(token_threshold=1000).stateless is False
+        assert OpenAICompaction(message_count_threshold=5).stateless is True
+        assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
+
+    def test_openai_compaction_stateful_model_settings(self):
+        """Stateful mode returns `openai_context_management` via get_model_settings."""
+        pytest.importorskip('openai')
+        from types import SimpleNamespace
+        from typing import cast
+
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        def _resolve(cap: OpenAICompaction[None], model_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+            resolver = cap.get_model_settings()
+            assert resolver is not None
+            ctx = SimpleNamespace(model_settings=model_settings)
+            return cast(dict[str, Any], resolver(cast(Any, ctx)))
+
+        assert _resolve(OpenAICompaction()) == {'openai_context_management': [{'type': 'compaction'}]}
+        assert _resolve(OpenAICompaction(token_threshold=50_000)) == {
+            'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]
+        }
+        # If the user already configured `openai_context_management` directly, we defer
+        # to them entirely and don't append our own entry. OpenAI's context_management
+        # list only meaningfully supports one `compaction` entry, so mixing the capability
+        # with manual config would produce ambiguous/conflicting state.
+        assert (
+            _resolve(
+                OpenAICompaction(token_threshold=50_000),
+                model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
+            )
+            == {}
+        )
+        # When user has other model settings but no `openai_context_management`,
+        # the capability's compaction entry is injected normally.
+        assert _resolve(
+            OpenAICompaction(token_threshold=50_000),
+            model_settings={'temperature': 0.5},
+        ) == {'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]}
+        # Stateless mode does not inject model settings
+        assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
+
+    def test_openai_compaction_rejects_mixed_fields(self):
+        """Mixing stateful-only and stateless-only fields raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='`token_threshold` is only valid for stateful compaction'):
+            OpenAICompaction(stateless=True, token_threshold=1000, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, trigger=lambda _msgs: True)
+
+    def test_openai_compaction_stateless_requires_trigger(self):
+        """`stateless=True` without message_count_threshold or trigger raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
+            OpenAICompaction(stateless=True)
+
+    def test_openai_compaction_instructions_deprecated(self):
+        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
+            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
+
+    def test_openai_compaction_serialization_name(self):
+        """OpenAICompaction has the correct serialization name."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
+
+    def test_anthropic_compaction_serialization_name(self):
+        """AnthropicCompaction has the correct serialization name."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
+
+    async def test_compaction_part_in_function_model_history(self):
+        """FunctionModel handles message history containing CompactionPart."""
+        from pydantic_ai.messages import CompactionPart
+
+        compaction_response = ModelResponse(
+            parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
+            provider_name='anthropic',
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+            compaction_response,
+            ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+        ]
+
+        agent = Agent(FunctionModel(simple_model_function))
+        result = await agent.run('Follow up', message_history=history)
+        assert result.output == 'response from model'
+
+    async def test_compaction_part_without_content_in_response(self):
+        """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
+        from pydantic_ai.messages import CompactionPart
+
+        def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content=None, id='cmp_123', provider_name='openai'),
+                    TextPart(content='actual response'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(model_with_compaction))
+        result = await agent.run('hello')
+        assert result.output == 'actual response'
+
+
+# endregion
+
+
+def test_thread_executor_not_serializable() -> None:
+    assert ThreadExecutor.get_serialization_name() is None
+
+
+async def test_thread_executor_capability() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='cap-pool')
+    try:
+        agent = Agent(FunctionModel(model_function), capabilities=[ThreadExecutor(executor)])
+
+        @agent.tool_plain
+        def check_thread() -> str:
+            tool_threads.append(threading.current_thread().name)
+            return 'ok'
+
+        result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('cap-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_thread_executor_static_method() -> None:
+    tool_threads: list[str] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='check_thread', args='{}')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def check_thread() -> str:
+        tool_threads.append(threading.current_thread().name)
+        return 'ok'
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='static-pool')
+    try:
+        with Agent.using_thread_executor(executor):
+            result = await agent.run('test')
+        assert result.output == 'done'
+        assert len(tool_threads) == 1
+        assert tool_threads[0].startswith('static-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+# --- Capability ordering tests ---
+
+
+@dataclass
+class OutermostCap(AbstractCapability[Any]):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
+@dataclass
+class InnermostCap(AbstractCapability[Any]):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='innermost')
+
+
+@dataclass
+class PlainCapA(AbstractCapability[Any]):
+    pass
+
+
+@dataclass
+class PlainCapB(AbstractCapability[Any]):
+    pass
+
+
+@dataclass
+class WrapsACap(AbstractCapability[Any]):
+    """Must wrap around PlainCapA."""
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(wraps=[PlainCapA])
+
+
+@dataclass
+class RequiresOutermostCap(AbstractCapability[Any]):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(requires=[OutermostCap])
+
+
+def _cap_names(combined: CombinedCapability) -> list[str]:
+    return [type(c).__name__ for c in combined.capabilities]
+
+
+def test_ordering_outermost():
+    """Capability declaring 'outermost' ends up at index 0."""
+    combined = CombinedCapability([PlainCapA(), OutermostCap(), PlainCapB()])
+    assert _cap_names(combined) == ['OutermostCap', 'PlainCapA', 'PlainCapB']
+
+
+def test_ordering_innermost():
+    """Capability declaring 'innermost' ends up last."""
+    combined = CombinedCapability([InnermostCap(), PlainCapA(), PlainCapB()])
+    assert _cap_names(combined) == ['PlainCapA', 'PlainCapB', 'InnermostCap']
+
+
+def test_ordering_both_outermost_and_innermost():
+    """Both outermost and innermost present."""
+    combined = CombinedCapability([PlainCapA(), InnermostCap(), OutermostCap()])
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[-1].__class__ is InnermostCap
+
+
+def test_ordering_multiple_outermost_tier():
+    """Multiple outermost capabilities form a tier; original order breaks ties."""
+
+    @dataclass
+    class OutermostCap2(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    combined = CombinedCapability([PlainCapA(), OutermostCap2(), OutermostCap()])
+    # Both outermost caps before PlainCapA; original order (OutermostCap2 before OutermostCap) preserved
+    assert _cap_names(combined) == ['OutermostCap2', 'OutermostCap', 'PlainCapA']
+
+
+def test_ordering_multiple_innermost_tier():
+    """Multiple innermost capabilities form a tier; original order breaks ties."""
+
+    @dataclass
+    class InnermostCap2(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+    combined = CombinedCapability([InnermostCap(), InnermostCap2(), PlainCapA()])
+    # PlainCapA first, then both innermost in original order
+    assert _cap_names(combined) == ['PlainCapA', 'InnermostCap', 'InnermostCap2']
+
+
+def test_ordering_outermost_tier_with_wraps():
+    """wraps/wrapped_by refines order within the outermost tier."""
+
+    @dataclass
+    class OuterA(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    @dataclass
+    class OuterB(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[OuterA])
+
+    # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
+    combined = CombinedCapability([OuterA(), PlainCapA(), OuterB()])
+    assert _cap_names(combined) == ['OuterB', 'OuterA', 'PlainCapA']
+
+
+def test_ordering_wraps():
+    """Explicit 'wraps' edge is respected."""
+    combined = CombinedCapability([PlainCapA(), WrapsACap()])
+    assert _cap_names(combined) == ['WrapsACap', 'PlainCapA']
+
+
+def test_ordering_wrapped_by():
+    """Explicit 'wrapped_by' edge is respected."""
+
+    @dataclass
+    class WrappedByACap(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[PlainCapA])
+
+    combined = CombinedCapability([WrappedByACap(), PlainCapA()])
+    assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
+
+
+def test_ordering_requires_present():
+    """No error when required capability is present."""
+    combined = CombinedCapability([RequiresOutermostCap(), OutermostCap()])
+    assert len(combined.capabilities) == 2
+
+
+def test_ordering_requires_missing():
+    with pytest.raises(UserError, match='`RequiresOutermostCap` requires `OutermostCap`'):
+        CombinedCapability([RequiresOutermostCap(), PlainCapA()])
+
+
+def test_ordering_preserves_user_order():
+    """Capabilities without constraints keep their relative order."""
+    a, b = PlainCapB(), PlainCapA()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
+
+
+def test_ordering_nested_combined():
+    """Ordering from leaves inside a nested CombinedCapability is respected.
+
+    When a CombinedCapability is nested inside another, its leaves' ordering
+    constraints are merged and applied to the outer sort. Leaves without
+    ordering constraints are skipped during the merge.
+    """
+    # OutermostCap declares position='outermost'; PlainCapB has no ordering.
+    # The merged effective ordering for 'inner' should be position='outermost',
+    # placing it before PlainCapA despite being listed second.
+    inner = CombinedCapability([PlainCapB(), OutermostCap()])
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+
+
+def test_ordering_nested_combined_no_constraints():
+    """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
+    inner = CombinedCapability([PlainCapA(), PlainCapB()])
+    combined = CombinedCapability([inner, OutermostCap()])
+    # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[1] is inner
+
+
+def test_ordering_nested_combined_wraps_without_position():
+    """A nested CombinedCapability with wraps constraints (but no position) merges correctly."""
+    inner = CombinedCapability([PlainCapB(), WrapsACap()])
+    # WrapsACap has wraps=[PlainCapA] but no position.
+    # The nested group inherits that constraint, so it sorts before PlainCapA.
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+    assert combined.capabilities[1].__class__ is PlainCapA
+
+
+def test_ordering_single_capability():
+    """Single capability in CombinedCapability is unchanged."""
+    cap = OutermostCap()
+    combined = CombinedCapability([cap])
+    assert list(combined.capabilities) == [cap]
+
+
+def test_ordering_no_constraints_noop():
+    """When no capability declares ordering, list is unchanged."""
+    a, b = PlainCapA(), PlainCapB()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
+
+
+def test_ordering_cycle_detection():
+    @dataclass
+    class CycleA(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[CycleB])
+
+    @dataclass
+    class CycleB(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[CycleA])
+
+    with pytest.raises(UserError, match='Circular ordering constraints'):
+        CombinedCapability([CycleA(), CycleB()])
+
+
+def test_ordering_conflicting_positions_in_nested():
+    """Conflicting positions in a nested CombinedCapability raise UserError."""
+    inner = CombinedCapability([OutermostCap(), InnermostCap()])
+    with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
+        CombinedCapability([inner, PlainCapA()])
+
+
+def test_ordering_wrapper_capability_recurses():
+    """Ordering constraints on capabilities inside a WrapperCapability are preserved."""
+    wrapped = WrapperCapability(wrapped=OutermostCap())
+    # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
+    # and picks up OutermostCap's position='outermost' constraint.
+    combined = CombinedCapability([PlainCapA(), wrapped])
+    assert combined.capabilities[0] is wrapped
+
+
+def test_ordering_hooks_ordering_parameter():
+    """Hooks with ordering= are sorted according to those constraints."""
+    hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wraps():
+    """Hooks with ordering wraps= are placed before the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[PlainCapA]))
+    combined = CombinedCapability([PlainCapA(), hooks])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wrapped_by():
+    """Hooks with ordering wrapped_by= are placed after the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[PlainCapA]))
+    combined = CombinedCapability([hooks, PlainCapA()])
+    assert combined.capabilities[0].__class__ is PlainCapA
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_no_ordering():
+    """Hooks without ordering= preserve their list position."""
+    hooks = Hooks()
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_ordering_requires():
+    """Hooks with ordering requires= validates that the required type is present."""
+    hooks = Hooks(ordering=CapabilityOrdering(requires=[OutermostCap]))
+    with pytest.raises(UserError, match='`Hooks` requires `OutermostCap`'):
+        CombinedCapability([hooks, PlainCapA()])
+
+
+def test_ordering_wraps_instance_ref():
+    """wraps= with an instance ref only constrains the specific instance, not all instances of that type."""
+    target = PlainCapA()
+    other_a = PlainCapA()
+
+    @dataclass
+    class WrapsInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[target])
+
+    # Arrange so that instance ref vs type ref produces a distinguishable result:
+    # - Instance ref wraps=[target] → only target must come after WrapsInstance
+    # - A type ref wraps=[PlainCapA] would constrain both other_a and target
+    combined = CombinedCapability([other_a, target, WrapsInstance()])
+    # other_a stays before WrapsInstance (no constraint), WrapsInstance before target
+    assert combined.capabilities[0] is other_a
+    assert combined.capabilities[1].__class__ is WrapsInstance
+    assert combined.capabilities[2] is target
+
+
+def test_ordering_wrapped_by_instance_ref():
+    """wrapped_by= can reference a specific capability instance."""
+    wrapper = PlainCapA()
+
+    @dataclass
+    class WrappedByInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[wrapper])
+
+    combined = CombinedCapability([WrappedByInstance(), wrapper])
+    assert combined.capabilities[0] is wrapper
+    assert combined.capabilities[1].__class__ is WrappedByInstance
+
+
+def test_ordering_hooks_wraps_instance():
+    """Hooks can order relative to a specific capability instance via wraps=."""
+    target = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[target]))
+    combined = CombinedCapability([target, hooks])
+    assert combined.capabilities[0] is hooks
+    assert combined.capabilities[1] is target
+
+
+def test_ordering_hooks_wrapped_by_instance():
+    """Hooks can order relative to a specific capability instance via wrapped_by=."""
+    outer = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[outer]))
+    combined = CombinedCapability([hooks, outer])
+    assert combined.capabilities[0] is outer
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_instance_ref_not_present():
+    """Instance ref in wraps= that isn't in the list has no effect (no edge added)."""
+    absent = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[absent]))
+    # absent is NOT in the capabilities list — the wraps ref should be a no-op
+    combined = CombinedCapability([PlainCapB(), hooks])
+    # Order preserved since the instance ref doesn't match anything
+    assert combined.capabilities[0].__class__ is PlainCapB
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_mixed_type_and_instance_refs():
+    """wraps= can mix type refs and instance refs."""
+    target_instance = PlainCapB()
+
+    @dataclass
+    class MixedRefs(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[PlainCapA, target_instance])
+
+    combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
+    assert combined.capabilities[0].__class__ is MixedRefs
+
+
+# --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
+
+
+async def test_after_node_run_end_to_node_override():
+    """after_node_run can convert an End result back to a node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('first answer')])
+        return ModelResponse(parts=[TextPart('second answer')])
+
+    redirected = False
+
+    @dataclass
+    class RedirectOnFirstEnd(AbstractCapability[Any]):
+        """Redirects the first End back to a ModelRequestNode to force a second model call."""
+
+        _redirected: bool = field(default=False, init=False)
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal redirected
+            if isinstance(result, End) and not self._redirected:
+                self._redirected = True
+                redirected = True
+                return ModelRequestNode(ModelRequest(parts=[UserPromptPart(content='try again')]))  # pyright: ignore[reportUnknownVariableType]
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(llm), capabilities=[RedirectOnFirstEnd()])
+    result = await agent.run('hello')
+
+    assert redirected
+    assert call_count == 2
+    assert result.output == 'second answer'
+
+
+async def test_next_node_raises_on_error_marker():
+    """Accessing next_node after a node error re-raises the original exception."""
+    call_count = 0
+
+    def failing_then_ok_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        raise ValueError('model failure')
+
+    agent = Agent(FunctionModel(failing_then_ok_model))
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            try:
+                node = await agent_run.next(node)
+            except ValueError:
+                # After an unrecovered error, next_node should re-raise
+                with pytest.raises(ValueError, match='model failure'):
+                    _ = agent_run.next_node
+                break
+
+
+async def test_on_node_run_error_returns_end():
+    """on_node_run_error can recover from an exception by returning End, completing the run."""
+    from pydantic_ai.result import FinalResult
+
+    def always_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('model exploded')
+
+    @dataclass
+    class RecoverWithEnd(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult('recovered output'))
+
+    agent = Agent(FunctionModel(always_fails), capabilities=[RecoverWithEnd()])
+    result = await agent.run('hello')
+    assert result.output == 'recovered output'
+
+
+async def test_on_node_run_error_returns_node():
+    """on_node_run_error can recover by returning a retry node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def fails_then_succeeds(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('transient failure')
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    @dataclass
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            # Retry by returning a new ModelRequestNode with the same request
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(fails_then_succeeds), capabilities=[RetryOnError()])
+    result = await agent.run('hello')
+    assert call_count == 2
+    assert result.output == 'recovered'
+
+
+async def test_after_node_run_node_to_end():
+    """after_node_run can short-circuit a run by converting a continuation node to End."""
+    from pydantic_ai.result import FinalResult
+
+    model_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+        # Always request a tool call, producing a CallToolsNode (not End)
+        return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
+
+    @dataclass
+    class ShortCircuitAfterModelRequest(AbstractCapability[Any]):
+        """Short-circuit after the first model request node by converting the continuation to End."""
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            from pydantic_ai import ModelRequestNode
+
+            # The ModelRequestNode produces a CallToolsNode (not End); convert it to End.
+            if isinstance(node, ModelRequestNode) and not isinstance(result, End):
+                return End(FinalResult('short-circuited'))
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ShortCircuitAfterModelRequest()])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'  # pragma: no cover
+
+    result = await agent.run('hello')
+    assert result.output == 'short-circuited'
+    assert model_call_count == 1

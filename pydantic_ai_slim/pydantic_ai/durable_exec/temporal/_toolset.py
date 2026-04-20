@@ -3,20 +3,23 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config
+from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import ToolReturnContent
+from pydantic_ai.messages import ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._run_context import TemporalRunContext
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
 
 @dataclass
@@ -52,9 +55,23 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+def _result_discriminator(v: Any) -> str:
+    if isinstance(v, ToolReturn) or (isinstance(v, dict) and v.get('kind') == 'tool-return'):  # pyright: ignore[reportUnknownMemberType]
+        return 'tool-return'
+    return 'content'
+
+
+# Defined at module level so Pydantic resolves the Annotated metadata at runtime,
+# not as a string annotation (which would lose the discriminator under `from __future__ import annotations`).
+_ToolReturnResult = Annotated[
+    Annotated[ToolReturn, Tag('tool-return')] | Annotated[ToolReturnContent, Tag('content')],
+    Discriminator(_result_discriminator),
+]
+
+
 @dataclass
 class _ToolReturn:
-    result: ToolReturnContent
+    result: _ToolReturnResult
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -158,6 +175,7 @@ def temporalize_toolset(
     tool_activity_config: dict[str, ActivityConfig | Literal[False]],
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+    agent: AbstractAgent[AgentDepsT, Any] | None = None,
 ) -> AbstractToolset[AgentDepsT]:
     """Temporalize a toolset.
 
@@ -168,6 +186,7 @@ def temporalize_toolset(
         tool_activity_config: The Temporal activity config to use for specific tools identified by tool name.
         deps_type: The type of agent's dependencies object. It needs to be serializable using Pydantic's `TypeAdapter`.
         run_context_type: The `TemporalRunContext` (sub)class that's used to serialize and deserialize the run context.
+        agent: The agent instance to attach to deserialized run contexts in activities.
     """
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import TemporalFunctionToolset
@@ -179,6 +198,7 @@ def temporalize_toolset(
             tool_activity_config=tool_activity_config,
             deps_type=deps_type,
             run_context_type=run_context_type,
+            agent=agent,
         )
 
     if isinstance(toolset, DynamicToolset):
@@ -191,6 +211,7 @@ def temporalize_toolset(
             tool_activity_config=tool_activity_config,
             deps_type=deps_type,
             run_context_type=run_context_type,
+            agent=agent,
         )
 
     try:
@@ -208,6 +229,7 @@ def temporalize_toolset(
                 tool_activity_config=tool_activity_config,
                 deps_type=deps_type,
                 run_context_type=run_context_type,
+                agent=agent,
             )
 
     try:
@@ -225,6 +247,7 @@ def temporalize_toolset(
                 tool_activity_config=tool_activity_config,
                 deps_type=deps_type,
                 run_context_type=run_context_type,
+                agent=agent,
             )
 
     return toolset
