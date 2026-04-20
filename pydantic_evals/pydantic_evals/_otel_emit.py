@@ -43,8 +43,8 @@ _ATTR_ERROR_TYPE = 'error.type'
 # If upstream adopts different names, update these constants together with
 # downstream queries/materialized views.
 _ATTR_TARGET = 'gen_ai.evaluation.target'
-_ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator_source'
-_ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator_version'
+_ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator.source'
+_ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
 
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
@@ -79,9 +79,9 @@ def emit_otel_events(
 
     Args:
         results: Evaluation results from a single evaluator run. Each result's
-            `evaluator_version` is written to `gen_ai.evaluation.evaluator_version`.
+            `evaluator_version` is written to `gen_ai.evaluation.evaluator.version`.
         failures: Failures from a single evaluator run. Each failure's
-            `evaluator_version` is written to `gen_ai.evaluation.evaluator_version`.
+            `evaluator_version` is written to `gen_ai.evaluation.evaluator.version`.
         target: Name of the function/agent being evaluated. Written to
             `gen_ai.evaluation.target`.
         include_baggage: When True (the default), each emitted event also carries

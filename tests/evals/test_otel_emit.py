@@ -74,7 +74,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
     assert attrs['gen_ai.evaluation.explanation'] == 'looks right'
     assert attrs['gen_ai.evaluation.target'] == 'my_agent'
-    assert 'gen_ai.evaluation.evaluator_source' in attrs
+    assert 'gen_ai.evaluation.evaluator.source' in attrs
 
     # Parented to referenced span.
     assert record.trace_id == 1
@@ -146,7 +146,7 @@ def test_evaluator_version_and_extra_attributes(capfire: CaptureLogfire):
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert attrs['gen_ai.evaluation.evaluator_version'] == 'v2'
+    assert attrs['gen_ai.evaluation.evaluator.version'] == 'v2'
     assert attrs['team'] == 'platform'
 
 
@@ -158,7 +158,7 @@ def test_no_version_attribute_when_none(capfire: CaptureLogfire):
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert 'gen_ai.evaluation.evaluator_version' not in attrs
+    assert 'gen_ai.evaluation.evaluator.version' not in attrs
 
 
 def test_failure_carries_evaluator_version(capfire: CaptureLogfire):
@@ -176,7 +176,7 @@ def test_failure_carries_evaluator_version(capfire: CaptureLogfire):
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert attrs['gen_ai.evaluation.evaluator_version'] == 'v3'
+    assert attrs['gen_ai.evaluation.evaluator.version'] == 'v3'
 
 
 def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):

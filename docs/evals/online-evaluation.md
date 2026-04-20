@@ -209,8 +209,8 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 | `gen_ai.evaluation.explanation` | `EvaluationResult.reason` (success) or `EvaluatorFailure.error_message` (failure) | Omitted when absent. Set this via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator. |
 | `error.type` | fixed string, failure events only | `'pydantic_evals.EvaluatorFailure'` when the evaluator raised; absent on successful evaluations. |
 | `gen_ai.evaluation.target` | `@evaluate(target=...)` or agent `name` | See [Target](#target). |
-| `gen_ai.evaluation.evaluator_version` | `Evaluator.evaluator_version` class attribute | Omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning). |
-| `gen_ai.evaluation.evaluator_source` | JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] | Identifies the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources). |
+| `gen_ai.evaluation.evaluator.version` | `Evaluator.evaluator_version` class attribute | Omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning). |
+| `gen_ai.evaluation.evaluator.source` | JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] | Identifies the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources). |
 
 OTel baggage entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
 
@@ -219,10 +219,10 @@ For example, a `ToneCheck(evaluator_version='v2')` evaluator whose `evaluate()` 
 - `gen_ai.evaluation.name = 'ToneCheck'`
 - `gen_ai.evaluation.score.value = 1.0`, `gen_ai.evaluation.score.label = 'pass'`
 - `gen_ai.evaluation.target = 'customer_support'`
-- `gen_ai.evaluation.evaluator_version = 'v2'`
-- `gen_ai.evaluation.evaluator_source = '{"name": "ToneCheck", "arguments": null}'`
+- `gen_ai.evaluation.evaluator.version = 'v2'`
+- `gen_ai.evaluation.evaluator.source = '{"name": "ToneCheck", "arguments": null}'`
 
-The `gen_ai.evaluation.*` extensions beyond the current semconv sit in the `gen_ai.*` namespace on the assumption that upstream will land analogous attributes there; if OTel adopts different names we'll realign.
+Attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
 
 To disable the default emission (e.g. in a test harness that only wants to assert on a custom sink), set `emit_otel_events=False` on the config:
 
