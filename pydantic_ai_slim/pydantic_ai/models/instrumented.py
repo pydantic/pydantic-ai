@@ -189,6 +189,24 @@ class InstrumentationSettings:
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
             )
+        # Custom metric for cache token breakdown, separate from the standard
+        # gen_ai.client.token.usage to avoid double-counting (cache tokens are
+        # already included in input/output totals).
+        cached_tokens_histogram_kwargs = dict(
+            name='gen_ai.client.cached_token.usage',
+            unit='{token}',
+            description='Measures number of cached read and write tokens',
+        )
+        try:
+            self.cached_tokens_histogram = self.meter.create_histogram(
+                **cached_tokens_histogram_kwargs,
+                explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:  # pragma: lax no cover
+            # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
+            self.cached_tokens_histogram = self.meter.create_histogram(
+                **cached_tokens_histogram_kwargs,  # pyright: ignore
+            )
         self.cost_histogram = self.meter.create_histogram(
             'operation.cost',
             unit='{USD}',
@@ -354,6 +372,12 @@ class InstrumentationSettings:
         if price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
+
+        for cache_typ in ['cache_read', 'cache_write']:
+            if not (tokens := getattr(response.usage, f'{cache_typ}_tokens', 0)):
+                continue
+            cache_token_attributes = {**attributes, 'gen_ai.token.type': cache_typ}
+            self.cached_tokens_histogram.record(tokens, cache_token_attributes)
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
