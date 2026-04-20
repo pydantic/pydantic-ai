@@ -294,6 +294,8 @@ async def test_sink_with_var_keyword_only_is_shimmed():
 
     TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
     """
+    from pydantic_evals._online import _warned_legacy_sink_ids  # pyright: ignore[reportPrivateUsage]
+
     calls: list[dict[str, Any]] = []
 
     class KwargsSink:
@@ -304,6 +306,10 @@ async def test_sink_with_var_keyword_only_is_shimmed():
     class E(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return True
+
+    # Defensive: drop any stale `id(cls)` collision from an earlier GC'd class so the
+    # first-use-per-class warning fires deterministically under parallel test runners.
+    _warned_legacy_sink_ids.discard(id(KwargsSink))
 
     # Cast: KwargsSink intentionally uses the pre-`SinkPayload` signature to exercise the shim.
     config = OnlineEvalConfig(default_sink=cast(Any, KwargsSink()), emit_otel_events=False)
