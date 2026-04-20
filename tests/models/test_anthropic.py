@@ -6754,7 +6754,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
 
 
 async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
@@ -6776,52 +6776,48 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking for a simple multiplication: 3 * 12390. This is a mathematical calculation, and according to my guidelines, I should always use the code execution tool for math. Even though this is a relatively simple calculation that could be done mentally, the instruction is clear that I should use the code execution tool for math.',
-                        signature='EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=',
+                        content='The user wants to calculate 3 * 12390.',
+                        signature='EuMBClsIDBgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgwm/iPvim7OkDjb00IaDCdF9DxFUZx+4ZwZASIw7cguD4xLWWJ0lN5/NN6NFNG/OJFpXwCy70FgXEnsrTwUAbeo1V33+WXxW20rbeBAKjZflikOuG96A6Ofg1qKu3w+P+B0mBjppH+XX6Y9rIObaww4PD04cm+6SPP2jT8vOHy6/tkKHywYAQ==',
                         provider_name='anthropic',
                     ),
+                    TextPart(content='Sure! Let me calculate that for you.'),
                     BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-result = 3 * 12390
-print(f"3 * 12390 = {result}")\
-"""
-                        },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        tool_name='bash_code_execution',
+                        args={'command': 'echo $((3 * 12390))'},
+                        tool_call_id='srvtoolu_01F7HTFLdWeSYRgv5Sa6wyd1',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='code_execution',
+                        tool_name='bash_code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '3 * 12390 = 37170\n',
-                            'type': 'code_execution_result',
+                            'stdout': '37170\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        tool_call_id='srvtoolu_01F7HTFLdWeSYRgv5Sa6wyd1',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(content='3 * 12390 = 37170'),
+                    TextPart(content='**3 × 12,390 = 37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1771,
-                    output_tokens=171,
+                    input_tokens=4702,
+                    output_tokens=113,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1771,
-                        'output_tokens': 171,
+                        'input_tokens': 4702,
+                        'output_tokens': 113,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn'},
-                provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaESptZNJVC9Cg3c28Buh'},
+                provider_response_id='msg_01EP8eZP7GTY1FPE1ZaDywmS',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6845,52 +6841,47 @@ print(f"3 * 12390 = {result}")\
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking for a simple multiplication: 4 * 12390. This is a computational task that requires precise calculation, so I should use the code execution tool to get the accurate result.',
-                        signature='EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==',
+                        content='The user wants to calculate 4 * 12390.',
+                        signature='EuMBClsIDBgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgxdMoxketxaRi0SIDIaDGu2uFsnBjpUQQ3styIwug8i/z8VwTo9P7ioh1eUzbeqDyUhGqCoqewksXt7lHW+lSAJvsSxI+CPacNIzonjKjbBQyrUrgAhNwvvbln6BIHioh24LlMuqf9Wk75VnwAItHuFlf/DWEZsUCO3m0kvhRO7LoMVUjYYAQ==',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-result = 4 * 12390
-print(f"4 * 12390 = {result}")\
-"""
-                        },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_name='bash_code_execution',
+                        args={'command': 'echo $((4 * 12390))'},
+                        tool_call_id='srvtoolu_013LtqoLW38oSHuMK5uF3qBa',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='code_execution',
+                        tool_name='bash_code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '4 * 12390 = 49560\n',
-                            'type': 'code_execution_result',
+                            'stdout': '49560\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_call_id='srvtoolu_013LtqoLW38oSHuMK5uF3qBa',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(content='4 * 12390 = 49560'),
+                    TextPart(content='**4 × 12,390 = 49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1741,
-                    output_tokens=143,
+                    input_tokens=4690,
+                    output_tokens=103,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1741,
-                        'output_tokens': 143,
+                        'input_tokens': 4690,
+                        'output_tokens': 103,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d'},
-                provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaESqGDN1d96H2c68TEH1'},
+                provider_response_id='msg_01NquuTQGnL369GPtASXwmm8',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6899,7 +6890,7 @@ print(f"4 * 12390 = {result}")\
 
 
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, builtin_tools=[CodeExecutionTool()], model_settings=settings)
 
@@ -6927,81 +6918,63 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
-
-This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
-
-65465-6544 * 65464-6+1.02255
-
-Following order of operations:
-1. First, multiplication: 6544 * 65464
-2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
-
-This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
-""",
-                        signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                        content='Let me calculate this mathematical expression.',
+                        signature='EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB',
                         provider_name='anthropic',
                     ),
                     TextPart(
-                        content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
+                        content="I'll calculate this expression right away using the correct order of operations (multiplication first, then addition/subtraction)!"
                     ),
                     BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_name='bash_code_execution',
+                        args='{"command": "python3 -c \\"result = 65465 - 6544 * 65464 - 6 + 1.02255; print(result)\\""}',
+                        tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='code_execution',
+                        tool_name='bash_code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                            'type': 'code_execution_result',
+                            'stdout': '-428330955.97745\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+Following the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:
 
-Here's how it breaks down following the order of operations:
-1. First, multiplication: 6,544 × 65,464 = 428,396,416
-2. Then left to right: 65,465 - 428,396,416 = -428,330,951
-3. Continue: -428,330,951 - 6 = -428,330,957
-4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | **Multiplication first:** 6544 × 65464 | 428,395,616 |
+| 2️⃣ | **Left to right:** 65465 − 428,395,616 | −428,330,151 |
+| 3️⃣ | **Subtract:** − 6 | −428,330,157 |
+| 4️⃣ | **Add:** + 1.02255 | **−428,330,155.97745** |
+
+### ✅ Final Answer: **-428,330,155.97745**\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2316,
-                    output_tokens=733,
+                    input_tokens=4741,
+                    output_tokens=322,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2316,
-                        'output_tokens': 733,
+                        'input_tokens': 4741,
+                        'output_tokens': 322,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
+                provider_response_id='msg_01MRmeYbighzLi29iVmpzFgA',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -7013,339 +6986,118 @@ Here's how it breaks down following the order of operations:
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
+                delta=ThinkingPartDelta(content_delta='Let'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' a mathematical expression: 65465-6544 *'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- 65464-6+1.02255
-
-This\
-"""
-                ),
+                delta=ThinkingPartDelta(content_delta=' me calculate this mathematical expression.'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- Let me break this down:
-
-65\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-
-Following order of operations:
-1. First, multiplication:\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-2. Then left to right for\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- - 6 + 1.02255
-
-This\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' is a computational task that requires precise'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' calculations, so I should use the code_execution'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ=='
+                    signature_delta='EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content="""\
-The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
-
-This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
-
-65465-6544 * 65464-6+1.02255
-
-Following order of operations:
-1. First, multiplication: 6544 * 65464
-2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
-
-This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
-""",
-                    signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    content='Let me calculate this mathematical expression.',
+                    signature='EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=1,
-                part=TextPart(content="I'll calculate this mathematical expression for you. Let me break"),
+                part=TextPart(content="I'll calculate this expression right away using"),
                 previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
-                index=1, delta=TextPartDelta(content_delta=' it down step by step following the order of operations.')
+                index=1,
+                delta=TextPartDelta(
+                    content_delta=' the correct order of operations (multiplication first, then addition/subtraction)!'
+                ),
             ),
             PartEndEvent(
                 index=1,
                 part=TextPart(
-                    content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
+                    content="I'll calculate this expression right away using the correct order of operations (multiplication first, then addition/subtraction)!"
                 ),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_name='bash_code_execution',
+                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                index=2,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
+                delta=ToolCallPartDelta(args_delta='{"', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=')\\n\\nexpression = \\"65465-6544 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='command": ', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='* 65464-6+1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='"python', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='.02255\\"\\nprint(f\\"Expression: {expression',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
+                delta=ToolCallPartDelta(args_delta='3 -c', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\n# Let\'s break it down', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta=' \\"result ', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' step by step\\nstep1 = ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='= 65465 - 65', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='44', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta=' *', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF')
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# Multiplication first\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta=' 65464 -', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta=' 6 +', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF')
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta=' 1', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF')
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='(f\\"Step 1 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='.02255; pr', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='- Multiplication: ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='int(resu', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {step1}\\")\\n\\nstep2', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' = 65465 - step1  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# First subtraction\\nprint(f\\"Step', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' 2 - First subtraction:', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=' 65465 - {step1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='} = {step2}\\")\\n\\nstep', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='3 = step2 - 6  # Second subtraction\\nprint',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='(f\\"Step 3 - Second subtraction: {step2}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=' - 6 = {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\nfinal_result = step3 + ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='1.02255  # Final addition\\nprint(f\\"Step ',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='4 - Final addition: {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='} + 1.02255 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {final_result}\\")\\n\\n#', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=" Let's also verify with", tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' direct calculation\\ndirect_result = 65',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='465-6544 * 65464-', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='6+1.02255\\nprint(f\\"\\\\nDirect calculation:',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' {direct_result}\\")\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='(f\\"Results match: {final_result == direct',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='_result}\\")', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                delta=ToolCallPartDelta(args_delta='lt)\\""}', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
             ),
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_name='bash_code_execution',
+                    args='{"command": "python3 -c \\"result = 65465 - 6544 * 65464 - 6 + 1.02255; print(result)\\""}',
+                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -7353,118 +7105,114 @@ This is a computational task that requires precise calculations, so I should use
             PartStartEvent(
                 index=3,
                 part=BuiltinToolReturnPart(
-                    tool_name='code_execution',
+                    tool_name='bash_code_execution',
                     content={
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
-                        'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                        'type': 'code_execution_result',
+                        'stdout': '-428330955.97745\n',
+                        'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
+            PartStartEvent(index=4, part=TextPart(content='Following'), previous_part_kind='builtin-tool-return'),
             PartDeltaEvent(
                 index=4,
                 delta=TextPartDelta(
                     content_delta="""\
+ the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:
 
+|\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+ Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | **Multiplication first:** 6544 × 65464 |\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+ 428,395,616 |
+| 2️⃣ | **Left to right:** 65465 − 428,395,616 \
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+| −428,330,151 |
+| 3️⃣ | **Subtract:** − 6 |\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+ −428,330,157 |
+| 4️⃣ | **Add:** + 1.02255 | **−\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+428,330,155.97745** |
 
-Here's how it breaks down following the order of operations:
-1. First\
+### ✅ Final Answer: **-428,330,155.97745**\
 """
                 ),
             ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=', multiplication: 6,544 × 65,464 ')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-= 428,396,416
-2. Then left\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to right: 65,465 - 428')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-,396,416 = -428,330,951
-3\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. Continue: -428,330,951 -')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' 6 = -428,330')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-,957
-4. Finally: -428,330,957 + \
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
             PartEndEvent(
                 index=4,
                 part=TextPart(
                     content="""\
-The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+Following the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:
 
-Here's how it breaks down following the order of operations:
-1. First, multiplication: 6,544 × 65,464 = 428,396,416
-2. Then left to right: 65,465 - 428,396,416 = -428,330,951
-3. Continue: -428,330,951 - 6 = -428,330,957
-4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | **Multiplication first:** 6544 × 65464 | 428,395,616 |
+| 2️⃣ | **Left to right:** 65465 − 428,395,616 | −428,330,151 |
+| 3️⃣ | **Subtract:** − 6 | −428,330,157 |
+| 4️⃣ | **Add:** + 1.02255 | **−428,330,155.97745** |
+
+### ✅ Final Answer: **-428,330,155.97745**\
 """
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='code_execution',
-                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_name='bash_code_execution',
+                    args='{"command": "python3 -c \\"result = 65465 - 6544 * 65464 - 6 + 1.02255; print(result)\\""}',
+                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                     provider_name='anthropic',
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='code_execution',
+                    tool_name='bash_code_execution',
                     content={
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
-                        'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                        'type': 'code_execution_result',
+                        'stdout': '-428330955.97745\n',
+                        'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -7525,21 +7273,56 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     from pydantic_ai.providers.google import GoogleProvider
 
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(builtin_tools=[CodeExecutionTool()])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
+        ]
     )
 
     result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )
 
