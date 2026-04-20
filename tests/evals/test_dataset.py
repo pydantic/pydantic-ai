@@ -580,6 +580,7 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                         error_message='ValueError: Evaluator error',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -604,6 +605,7 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                         error_message='ValueError: Evaluator error',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1114,6 +1116,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                         'type: Ellipsis.',
                         error_stacktrace=IsStr(),
                         source=Python(expression='...').as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1142,6 +1145,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                         'type: Ellipsis.',
                         error_stacktrace=IsStr(),
                         source=Python(expression='...').as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1220,6 +1224,7 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                         error_message='ValueError: Evaluator failed',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1244,6 +1249,7 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                         error_message='ValueError: Evaluator failed',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1299,6 +1305,7 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                         'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
                         error_stacktrace=IsStr(),
                         source=InvalidEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1328,6 +1335,7 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                         'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
                         error_stacktrace=IsStr(),
                         source=InvalidEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),

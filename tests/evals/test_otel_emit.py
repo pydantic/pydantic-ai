@@ -192,6 +192,25 @@ def test_empty_results_and_failures_emits_nothing(capfire: CaptureLogfire):
     assert list(capfire.log_exporter.get_finished_logs()) == []
 
 
+def test_failure_error_type_surfaces_actual_exception_class(capfire: CaptureLogfire):
+    """`EvaluatorFailure.error_type` is surfaced on the event's `error.type` attribute."""
+    failure = EvaluatorFailure(
+        name='X',
+        error_message='boom',
+        error_stacktrace='tb',
+        source=_spec('X'),
+        error_type='ValueError',
+    )
+    emit_otel_events(
+        results=[],
+        failures=[failure],
+        target=_target('f'),
+    )
+
+    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    assert attrs['error.type'] == 'ValueError'
+
+
 def test_failure_without_error_message_omits_explanation(capfire: CaptureLogfire):
     failure = EvaluatorFailure(
         name='X',

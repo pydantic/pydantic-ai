@@ -149,7 +149,9 @@ def _emit_failure(
     baggage_attrs: Mapping[str, Any] | None,
 ) -> None:
     attrs = _base_attrs(target, failure.name, failure.source, failure.evaluator_version, baggage_attrs)
-    attrs[_ATTR_ERROR_TYPE] = 'pydantic_evals.EvaluatorFailure'
+    # Prefer the actual raising exception class when available; fall back to the
+    # generic marker for legacy `EvaluatorFailure` instances constructed without it.
+    attrs[_ATTR_ERROR_TYPE] = failure.error_type or 'pydantic_evals.EvaluatorFailure'
     if failure.error_message:
         attrs[_ATTR_EXPLANATION] = failure.error_message
     _get_logger().emit(

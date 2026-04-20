@@ -106,6 +106,7 @@ async def run_evaluator(
             error_message=f'{type(e).__name__}: {e}',
             error_stacktrace=traceback.format_exc(),
             source=source,
+            error_type=type(e).__name__,
             evaluator_version=evaluator_version,
         )
 

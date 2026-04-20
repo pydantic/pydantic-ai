@@ -110,6 +110,10 @@ class EvaluatorFailure:
     evaluator_version: str | None = None
     """Optional version tag for the evaluator that raised (e.g. `'v2'`). Sourced automatically
     from the `evaluator_version` class attribute on the `Evaluator` subclass."""
+    error_type: str | None = None
+    """Class name of the exception that caused the failure (e.g. `'ValueError'`). Populated
+    automatically when `EvaluatorFailure` is constructed from a caught exception; surfaced
+    as the `error.type` attribute on emitted OTel events."""
 
 
 # Evaluators are contravariant in all of its parameters.

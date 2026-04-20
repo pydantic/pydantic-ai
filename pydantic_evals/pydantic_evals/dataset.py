@@ -1027,6 +1027,7 @@ async def _run_report_evaluators(
                         error_message=f'{type(e).__name__}: {e}',
                         error_stacktrace=traceback.format_exc(),
                         source=report_eval.as_spec(),
+                        error_type=type(e).__name__,
                     )
                 )
             else:

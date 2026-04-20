@@ -308,6 +308,7 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
         error_message='ValueError: Simulated error',
         error_stacktrace=IsStr(),
         source=FailingEvaluator().as_spec(),
+        error_type='ValueError',
     )
 
 
