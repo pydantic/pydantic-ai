@@ -422,13 +422,17 @@ async def _run_and_collect(
                 await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
         return
 
-    # Attach the call's span as the current OTel parent for the whole evaluator
-    # run. This nests the `evaluator: {evaluator_name}` span (created inside
-    # `run_evaluator`) under the decorated function's call span, and parents the
-    # emitted events the same way without each emit having to attach independently.
-    parent_ctx = build_parent_context(span_reference)
-    parent_token = otel_context.attach(parent_ctx) if parent_ctx is not None else None
+    # Pair the acquire with a try/finally that always releases. The parent-context
+    # setup is inside the `try` so a stray failure in `otel_context.attach` (or a
+    # pathological `build_parent_context`) can't leak the semaphore slot.
+    parent_token = None
     try:
+        # Attach the call's span as the current OTel parent for the whole evaluator
+        # run. This nests the `evaluator: {evaluator_name}` span (created inside
+        # `run_evaluator`) under the decorated function's call span, and parents the
+        # emitted events the same way without each emit having to attach independently.
+        parent_ctx = build_parent_context(span_reference)
+        parent_token = otel_context.attach(parent_ctx) if parent_ctx is not None else None
         raw_result = await run_evaluator(evaluator, context)
 
         if isinstance(raw_result, EvaluatorFailure):
