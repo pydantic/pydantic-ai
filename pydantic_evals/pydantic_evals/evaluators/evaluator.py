@@ -56,6 +56,10 @@ EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covar
 T = TypeVar('T')
 
 
+# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
+# without shifting positional-argument bindings, and consider reordering the existing
+# fields into a more logical grouping (e.g. identity → value → source metadata) while
+# we're free to rearrange.
 @dataclass
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
@@ -99,6 +103,10 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
+# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
+# without shifting positional-argument bindings, and consider reordering the existing
+# fields into a more logical grouping (e.g. identity → error detail → source metadata)
+# while we're free to rearrange.
 @dataclass
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
