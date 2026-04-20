@@ -144,8 +144,7 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
             return ctx.output == ctx.expected_output
     ```
 
-    Optional class-level attributes (read via `getattr`, not declared on the base to avoid
-    dataclass-field/ClassVar conflicts in subclasses):
+    Optional class-level attributes:
 
     - `evaluation_name`: override the default name used in reports for this evaluator's output
       (only applies when `evaluate` returns a scalar or `EvaluationReason` — mapping outputs
@@ -187,6 +186,8 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
+        # TODO(v2): declare `evaluation_name: ClassVar[str | None] = None` on the
+        # base (alongside `evaluator_version`) and read it directly.
         evaluation_name = getattr(self, 'evaluation_name', None)
         if isinstance(evaluation_name, str):
             # If the evaluator has an attribute `name` of type string, use that
