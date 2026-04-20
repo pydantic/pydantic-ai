@@ -1111,6 +1111,114 @@ async def test_sink_exception_does_not_propagate():
 
 
 @pytest.mark.anyio
+async def test_on_max_concurrency_exception_suppressed_when_no_on_error():
+    """`on_max_concurrency` raising with no `on_error` configured is silently swallowed."""
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            await asyncio.sleep(0.1)
+            return True
+
+    def bad_callback(ctx: EvaluatorContext[Any, Any, Any]) -> None:
+        raise ValueError('callback boom')
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)  # no on_error
+
+    @config.evaluate(
+        OnlineEvaluator(
+            evaluator=SlowEvaluator(),
+            max_concurrency=1,
+            sample_rate=1.0,
+            on_max_concurrency=bad_callback,
+        )
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    # Fire enough concurrent calls to force drops; callback raises on every drop but no
+    # exceptions propagate because `on_error` is None (`_call_on_error` early-returns).
+    tasks = [my_func(i) for i in range(5)]
+    await asyncio.gather(*tasks)
+    await wait_for_evaluations()
+
+
+@pytest.mark.anyio
+async def test_sink_exception_suppressed_when_no_on_error():
+    """A sink raising with no `on_error` configured is silently swallowed."""
+
+    class FailingSink:
+        async def submit(self, payload: SinkPayload) -> None:
+            raise ValueError('sink boom')
+
+    config = OnlineEvalConfig(default_sink=FailingSink())  # no on_error
+
+    @config.evaluate(AlwaysTrue())
+    async def my_func(x: int) -> int:
+        return x
+
+    # Completes cleanly — the sink exception is absorbed by the no-op `on_error=None` path.
+    result = await my_func(42)
+    assert result == 42
+    await wait_for_evaluations()
+
+
+@pytest.mark.anyio
+async def test_shared_on_error_across_evaluators_fires_once_per_sink_failure():
+    """When multiple evaluators in a group share the same `on_error` handler, a single
+    sink failure still only fires it once — dedup by handler identity."""
+    fires: list[OnErrorLocation] = []
+
+    def on_error(
+        exc: Exception,
+        ctx: EvaluatorContext[Any, Any, Any],
+        evaluator: Evaluator,
+        location: OnErrorLocation,
+    ) -> None:
+        fires.append(location)
+
+    class FailingSink:
+        async def submit(self, payload: SinkPayload) -> None:
+            raise ValueError('sink boom')
+
+    config = OnlineEvalConfig(default_sink=FailingSink(), on_error=on_error)
+
+    # Two evaluators → both land in the default-sink group. Sink raises once; dedup
+    # ensures the shared on_error fires exactly once, not twice.
+    @config.evaluate(AlwaysTrue(), OutputEquals(value=42))
+    async def my_func(x: int) -> int:
+        return x * 2
+
+    await my_func(21)
+    await wait_for_evaluations()
+
+    assert fires == ['sink']
+
+
+@pytest.mark.anyio
+async def test_evaluator_returning_empty_mapping_emits_nothing():
+    """An evaluator returning `{}` produces no results — the empty-batch branch skips the submit."""
+    collector = Collector()
+
+    @dataclass
+    class EmptyEvaluator(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return {}
+
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(EmptyEvaluator())
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+
+    assert collector.calls == []
+
+
+@pytest.mark.anyio
 async def test_sync_function_from_async_context():
     """Sync decorated function called from async context dispatches via background thread."""
     collector = Collector()

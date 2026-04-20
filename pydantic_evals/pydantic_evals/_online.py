@@ -494,22 +494,18 @@ async def dispatch_evaluators(
     # (default_sink or per-evaluator `sink=` override) so user-visible identity
     # drives the grouping without silently coalescing distinct sink instances.
     groups: dict[int, _SinkGroup] = {}
-    resolved_cache: dict[int, list[EvaluationSink]] = {}
     for online_eval in online_evaluators:
         raw = online_eval.sink if online_eval.sink is not None else config.default_sink
         key = id(raw)
         group = groups.get(key)
         if group is None:
-            cached = resolved_cache.get(key)
-            if cached is None:
-                cached = _normalize_sinks(raw) if raw is not None else []
-                resolved_cache[key] = cached
+            sinks = _normalize_sinks(raw) if raw is not None else []
             # Skip evaluators whose results would have nowhere to go: both OTel
             # emission disabled and no sinks attached. Avoids spending semaphore
             # slots and evaluator work to produce results we'd immediately drop.
-            if not config.emit_otel_events and not cached:
+            if not config.emit_otel_events and not sinks:
                 continue
-            group = _SinkGroup(sinks=cached, evaluators=[], outcomes=[])
+            group = _SinkGroup(sinks=sinks, evaluators=[], outcomes=[])
             groups[key] = group
         group.evaluators.append(online_eval)
 
