@@ -681,6 +681,62 @@ class OpenRouterModel(OpenAIChatModel):
             cache_control['ttl'] = ttl
         return cache_control
 
+    def _limit_cache_points(
+        self,
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        *,
+        has_tool_cache_point: bool = False,
+    ) -> None:
+        """Limit the number of cache breakpoints to the downstream provider's maximum.
+
+        Anthropic enforces a maximum of 4 cache breakpoints per request. When the limit
+        is exceeded, excess breakpoints are removed from messages (oldest first), preserving
+        tool and system/developer cache points which are typically more valuable.
+
+        Follows the same strategy as the Anthropic and Bedrock models' ``_limit_cache_points``:
+        1. Reserve slots for tool cache points (known from ``has_tool_cache_point``)
+        2. Count cache points in system/developer messages (always preserved)
+        3. Calculate remaining budget for user/assistant message cache points
+        4. Traverse remaining messages newest-first, removing excess cache points
+
+        Args:
+            openai_messages: The mapped OpenAI messages to limit.
+            has_tool_cache_point: Whether a tool definition cache point was added by ``_get_tools``.
+        """
+        max_points = self._cache_profile.openrouter_max_cache_points
+        if max_points is None:
+            return
+
+        used = int(has_tool_cache_point)
+
+        for msg in openai_messages:
+            if msg.get('role') in ('system', 'developer'):
+                content = msg.get('content')
+                if isinstance(content, list):
+                    used += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
+
+        remaining = max_points - used
+        if remaining < 0:  # pragma: no cover
+            raise UserError(
+                f'Too many cache points for downstream provider. '
+                f'Tool and system cache points already use {used}, '
+                f'which exceeds the maximum of {max_points}.'
+            )
+
+        for msg in reversed(openai_messages):
+            if msg.get('role') in ('system', 'developer'):
+                continue
+            content = msg.get('content')
+            if not isinstance(content, list):
+                continue
+            for part in reversed(content):
+                part_dict = cast(dict[str, Any], part)
+                if 'cache_control' in part_dict:
+                    if remaining > 0:
+                        remaining -= 1
+                    else:
+                        del part_dict['cache_control']
+
     def _add_cache_control(self, params: list[ChatCompletionContentPartParam], ttl: Literal['5m', '1h'] = '5m') -> None:
         """Add ``cache_control`` to the last content part.
 
@@ -806,6 +862,13 @@ class OpenRouterModel(OpenAIChatModel):
                         last_part = cast(dict[str, Any], content[-1])
                         last_part['cache_control'] = self._build_cache_control(ttl)
                     break
+
+        has_tool_cache_point = bool(
+            model_settings
+            and model_settings.get('openrouter_cache_tool_definitions')
+            and self._cache_profile.openrouter_supports_tool_cache
+        )
+        self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
 
         return openai_messages
 

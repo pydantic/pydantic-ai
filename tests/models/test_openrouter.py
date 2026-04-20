@@ -1519,6 +1519,145 @@ async def test_openrouter_cache_all_settings_combined() -> None:
     assert 'cache_control' in last_content[-1]
 
 
+# ===== Cache point limit enforcement =====
+
+
+async def test_openrouter_limit_cache_points_anthropic() -> None:
+    """Anthropic models via OpenRouter are limited to 4 cache breakpoints per request.
+
+    When more than 4 CachePoints are placed in user messages (with system + tool cache
+    consuming some slots), excess breakpoints are removed from the oldest messages first.
+    """
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(
+        openrouter_cache_instructions=True,
+        openrouter_cache_tool_definitions=True,
+    )
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(content=['Old context', CachePoint(), 'Old question']),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Middle context', CachePoint(), 'Middle question']),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Recent context', CachePoint(), 'Recent question']),
+            ]
+        ),
+    ]
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='my_tool', description='A tool', parameters_json_schema={'type': 'object', 'properties': {}}
+            ),
+        ],
+        allow_text_output=True,
+    )
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, params, model_settings=settings
+    )
+
+    # System message uses 1 slot, tool def uses 1 slot → 2 remaining for messages.
+    # 3 CachePoints in user messages, only the 2 newest should survive.
+    system_msg = next(m for m in mapped if m.get('role') in ('system', 'developer'))
+    system_content = system_msg.get('content')
+    assert isinstance(system_content, list)
+    assert 'cache_control' in system_content[0]
+
+    user_messages = [m for m in mapped if m.get('role') == 'user']
+    assert len(user_messages) == 3
+
+    # Oldest user message — cache_control should have been removed
+    old_content = user_messages[0].get('content')
+    assert isinstance(old_content, list)
+    assert all('cache_control' not in cast(dict[str, Any], p) for p in old_content)
+
+    # Middle user message — cache_control should be preserved (2nd newest)
+    mid_content = user_messages[1].get('content')
+    assert isinstance(mid_content, list)
+    assert any('cache_control' in cast(dict[str, Any], p) for p in mid_content)
+
+    # Newest user message — cache_control should be preserved (newest)
+    new_content = user_messages[2].get('content')
+    assert isinstance(new_content, list)
+    assert any('cache_control' in cast(dict[str, Any], p) for p in new_content)
+
+
+async def test_openrouter_limit_cache_points_gemini_no_limit() -> None:
+    """Gemini models via OpenRouter have no cache breakpoint limit."""
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test-key'))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Chunk 1',
+                        CachePoint(),
+                        'Chunk 2',
+                        CachePoint(),
+                        'Chunk 3',
+                        CachePoint(),
+                        'Chunk 4',
+                        CachePoint(),
+                        'Chunk 5',
+                        CachePoint(),
+                        'Question',
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters()
+    )
+
+    content = mapped[0].get('content')
+    assert isinstance(content, list)
+    # All 5 CachePoints should survive — Gemini has no limit
+    cache_count = sum(1 for p in content if 'cache_control' in cast(dict[str, Any], p))
+    assert cache_count == 5
+
+
+async def test_openrouter_limit_cache_points_within_budget() -> None:
+    """When cache points are within the limit, all are preserved."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Context 1', CachePoint(), 'Q1']),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Context 2', CachePoint(), 'Q2']),
+            ]
+        ),
+    ]
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters()
+    )
+
+    # 2 CachePoints, no system/tool cache → well within limit of 4
+    user_messages = [m for m in mapped if m.get('role') == 'user']
+    for msg in user_messages:
+        content = msg.get('content')
+        assert isinstance(content, list)
+        assert any('cache_control' in cast(dict[str, Any], p) for p in content)
+
+
 # ===== Cache E2E tests with cassettes =====
 
 
