@@ -74,26 +74,6 @@ The target name is supplied to sinks on every `submit()` call as a plain `str` �
 
 For agent capabilities, the target name is taken from the agent's own `name` attribute (see [Agent Integration](#agent-integration)); to categorize or route on agent-ness, add metadata on the config (e.g., `metadata={'kind': 'agent'}`).
 
-## Evaluator Versioning
-
-Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to tag every result it emits with a version string. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
-
-```python
-from dataclasses import dataclass
-
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-
-
-@dataclass
-class ToneCheck(Evaluator):
-    evaluator_version = 'v2'  # bumped after prompt rewrite
-
-    def evaluate(self, ctx: EvaluatorContext) -> str:
-        return 'neutral'
-```
-
-The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
-
 ## Core Concepts
 
 ### OnlineEvaluator
@@ -236,6 +216,26 @@ from pydantic_evals.online import OnlineEvalConfig
 
 config = OnlineEvalConfig(emit_otel_events=False)
 ```
+
+#### Evaluator Versioning
+
+Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator_version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+@dataclass
+class ToneCheck(Evaluator):
+    evaluator_version = 'v2'  # bumped after prompt rewrite
+
+    def evaluate(self, ctx: EvaluatorContext) -> str:
+        return 'neutral'
+```
+
+The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
 
 ## Sampling
 
