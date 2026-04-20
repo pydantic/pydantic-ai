@@ -341,11 +341,24 @@ reasons (filtering out sensitive information), to save costs on tokens, to give 
 custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request.
+the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
+
+!!! warning "History processors can affect `new_messages()` results"
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
+    produced during the current run. Messages provided via `message_history` are excluded —
+    including the trailing `ModelRequest` when resuming without a user prompt, even though
+    the framework may stamp it with the current run's `run_id` for observability.
+
+    To keep this working when your processor mutates or adds messages:
+
+    - If you rebuild the trailing `ModelRequest`, preserve its `parts`, `timestamp`,
+      `instructions`, and `metadata` so it can still be identified as prior context.
+    - If you insert a new message that should appear in `new_messages()`, use a
+      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on it.
 
 ### Usage
 

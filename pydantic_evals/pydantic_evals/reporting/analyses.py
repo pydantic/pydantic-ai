@@ -6,6 +6,9 @@ from pydantic import BaseModel, Discriminator
 
 __all__ = (
     'ConfusionMatrix',
+    'LinePlot',
+    'LinePlotCurve',
+    'LinePlotPoint',
     'PrecisionRecall',
     'PrecisionRecallCurve',
     'PrecisionRecallPoint',
@@ -79,8 +82,50 @@ class TableResult(BaseModel):
     """Row data, one list per row."""
 
 
+class LinePlotPoint(BaseModel):
+    """A single point on a line plot."""
+
+    x: float
+    y: float
+
+
+class LinePlotCurve(BaseModel):
+    """A single curve on a line plot."""
+
+    name: str
+    """Name of this curve (shown in legend)."""
+    points: list[LinePlotPoint]
+    """Points on the curve, ordered by x value."""
+    style: Literal['solid', 'dashed'] = 'solid'
+    """Line style for rendering."""
+    step: Literal['start', 'middle', 'end'] | None = None
+    """Step interpolation mode. Use `'end'` for empirical CDFs (right-continuous step functions)."""
+
+
+class LinePlot(BaseModel):
+    """A generic XY line plot with labeled axes, supporting multiple curves.
+
+    Use this for ROC curves, KS plots, calibration curves, or any custom
+    line chart that doesn't fit the specific PrecisionRecall type.
+    """
+
+    type: Literal['line_plot'] = 'line_plot'
+    title: str
+    description: str | None = None
+    x_label: str
+    """Label for the x-axis."""
+    y_label: str
+    """Label for the y-axis."""
+    x_range: tuple[float, float] | None = None
+    """Optional fixed range for x-axis (min, max)."""
+    y_range: tuple[float, float] | None = None
+    """Optional fixed range for y-axis (min, max)."""
+    curves: list[LinePlotCurve]
+    """One or more curves to plot."""
+
+
 ReportAnalysis = Annotated[
-    ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult,
+    ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult | LinePlot,
     Discriminator('type'),
 ]
 """Discriminated union of all report-level analysis types."""

@@ -98,6 +98,10 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+In addition to [`.deps`][pydantic_ai.tools.RunContext.deps], [`RunContext`][pydantic_ai.tools.RunContext] provides access to the running agent via [`.agent`][pydantic_ai.tools.RunContext.agent], which is useful when [tools](tools.md), [hooks](hooks.md), or [capabilities](capabilities.md) need to read agent properties like [`name`][pydantic_ai.agent.Agent.name] or [`output_type`][pydantic_ai.agent.Agent.output_type].
+
+Dependency fields can also be referenced in instructions and descriptions via [template strings](agent-spec.md#template-strings) — for example, `TemplateStr('Hello {{name}}')` renders `name` from the deps object at runtime. This is especially useful in [agent specs](agent-spec.md) where callables aren't available.
+
 ### Asynchronous vs. Synchronous dependencies
 
 [System prompt functions](agent.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.

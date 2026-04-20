@@ -45,15 +45,15 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
-from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
 
-with try_import() as starlette_import_successful:
-    from starlette.requests import Request
-    from starlette.responses import StreamingResponse
+pytest.importorskip('starlette')
 
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
+
+from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 
 pytestmark = [
     pytest.mark.anyio,
@@ -531,8 +531,12 @@ async def test_run_stream_response_error():
             '<response>',
             "<tool-call name='unknown_tool'>None",
             "</tool-call name='unknown_tool'>",
-            "<error type='UnexpectedModelBehavior'>Exceeded maximum retries (1) for output validation</error>",
             '</response>',
+            '<request>',
+            "<function-tool-call name='unknown_tool'>None</function-tool-call>",
+            "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
+            '</request>',
             '</stream>',
         ]
     )
@@ -558,7 +562,48 @@ async def test_run_stream_request_error():
             '</response>',
             '<request>',
             "<function-tool-call name='tool'>{'query': 'a'}</function-tool-call>",
+            "<function-tool-result name='tool'>Tool execution was interrupted by an error.</function-tool-result>",
             "<error type='ValueError'>Unknown tool</error>",
+            '</request>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_output_tool_error():
+    """Output tool errors should close the pending tool call via _final_result_event drain."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"value": "bad"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def bad_output(value: str) -> str:
+        raise ValueError('Output validation failed')
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"value": "bad"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            "<function-tool-result name='final_result'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<error type='ValueError'>Output validation failed</error>",
             '</request>',
             '</stream>',
         ]
@@ -650,7 +695,6 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])

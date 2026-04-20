@@ -3,70 +3,28 @@ name: Manual Docs Deploy
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build-docs-manual:
-    # Note: this should match the `docs` job in ci.yml
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-suffix: docs
-
-      - run: uv sync --group docs
-
-      - run: make docs
-
-      - run: tree -sh site
-      - uses: actions/setup-node@v4
-      - run: npm install
-        working-directory: docs-site
-      - run: npm run typecheck
-        working-directory: docs-site
-
-      - name: Store docs
-        uses: actions/upload-artifact@v4
-        with:
-          name: site
-          path: site
-
+  # Note: this should match the `deploy-docs` job in ci.yml
   deploy-docs-manual:
-    # Note: this should match the `deploy-docs` job in ci.yml
-    needs: [build-docs-manual]
     runs-on: ubuntu-latest
-    environment:
-      name: deploy-docs
-      url: https://ai.pydantic.dev
-
     steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v4
-      - run: npm install
-        working-directory: docs-site
-
-      - uses: astral-sh/setup-uv@v5
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
         with:
-          enable-cache: true
-          cache-suffix: docs-upload
+          app-id: ${{ vars.DOCS_APP_ID }}
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: unified-docs
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: site
-          path: site
-
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          workingDirectory: docs-site
-          command: >
-            deploy
-            --var GIT_COMMIT_SHA:${{ github.sha }}
-            --var GIT_BRANCH:main
-
-      - run: uv sync --group docs-upload
-      - run: uv run python docs/.hooks/algolia.py upload
+      - name: Trigger unified-docs deployment
         env:
-          ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/pydantic/unified-docs/dispatches \
+            --method POST \
+            -f event_type=docs-update \
+            -f "client_payload[source]=pydantic/pydantic-ai (manual)"

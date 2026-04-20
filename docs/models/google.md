@@ -153,6 +153,29 @@ agent = Agent(model)
 ...
 ```
 
+#### Vertex AI service tier (`google_service_tier`)
+
+On **Vertex AI**, optional HTTP headers control how each request uses [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) pricing. Set the [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] to one of the [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] values.
+
+**Flex PayGo example**
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.providers.google import GoogleProvider
+
+provider = GoogleProvider(location='global')
+model = GoogleModel('gemini-3-flash-preview', provider=provider)
+agent = Agent(model)
+
+result = agent.run_sync(
+    'Hello!',
+    model_settings=GoogleModelSettings(google_service_tier='pt_then_flex'),
+)
+```
+
+After a Flex request, you can inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX` when Flex was used) if the API returns it.
+
 #### Model Garden
 
 You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the `generateContent` API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
@@ -320,3 +343,33 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for more on safety settings.
+
+
+### Logprobs
+
+You can return logprobs from the model in your response by setting `google_logprobs` and `google_top_logprobs` in the [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+
+This feature is only supported for non-streaming requests and Vertex AI.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.providers.google import GoogleProvider
+
+model_settings = GoogleModelSettings(
+    google_logprobs=True, google_top_logprobs=2,
+)
+
+model = GoogleModel(
+    model_name='gemini-2.5-flash',
+    provider=GoogleProvider(location='europe-west1', vertexai=True),
+)
+agent = Agent(model, model_settings=model_settings)
+
+result = agent.run_sync('Your prompt here')
+# Access logprobs from provider_details
+logprobs = result.response.provider_details.get('logprobs')
+avg_logprobs = result.response.provider_details.get('avg_logprobs')
+```
+
+See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.

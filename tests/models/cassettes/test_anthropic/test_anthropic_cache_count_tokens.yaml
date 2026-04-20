@@ -1,0 +1,265 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '5600'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      cache_control:
+        ttl: 5m
+        type: ephemeral
+      messages:
+      - content:
+        - text: 'Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. '
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      system: You are a helpful assistant.
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '22'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=91
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      input_tokens: 1114
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '5637'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=4CcdMARi4RLQQLi0DrxjAJQ.Zu9V94iwSZeil6w5Nbs-1774621768.0823839-1.0.1.1-eZE1CKTrfpjxjYm.Yf3jNzjfc8b_bXrMHrMPIh07uX4
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      cache_control:
+        ttl: 5m
+        type: ephemeral
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its
+            main use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main
+            use cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use
+            cases. Please explain what Python is and its main use cases. Please explain what Python is and its main use cases.
+            Please explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please
+            explain what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain
+            what Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what
+            Python is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python
+            is and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is
+            and its main use cases. Please explain what Python is and its main use cases. Please explain what Python is and
+            its main use cases. Please explain what Python is and its main use cases. '
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system: You are a helpful assistant.
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2181'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=7007
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          # What is Python?
+
+          **Python** is a high-level, interpreted programming language created by Guido van Rossum and first released in 1991. It emphasizes code readability and simplicity, with a clean syntax that uses indentation to define code blocks.
+
+          ## Key Characteristics:
+          - **Easy to learn and read** - syntax resembles natural English
+          - **Interpreted** - code runs line-by-line without compilation
+          - **Dynamically typed** - no need to declare variable types
+          - **Multi-paradigm** - supports procedural, object-oriented, and functional programming
+          - **Extensive libraries** - vast ecosystem of packages and frameworks
+
+          ## Main Use Cases:
+
+          ### 1. **Data Science & Machine Learning**
+          - Data analysis and visualization (pandas, NumPy, Matplotlib)
+          - Machine learning models (scikit-learn, TensorFlow, PyTorch)
+          - Statistical analysis
+
+          ### 2. **Web Development**
+          - Backend frameworks (Django, Flask, FastAPI)
+          - Building APIs and web applications
+
+          ### 3. **Automation & Scripting**
+          - Task automation
+          - System administration
+          - File processing and batch operations
+
+          ### 4. **Scientific Computing**
+          - Research simulations
+          - Mathematical computations (SciPy)
+          - Academic research
+
+          ### 5. **Artificial Intelligence**
+          - Natural language processing
+          - Computer vision
+          - Deep learning applications
+
+          ### 6. **Software Development**
+          - Desktop applications
+          - Prototyping
+          - DevOps tools
+
+          ### 7. **Game Development**
+          - Pygame for 2D games
+          - Game scripting
+
+          ### 8. **Cybersecurity**
+          - Penetration testing
+          - Security analysis tools
+
+          Python's versatility, beginner-friendliness, and strong community support make it one of the most popular programming languages in the world today.
+        type: text
+      id: msg_01GXu6BFHpP1DE9kngmQ7J3u
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 1111
+        inference_geo: not_available
+        input_tokens: 3
+        output_tokens: 414
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

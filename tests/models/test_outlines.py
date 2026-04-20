@@ -8,13 +8,14 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -32,8 +33,10 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -130,10 +133,10 @@ def mock_async_model() -> OutlinesModel:
 @pytest.fixture(scope='module')
 def transformers_model() -> OutlinesModel:
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        'erwanf/gpt2-mini',
+        'hf-internal-testing/tiny-random-gpt2',
         device_map='cpu',
     )
-    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
     outlines_model = outlines.models.transformers.from_transformers(
@@ -202,10 +205,10 @@ outlines_parameters = [
         'from_transformers',
         lambda: (  # pyright: ignore[reportUnknownLambdaType]
             transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-                'erwanf/gpt2-mini',
+                'hf-internal-testing/tiny-random-gpt2',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # pyright: ignore[reportUnknownMemberType]
+            transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),  # pyright: ignore[reportUnknownMemberType]
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
@@ -263,10 +266,10 @@ pydantic_ai_parameters = [
         'from_transformers',
         lambda: (  # pyright: ignore[reportUnknownLambdaType]
             transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-                'erwanf/gpt2-mini',
+                'hf-internal-testing/tiny-random-gpt2',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # pyright: ignore[reportUnknownMemberType]
+            transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),  # pyright: ignore[reportUnknownMemberType]
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
@@ -482,6 +485,31 @@ async def test_multi_turn_async_model(mock_async_model: OutlinesModel) -> None:
 
 
 @skip_if_transformers_imports_unsuccessful
+async def test_text_content_input(transformers_multimodal_model: OutlinesModel):
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant'),
+                UserPromptPart(
+                    content=['Hello', TextContent(content='This is additional text content', metadata={'key': 'value'})]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+    ]
+    m = await transformers_multimodal_model._format_prompt(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert asdict(m) == snapshot(
+        {
+            'messages': [
+                {'role': 'system', 'content': 'You are a helpful assistant'},
+                {'role': 'user', 'content': ['Hello', 'This is additional text content']},
+                {'role': 'assistant', 'content': 'Hi'},
+            ]
+        }
+    )
+
+
+@skip_if_transformers_imports_unsuccessful
 def test_request_image_binary(transformers_multimodal_model: OutlinesModel, binary_image: BinaryImage) -> None:
     agent = Agent(transformers_multimodal_model)
     result = agent.run_sync(
@@ -638,6 +666,23 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
         UserError, match='Each element of the content sequence must be a string, an `ImageUrl` or a `BinaryImage`.'
     ):
         agent.run_sync('How are you doing?', message_history=multi_modal_message_history)
+
+    # unsupported: uploaded files
+    uploaded_file_message_history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello there!',
+                        UploadedFile(file_id='file-123', provider_name='anthropic'),
+                    ]
+                )
+            ],
+            timestamp=IsDatetime(),
+        )
+    ]
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported by Outlines.'):
+        agent.run_sync('How are you doing?', message_history=uploaded_file_message_history)
 
     # unsupported: tool calls
     tool_call_message_history: list[ModelMessage] = [

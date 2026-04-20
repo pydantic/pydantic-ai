@@ -16,6 +16,7 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
     from huggingface_hub import AsyncInferenceClient
+    from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
@@ -34,13 +35,21 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
     @property
     def base_url(self) -> str:
-        return self.client.model  # type: ignore
+        if self._client.model is not None:
+            return self._client.model
+        if self._client.provider is not None:
+            return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
+        raise UserError(
+            'Unable to determine base URL for HuggingFace provider. '
+            'Please provide `base_url`, `provider_name`, or a pre-configured `hf_client`.'
+        )
 
     @property
     def client(self) -> AsyncInferenceClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
@@ -88,7 +97,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             api_key: The API key to use for authentication, if not provided, the `HF_TOKEN` environment variable
                 will be used if available.
             hf_client: An existing
-                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/v0.29.3/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
+                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
                 client to use. If not provided, a new instance will be created.
             http_client: (currently ignored) An existing `httpx.AsyncClient` to use for making HTTP requests.
             provider_name: Name of the provider to use for inference. available providers can be found in the [HF Inference Providers documentation](https://huggingface.co/docs/inference-providers/index#partners).
@@ -100,7 +109,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         if api_key is None:
             raise UserError(
                 'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-                'to use the HuggingFace provider.'
+                ' to use the HuggingFace provider.'
             )
 
         if http_client is not None:

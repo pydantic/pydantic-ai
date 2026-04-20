@@ -68,61 +68,50 @@ Some models (e.g. Gemini) natively support semi-structured return values, while 
 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
-- Provide rich multi-modal content (images, documents, etc.) to the model as context
-- Separate the programmatic return value from the model's context
+- Separate the structured return value from additional content sent to the model
+- Explicitly send content as a separate user message (rather than in the tool result)
 - Include additional metadata that shouldn't be sent to the LLM
 
 Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
 
-```python {title="advanced_tool_return.py" test="skip" lint="skip"}
-import time
-from pydantic_ai import Agent
-from pydantic_ai import ToolReturn, BinaryContent
+```python {title="advanced_tool_return.py"}
+from pydantic_ai import Agent, BinaryContent, ToolReturn
+from pydantic_ai.models.test import TestModel
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent(TestModel())
 
 @agent.tool_plain
 def click_and_capture(x: int, y: int) -> ToolReturn:
     """Click at coordinates and show before/after screenshots."""
-    # Take screenshot before action
-    before_screenshot = capture_screen()
-
-    # Perform click operation
-    perform_click(x, y)
-    time.sleep(0.5)  # Wait for UI to update
-
-    # Take screenshot after action
-    after_screenshot = capture_screen()
-
+    before_screenshot = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    # perform_click(x, y)
+    after_screenshot = BinaryContent(data=b'\x89PNG', media_type='image/png')
     return ToolReturn(
         return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f'Clicked at coordinates ({x}, {y}). Here\'s the comparison:',
             'Before:',
-            BinaryContent(data=before_screenshot, media_type='image/png'),
+            before_screenshot,
             'After:',
-            BinaryContent(data=after_screenshot, media_type='image/png'),
-            'Please analyze the changes and suggest next steps.'
+            after_screenshot,
         ],
         metadata={
             'coordinates': {'x': x, 'y': y},
             'action_type': 'click_and_capture',
-            'timestamp': time.time()
-        }
+        },
     )
 
 # The model receives the rich visual content for analysis
 # while your application can access the structured return_value and metadata
 result = agent.run_sync('Click on the submit button and tell me what happened')
 print(result.output)
-# The model can analyze the screenshots and provide detailed feedback
+#> {"click_and_capture":"Successfully clicked at (0, 0)"}
 ```
 
-- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
-- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
-- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
+- **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
+- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
-This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
+This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).
 
 ## Custom Tool Schema
 
@@ -403,6 +392,47 @@ async def fast_tool() -> str:
 
 When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
+### Custom Args Validator {#args-validator}
+
+The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
+
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure.
+
+```python {title="args_validator_approval.py"}
+from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
+
+agent = Agent('test', deps_type=int, output_type=[str, DeferredToolRequests])
+
+
+def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
+    """Validate that the sum doesn't exceed the limit from deps."""
+    if x + y > ctx.deps:
+        raise ModelRetry(f'Sum of x and y must not exceed {ctx.deps}')
+
+
+# Validation runs *before* approval is requested, so the model can
+# fix bad args without bothering the user.
+@agent.tool(requires_approval=True, args_validator=validate_sum_limit)
+def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+    """Add two numbers (sum must not exceed the configured limit)."""
+    return x + y
+
+
+result = agent.run_sync('add 5 and 3', deps=100)
+assert isinstance(result.output, DeferredToolRequests)
+# The validated args are ready for the user to approve
+print(result.output.approvals[0].args)
+#> {'x': 0, 'y': 0}
+```
+
+_(This example is complete, it can be run "as is")_
+
+When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
+
+The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
+
+The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
+
 ### Parallel tool calls & concurrency
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
@@ -410,15 +440,79 @@ If a tool requires sequential/serial execution, you can pass the [`sequential`][
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
+#### Thread executor for long-running servers
+
+By default, sync functions are offloaded to threads using [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads on demand. In long-running servers (e.g. FastAPI), these threads can accumulate under sustained traffic, leading to memory growth.
+
+To control thread lifecycle, provide a bounded [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] using the [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability (per-agent) or the [`Agent.using_thread_executor()`][pydantic_ai.agent.AbstractAgent.using_thread_executor] context manager (global):
+
+```python {test="skip"}
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ThreadExecutor
+
+# Per-agent: pass as a capability
+executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
+agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
+
+# Global: wrap your server lifespan
+@asynccontextmanager
+async def lifespan(app):
+    executor = ThreadPoolExecutor(max_workers=16)
+    with Agent.using_thread_executor(executor):
+        yield
+    executor.shutdown(wait=True)
+```
+
 !!! note "Limiting tool executions"
     You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agent.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
 #### Output Tool Calls
 
 When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
-The `'exhaustive'` strategy ensures all tools are executed even after a final result is found, which is useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+The `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+For more information on how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+
+## Tool Search
+
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; a `search_tools` tool is automatically injected so the model can discover hidden tools by keyword when it needs them.
+
+This is inspired by Anthropic's [Tool Search Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#limits-and-best-practices) for managing large tool collections. Tool search is implemented on the Pydantic AI side and works with any model. Native provider support is planned in [#4167](https://github.com/pydantic/pydantic-ai/issues/4167).
+
+For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
+
+```python {title="tool_search.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain(defer_loading=True)
+def mortgage_calculator(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment for a home loan."""
+    monthly_rate = rate / 100 / 12
+    n_payments = years * 12
+    payment = principal * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+    return f'${payment:.2f}/month'
+```
+
+For MCP servers, use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] to hide all tools behind search:
+
+```python {title="tool_search_mcp.py" lint="skip" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+mcp = MCPServerHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+```
+
+!!! note "Tool discovery and message history"
+    Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
+
+See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
 
 ## See Also
 
