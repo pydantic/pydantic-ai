@@ -8286,6 +8286,60 @@ Both steps are done! Here's a summary of what happened:
     )
 
 
+async def test_anthropic_text_editor_code_execution_tool_message_replay():
+    """Serialize text_editor_code_execution BuiltinToolCallPart/ReturnPart back to Anthropic block params."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='View the file.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='text_editor_code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_text_editor_1',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='text_editor_code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_text_editor_1',
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[], builtin_tools=[CodeExecutionTool()], output_tools=[]
+    )
+    _, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
+
+    assert len(anthropic_messages) == 2
+    assistant_content = anthropic_messages[1]['content']
+    assert any(
+        isinstance(item, dict)
+        and item.get('type') == 'server_tool_use'
+        and item.get('name') == 'text_editor_code_execution'
+        for item in assistant_content
+    )
+    result_block = next(
+        item
+        for item in assistant_content
+        if isinstance(item, dict) and item.get('type') == 'text_editor_code_execution_tool_result'
+    )
+    assert result_block['tool_use_id'] == 'srvtoolu_text_editor_1'
+    assert result_block['content']['type'] == 'text_editor_code_execution_view_result'  # type: ignore[typeddict-item]
+
+
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
