@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterat
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from typing_extensions import assert_never
 
@@ -888,6 +888,8 @@ class XaiModel(Model[AsyncClient]):
 @dataclass
 class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
+
+    _stream_cancel_errors: ClassVar[tuple[type[BaseException], ...]] = (grpc.RpcError,)
 
     _model_name: str
     _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]

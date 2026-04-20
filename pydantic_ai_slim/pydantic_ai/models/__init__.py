@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
@@ -978,70 +978,18 @@ class Model(ABC, Generic[InterfaceClient]):
         return None
 
 
-def _collect_stream_cancel_errors() -> tuple[type[BaseException], ...]:
-    """Build the tuple of transport exceptions that ``_stream_cancel_guard`` suppresses.
-
-    ``httpx`` is a required dependency so its stream/transport errors are always
-    included. Provider SDKs are optional, so each import is wrapped in
-    ``try/except ImportError``. When an SDK wraps the underlying ``httpx`` error
-    in its own connection-error type (Anthropic/OpenAI/Groq/Google/xAI/Mistral/
-    Bedrock), that type is added too so the guard still matches it.
-    """
-    errors: tuple[type[BaseException], ...] = (
-        httpx.StreamError,  # StreamClosed, StreamConsumed
-        httpx.TransportError,  # ReadError, RemoteProtocolError, ReadTimeout, ConnectError
-    )
-    try:
-        from anthropic import APIConnectionError as _AnthropicAPIConnectionError
-
-        errors += (_AnthropicAPIConnectionError,)
-    except ImportError:
-        pass
-    try:
-        from openai import APIConnectionError as _OpenAIAPIConnectionError
-
-        errors += (_OpenAIAPIConnectionError,)
-    except ImportError:
-        pass
-    try:
-        from groq import APIConnectionError as _GroqAPIConnectionError
-
-        errors += (_GroqAPIConnectionError,)
-    except ImportError:
-        pass
-    try:
-        from google.genai.errors import APIError as _GoogleAPIError
-
-        errors += (_GoogleAPIError,)
-    except ImportError:
-        pass
-    try:
-        from mistralai.client.errors import SDKError as _MistralSDKError
-
-        errors += (_MistralSDKError,)
-    except ImportError:
-        pass
-    try:
-        import grpc
-
-        errors += (grpc.RpcError,)
-    except ImportError:
-        pass
-    try:
-        from botocore.exceptions import BotoCoreError
-
-        errors += (BotoCoreError,)
-    except ImportError:
-        pass
-    return errors
-
-
-_STREAM_CANCEL_ERRORS: tuple[type[BaseException], ...] = _collect_stream_cancel_errors()
-
-
 @dataclass
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
+
+    _stream_cancel_errors: ClassVar[tuple[type[BaseException], ...]] = (httpx.StreamError, httpx.TransportError)
+    """Exceptions suppressed by ``_stream_cancel_guard`` when ``cancel()`` tears down the stream.
+
+    The default covers providers whose SDKs iterate ``httpx`` responses directly (Anthropic,
+    OpenAI, Groq, Mistral, Google GenAI, HuggingFace, and the custom Gemini client), since
+    they let bare ``httpx`` errors propagate from chunk reads. Transports that don't use
+    ``httpx`` (gRPC, botocore) override this tuple in their subclass.
+    """
 
     model_request_parameters: ModelRequestParameters
 
@@ -1153,16 +1101,17 @@ class StreamedResponse(ABC):
     def _stream_cancel_guard(self):
         """Suppress transport errors caused by stream cancellation.
 
-        When ``cancel()`` closes the underlying HTTP/gRPC connection while
+        When ``cancel()`` closes the underlying connection while
         ``_get_event_iterator()`` is awaiting the next chunk, the SDK raises
-        a transport-level error (``httpx.StreamClosed``, ``urllib3.ProtocolError``,
-        etc.). When ``self.cancelled`` is ``True`` we know the error was caused
-        by our own cancellation, so we suppress it and let the async generator
-        exit cleanly via ``StopAsyncIteration``.
+        a transport-level error (e.g. ``httpx.StreamClosed``). Subclasses
+        extend ``_stream_cancel_errors`` for non-``httpx`` transports. When
+        ``self.cancelled`` is ``True`` we know the error was caused by our
+        own cancellation, so we suppress it and let the async generator exit
+        cleanly via ``StopAsyncIteration``.
         """
         try:
             yield
-        except _STREAM_CANCEL_ERRORS:
+        except self._stream_cancel_errors:
             if not self.cancelled:
                 raise
 

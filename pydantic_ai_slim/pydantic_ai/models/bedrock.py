@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
@@ -15,7 +15,7 @@ from typing_extensions import ParamSpec, assert_never
 
 try:
     from botocore.client import BaseClient
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import BotoCoreError, ClientError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -1204,6 +1204,8 @@ class BedrockConverseModel(Model[BaseClient]):
 @dataclass
 class BedrockStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Bedrock models."""
+
+    _stream_cancel_errors: ClassVar[tuple[type[BaseException], ...]] = (BotoCoreError,)
 
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
