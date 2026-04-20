@@ -207,15 +207,9 @@ def _resolve_sample_rate(
 
 def _should_evaluate(
     rate: float | Callable[[Any], float | bool],
-    global_enabled: bool,
     sampling_context: Any,
     sampling_mode: SamplingMode,
 ) -> bool:
-    if not global_enabled:  # pragma: no cover
-        return False
-    if EVALUATION_DISABLED.get():  # pragma: no cover
-        return False
-
     resolved = _resolve_sample_rate(rate, sampling_context)
     if isinstance(resolved, bool):
         return resolved
@@ -243,7 +237,6 @@ def sample_evaluators(
         try:
             if _should_evaluate(
                 _resolve_sample_rate_field(online_eval, config),
-                config.enabled,
                 sampling_context,
                 config.sampling_mode,
             ):
