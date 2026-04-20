@@ -2073,19 +2073,23 @@ async def test_call_span_record_return(capfire: CaptureLogfire):
 @needs_logfire
 @pytest.mark.anyio
 async def test_call_span_msg_template_and_span_name(capfire: CaptureLogfire):
-    """`msg_template`/`span_name` override the default span name."""
+    """`msg_template` formats against call args (logfire convention); `span_name` overrides the span name."""
     config = OnlineEvalConfig(emit_otel_events=False)
 
-    @config.evaluate(AlwaysTrue(), msg_template='running my task', span_name='task.run')
+    @config.evaluate(AlwaysTrue(), msg_template='run task with {x=}', span_name='task.run', extract_args=True)
     async def my_func(x: int) -> int:
         return x
 
-    await my_func(1)
+    await my_func(7)
     await wait_for_evaluations()
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
-    names = [s['name'] for s in spans]
-    assert 'task.run' in names
+    task_spans = [s for s in spans if s['name'] == 'task.run']
+    assert len(task_spans) == 1
+    attrs = task_spans[0]['attributes']
+    # `msg_template` keeps its raw template on the span; `logfire.msg` is the rendered form.
+    assert attrs['logfire.msg_template'] == 'run task with {x=}'
+    assert attrs['logfire.msg'] == 'run task with x=7'
 
 
 @needs_logfire
