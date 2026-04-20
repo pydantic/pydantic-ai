@@ -227,40 +227,28 @@ OTel event emission is the default observability surface for online evaluation (
 
 The built-in [`CallbackSink`][pydantic_evals.online.CallbackSink] wraps any callable (sync or async) that accepts results, failures, and context. You can also pass a bare callable wherever a sink is expected — it's auto-wrapped in a [`CallbackSink`][pydantic_evals.online.CallbackSink].
 
-For custom sinks, implement the [`EvaluationSink`][pydantic_evals.online.EvaluationSink] protocol:
+For custom sinks, implement the [`EvaluationSink`][pydantic_evals.online.EvaluationSink] protocol. Each `submit()` call receives a [`SinkPayload`][pydantic_evals.online.SinkPayload] bundling the results, failures, context, span reference, and target from one or more evaluators that ran for a given function call:
 
 ```python
-from collections.abc import Sequence
-
-from pydantic_evals.evaluators import (
-    EvaluationResult,
-    EvaluatorContext,
-    EvaluatorFailure,
-)
-from pydantic_evals.online import SpanReference
+from pydantic_evals.online import SinkPayload
 
 
 class PrintSink:
     """Prints evaluation results to stdout."""
 
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: SpanReference | None,
-        target: str,
-    ) -> None:
-        for r in results:
+    async def submit(self, payload: SinkPayload) -> None:
+        for r in payload.results:
             version = f' ({r.evaluator_version})' if r.evaluator_version else ''
-            print(f'  [{target}] {r.name}{version}: {r.value}')
-        for f in failures:
+            print(f'  [{payload.target}] {r.name}{version}: {r.value}')
+        for f in payload.failures:
             version = f' ({f.evaluator_version})' if f.evaluator_version else ''
-            print(f'  [{target}] FAILED {f.name}{version}: {f.error_message}')
+            print(f'  [{payload.target}] FAILED {f.name}{version}: {f.error_message}')
 ```
 
-Each `submit()` call corresponds to a single evaluator — `results` and `failures` always come from the same evaluator. The `target` identifies the function or agent being evaluated (see [Target](#target)); the per-result `evaluator_version` (carried on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]) is populated from the evaluator class's optional version tag (see [Evaluator Versioning](#evaluator-versioning)).
+`payload.results` and `payload.failures` may cover one or more evaluators from a single function call — when multiple evaluators share a sink, their results are batched into a single `submit()` call. Each result carries its own attribution (name, `evaluator_version` on [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure], and source spec), so sinks can separate them downstream; see [Evaluator Versioning](#evaluator-versioning). The `payload.target` identifies the function or agent being evaluated (see [Target](#target)).
+
+!!! note "`SinkPayload` is extensible"
+    Additional fields may be added to [`SinkPayload`][pydantic_evals.online.SinkPayload] in future releases. Read only the attributes your sink needs, and do not instantiate `SinkPayload` directly in application code.
 
 ### Default OTel event emission
 

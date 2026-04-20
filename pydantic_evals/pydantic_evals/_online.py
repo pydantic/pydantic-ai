@@ -11,7 +11,8 @@ import threading
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextvars import ContextVar
-from typing import Any, Literal, Protocol, cast, runtime_checkable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
 import anyio
 import sniffio
@@ -22,6 +23,10 @@ from ._otel_emit import build_parent_context, emit_otel_events
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
+
+if TYPE_CHECKING:
+    # Imported only for type annotations; `online` imports from this module at runtime.
+    from .online import SpanReference
 
 SinkCallback = Callable[
     [Sequence[EvaluationResult], Sequence[EvaluatorFailure], EvaluatorContext],
@@ -38,17 +43,37 @@ OnErrorCallback = Callable[
 SamplingContextBuilder = Callable[[Evaluator, Any, dict[str, Any] | None, float], Any]
 
 
+@dataclass(kw_only=True, frozen=True)
+class SinkPayload:
+    """Container passed to [`EvaluationSink.submit`][pydantic_evals.online.EvaluationSink.submit].
+
+    !!! warning "Do not instantiate directly"
+        `SinkPayload` is constructed internally by pydantic-evals. We reserve the right
+        to add fields in any release — if you build your own instances, a future version
+        may break your code. Sink implementations should accept the payload as-is and read
+        only the fields they need.
+    """
+
+    results: Sequence[EvaluationResult]
+    """Evaluation results from the evaluator run."""
+
+    failures: Sequence[EvaluatorFailure]
+    """Failures from the evaluator run if it raised."""
+
+    context: EvaluatorContext
+    """The full evaluator context for the function call."""
+
+    span_reference: SpanReference | None
+    """Reference to the OTel span for the function call, if available."""
+
+    target: str
+    """Identifies the function/agent being evaluated, supplied by the
+    `@evaluate` decorator (defaults resolved at decoration time)."""
+
+
 @runtime_checkable
 class EvaluationSink(Protocol):
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: Any | None,
-        target: str,
-    ) -> None: ...
+    async def submit(self, payload: SinkPayload) -> None: ...
 
 
 class OnlineEvaluatorLike(Protocol):
@@ -79,17 +104,8 @@ class _CallbackSink:
     def __init__(self, callback: SinkCallback) -> None:
         self.callback = callback
 
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: Any | None,
-        target: str,
-    ) -> None:
-        _ = span_reference, target  # custom sink only
-        result = self.callback(results, failures, context)
+    async def submit(self, payload: SinkPayload) -> None:
+        result = self.callback(payload.results, payload.failures, payload.context)
         if inspect.isawaitable(result):
             await result
 
@@ -232,21 +248,11 @@ def sample_evaluators(
     return sampled
 
 
-def _resolve_sinks(
-    evaluator_sink: Any,
-    default_sink: Any,
-) -> list[EvaluationSink]:
-    raw = evaluator_sink if evaluator_sink is not None else default_sink
-    if raw is None:
-        return []
-    return _normalize_sinks(cast(EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback, raw))
-
-
 def _normalize_sinks(
     sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback,
 ) -> list[EvaluationSink]:
     if isinstance(sink, EvaluationSink):
-        return [_ensure_target_compat(sink)]
+        return [_ensure_payload_compat(sink)]
     if callable(sink):
         return [_CallbackSink(sink)]
     return [_normalize_single_sink(single_sink) for single_sink in sink]
@@ -254,75 +260,91 @@ def _normalize_sinks(
 
 def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
     if isinstance(sink, EvaluationSink):
-        return _ensure_target_compat(sink)
+        return _ensure_payload_compat(sink)
     return _CallbackSink(sink)
 
 
 # ---------------------------------------------------------------------------
-# Back-compat shim for EvaluationSink.submit added `target: str` kwarg.
+# Back-compat shim for EvaluationSink.submit signature change.
+#
+# The original signature was
+#   async def submit(*, results, failures, context, span_reference)
+# and is now
+#   async def submit(payload: SinkPayload)
+# Sinks that still use the old kwargs are detected via signature introspection
+# and wrapped in `_LegacyKwargsShim`, which unpacks the payload for them.
 #
 # TODO(v2): delete this whole section. In v2, `EvaluationSink.submit` will
-# require `target: str` unconditionally — drop `_submit_accepts_target`,
-# `_ensure_target_compat`, `_LegacyTargetShim`, and `_warned_legacy_sink_ids`,
+# require `(payload: SinkPayload)` unconditionally — drop `_is_legacy_submit`,
+# `_ensure_payload_compat`, `_LegacyKwargsShim`, and `_warned_legacy_sink_ids`,
 # and inline the return values in `_normalize_sinks` / `_normalize_single_sink`.
 # ---------------------------------------------------------------------------
 _warned_legacy_sink_ids: set[int] = set()
 
 
-def _submit_accepts_target(sink: EvaluationSink) -> bool:
-    """Check whether a sink's `submit` accepts the `target` kwarg (directly or via **kwargs)."""
+def _is_legacy_submit(sink: EvaluationSink) -> bool:
+    """Return whether a sink's `submit` uses the pre-`SinkPayload` kwargs signature.
+
+    A sink is modern when it can be called positionally as `submit(payload)` —
+    i.e. its signature accepts a positional parameter and does not expose the
+    legacy `results` kwarg. `**kwargs`-only and keyword-only signatures are
+    treated as legacy and dispatched via the shim with unpacked kwargs.
+    """
     try:
         params = inspect.signature(sink.submit).parameters
     except (TypeError, ValueError):  # pragma: no cover — some C-implemented callables
-        return True  # can't introspect — assume modern signature, don't warn
-    if 'target' in params:
-        return True
-    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+        return False  # can't introspect — assume modern signature, don't warn
+    has_positional = any(
+        p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+        )
+        for p in params.values()
+    )
+    return not (has_positional and 'results' not in params)
 
 
-class _LegacyTargetShim:
-    """Wraps a pre-`target` sink, dropping the kwarg before delegating."""
+class _LegacyKwargsShim:
+    """Wraps a legacy sink using the pre-`SinkPayload` kwargs signature.
+
+    Unpacks the `SinkPayload` into `(results, failures, context, span_reference)`
+    kwargs and delegates.
+    """
 
     def __init__(self, inner: EvaluationSink) -> None:
         self._inner = inner
 
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: Any | None,
-        target: str,
-    ) -> None:
-        _ = target  # dropped for legacy sinks
-        # Pyright knows `EvaluationSink.submit` now requires `target`; the whole point
-        # of this shim is to call sinks whose real signatures predate that kwarg.
-        await self._inner.submit(  # pyright: ignore[reportCallIssue]
-            results=results,
-            failures=failures,
-            context=context,
-            span_reference=span_reference,
+    async def submit(self, payload: SinkPayload) -> None:
+        # Cast to Any: the shim exists specifically to call sinks whose real signatures
+        # predate the `payload: SinkPayload` change, so pyright's protocol-based view
+        # of `_inner.submit` doesn't match the kwargs we need to pass.
+        await cast(Any, self._inner).submit(
+            results=payload.results,
+            failures=payload.failures,
+            context=payload.context,
+            span_reference=payload.span_reference,
         )
 
 
-def _ensure_target_compat(sink: EvaluationSink) -> EvaluationSink:
-    """If `sink.submit` predates the `target` kwarg, wrap it and warn once per class."""
-    if _submit_accepts_target(sink):
+def _ensure_payload_compat(sink: EvaluationSink) -> EvaluationSink:
+    """If `sink.submit` uses the pre-`SinkPayload` signature, wrap it and warn once per class."""
+    if not _is_legacy_submit(sink):
         return sink
     sink_cls = type(sink)
     cls_id = id(sink_cls)
     if cls_id not in _warned_legacy_sink_ids:
         _warned_legacy_sink_ids.add(cls_id)
         warnings.warn(
-            f'{sink_cls.__module__}.{sink_cls.__qualname__}.submit() is missing the '
-            "'target: str' keyword argument added to EvaluationSink.submit. Update the "
-            'signature to accept `target` (or `**kwargs`); this compatibility shim will '
+            f'{sink_cls.__module__}.{sink_cls.__qualname__}.submit() uses the deprecated '
+            'kwargs signature (results, failures, context, span_reference). Update it to '
+            '`async def submit(self, payload: SinkPayload)` — this compatibility shim will '
             'be removed in pydantic-evals v2.',
             DeprecationWarning,
             stacklevel=4,
         )
-    return _LegacyTargetShim(sink)
+    return _LegacyKwargsShim(sink)
 
 
 async def _call_on_error(
@@ -342,40 +364,39 @@ async def _call_on_error(
         pass
 
 
-async def _submit_to_sink(
-    sink: EvaluationSink,
-    results: Sequence[EvaluationResult],
-    failures: Sequence[EvaluatorFailure],
-    context: EvaluatorContext,
-    span_reference: Any | None,
-    target: str,
-    on_error: OnErrorCallback | None,
-    evaluator: Evaluator,
-) -> None:
-    try:
-        await sink.submit(
-            results=results,
-            failures=failures,
-            context=context,
-            span_reference=span_reference,
-            target=target,
-        )
-    except Exception as exc:
-        await _call_on_error(on_error, exc, context, evaluator, 'sink')
+@dataclass
+class _SinkGroup:
+    """Evaluators that share a sink source, batched into one `submit` call per sink.
+
+    `sinks` is the normalized list for this group's raw source; all member
+    evaluators route through the same sinks. `outcomes` is populated as each
+    evaluator finishes — after all evaluators in the group complete, their
+    results are flattened into a single `SinkPayload`.
+    """
+
+    sinks: list[EvaluationSink]
+    evaluators: list[OnlineEvaluatorLike]
+    outcomes: list[tuple[OnlineEvaluatorLike, Sequence[EvaluationResult], Sequence[EvaluatorFailure]]]
 
 
-async def _dispatch_single_evaluator(
+async def _run_and_collect(
     online_eval: OnlineEvaluatorLike,
     context: EvaluatorContext,
     span_reference: Any | None,
     target: str,
-    sinks: list[EvaluationSink],
-    emit_events: bool,
-    include_baggage: bool,
-    on_max_concurrency: OnMaxConcurrencyCallback | None,
-    on_error: OnErrorCallback | None,
+    config: OnlineEvalConfigLike,
+    group: _SinkGroup,
 ) -> None:
+    """Run a single evaluator, emit its OTel events, and stash the outcome on the group.
+
+    Semaphore acquisition, `on_max_concurrency`, and OTel emission remain per
+    evaluator. Sink submission is deferred to the group-level batch.
+    """
     evaluator = online_eval.evaluator
+    on_error = online_eval.on_error if online_eval.on_error is not None else config.on_error
+    on_max_concurrency = (
+        online_eval.on_max_concurrency if online_eval.on_max_concurrency is not None else config.on_max_concurrency
+    )
 
     if not online_eval.semaphore.acquire(blocking=False):
         if on_max_concurrency is not None:
@@ -406,34 +427,49 @@ async def _dispatch_single_evaluator(
         # Default OTel event emission. Unconditional unless the config opts out.
         # If no OTel SDK is configured in the process, `get_logger()` returns a
         # no-op logger and this is effectively free.
-        if emit_events:
+        if config.emit_otel_events:
             try:
                 emit_otel_events(
                     results=results,
                     failures=failures,
                     target=target,
-                    include_baggage=include_baggage,
+                    include_baggage=config.include_baggage,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 await _call_on_error(on_error, exc, context, evaluator, 'sink')
 
-        async with anyio.create_task_group() as task_group:
-            for sink in sinks:
-                task_group.start_soon(
-                    _submit_to_sink,
-                    sink,
-                    results,
-                    failures,
-                    context,
-                    span_reference,
-                    target,
-                    on_error,
-                    evaluator,
-                )
+        group.outcomes.append((online_eval, results, failures))
     finally:
         if parent_token is not None:
             otel_context.detach(parent_token)
         online_eval.semaphore.release()
+
+
+async def _submit_group_to_sink(
+    sink: EvaluationSink,
+    payload: SinkPayload,
+    group: _SinkGroup,
+    config: OnlineEvalConfigLike,
+) -> None:
+    """Submit a batched payload to one sink, routing errors to each evaluator's on_error.
+
+    If the sink raises, every on_error handler represented in the group fires
+    once (deduped by handler identity) — the common-case single-evaluator group
+    still routes exactly like pre-batching.
+    """
+    try:
+        await sink.submit(payload)
+    except Exception as exc:
+        seen: set[int] = set()
+        for online_eval, _, _ in group.outcomes:
+            handler = online_eval.on_error if online_eval.on_error is not None else config.on_error
+            if handler is None:
+                continue
+            hid = id(handler)
+            if hid in seen:
+                continue
+            seen.add(hid)
+            await _call_on_error(handler, exc, payload.context, online_eval.evaluator, 'sink')
 
 
 async def dispatch_evaluators(
@@ -443,37 +479,82 @@ async def dispatch_evaluators(
     target: str,
     config: OnlineEvalConfigLike,
 ) -> None:
-    async with anyio.create_task_group() as task_group:
-        for online_eval in online_evaluators:
-            # Additional user sinks (if any) — OTel event emission happens
-            # unconditionally inside `_dispatch_single_evaluator` when
-            # `config.emit_otel_events` is True.
-            sinks = _resolve_sinks(online_eval.sink, config.default_sink)
+    # Group evaluators by raw sink source so evaluators sharing a source land a
+    # single batched `submit` call per sink. Keyed by `id()` of the raw source
+    # (default_sink or per-evaluator `sink=` override) so user-visible identity
+    # drives the grouping without silently coalescing distinct sink instances.
+    groups: dict[int, _SinkGroup] = {}
+    resolved_cache: dict[int, list[EvaluationSink]] = {}
+    for online_eval in online_evaluators:
+        raw = online_eval.sink if online_eval.sink is not None else config.default_sink
+        key = id(raw)
+        group = groups.get(key)
+        if group is None:
+            cached = resolved_cache.get(key)
+            if cached is None:
+                cached = (
+                    _normalize_sinks(cast(EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback, raw))
+                    if raw is not None
+                    else []
+                )
+                resolved_cache[key] = cached
             # Skip evaluators whose results would have nowhere to go: both OTel
             # emission disabled and no sinks attached. Avoids spending semaphore
             # slots and evaluator work to produce results we'd immediately drop.
-            if not config.emit_otel_events and not sinks:
+            if not config.emit_otel_events and not cached:
                 continue
-            on_max_concurrency = (
-                online_eval.on_max_concurrency
-                if online_eval.on_max_concurrency is not None
-                else config.on_max_concurrency
-            )
-            on_error = online_eval.on_error if online_eval.on_error is not None else config.on_error
-            task_group.start_soon(
-                functools.partial(
-                    _dispatch_single_evaluator,
-                    online_eval,
-                    context,
-                    span_reference,
-                    target,
-                    sinks,
-                    emit_events=config.emit_otel_events,
-                    include_baggage=config.include_baggage,
-                    on_max_concurrency=on_max_concurrency,
-                    on_error=on_error,
+            group = _SinkGroup(sinks=cached, evaluators=[], outcomes=[])
+            groups[key] = group
+        group.evaluators.append(online_eval)
+
+    if not groups:
+        return
+
+    # Phase 1: run every evaluator in parallel, collecting outcomes into their group.
+    async with anyio.create_task_group() as eval_tg:
+        for group in groups.values():
+            for online_eval in group.evaluators:
+                eval_tg.start_soon(
+                    functools.partial(
+                        _run_and_collect,
+                        online_eval,
+                        context,
+                        span_reference,
+                        target,
+                        config,
+                        group,
+                    )
                 )
+
+    # Phase 2: one batched `submit` call per (group, sink), fanned out in parallel.
+    async with anyio.create_task_group() as sink_tg:
+        for group in groups.values():
+            if not group.outcomes or not group.sinks:
+                continue
+            batched_results: list[EvaluationResult] = []
+            batched_failures: list[EvaluatorFailure] = []
+            for _, r, f in group.outcomes:
+                batched_results.extend(r)
+                batched_failures.extend(f)
+            if not batched_results and not batched_failures:
+                continue
+            payload = SinkPayload(
+                results=batched_results,
+                failures=batched_failures,
+                context=context,
+                span_reference=span_reference,
+                target=target,
             )
+            for sink in group.sinks:
+                sink_tg.start_soon(
+                    functools.partial(
+                        _submit_group_to_sink,
+                        sink,
+                        payload,
+                        group,
+                        config,
+                    )
+                )
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:

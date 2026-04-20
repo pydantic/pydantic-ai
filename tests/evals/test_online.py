@@ -23,6 +23,7 @@ with try_import() as imports_successful:
         OnlineEvalConfig,
         OnlineEvaluator,
         SamplingContext,
+        SinkPayload,
         SpanReference,
         configure,
         disable_evaluation,
@@ -158,11 +159,7 @@ async def test_callback_sink_sync():
     results = [EvaluationResult(name='test', value=True, reason=None, source=AlwaysTrue().as_spec())]
 
     await sink.submit(
-        results=results,
-        failures=[],
-        context=ctx,
-        span_reference=None,
-        target='t',
+        SinkPayload(results=results, failures=[], context=ctx, span_reference=None, target='t'),
     )
 
     assert len(collected) == 1
@@ -180,11 +177,7 @@ async def test_callback_sink_async():
     results = [EvaluationResult(name='test', value=True, reason=None, source=AlwaysTrue().as_spec())]
 
     await sink.submit(
-        results=results,
-        failures=[],
-        context=ctx,
-        span_reference=None,
-        target='t',
+        SinkPayload(results=results, failures=[], context=ctx, span_reference=None, target='t'),
     )
     assert len(collector.calls) == 1
 
@@ -198,11 +191,7 @@ async def test_callback_sink_ignores_span_reference():
     span_ref = SpanReference(trace_id='abc', span_id='def')
 
     await sink.submit(
-        results=[],
-        failures=[],
-        context=ctx,
-        span_reference=span_ref,
-        target='t',
+        SinkPayload(results=[], failures=[], context=ctx, span_reference=span_ref, target='t'),
     )
     assert len(collector.calls) == 1
     assert collector.result_count == 0
@@ -210,7 +199,7 @@ async def test_callback_sink_ignores_span_reference():
 
 @pytest.mark.anyio
 async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warning():
-    """Sinks whose `submit()` predates the `target` kwarg still work via a back-compat shim.
+    """Sinks using the four-kwarg (pre-`target`) signature still work via the back-compat shim.
 
     TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
     """
@@ -240,19 +229,19 @@ async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warn
             return True
 
     # Cast: the point of this test is that LegacySink intentionally doesn't
-    # satisfy the current EvaluationSink protocol (missing `target` kwarg).
+    # satisfy the current EvaluationSink protocol (uses the old kwargs shape).
     config = OnlineEvalConfig(default_sink=cast(Any, LegacySink()), emit_otel_events=False)
 
     @config.evaluate(LegacyEvaluator())
     async def run(x: int) -> int:
         return x
 
-    with pytest.warns(DeprecationWarning, match=r"missing the 'target: str' keyword argument"):
+    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
         await run(1)
         await wait_for_evaluations()
 
     assert len(calls) == 1
-    # The legacy sink receives the original four kwargs — `target` is dropped by the shim.
+    # The pre-`target` legacy sink receives the original four kwargs.
     assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
 
 
@@ -266,7 +255,7 @@ async def test_legacy_sink_warning_fires_once_per_class():
     TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
     """
     from pydantic_evals._online import (
-        _ensure_target_compat,  # pyright: ignore[reportPrivateUsage]
+        _ensure_payload_compat,  # pyright: ignore[reportPrivateUsage]
         _warned_legacy_sink_ids,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -288,16 +277,23 @@ async def test_legacy_sink_warning_fires_once_per_class():
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', DeprecationWarning)
-        _ensure_target_compat(sink)
-        _ensure_target_compat(sink)
+        _ensure_payload_compat(sink)
+        _ensure_payload_compat(sink)
 
     legacy_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert len(legacy_warnings) == 1
 
 
 @pytest.mark.anyio
-async def test_sink_with_var_keyword_is_treated_as_modern():
-    """A sink whose `submit` uses **kwargs is assumed to accept `target` — no shim, no warning."""
+async def test_sink_with_var_keyword_only_is_shimmed():
+    """A sink whose `submit` uses only **kwargs is treated as legacy — shim unpacks the payload.
+
+    The modern API is called positionally as `submit(payload)`, which a **kwargs-only
+    signature can't receive. The shim routes around this by forwarding the unpacked
+    kwargs; a deprecation warning nudges the user to the new signature.
+
+    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
+    """
     calls: list[dict[str, Any]] = []
 
     class KwargsSink:
@@ -309,19 +305,19 @@ async def test_sink_with_var_keyword_is_treated_as_modern():
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return True
 
-    config = OnlineEvalConfig(default_sink=KwargsSink(), emit_otel_events=False)
+    # Cast: KwargsSink intentionally uses the pre-`SinkPayload` signature to exercise the shim.
+    config = OnlineEvalConfig(default_sink=cast(Any, KwargsSink()), emit_otel_events=False)
 
     @config.evaluate(E(), target='my_target')
     async def run(x: int) -> int:
         return x
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
+    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
         await run(1)
         await wait_for_evaluations()
 
     assert len(calls) == 1
-    assert calls[0]['target'] == 'my_target'
+    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
 
 
 @pytest.mark.anyio
@@ -911,16 +907,8 @@ async def test_custom_sink_protocol():
         def __init__(self) -> None:
             self.submissions: list[tuple[list[EvaluationResult[Any]], SpanReference | None]] = []
 
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-            target: Any,
-        ) -> None:
-            self.submissions.append((list(results), span_reference))
+        async def submit(self, payload: SinkPayload) -> None:
+            self.submissions.append((list(payload.results), payload.span_reference))
 
     sink = MySink()
     config = OnlineEvalConfig(default_sink=sink)
@@ -1098,7 +1086,7 @@ async def test_sink_exception_does_not_propagate():
     """Exception in a sink is logged but does not break other sinks."""
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink error')
 
     collector = Collector()
@@ -1145,16 +1133,8 @@ async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
     span_refs: list[SpanReference | None] = []
 
     class SpanCaptureSink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-            target: Any,
-        ) -> None:
-            span_refs.append(span_reference)
+        async def submit(self, payload: SinkPayload) -> None:
+            span_refs.append(payload.span_reference)
 
     config = OnlineEvalConfig(default_sink=SpanCaptureSink())
 
@@ -1441,7 +1421,7 @@ async def test_on_error_sink_exception():
         errors.append((exc, location))
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     good_collector = Collector()
@@ -1510,7 +1490,7 @@ async def test_on_error_handler_exception_suppressed():
     """on_error handler that raises is silently suppressed."""
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     good_collector = Collector()
@@ -1544,7 +1524,7 @@ async def test_on_error_per_evaluator_overrides_config():
     evaluator_errors: list[OnErrorLocation] = []
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     def config_on_error(
@@ -1584,7 +1564,7 @@ async def test_on_error_async_callback():
     errors: list[OnErrorLocation] = []
 
     class FailingSink:
-        async def submit(self, **kwargs: Any) -> None:
+        async def submit(self, payload: SinkPayload) -> None:
             raise ValueError('sink boom')
 
     async def async_on_error(

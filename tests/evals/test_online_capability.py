@@ -19,6 +19,7 @@ with try_import() as imports_successful:
         OnlineEvalConfig,
         OnlineEvaluator,
         SamplingContext,
+        SinkPayload,
         SpanReference,
         configure,
         disable_evaluation,
@@ -71,16 +72,8 @@ if TYPE_CHECKING or imports_successful():
         def __init__(self) -> None:
             self.span_refs: list[SpanReference | None] = []
 
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult[Any]],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-            target: Any,
-        ) -> None:
-            self.span_refs.append(span_reference)
+        async def submit(self, payload: SinkPayload) -> None:
+            self.span_refs.append(payload.span_reference)
 
 
 @pytest.mark.anyio
@@ -271,9 +264,11 @@ async def test_multiple_evaluators():
     await agent.run('hello')
     await wait_for_evaluations()
 
-    assert len(collector.calls) == 2
-    assert all(len(r) == 1 for r, _, _ in collector.calls)
-    assert all(r[0].value is True for r, _, _ in collector.calls)
+    # Evaluators sharing a sink are batched into a single submit call.
+    assert len(collector.calls) == 1
+    results, _, _ = collector.calls[0]
+    assert len(results) == 2
+    assert all(r.value is True for r in results)
 
 
 @pytest.mark.anyio

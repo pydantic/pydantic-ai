@@ -41,6 +41,7 @@ from opentelemetry import trace
 from typing_extensions import LiteralString, ParamSpec, TypeVar
 
 from . import _online as _online_internal, _task_run
+from ._online import SinkPayload
 from ._utils import UNSET, Unset, logfire_span
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
@@ -69,6 +70,7 @@ __all__ = (
     'SamplingContext',
     'SamplingMode',
     'SinkCallback',
+    'SinkPayload',
     'SpanReference',
     'configure',
     'disable_evaluation',
@@ -197,30 +199,21 @@ class EvaluationSink(Protocol):
     on the config.
     """
 
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: SpanReference | None,
-        target: str,
-    ) -> None:
+    async def submit(self, payload: SinkPayload) -> None:
         """Submit evaluation results to the sink.
 
-        Each `submit()` call corresponds to a single evaluator — `results` and
-        `failures` are always from the same `Evaluator` instance. The evaluator
-        version (if any) is recorded on each `EvaluationResult` /
-        `EvaluatorFailure` directly, sourced from the `evaluator_version` class
-        attribute on the `Evaluator` subclass.
+        The payload may include results from one or more evaluators that ran for
+        a given function call — when multiple evaluators share this sink, their
+        results are batched into a single `submit()` call. Each result carries
+        enough metadata (name, evaluator version, source) to be attributed
+        downstream; the exact batching behavior is an implementation detail and
+        may change.
 
         Args:
-            results: Evaluation results from the evaluator run.
-            failures: Failures from the evaluator run if it raised.
-            context: The full evaluator context for the function call.
-            span_reference: Reference to the OTel span for the function call, if available.
-            target: Identifies the function/agent being evaluated, supplied by the
-                `@evaluate` decorator (defaults resolved at decoration time).
+            payload: A [`SinkPayload`][pydantic_evals.online.SinkPayload] bundling
+                results, failures, context, span reference, and target. Sinks
+                should read only the fields they need; new fields may be added
+                in future releases.
         """
         ...
 
@@ -228,25 +221,17 @@ class EvaluationSink(Protocol):
 class CallbackSink:
     """An `EvaluationSink` that delegates to a user-provided callable.
 
-    The callback receives the results, failures, and context. The `span_reference`
-    and `target` are not passed to the callback — use a custom `EvaluationSink`
-    implementation if you need them.
+    The callback receives the results, failures, and context. Other fields on
+    the [`SinkPayload`][pydantic_evals.online.SinkPayload] (such as
+    `span_reference` and `target`) are not passed — use a custom
+    `EvaluationSink` implementation if you need them.
     """
 
     def __init__(self, callback: SinkCallback) -> None:
         self.callback = callback
 
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: SpanReference | None,
-        target: str,
-    ) -> None:
-        _ = span_reference, target  # custom sink only
-        result = self.callback(results, failures, context)
+    async def submit(self, payload: SinkPayload) -> None:
+        result = self.callback(payload.results, payload.failures, payload.context)
         if inspect.isawaitable(result):
             await result
 
