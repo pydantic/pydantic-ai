@@ -396,7 +396,7 @@ class _SinkGroup:
 async def _run_and_collect(
     online_eval: OnlineEvaluator,
     context: EvaluatorContext,
-    span_reference: Any | None,
+    span_reference: SpanReference | None,
     target: str,
     config: OnlineEvalConfig,
     group: _SinkGroup,
@@ -423,9 +423,9 @@ async def _run_and_collect(
         return
 
     # Attach the call's span as the current OTel parent for the whole evaluator
-    # run. This nests the `evaluator: {name}` span (created inside `run_evaluator`)
-    # under the decorated function's call span, and parents the emitted events
-    # the same way without each emit having to attach independently.
+    # run. This nests the `evaluator: {evaluator_name}` span (created inside
+    # `run_evaluator`) under the decorated function's call span, and parents the
+    # emitted events the same way without each emit having to attach independently.
     parent_ctx = build_parent_context(span_reference)
     parent_token = otel_context.attach(parent_ctx) if parent_ctx is not None else None
     try:
@@ -489,7 +489,7 @@ async def _submit_group_to_sink(
 async def dispatch_evaluators(
     online_evaluators: Sequence[OnlineEvaluator],
     context: EvaluatorContext,
-    span_reference: Any | None,
+    span_reference: SpanReference | None,
     target: str,
     config: OnlineEvalConfig,
 ) -> None:

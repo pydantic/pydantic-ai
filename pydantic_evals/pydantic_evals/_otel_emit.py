@@ -17,15 +17,19 @@ supplied, so they appear nested under the original function call in the trace.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import baggage, trace
-from opentelemetry._logs import LogRecord, get_logger
+from opentelemetry._logs import LogRecord, SeverityNumber, get_logger
 from opentelemetry.context import Context
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 from .evaluators.evaluator import EvaluationResult, EvaluatorFailure
 from .evaluators.spec import EvaluatorSpec
+
+if TYPE_CHECKING:
+    # Imported only for type annotations; `online` imports from this module at runtime.
+    from .online import SpanReference
 
 __all__ = ('build_parent_context', 'emit_otel_events')
 
@@ -68,14 +72,14 @@ def emit_otel_events(
     failures: Sequence[EvaluatorFailure],
     target: str,
     include_baggage: bool = True,
-    extra_attributes: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit one `gen_ai.evaluation.result` OTel event per result/failure.
 
     Each `EvaluationResult` produces one event; each `EvaluatorFailure` produces
-    one event with `error.type` set and no score. The caller is responsible for
-    attaching the appropriate parent OTel context (e.g. via
-    `build_parent_context`) so events appear nested under the function call.
+    one event with `error.type` set, no score, and `SeverityNumber.WARN`. The
+    caller is responsible for attaching the appropriate parent OTel context
+    (e.g. via `build_parent_context`) so events appear nested under the function
+    call.
 
     Args:
         results: Evaluation results from a single evaluator run. Each result's
@@ -87,43 +91,33 @@ def emit_otel_events(
         include_baggage: When True (the default), each emitted event also carries
             every key from the current OTel baggage as an attribute. Standard
             `gen_ai.*` and `error.type` attributes always win on conflict.
-        extra_attributes: Optional extra attributes to include on every emitted
-            event. Escape hatch for custom metadata without subclassing.
     """
     if not results and not failures:
         return
 
-    base_extras = _collect_extra_attributes(include_baggage, extra_attributes)
+    baggage_attrs = _baggage_attrs() if include_baggage else None
     for result in results:
-        _emit_result(result, target, base_extras)
+        _emit_result(result, target, baggage_attrs)
     for failure in failures:
-        _emit_failure(failure, target, base_extras)
+        _emit_failure(failure, target, baggage_attrs)
 
 
-def _collect_extra_attributes(
-    include_baggage: bool,
-    extra_attributes: Mapping[str, Any] | None,
-) -> Mapping[str, Any] | None:
-    """Merge OTel baggage with caller-provided extras (caller wins)."""
-    if not include_baggage:
-        return extra_attributes
+def _baggage_attrs() -> Mapping[str, Any] | None:
+    """Snapshot the current OTel baggage as a flat attribute mapping, or `None` if empty."""
     bag = baggage.get_all()
-    if not bag and not extra_attributes:
+    if not bag:
         return None
-    merged: dict[str, Any] = {str(k): v for k, v in bag.items()}
-    if extra_attributes:
-        merged.update(extra_attributes)
-    return merged
+    return {str(k): v for k, v in bag.items()}
 
 
-def build_parent_context(span_reference: Any | None) -> Context | None:
+def build_parent_context(span_reference: SpanReference | None) -> Context | None:
     """Build an OTel context with a non-recording parent span, or None."""
     if span_reference is None:
         return None
     try:
         trace_id = int(span_reference.trace_id, 16)
         span_id = int(span_reference.span_id, 16)
-    except (AttributeError, ValueError, TypeError):  # pragma: no cover
+    except ValueError:  # pragma: no cover — defensive against malformed hex strings
         return None
     span_ctx = SpanContext(
         trace_id=trace_id,
@@ -140,40 +134,46 @@ def build_parent_context(span_reference: Any | None) -> Context | None:
 def _emit_result(
     result: EvaluationResult,
     target: str,
-    extra_attributes: Mapping[str, Any] | None,
+    baggage_attrs: Mapping[str, Any] | None,
 ) -> None:
-    attrs = _base_attrs(target, result.evaluator_version, extra_attributes)
-    attrs[_ATTR_EVAL_NAME] = result.name
+    attrs = _base_attrs(target, result.name, result.source, result.evaluator_version, baggage_attrs)
     _set_score_attrs(attrs, result.value)
     if result.reason is not None:
         attrs[_ATTR_EXPLANATION] = result.reason
-    attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(result.source)
     _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs))
 
 
 def _emit_failure(
     failure: EvaluatorFailure,
     target: str,
-    extra_attributes: Mapping[str, Any] | None,
+    baggage_attrs: Mapping[str, Any] | None,
 ) -> None:
-    attrs = _base_attrs(target, failure.evaluator_version, extra_attributes)
-    attrs[_ATTR_EVAL_NAME] = failure.name
+    attrs = _base_attrs(target, failure.name, failure.source, failure.evaluator_version, baggage_attrs)
     attrs[_ATTR_ERROR_TYPE] = 'pydantic_evals.EvaluatorFailure'
     if failure.error_message:
         attrs[_ATTR_EXPLANATION] = failure.error_message
-    attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(failure.source)
-    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_failure_body(failure), attributes=attrs))
+    _get_logger().emit(
+        LogRecord(
+            event_name=_EVENT_NAME,
+            body=_format_failure_body(failure),
+            attributes=attrs,
+            severity_number=SeverityNumber.WARN,
+        )
+    )
 
 
 def _base_attrs(
     target: str,
+    name: str,
+    source: EvaluatorSpec,
     evaluator_version: str | None,
-    extra_attributes: Mapping[str, Any] | None,
+    baggage_attrs: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    # Apply extras first so standard attributes always win — consistent with the
-    # standard attrs written by _emit_result / _emit_failure after this returns.
-    attrs: dict[str, Any] = dict(extra_attributes) if extra_attributes else {}
+    # Apply baggage first so standard attributes always win on conflict.
+    attrs: dict[str, Any] = dict(baggage_attrs) if baggage_attrs else {}
     attrs[_ATTR_TARGET] = target
+    attrs[_ATTR_EVAL_NAME] = name
+    attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(source)
     if evaluator_version is not None:
         attrs[_ATTR_EVALUATOR_VERSION] = evaluator_version
     return attrs

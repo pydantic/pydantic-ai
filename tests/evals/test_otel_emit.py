@@ -118,6 +118,8 @@ def test_string_label_only(capfire: CaptureLogfire):
 
 
 def test_failure_emits_error_type_and_no_score(capfire: CaptureLogfire):
+    from opentelemetry._logs import SeverityNumber
+
     failure = EvaluatorFailure(
         name='X',
         error_message='boom',
@@ -130,24 +132,25 @@ def test_failure_emits_error_type_and_no_score(capfire: CaptureLogfire):
         target=_target('f'),
     )
 
-    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
+    record = capfire.log_exporter.get_finished_logs()[0].log_record
+    attrs = dict(record.attributes or {})
     assert attrs['error.type'] == 'pydantic_evals.EvaluatorFailure'
     assert attrs['gen_ai.evaluation.explanation'] == 'boom'
     assert 'gen_ai.evaluation.score.value' not in attrs
     assert 'gen_ai.evaluation.score.label' not in attrs
+    # Failure events are emitted at WARN severity so log viewers can filter/highlight.
+    assert record.severity_number is SeverityNumber.WARN
 
 
-def test_evaluator_version_and_extra_attributes(capfire: CaptureLogfire):
+def test_evaluator_version_attribute(capfire: CaptureLogfire):
     emit_otel_events(
         results=[_result('X', True, evaluator_version='v2')],
         failures=[],
         target=_target('f'),
-        extra_attributes={'team': 'platform'},
     )
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert attrs['gen_ai.evaluation.evaluator.version'] == 'v2'
-    assert attrs['team'] == 'platform'
 
 
 def test_no_version_attribute_when_none(capfire: CaptureLogfire):
@@ -323,21 +326,3 @@ def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert 'tenant' not in attrs
-
-
-def test_extra_attributes_win_over_baggage(capfire: CaptureLogfire):
-    """When baggage and `extra_attributes` collide, the explicit extras win."""
-    ctx = _baggage.set_baggage('team', 'baggage_team')
-    token = _otel_context.attach(ctx)
-    try:
-        emit_otel_events(
-            results=[_result('X', True)],
-            failures=[],
-            target=_target('f'),
-            extra_attributes={'team': 'platform'},
-        )
-    finally:
-        _otel_context.detach(token)
-
-    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert attrs['team'] == 'platform'
