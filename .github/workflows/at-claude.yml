@@ -34,7 +34,7 @@ jobs:
     outputs:
       is_fork: ${{ steps.pr-info.outputs.is_fork }}
       pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
-      pr_head_ref: ${{ steps.pr-info.outputs.pr_head_ref }}
+      pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
     steps:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
@@ -43,7 +43,7 @@ jobs:
           PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
           echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
-          echo "pr_head_ref=$(echo "$PR_DATA" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
+          echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,6 +75,9 @@ jobs:
 
       - run: make install
 
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
       - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -99,7 +102,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
-          ref: ${{ needs.get-pr-info.outputs.pr_head_ref }}
+          ref: ${{ needs.get-pr-info.outputs.pr_head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -113,6 +116,9 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
 
       - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:

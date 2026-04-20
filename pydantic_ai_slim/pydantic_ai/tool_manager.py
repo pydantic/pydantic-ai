@@ -119,13 +119,18 @@ class ToolManager(Generic[AgentDepsT]):
 
         toolset = await self.toolset.for_run_step(ctx)
 
-        return self.__class__(
+        new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
         )
+        # Make the prepared ToolManager accessible from RunContext so that
+        # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
+        # through the standard validation/execution path.
+        ctx.tool_manager = new_tm
+        return new_tm
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -251,7 +256,9 @@ class ToolManager(Generic[AgentDepsT]):
             validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
             return validated
 
-        if cap is not None:
+        # Output tools are internal — they don't fire user-facing tool hooks, matching how
+        # `WrapperToolset` and `prepare_tools` exclude them.
+        if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
             # before_tool_validate
@@ -294,7 +301,9 @@ class ToolManager(Generic[AgentDepsT]):
             modified_validated = replace(validated, validated_args=args)
             return await self._raw_execute(modified_validated, usage=usage)
 
-        if cap is not None:
+        # Output tools are internal — they don't fire user-facing tool hooks, matching how
+        # `WrapperToolset` and `prepare_tools` exclude them.
+        if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
             try:

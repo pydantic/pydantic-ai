@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -13,6 +14,7 @@ __all__ = (
     'AbstractBuiltinTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     'CodeExecutionTool',
     'WebFetchTool',
     'UrlContextTool',
@@ -175,6 +177,97 @@ class WebSearchUserLocation(TypedDict, total=False):
 
     timezone: str
     """The timezone of the user's location."""
+
+
+@dataclass(kw_only=True)
+class XSearchTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to search X/Twitter for posts and content.
+
+    This tool is exclusive to xAI models. See <https://docs.x.ai/developers/tools/x-search> for more details.
+
+    Supported by:
+
+    * xAI
+    """
+
+    allowed_x_handles: list[str] | None = None
+    """If provided, only posts from these X handles will be included (max 10).
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    excluded_x_handles: list[str] | None = None
+    """If provided, posts from these X handles will be excluded (max 10).
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    from_date: datetime | None = None
+    """If provided, only posts created on or after this datetime will be included.
+
+    Naive datetimes are interpreted as UTC by the xAI API.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    to_date: datetime | None = None
+    """If provided, only posts created on or before this datetime will be included.
+
+    Naive datetimes are interpreted as UTC by the xAI API.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    enable_image_understanding: bool = False
+    """Enable image analysis from X posts.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    enable_video_understanding: bool = False
+    """Enable video analysis from X content.
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    include_output: bool = False
+    """Include raw X search results in the response as
+    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart].
+
+    Without this, the model uses the search results internally but only returns
+    its text summary. Enabling it gives programmatic access to searched posts,
+    sources, and metadata.
+
+    Can also be set via
+    [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output].
+
+    Supported by:
+
+    * xAI, see <https://docs.x.ai/developers/tools/x-search>
+    """
+
+    kind: str = 'x_search'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
+            raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
+            raise ValueError('allowed_x_handles cannot contain more than 10 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
+            raise ValueError('excluded_x_handles cannot contain more than 10 handles')
 
 
 @dataclass(kw_only=True)
@@ -462,6 +555,7 @@ class FileSearchTool(AbstractBuiltinTool):
 
     * OpenAI Responses
     * Google (Gemini)
+    * xAI (mapped to collections search)
     """
 
     file_store_ids: Sequence[str]
@@ -469,6 +563,7 @@ class FileSearchTool(AbstractBuiltinTool):
 
     For OpenAI, these are the IDs of vector stores created via the OpenAI API.
     For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
+    For xAI, these are collection IDs for the xAI collections search tool.
     """
 
     kind: str = 'file_search'
@@ -488,4 +583,6 @@ DEPRECATED_BUILTIN_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset({UrlC
 SUPPORTED_BUILTIN_TOOLS = frozenset(cls for cls in BUILTIN_TOOL_TYPES.values() if cls not in DEPRECATED_BUILTIN_TOOLS)
 """Get the set of all builtin tool types (excluding deprecated tools)."""
 
-BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset({MCPServerTool, MemoryTool})
+BUILTIN_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractBuiltinTool]] = frozenset(
+    {FileSearchTool, MCPServerTool, MemoryTool}
+)

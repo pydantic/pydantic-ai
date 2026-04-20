@@ -21,7 +21,7 @@ interactions:
         - text: How much is 3 * 12390?
           type: text
         role: user
-      model: claude-sonnet-4-0
+      model: claude-sonnet-4-6
       stream: false
       tool_choice:
         type: auto
@@ -67,7 +67,7 @@ interactions:
       - text: 3 * 12390 = 37,170
         type: text
       id: msg_017vUE35gAsm2NEEH2fNLDAx
-      model: claude-sonnet-4-20250514
+      model: claude-sonnet-4-6
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
