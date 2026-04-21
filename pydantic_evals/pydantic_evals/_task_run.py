@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ class TaskRun:
 
 
 @contextmanager
-def run_task():
+def run_task() -> Iterator[Callable[[], dict[str, Any]]]:
     task_run = TaskRun()
     token = CURRENT_TASK_RUN.set(task_run)
 

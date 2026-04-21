@@ -577,7 +577,7 @@ class OnlineEvalConfig:
 
         return decorator
 
-    def should_evaluate(self):
+    def should_evaluate(self) -> bool:
         """Whether evaluators with this config should run, based on the current settings and context."""
         return self.enabled and not _EVALUATION_DISABLED.get() and _task_run.CURRENT_TASK_RUN.get() is None
 

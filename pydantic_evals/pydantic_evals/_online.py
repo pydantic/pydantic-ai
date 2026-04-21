@@ -40,7 +40,6 @@ OnErrorCallback = Callable[
     [Exception, EvaluatorContext, Evaluator, OnErrorLocation],
     None | Awaitable[None],
 ]
-SamplingContextBuilder = Callable[[Evaluator, Any, dict[str, Any] | None, float], Any]
 
 
 @dataclass(kw_only=True, frozen=True)
