@@ -996,7 +996,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if not field_name:
                 continue
             reasoning: str | None = getattr(message, field_name, None)
-            if reasoning:  # pragma: no branch
+            if isinstance(reasoning, str) and reasoning:  # guard against non-string values (e.g. Gemini returns a dict)
                 items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
                 return items
 
@@ -2705,7 +2705,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if not field_name:
                 continue
             reasoning: str | None = getattr(choice.delta, field_name, None)
-            if reasoning:  # pragma: no branch
+            if isinstance(reasoning, str) and reasoning:  # guard against non-string values (e.g. Gemini returns a dict)
                 yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=field_name,
                     id=field_name,
