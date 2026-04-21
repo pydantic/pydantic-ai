@@ -227,13 +227,18 @@ def sample_evaluators(
     online_evals: Sequence[OnlineEvaluator],
     config: OnlineEvalConfig,
     inputs: Any,
-    *,
-    build_sampling_context: SamplingContextBuilder,
 ) -> list[OnlineEvaluator]:
+    from .online import SamplingContext
+
     call_seed = random.random()
     sampled: list[OnlineEvaluator] = []
     for online_eval in online_evals:
-        sampling_context = build_sampling_context(online_eval.evaluator, inputs, config.metadata, call_seed)
+        sampling_context = SamplingContext(
+            evaluator=online_eval.evaluator,
+            inputs=inputs,
+            metadata=config.metadata,
+            call_seed=call_seed,
+        )
         try:
             if _should_evaluate(
                 _resolve_sample_rate_field(online_eval, config),

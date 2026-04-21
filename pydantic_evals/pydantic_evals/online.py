@@ -400,20 +400,6 @@ def _open_call_span(
             yield span
 
 
-def _build_sampling_context(
-    evaluator: Evaluator,
-    inputs: Any,
-    metadata: dict[str, Any] | None,
-    call_seed: float,
-) -> SamplingContext:
-    return SamplingContext(
-        evaluator=evaluator,
-        inputs=inputs,
-        metadata=metadata,
-        call_seed=call_seed,
-    )
-
-
 @dataclass(kw_only=True)
 class OnlineEvalConfig:
     """Holds cross-evaluator defaults for online evaluation.
@@ -630,7 +616,6 @@ def _wrap_async(
             online_evals,
             config,
             inputs,
-            build_sampling_context=_build_sampling_context,
         )
         if not sampled:
             return await func(*args, **kwargs)
@@ -716,7 +701,6 @@ def _wrap_sync(
             online_evals,
             config,
             inputs,
-            build_sampling_context=_build_sampling_context,
         )
         if not sampled:
             return func(*args, **kwargs)

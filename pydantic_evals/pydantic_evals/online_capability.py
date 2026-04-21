@@ -22,7 +22,6 @@ from .online import (
     DEFAULT_CONFIG,
     OnlineEvalConfig,
     OnlineEvaluator,
-    SamplingContext,
     SpanReference,
 )
 from .otel._context_subtree import context_subtree
@@ -109,20 +108,6 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None
 
-    @staticmethod
-    def _build_sampling_context(
-        evaluator: Evaluator,
-        inputs: Any,
-        metadata: dict[str, Any] | None,
-        call_seed: float,
-    ) -> SamplingContext:
-        return SamplingContext(
-            evaluator=evaluator,
-            inputs=inputs,
-            metadata=metadata,
-            call_seed=call_seed,
-        )
-
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -147,7 +132,6 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             self._online_evaluators,
             config,
             inputs,
-            build_sampling_context=self._build_sampling_context,
         )
         if not sampled:
             return await handler()
