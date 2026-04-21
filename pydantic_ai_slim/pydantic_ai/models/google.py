@@ -536,8 +536,11 @@ class GoogleModel(Model[Client]):
         # (https://ai.google.dev/api/caching#ToolType), this includes google_search,
         # url_context, and file_search. ImageGenerationTool is a native model capability
         # and CodeExecutionTool uses its own executableCode/codeExecutionResult parts.
-        has_server_side_tools = any(
-            not isinstance(tool, (ImageGenerationTool, CodeExecutionTool))
+        # `include_server_side_tool_invocations` itself is Gemini 3+ only — older models
+        # reject the field with "Tool call context circulation is not enabled" — so
+        # additionally gate on the tool-combination profile flag.
+        has_server_side_tools = GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination and any(
+            isinstance(tool, (WebSearchTool, WebFetchTool, FileSearchTool))
             for tool in model_request_parameters.builtin_tools
         )
         if not model_request_parameters.allow_text_output and tools:
@@ -1303,7 +1306,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(  # noqa: C901
-    m: ModelResponse, provider_name: str, *, supports_tool_combination: bool = True
+    m: ModelResponse, provider_name: str, *, supports_tool_combination: bool = False
 ) -> ContentDict | None:
     parts: list[PartDict] = []
     thinking_part_signature: str | None = None

@@ -3,7 +3,6 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from functools import cache
 
 import pytest
 
@@ -20,7 +19,6 @@ with try_import() as imports_successful:
 def google_model(gemini_api_key: str) -> GoogleModelFactory:
     """Factory to create Google models. Used by VCR-recorded integration tests."""
 
-    @cache
     def _create_model(
         model_name: str,
         api_key: str | None = None,

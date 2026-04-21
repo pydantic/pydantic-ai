@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RetryPromptPart
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -1528,21 +1528,39 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'worldatlas.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFcmUyD8LOoNCqLNQuJqgfGvtHrm6l7b22vtb34pEjFqZz8q90TwnMkbww2VdcQew1AlK418PRkXw4huJzfVPCwBmCRokw0u1CBBtqswUY6cZFeGe4EFO8n3JZNMvQaCnHFo1d55blCPs_5ip_yROtLPO07V-eaNCI-JOSi3eeBhQ==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wikipedia.org',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFBOYbyNW1OBKjMTRBE3fqwz-yPY-fj0Mvm7YIqOYWOHt1AIjHU1sS0Iw2pLDvYG7Vok6X_IC8OxcHWKq9vJkCt89PS4Eg_Zcv3qostSbPlMG1H7IqqLyaSPX_PS-JJM9u8vtKi',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'chicagosistercities.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGVC74i6cYzjyWdMhx9_Y3n1URFOVrkF23v5u8Rm7Wl7gD-ezkejMKBUUJ5h42skaar0Wsq8oVw8exnficP8YHgtUj5PDRGj-K6WWCBfcEaPcnjJ4hyr_JgE7-dWuKC-AVFVPKz4DSAFzXW8QpfOh2E6jfaDKshXF1-WssqOCBs',
+                            },
+                        ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(content='{"city": "Mexico City", "country": "Mexico"}'),
+                    TextPart(
+                        content='Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in 2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most important cultural and financial centers globally.'
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=85,
-                    output_tokens=192,
+                    output_tokens=357,
                     details={
-                        'thoughts_tokens': 32,
-                        'tool_use_prompt_tokens': 132,
+                        'thoughts_tokens': 109,
+                        'tool_use_prompt_tokens': 138,
                         'text_prompt_tokens': 85,
-                        'text_tool_use_prompt_tokens': 132,
+                        'text_tool_use_prompt_tokens': 138,
                     },
                 ),
                 model_name='gemini-2.5-flash',
@@ -1550,7 +1568,40 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='lTrNaf2-IoqojMcPnYv3kQI',
+                provider_response_id='acDnab-ZJfCGz7IP-bKCoQg',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: expected value at line 1 column 1',
+                                'input': 'Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in 2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most important cultural and financial centers globally.',
+                                'ctx': {'error': 'expected value at line 1 column 1'},
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=RequestUsage(
+                    input_tokens=345, output_tokens=77, details={'thoughts_tokens': 64, 'text_prompt_tokens': 345}
+                ),
+                model_name='gemini-2.5-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='bcDnaaSJCM2Fz7IPo7zPkAc',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

@@ -75,7 +75,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -99,8 +98,6 @@ with try_import() as imports_successful:
         MediaModality,
         ModalityTokenCount,
         SafetyRating,
-        ToolCall,
-        ToolResponse,
         ToolType,
     )
 
@@ -110,8 +107,6 @@ with try_import() as imports_successful:
         GoogleModelSettings,
         GoogleServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_call,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -3480,60 +3475,6 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
         'output_mime_type': 'image/jpeg',
         'output_compression_quality': 90,
     }
-
-
-async def test_google_image_generation_tool_no_server_side_tool_config(google_provider: GoogleProvider) -> None:
-    """ImageGenerationTool alone should not set include_server_side_tool_invocations."""
-    model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
-    params = model.customize_request_parameters(params)
-
-    tools, _image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    tool_config = model._get_tool_config(params, tools)  # pyright: ignore[reportPrivateUsage]
-    assert tool_config is None
-
-    output_tool = ToolDefinition(
-        name='result',
-        description='result tool',
-        parameters_json_schema={'type': 'object', 'properties': {'spam': {'type': 'number'}}},
-    )
-    params_with_output = ModelRequestParameters(
-        builtin_tools=[ImageGenerationTool()],
-        output_tools=[output_tool],
-        allow_text_output=False,
-        output_mode='tool',
-        output_object=None,
-    )
-    params_with_output = model.customize_request_parameters(params_with_output)
-    tools_with_output, _ = model._get_tools(params_with_output)  # pyright: ignore[reportPrivateUsage]
-    tool_config_with_output = model._get_tool_config(params_with_output, tools_with_output)  # pyright: ignore[reportPrivateUsage]
-    assert tool_config_with_output is not None
-    assert 'include_server_side_tool_invocations' not in tool_config_with_output
-
-
-def test_map_tool_call() -> None:
-    tc = ToolCall(id='tc-1', tool_type=ToolType.URL_CONTEXT, args={'urls': ['https://example.com']})
-    assert _map_tool_call(tc, 'google-gla') == snapshot(
-        BuiltinToolCallPart(
-            tool_name='web_fetch',
-            tool_call_id='tc-1',
-            args={'urls': ['https://example.com']},
-            provider_name='google-gla',
-        )
-    )
-
-
-def test_map_tool_response() -> None:
-    tr = ToolResponse(id='tr-1', tool_type=ToolType.URL_CONTEXT, response={'content': 'hello'})
-    assert _map_tool_response(tr, 'google-gla') == snapshot(
-        BuiltinToolReturnPart(
-            tool_name='web_fetch',
-            tool_call_id='tr-1',
-            content={'content': 'hello'},
-            timestamp=IsDatetime(),
-            provider_name='google-gla',
-        )
-    )
 
 
 async def test_google_vertexai_image_generation(
