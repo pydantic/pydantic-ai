@@ -1,0 +1,18 @@
+pydantic_evals/pydantic_evals/online.py
+  h_bc896295f46a8b 630-631,711-712
+pydantic_evals/pydantic_evals/online_capability.py
+  h_bc896295f46a8b 136,139
+pydantic_evals/pydantic_evals/_task_run.py
+  h_bc896295f46a8b 3,31-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "b7ef937b1a1172600330349557602efe1e6243b3",
+  "prompts": {},
+  "humans": {
+    "h_bc896295f46a8b": {
+      "author": "Alex Hall"
+    }
+  }
+}
