@@ -1557,25 +1557,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'
             )
 
-        if task_budget.get('type') != 'tokens':
-            raise UserError("`anthropic_task_budget['type']` must be `'tokens'`.")
-
-        total = task_budget.get('total')
-        if not isinstance(total, int) or isinstance(total, bool) or total <= 0:
-            raise UserError("`anthropic_task_budget['total']` must be a positive integer.")
-
-        remaining = task_budget.get('remaining')
-        if remaining is not None and (not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 0):
-            raise UserError("`anthropic_task_budget['remaining']` must be a non-negative integer when provided.")
-        if remaining is not None and remaining > total:
-            raise UserError(
-                "`anthropic_task_budget['remaining']` must be less than or equal to `anthropic_task_budget['total']`."
-            )
-
-        validated_task_budget: AnthropicTaskBudget = {'type': 'tokens', 'total': total}
-        if remaining is not None:
-            validated_task_budget['remaining'] = remaining
-        return validated_task_budget
+        return task_budget
 
 
 class AnthropicCompaction(AbstractCapability[AgentDepsT]):

@@ -116,7 +116,6 @@ with try_import() as imports_successful:
         AnthropicCompaction,
         AnthropicModel,
         AnthropicModelSettings,
-        AnthropicTaskBudget,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -1293,66 +1292,6 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
     agent = Agent(model)
 
     with pytest.raises(UserError, match='does not support `anthropic_task_budget`'):
-        await agent.run('Hello')
-
-
-async def test_anthropic_task_budget_rejects_invalid_type(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'chars', 'total': 2_000},  # pyright: ignore[reportArgumentType]
-        ),
-    )
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match=r"`anthropic_task_budget\['type'\]` must be `'tokens'`\.$"):
-        await agent.run('Hello')
-
-
-@pytest.mark.parametrize(
-    ('task_budget', 'error_message'),
-    [
-        pytest.param(
-            {'type': 'tokens', 'total': 0},
-            r"`anthropic_task_budget\['total'\]` must be a positive integer\.",
-            id='invalid-total',
-        ),
-        pytest.param(
-            {'type': 'tokens', 'total': 2_000, 'remaining': -1},
-            r"`anthropic_task_budget\['remaining'\]` must be a non-negative integer when provided\.",
-            id='invalid-remaining',
-        ),
-        pytest.param(
-            {'type': 'tokens', 'total': 2_000, 'remaining': 2_001},
-            r"`anthropic_task_budget\['remaining'\]` must be less than or equal to `anthropic_task_budget\['total'\]`\.",
-            id='remaining-exceeds-total',
-        ),
-    ],
-)
-async def test_anthropic_task_budget_validation_errors(
-    allow_model_requests: None, task_budget: AnthropicTaskBudget, error_message: str
-):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(anthropic_task_budget=task_budget),
-    )
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match=error_message):
         await agent.run('Hello')
 
 
