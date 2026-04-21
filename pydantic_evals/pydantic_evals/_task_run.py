@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
+from .otel._context_subtree import context_subtree
 from .otel.span_tree import SpanTree
 
 
@@ -28,13 +30,24 @@ class TaskRun:
     def record_attribute(self, name: str, value: Any) -> None:
         self.attributes[name] = value
 
-    @contextmanager
-    def set_as_current(self):
-        token = CURRENT_TASK_RUN.set(self)
-        try:
-            yield self
-        finally:
-            CURRENT_TASK_RUN.reset(token)
+
+@contextmanager
+def run_task():
+    task_run = TaskRun()
+    token = CURRENT_TASK_RUN.set(task_run)
+
+    def get_duration() -> float:
+        return duration
+
+    try:
+        with context_subtree() as span_tree:
+            t0 = time.perf_counter()
+            yield task_run, span_tree, get_duration
+            duration = time.perf_counter() - t0
+    finally:
+        CURRENT_TASK_RUN.reset(token)
+    if isinstance(span_tree, SpanTree):  # pragma: no branch
+        extract_span_tree_metrics(task_run, span_tree)
 
 
 def extract_span_tree_metrics(task_run: TaskRun, span_tree: SpanTree) -> None:

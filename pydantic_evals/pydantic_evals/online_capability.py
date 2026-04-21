@@ -6,7 +6,6 @@ dispatching them asynchronously in the background after each run completes.
 
 from __future__ import annotations
 
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -24,8 +23,6 @@ from .online import (
     OnlineEvaluator,
     SpanReference,
 )
-from .otel._context_subtree import context_subtree
-from .otel.span_tree import SpanTree
 
 __all__ = ('OnlineEvaluation',)
 
@@ -133,14 +130,8 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             return await handler()
 
         # Run the agent with span tree capture and attribute/metric tracking
-        with _task_run.TaskRun().set_as_current() as task_run, context_subtree() as span_tree:
-            t0 = time.perf_counter()
+        with _task_run.run_task() as (task_run, span_tree, get_duration):
             result = await handler()
-            duration = time.perf_counter() - t0
-
-        # Extract standard metrics from the span tree
-        if isinstance(span_tree, SpanTree):  # pragma: no branch
-            _task_run.extract_span_tree_metrics(task_run, span_tree)
 
         # Merge config and run metadata
         metadata: dict[str, Any] | None = None
@@ -153,7 +144,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             output=result.output,
             expected_output=None,
             metadata=metadata,
-            duration=duration,
+            duration=get_duration(),
             _span_tree=span_tree,
             attributes=task_run.attributes,
             metrics=task_run.metrics,

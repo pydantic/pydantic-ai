@@ -30,7 +30,6 @@ import asyncio
 import functools
 import inspect
 import threading
-import time
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -46,7 +45,6 @@ from ._utils import UNSET, Unset, logfire_span
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
-from .otel._context_subtree import context_subtree
 from .otel.span_tree import SpanTree
 
 try:
@@ -628,13 +626,10 @@ def _wrap_async(
 
         # Run the function with span tree capture and attribute/metric tracking
         with (
-            _task_run.TaskRun().set_as_current() as task_run,
             _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-            context_subtree() as span_tree,
+            _task_run.run_task() as (task_run, span_tree, get_duration),
         ):
-            t0 = time.perf_counter()
             result = await func(*args, **kwargs)
-            duration = time.perf_counter() - t0
             if call_span.record_return:
                 # Swallow attribute-set failures so an exotic return value (e.g. one
                 # whose repr raises during logfire's JSON-schema serialisation) can't
@@ -645,10 +640,6 @@ def _wrap_async(
                 except Exception:  # pragma: no cover - defensive
                     pass
 
-        # Extract standard metrics (requests, cost, token usage) from the span tree
-        if isinstance(span_tree, SpanTree):  # pragma: no branch
-            _task_run.extract_span_tree_metrics(task_run, span_tree)
-
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None
         context = EvaluatorContext(
@@ -657,7 +648,7 @@ def _wrap_async(
             output=result,
             expected_output=None,
             metadata=metadata,
-            duration=duration,
+            duration=get_duration(),
             _span_tree=span_tree,
             attributes=task_run.attributes,
             metrics=task_run.metrics,
@@ -709,13 +700,10 @@ def _wrap_sync(
 
         # Run the function with span tree capture and attribute/metric tracking
         with (
-            _task_run.TaskRun().set_as_current() as task_run,
             _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-            context_subtree() as span_tree,
+            _task_run.run_task() as (task_run, span_tree, get_duration),
         ):
-            t0 = time.perf_counter()
             result = func(*args, **kwargs)
-            duration = time.perf_counter() - t0
             if call_span.record_return:
                 # Swallow attribute-set failures so an exotic return value (e.g. one
                 # whose repr raises during logfire's JSON-schema serialisation) can't
@@ -738,7 +726,7 @@ def _wrap_sync(
             output=result,
             expected_output=None,
             metadata=metadata,
-            duration=duration,
+            duration=get_duration(),
             _span_tree=span_tree,
             attributes=task_run.attributes,
             metrics=task_run.metrics,
