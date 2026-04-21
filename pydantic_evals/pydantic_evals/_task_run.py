@@ -36,13 +36,18 @@ def run_task():
     task_run = TaskRun()
     token = CURRENT_TASK_RUN.set(task_run)
 
-    def get_duration() -> float:
-        return duration
+    def get_eval_context_kwargs() -> dict[str, Any]:
+        return {
+            'attributes': task_run.attributes,
+            'metrics': task_run.metrics,
+            'duration': duration,
+            '_span_tree': span_tree,
+        }
 
     try:
         with context_subtree() as span_tree:
             t0 = time.perf_counter()
-            yield task_run, span_tree, get_duration
+            yield get_eval_context_kwargs
             duration = time.perf_counter() - t0
     finally:
         CURRENT_TASK_RUN.reset(token)

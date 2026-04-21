@@ -45,7 +45,6 @@ from ._utils import UNSET, Unset, logfire_span
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
-from .otel.span_tree import SpanTree
 
 try:
     import logfire as _logfire  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -627,7 +626,7 @@ def _wrap_async(
         # Run the function with span tree capture and attribute/metric tracking
         with (
             _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-            _task_run.run_task() as (task_run, span_tree, get_duration),
+            _task_run.run_task() as get_eval_context_kwargs,
         ):
             result = await func(*args, **kwargs)
             if call_span.record_return:
@@ -648,10 +647,7 @@ def _wrap_async(
             output=result,
             expected_output=None,
             metadata=metadata,
-            duration=get_duration(),
-            _span_tree=span_tree,
-            attributes=task_run.attributes,
-            metrics=task_run.metrics,
+            **get_eval_context_kwargs(),
         )
 
         # Extract span reference from the logfire span
@@ -701,7 +697,7 @@ def _wrap_sync(
         # Run the function with span tree capture and attribute/metric tracking
         with (
             _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-            _task_run.run_task() as (task_run, span_tree, get_duration),
+            _task_run.run_task() as get_eval_context_kwargs,
         ):
             result = func(*args, **kwargs)
             if call_span.record_return:
@@ -714,10 +710,6 @@ def _wrap_sync(
                 except Exception:  # pragma: no cover - defensive
                     pass
 
-        # Extract standard metrics (requests, cost, token usage) from the span tree
-        if isinstance(span_tree, SpanTree):  # pragma: no branch
-            _task_run.extract_span_tree_metrics(task_run, span_tree)
-
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None
         context = EvaluatorContext(
@@ -726,10 +718,7 @@ def _wrap_sync(
             output=result,
             expected_output=None,
             metadata=metadata,
-            duration=get_duration(),
-            _span_tree=span_tree,
-            attributes=task_run.attributes,
-            metrics=task_run.metrics,
+            **get_eval_context_kwargs(),
         )
 
         # Extract span reference

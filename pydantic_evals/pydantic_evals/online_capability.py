@@ -130,7 +130,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             return await handler()
 
         # Run the agent with span tree capture and attribute/metric tracking
-        with _task_run.run_task() as (task_run, span_tree, get_duration):
+        with _task_run.run_task() as get_eval_context_kwargs:
             result = await handler()
 
         # Merge config and run metadata
@@ -144,10 +144,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             output=result.output,
             expected_output=None,
             metadata=metadata,
-            duration=get_duration(),
-            _span_tree=span_tree,
-            attributes=task_run.attributes,
-            metrics=task_run.metrics,
+            **get_eval_context_kwargs(),
         )
 
         span_reference = _parse_traceparent(result._traceparent(required=False))  # pyright: ignore[reportPrivateUsage]
