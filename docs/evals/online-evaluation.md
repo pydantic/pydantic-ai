@@ -192,35 +192,32 @@ class PrintSink:
 
 `payload.results` and `payload.failures` may cover one or more evaluators from a single function call — when multiple evaluators share a sink, their results are batched into a single `submit()` call. Each result carries its own attribution (name, `evaluator_version` on [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure], and source spec), so sinks can separate them downstream; see [Evaluator Versioning](#evaluator-versioning). The `payload.target` identifies the function or agent being evaluated (see [Target](#target)).
 
-!!! note "`SinkPayload` is extensible"
-    Additional fields may be added to [`SinkPayload`][pydantic_evals.online.SinkPayload] in future releases. Read only the attributes your sink needs, and do not instantiate `SinkPayload` directly in application code.
-
 ### Default OTel event emission
 
 Every dispatched evaluator emits one `gen_ai.evaluation.result` OTel log event per [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] or [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure], unconditionally — no sink registration required. Events are parented to the span that produced them, so they appear nested under the original function call in the trace. If no OTel SDK is configured in the process, emission is a cheap no-op.
 
 Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-readable body (e.g. `evaluation: accuracy=0.87`, or `evaluation: accuracy failed: <error>`). Emission follows the [OpenTelemetry GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult), with these attributes:
 
-| Attribute | Source | Notes |
-|---|---|---|
-| `gen_ai.evaluation.name` | [`EvaluationResult.name`][pydantic_evals.evaluators.EvaluationResult] / [`EvaluatorFailure.name`][pydantic_evals.evaluators.EvaluatorFailure] | The evaluator class name when the `evaluate()` method returns a scalar, or the mapping key when it returns `{'accuracy': ..., 'score': ...}`. |
-| `gen_ai.evaluation.score.value` | the result's scalar return value | Populated for `bool` (`True`→`1.0`, `False`→`0.0`) and numeric returns. Omitted for `str` returns. |
-| `gen_ai.evaluation.score.label` | the result's scalar return value | Populated for `bool` (`True`→`'pass'`, `False`→`'fail'`) and `str` returns (used directly as the label). Omitted for numeric returns. |
-| `gen_ai.evaluation.explanation` | `EvaluationResult.reason` (success) or `EvaluatorFailure.error_message` (failure) | Omitted when absent. Set this via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator. |
-| `error.type` | `EvaluatorFailure.error_type` (failure events only) | The exception class name (e.g. `'ValueError'`) when the failure was built from a caught exception; falls back to `'pydantic_evals.EvaluatorFailure'` for `EvaluatorFailure` instances constructed without it. Absent on successful evaluations. |
-| `gen_ai.evaluation.target` | `@evaluate(target=...)` or agent `name` | See [Target](#target). |
-| `gen_ai.evaluation.evaluator.version` | `Evaluator.evaluator_version` class attribute | Omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning). |
-| `gen_ai.evaluation.evaluator.source` | JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] | Identifies the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources). |
+- `gen_ai.evaluation.name` — the evaluator class name when `evaluate()` returns a scalar, or the mapping key when it returns `{'accuracy': ..., 'score': ...}`. Source: [`EvaluationResult.name`][pydantic_evals.evaluators.EvaluationResult] / [`EvaluatorFailure.name`][pydantic_evals.evaluators.EvaluatorFailure].
+- `gen_ai.evaluation.score.value` — populated for `bool` (`True`→`1.0`, `False`→`0.0`) and numeric returns. Omitted for `str` returns.
+- `gen_ai.evaluation.score.label` — populated for `bool` (`True`→`'pass'`, `False`→`'fail'`) and `str` returns (used directly as the label). Omitted for numeric returns.
+- `gen_ai.evaluation.explanation` — `EvaluationResult.reason` on success or `EvaluatorFailure.error_message` on failure. Omitted when absent. Set via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator.
+- `error.type` (failure events only) — the exception class name (e.g. `'ValueError'`) when the failure was built from a caught exception; falls back to `'pydantic_evals.EvaluatorFailure'` for `EvaluatorFailure` instances constructed without it. Absent on successful evaluations. Source: `EvaluatorFailure.error_type`.
+- `gen_ai.evaluation.target` — `@evaluate(target=...)` or agent `name`. See [Target](#target).
+- `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
+- `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
 
-OTel baggage entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
+[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
 
-For example, a `ToneCheck(evaluator_version='v2')` evaluator whose `evaluate()` returns `True`, decorated as `@evaluate(ToneCheck(), target='customer_support')`, emits one event with:
+For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(OutputNotEmpty(), target='customer_support')` and returning `True` for a given call, emits one event with:
 
-- `gen_ai.evaluation.name = 'ToneCheck'`
-- `gen_ai.evaluation.score.value = 1.0`, `gen_ai.evaluation.score.label = 'pass'`
+- `gen_ai.evaluation.name = 'OutputNotEmpty'`
+- `gen_ai.evaluation.score.value = 1.0`
+- `gen_ai.evaluation.score.label = 'pass'`
 - `gen_ai.evaluation.target = 'customer_support'`
-- `gen_ai.evaluation.evaluator.version = 'v2'`
-- `gen_ai.evaluation.evaluator.source = '{"name": "ToneCheck", "arguments": null}'`
+- `gen_ai.evaluation.evaluator.source = '{"name":"OutputNotEmpty","arguments":null}'`
+
+An evaluator with constructor arguments gets those rendered into `source` — e.g. [`LLMJudge(rubric='Is the response helpful?')`][pydantic_evals.evaluators.LLMJudge] emits `gen_ai.evaluation.evaluator.source = '{"name":"LLMJudge","arguments":["Is the response helpful?"]}'`, so two `LLMJudge` instances with different rubrics remain distinguishable downstream.
 
 Attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
 

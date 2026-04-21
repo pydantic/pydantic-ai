@@ -297,24 +297,20 @@ _warned_legacy_sink_ids: set[int] = set()
 def _is_legacy_submit(sink: EvaluationSink) -> bool:
     """Return whether a sink's `submit` uses the pre-`SinkPayload` kwargs signature.
 
-    The bound signature of a modern sink (`async def submit(self, payload)`) has
-    exactly one non-`**kwargs` parameter, and that parameter accepts a positional
-    arg. Everything else — 4-kwarg legacy, `**kwargs`-only, zero-arg — gets the
-    shim. Using arity rather than parameter names means a modern sink that happens
-    to name its argument `results` still resolves correctly.
+    The bound signature of a modern sink (`async def submit(self, payload)`)
+    has exactly one non-`**kwargs` parameter. Everything else — 4-kwarg legacy,
+    `**kwargs`-only, zero-arg — gets the shim. Using arity rather than
+    parameter names means a modern sink that happens to name its argument
+    `results` still resolves correctly, and an unusual keyword-only
+    `submit(self, *, payload)` is routed to the modern call path rather than
+    being shimmed and emitting a spurious deprecation warning.
     """
     try:
         params = list(inspect.signature(sink.submit).parameters.values())
     except (TypeError, ValueError):  # pragma: no cover — some C-implemented callables
         return False  # can't introspect — assume modern signature, don't warn
     non_var_kwargs = [p for p in params if p.kind is not inspect.Parameter.VAR_KEYWORD]
-    if len(non_var_kwargs) != 1:
-        return True
-    return non_var_kwargs[0].kind not in (
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        inspect.Parameter.VAR_POSITIONAL,
-    )
+    return len(non_var_kwargs) != 1
 
 
 class _LegacyKwargsShim:

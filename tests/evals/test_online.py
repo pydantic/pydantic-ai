@@ -326,6 +326,23 @@ async def test_sink_with_var_keyword_only_is_shimmed():
     assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
 
 
+def test_sink_with_keyword_only_payload_is_not_classified_as_legacy():
+    """A sink with a single keyword-only `payload` parameter routes to the modern path.
+
+    Arity is what distinguishes legacy from modern — not whether the single
+    parameter is positional-or-keyword vs keyword-only. Without this, a
+    `submit(self, *, payload)` sink would be misclassified as legacy and
+    trigger a spurious deprecation warning.
+    """
+    from pydantic_evals._online import _is_legacy_submit  # pyright: ignore[reportPrivateUsage]
+
+    class KeywordOnlyPayloadSink:
+        async def submit(self, *, payload: SinkPayload) -> None:
+            pass
+
+    assert _is_legacy_submit(cast(Any, KeywordOnlyPayloadSink())) is False
+
+
 @pytest.mark.anyio
 async def test_span_reference():
     """SpanReference stores trace and span IDs."""
