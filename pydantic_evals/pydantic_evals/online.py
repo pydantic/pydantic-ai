@@ -400,14 +400,6 @@ def _open_call_span(
             yield span
 
 
-def _record_return(span: Any, result: Any) -> None:
-    """Record the function return value on the span."""
-    # `set_attribute` on a logfire `LogfireSpan` handles JSON-schema serialisation
-    # of complex types; `record_return` is rejected at decoration time when
-    # logfire is not installed, so we only hit this path with a real logfire span.
-    span.set_attribute('return', result)
-
-
 def _build_sampling_context(
     evaluator: Evaluator,
     inputs: Any,
@@ -657,7 +649,14 @@ def _wrap_async(
                 result = await func(*args, **kwargs)
                 duration = time.perf_counter() - t0
                 if call_span.record_return:
-                    _record_return(span, result)
+                    # Swallow attribute-set failures so an exotic return value (e.g. one
+                    # whose repr raises during logfire's JSON-schema serialisation) can't
+                    # mask the function's real return. `record_return=True` is opt-in for
+                    # observability, not a contract to fail the call.
+                    try:
+                        span.set_attribute('return', result)
+                    except Exception:  # pragma: no cover - defensive
+                        pass
         finally:
             _task_run.CURRENT_TASK_RUN.reset(token)
 
@@ -736,7 +735,14 @@ def _wrap_sync(
                 result = func(*args, **kwargs)
                 duration = time.perf_counter() - t0
                 if call_span.record_return:
-                    _record_return(span, result)
+                    # Swallow attribute-set failures so an exotic return value (e.g. one
+                    # whose repr raises during logfire's JSON-schema serialisation) can't
+                    # mask the function's real return. `record_return=True` is opt-in for
+                    # observability, not a contract to fail the call.
+                    try:
+                        span.set_attribute('return', result)
+                    except Exception:  # pragma: no cover - defensive
+                        pass
         finally:
             _task_run.CURRENT_TASK_RUN.reset(token)
 
