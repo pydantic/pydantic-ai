@@ -2604,7 +2604,7 @@ async def test_tool_approval_request_emission():
                 'toolName': 'delete_file',
                 'input': {'path': 'test.txt'},
             },
-            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': IsStr()},
+            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': 'delete_1'},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -3262,7 +3262,7 @@ async def test_dispatch_request_with_tool_approval():
                 'toolName': 'delete_file',
                 'input': {'path': 'test.txt'},
             },
-            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': IsStr()},
+            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': 'delete_1'},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -4872,6 +4872,118 @@ async def test_adapter_dump_messages_tool_call_without_return():
             }
         ]
     )
+
+
+async def test_adapter_dump_messages_deferred_tool_approval():
+    """Test that dump_messages emits approval-requested for tool calls without results on v6."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    assert tool_part == snapshot(
+        {
+            'type': 'tool-dangerous_action',
+            'tool_call_id': 'deferred_tc1',
+            'state': 'approval-requested',
+            'input': {'target': 'production'},
+            'provider_executed': False,
+            'call_provider_metadata': None,
+            'approval': {'id': 'deferred_tc1'},
+        }
+    )
+
+    # Verify roundtrip — load_messages should reconstruct a ToolCallPart without a result
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert len(reloaded) == 2
+    tool_call_part = reloaded[1].parts[0]
+    assert isinstance(tool_call_part, ToolCallPart)
+    assert tool_call_part.tool_name == 'dangerous_action'
+    assert tool_call_part.tool_call_id == 'deferred_tc1'
+
+
+async def test_adapter_dump_messages_deferred_tool_v5_fallback():
+    """Test that on v5 (default), deferred tool calls fall back to input-available."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[0]['parts'][0]
+    assert tool_part['state'] == 'input-available'
+    assert tool_part['approval'] is None
+
+
+async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
+    """Test that tool calls with results are shown as completed, not deferred."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='resolved_tc1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='dangerous_action',
+                    content='Action completed',
+                    tool_call_id='resolved_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    assert tool_part['state'] == 'output-available'
+    assert tool_part['output'] == 'Action completed'
+
+
+async def test_adapter_dump_messages_deferred_builtin_tool():
+    """Test that on v6, builtin tool calls without results are detected as deferred."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='builtin_deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[0]['parts'][0]
+    assert tool_part['state'] == 'approval-requested'
+    assert tool_part['approval'] == {'id': 'builtin_deferred_tc1'}
 
 
 async def test_adapter_dump_messages_assistant_starts_with_tool():
