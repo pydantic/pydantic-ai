@@ -127,7 +127,6 @@ _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
 }
 
-
 class XaiModelSettings(ModelSettings, total=False):
     """Settings specific to xAI models.
 
@@ -898,8 +897,14 @@ class XaiStreamedResponse(StreamedResponse):
     _provider: Provider[AsyncClient]
 
     async def _close_stream(self) -> None:
-        # xAI SDK uses gRPC; the stream's cancel() is synchronous.
-        self._stream.cancel()  # type: ignore[union-attr]
+        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
+        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
+        #
+        # Calling `aclose()` shuts down that local async-generator wrapper and
+        # stops consumption on our side, but the SDK does not expose the inner
+        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
+        # RPC cancellation hook.
+        await self._stream.aclose()  # type: ignore[union-attr]
 
     @property
     def system(self) -> str:
