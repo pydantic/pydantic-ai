@@ -1,0 +1,30 @@
+pydantic_evals/pydantic_evals/online_capability.py
+  h_bc896295f46a8b 133,147
+pydantic_evals/pydantic_evals/_task_run.py
+  6ed2d07c6628d4d2 39,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "2430d182a82aef7c7658f454f30296f93d3e6be3",
+  "prompts": {
+    "6ed2d07c6628d4d2": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1776436231247",
+        "model": "unknown"
+      },
+      "human_author": "Alex Hall",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 1
+    }
+  },
+  "humans": {
+    "h_bc896295f46a8b": {
+      "author": "Alex Hall"
+    }
+  }
+}
