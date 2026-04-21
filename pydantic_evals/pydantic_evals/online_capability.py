@@ -25,6 +25,7 @@ from .online import (
     SpanReference,
 )
 from .otel._context_subtree import context_subtree
+from .otel.span_tree import SpanTree
 
 __all__ = ('OnlineEvaluation',)
 
@@ -138,7 +139,8 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             duration = time.perf_counter() - t0
 
         # Extract standard metrics from the span tree
-        _task_run.extract_span_tree_metrics(task_run, span_tree)
+        if isinstance(span_tree, SpanTree):  # pragma: no branch
+            _task_run.extract_span_tree_metrics(task_run, span_tree)
 
         # Merge config and run metadata
         metadata: dict[str, Any] | None = None

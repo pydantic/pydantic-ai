@@ -47,6 +47,7 @@ from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 from .otel._context_subtree import context_subtree
+from .otel.span_tree import SpanTree
 
 try:
     import logfire as _logfire  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -645,7 +646,8 @@ def _wrap_async(
                     pass
 
         # Extract standard metrics (requests, cost, token usage) from the span tree
-        _task_run.extract_span_tree_metrics(task_run, span_tree)
+        if isinstance(span_tree, SpanTree):  # pragma: no branch
+            _task_run.extract_span_tree_metrics(task_run, span_tree)
 
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None
@@ -725,7 +727,8 @@ def _wrap_sync(
                     pass
 
         # Extract standard metrics (requests, cost, token usage) from the span tree
-        _task_run.extract_span_tree_metrics(task_run, span_tree)
+        if isinstance(span_tree, SpanTree):  # pragma: no branch
+            _task_run.extract_span_tree_metrics(task_run, span_tree)
 
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None

@@ -47,6 +47,7 @@ from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
 from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
 from .lifecycle import CaseLifecycle
+from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure
 
@@ -989,7 +990,8 @@ async def _run_task(
 
     task_run, task_output, duration, span_tree = await _run_once()
 
-    _task_run.extract_span_tree_metrics(task_run, span_tree)
+    if isinstance(span_tree, SpanTree):  # pragma: no branch
+        _task_run.extract_span_tree_metrics(task_run, span_tree)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,

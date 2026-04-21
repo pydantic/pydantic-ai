@@ -5,8 +5,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic_evals.otel._errors import SpanTreeRecordingError
-
 from .otel.span_tree import SpanTree
 
 
@@ -39,10 +37,8 @@ class TaskRun:
             CURRENT_TASK_RUN.reset(token)
 
 
-def extract_span_tree_metrics(task_run: TaskRun, span_tree: SpanTree | SpanTreeRecordingError) -> None:
+def extract_span_tree_metrics(task_run: TaskRun, span_tree: SpanTree) -> None:
     """Extract standard metrics (requests, cost, token usage) from a span tree."""
-    if not isinstance(span_tree, SpanTree):
-        return
     for node in span_tree:
         if 'gen_ai.request.model' not in node.attributes:
             continue
