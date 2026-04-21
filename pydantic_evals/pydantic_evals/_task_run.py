@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +27,14 @@ class TaskRun:
 
     def record_attribute(self, name: str, value: Any) -> None:
         self.attributes[name] = value
+
+    @contextmanager
+    def set_as_current(self):
+        token = CURRENT_TASK_RUN.set(self)
+        try:
+            yield self
+        finally:
+            CURRENT_TASK_RUN.reset(token)
 
 
 def extract_span_tree_metrics(task_run: TaskRun, span_tree: SpanTree) -> None:

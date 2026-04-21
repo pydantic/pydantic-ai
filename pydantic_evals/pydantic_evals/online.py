@@ -627,27 +627,23 @@ def _wrap_async(
         recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
 
         # Run the function with span tree capture and attribute/metric tracking
-        task_run = _task_run.TaskRun()
-        token = _task_run.CURRENT_TASK_RUN.set(task_run)
-        try:
-            with (
-                _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-                context_subtree() as span_tree,
-            ):
-                t0 = time.perf_counter()
-                result = await func(*args, **kwargs)
-                duration = time.perf_counter() - t0
-                if call_span.record_return:
-                    # Swallow attribute-set failures so an exotic return value (e.g. one
-                    # whose repr raises during logfire's JSON-schema serialisation) can't
-                    # mask the function's real return. `record_return=True` is opt-in for
-                    # observability, not a contract to fail the call.
-                    try:
-                        span.set_attribute('return', result)
-                    except Exception:  # pragma: no cover - defensive
-                        pass
-        finally:
-            _task_run.CURRENT_TASK_RUN.reset(token)
+        with (
+            _task_run.TaskRun().set_as_current() as task_run,
+            _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
+            context_subtree() as span_tree,
+        ):
+            t0 = time.perf_counter()
+            result = await func(*args, **kwargs)
+            duration = time.perf_counter() - t0
+            if call_span.record_return:
+                # Swallow attribute-set failures so an exotic return value (e.g. one
+                # whose repr raises during logfire's JSON-schema serialisation) can't
+                # mask the function's real return. `record_return=True` is opt-in for
+                # observability, not a contract to fail the call.
+                try:
+                    span.set_attribute('return', result)
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
         # Extract standard metrics (requests, cost, token usage) from the span tree
         if isinstance(span_tree, SpanTree):  # pragma: no branch
@@ -712,27 +708,23 @@ def _wrap_sync(
         recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
 
         # Run the function with span tree capture and attribute/metric tracking
-        task_run = _task_run.TaskRun()
-        token = _task_run.CURRENT_TASK_RUN.set(task_run)
-        try:
-            with (
-                _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-                context_subtree() as span_tree,
-            ):
-                t0 = time.perf_counter()
-                result = func(*args, **kwargs)
-                duration = time.perf_counter() - t0
-                if call_span.record_return:
-                    # Swallow attribute-set failures so an exotic return value (e.g. one
-                    # whose repr raises during logfire's JSON-schema serialisation) can't
-                    # mask the function's real return. `record_return=True` is opt-in for
-                    # observability, not a contract to fail the call.
-                    try:
-                        span.set_attribute('return', result)
-                    except Exception:  # pragma: no cover - defensive
-                        pass
-        finally:
-            _task_run.CURRENT_TASK_RUN.reset(token)
+        with (
+            _task_run.TaskRun().set_as_current() as task_run,
+            _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
+            context_subtree() as span_tree,
+        ):
+            t0 = time.perf_counter()
+            result = func(*args, **kwargs)
+            duration = time.perf_counter() - t0
+            if call_span.record_return:
+                # Swallow attribute-set failures so an exotic return value (e.g. one
+                # whose repr raises during logfire's JSON-schema serialisation) can't
+                # mask the function's real return. `record_return=True` is opt-in for
+                # observability, not a contract to fail the call.
+                try:
+                    span.set_attribute('return', result)
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
         # Extract standard metrics (requests, cost, token usage) from the span tree
         if isinstance(span_tree, SpanTree):  # pragma: no branch

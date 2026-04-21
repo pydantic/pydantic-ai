@@ -133,15 +133,10 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             return await handler()
 
         # Run the agent with span tree capture and attribute/metric tracking
-        task_run = _task_run.TaskRun()
-        token = _task_run.CURRENT_TASK_RUN.set(task_run)
-        try:
-            with context_subtree() as span_tree:
-                t0 = time.perf_counter()
-                result = await handler()
-                duration = time.perf_counter() - t0
-        finally:  # pragma: no branch
-            _task_run.CURRENT_TASK_RUN.reset(token)
+        with _task_run.TaskRun().set_as_current() as task_run, context_subtree() as span_tree:
+            t0 = time.perf_counter()
+            result = await handler()
+            duration = time.perf_counter() - t0
 
         # Extract standard metrics from the span tree
         if isinstance(span_tree, SpanTree):  # pragma: no branch
