@@ -7,6 +7,7 @@ from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 from pydantic import ValidationError
@@ -888,7 +889,12 @@ class StreamEventsResult(Generic[OutputDataT]):
         self._managed = True
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> bool:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
         if not self._closed:
             self._closed = True
             await self._generator.aclose()
