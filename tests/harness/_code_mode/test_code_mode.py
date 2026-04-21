@@ -1306,7 +1306,7 @@ class TestCodeMode:
 
     async def test_sequential_tool_rendered_as_sync_and_resolved_inline(self) -> None:
         """A tool with `sequential=True` is rendered as `def` (sync) and
-        resolved inline at FunctionSnapshot via `resume(return_value=...)`."""
+        resolved inline at FunctionSnapshot via `resume({'return_value': ...})`."""
         from dataclasses import replace as dc_replace
 
         class _SeqToolset(AbstractToolset[None]):

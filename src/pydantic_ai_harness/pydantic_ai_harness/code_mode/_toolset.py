@@ -585,15 +585,15 @@ async def _execution_loop(
 
     Tool calls are handled based on their execution mode:
 
-    - **Parallel tools** (``async def``): deferred via ``resume(future=...)``
-      and eagerly scheduled as ``asyncio.Task``s for concurrent execution.
-      Resolved at ``FutureSnapshot`` via ``asyncio.gather``.
-    - **Sequential tools** (``def``): resolved inline at ``FunctionSnapshot``
-      via ``resume(return_value=...)`` or ``resume(exception=...)``. Before
+    - **Parallel tools** (`async def`): deferred via `resume({'future': ...})`
+      and eagerly scheduled as `asyncio.Task`s for concurrent execution.
+      Resolved at `FutureSnapshot` via `asyncio.gather`.
+    - **Sequential tools** (`def`): resolved inline at `FunctionSnapshot`
+      via `resume({'return_value': ...})` or `resume({'exception': ...})`. Before
       dispatching, any pending parallel tasks are awaited to maintain ordering.
     - **Global sequential mode** (DBOS/Temporal): all tools are deferred via
-      ``resume(future=...)`` but stored as bare coroutines and awaited
-      one-at-a-time at ``FutureSnapshot`` to prevent interleaving.
+      `resume({'future': ...})` but stored as bare coroutines and awaited
+      one-at-a-time at `FutureSnapshot` to prevent interleaving.
     """
     pending: dict[int, asyncio.Task[Any] | Coroutine[Any, Any, Any]] = {}
     # Results from parallel tasks that were awaited early (at a sequential-tool
@@ -646,11 +646,11 @@ async def _handle_function_snapshot(
     fn_name = snapshot.function_name
 
     if fn_name not in callable_defs:
-        return snapshot.resume(exception=NameError(f'Unknown function: {fn_name}'))
+        return snapshot.resume({'exception': NameError(f'Unknown function: {fn_name}')})
 
     if snapshot.args:
         return snapshot.resume(
-            exception=TypeError(f'{fn_name}() does not accept positional arguments; use keyword arguments')
+            {'exception': TypeError(f'{fn_name}() does not accept positional arguments; use keyword arguments')}
         )
 
     original_name = sanitized_to_original.get(fn_name, fn_name)
@@ -663,8 +663,8 @@ async def _handle_function_snapshot(
             pre_resolved[cid] = await _resolve_coro(pending.pop(cid))
         outcome = await _resolve_coro(dispatch(original_name, snapshot.kwargs))
         if 'return_value' in outcome:
-            return snapshot.resume(return_value=outcome['return_value'])
-        return snapshot.resume(exception=outcome['exception'])
+            return snapshot.resume({'return_value': outcome['return_value']})
+        return snapshot.resume({'exception': outcome['exception']})
 
     # Deferred execution — store for later resolution at FutureSnapshot.
     if global_sequential:
@@ -673,7 +673,7 @@ async def _handle_function_snapshot(
     else:
         # Eagerly schedule as a Task for concurrent execution.
         pending[snapshot.call_id] = asyncio.ensure_future(dispatch(original_name, snapshot.kwargs))
-    return snapshot.resume(future=...)
+    return snapshot.resume({'future': ...})
 
 
 async def _resolve_future_snapshot(

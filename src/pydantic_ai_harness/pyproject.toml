@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 code-mode = [
-    'pydantic-monty>=0.0.10',
+    'pydantic-monty>=0.0.16',
 ]
 temporal = [
     'pydantic-ai-slim[temporal]',
