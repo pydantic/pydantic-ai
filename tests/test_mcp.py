@@ -318,6 +318,27 @@ async def test_aexit_called_more_times_than_aenter():
         await server.__aexit__(None, None, None)
 
 
+async def test_aenter_cancelled_during_startup():
+    """Cancelling `__aenter__` while it waits for the session to become ready must tear down
+    the background session task cleanly and leave the server re-entrant.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    async def hanging_runner() -> None:
+        await asyncio.Event().wait()
+
+    with patch.object(server, '_session_runner', hanging_runner):
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(server.__aenter__(), timeout=0.1)
+
+    assert not server.is_running
+
+    # Re-entry must work after a cancelled startup
+    async with server:
+        assert server.is_running
+    assert not server.is_running
+
+
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
