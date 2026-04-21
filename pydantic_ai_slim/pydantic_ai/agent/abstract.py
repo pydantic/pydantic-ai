@@ -315,7 +315,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 async def _stream_and_advance(
                     n: _agent_graph.AgentNode[AgentDepsT, Any],
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-                    if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                    if self.is_model_request_node(n) or self.is_call_tools_node(n) or self.is_continue_request_node(n):
                         async with n.stream(agent_run.ctx) as stream:
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
@@ -716,7 +716,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
                             # for SetFinalResult, but not for this ModelRequestNode.
                             break
-                elif self.is_call_tools_node(node):
+                elif self.is_call_tools_node(node) or self.is_continue_request_node(node):
                     async with node.stream(agent_run.ctx) as stream:
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
@@ -1376,6 +1376,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
         """
         return isinstance(node, _agent_graph.CallToolsNode)
+
+    @staticmethod
+    def is_continue_request_node(
+        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+    ) -> TypeIs[_agent_graph.ContinueRequestNode[T, S]]:
+        """Check if the node is a `ContinueRequestNode`, narrowing the type if it is.
+
+        This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
+        """
+        return isinstance(node, _agent_graph.ContinueRequestNode)
 
     @staticmethod
     def is_user_prompt_node(

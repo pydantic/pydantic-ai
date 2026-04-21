@@ -1,0 +1,271 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Create a file at /tmp/hello.py containing print("hello world")
+        role: user
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      model: gpt-5.4
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0eb637b779deacb70169b1acb49758819a891e19ad3d23d29d","object":"response","created_at":1773212940,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"tool_choice":"auto","tools":[{"type":"apply_patch"}],"instructions":"Always use the apply_patch tool. Keep responses brief.","usage":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0eb637b779deacb70169b1acb49758819a891e19ad3d23d29d","object":"response","created_at":1773212940,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"usage":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"apc_0eb637b779deacb70169b1acb536c4819abc9c6e2d51a0650e","type":"apply_patch_call","status":"in_progress","call_id":"call_UKOwbbQ3wP1PCnbgMdOECZY6","operation":{"type":"create_file","path":"tmp/hello.py","diff":""}},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"apc_0eb637b779deacb70169b1acb536c4819abc9c6e2d51a0650e","type":"apply_patch_call","status":"completed","call_id":"call_UKOwbbQ3wP1PCnbgMdOECZY6","operation":{"type":"create_file","path":"tmp/hello.py","diff":""}},"output_index":0,"sequence_number":3}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0eb637b779deacb70169b1acb49758819a891e19ad3d23d29d","object":"response","created_at":1773212940,"completed_at":1773212945,"status":"completed","background":false,"model":"gpt-5.4-2026-03-05","output":[{"id":"apc_0eb637b779deacb70169b1acb536c4819abc9c6e2d51a0650e","type":"apply_patch_call","status":"completed","call_id":"call_UKOwbbQ3wP1PCnbgMdOECZY6","operation":{"type":"create_file","path":"tmp/hello.py","diff":""}}],"usage":{"input_tokens":659,"output_tokens":34,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}},"metadata":{}},"sequence_number":4}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - test-org
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - call_id: call_UKOwbbQ3wP1PCnbgMdOECZY6
+        output: '{"status": "completed", "output": "Created tmp/hello.py"}'
+        status: completed
+        type: apply_patch_call_output
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      model: gpt-5.4
+      previous_response_id: resp_0eb637b779deacb70169b1acb49758819a891e19ad3d23d29d
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0eb637b779deacb70169b1acb632d8819a832d565353b260fc","object":"response","created_at":1773212950,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"tool_choice":"auto","tools":[{"type":"apply_patch"}],"instructions":"Always use the apply_patch tool. Keep responses brief.","usage":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0eb637b779deacb70169b1acb632d8819a832d565353b260fc","object":"response","created_at":1773212950,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"usage":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"apc_0eb637b779deacb70169b1acb6cbc8819a8bab2ba15a5cf763","type":"apply_patch_call","status":"in_progress","call_id":"call_5IM4j9OVWM5mKSXhRTEfBl5g","operation":{"type":"update_file","path":"tmp/hello.py","diff":""}},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"apc_0eb637b779deacb70169b1acb6cbc8819a8bab2ba15a5cf763","type":"apply_patch_call","status":"completed","call_id":"call_5IM4j9OVWM5mKSXhRTEfBl5g","operation":{"type":"update_file","path":"tmp/hello.py","diff":""}},"output_index":0,"sequence_number":3}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0eb637b779deacb70169b1acb632d8819a832d565353b260fc","object":"response","created_at":1773212950,"completed_at":1773212955,"status":"completed","background":false,"model":"gpt-5.4-2026-03-05","output":[{"id":"apc_0eb637b779deacb70169b1acb6cbc8819a8bab2ba15a5cf763","type":"apply_patch_call","status":"completed","call_id":"call_5IM4j9OVWM5mKSXhRTEfBl5g","operation":{"type":"update_file","path":"tmp/hello.py","diff":""}}],"usage":{"input_tokens":740,"output_tokens":35,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}},"metadata":{}},"sequence_number":4}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - test-org
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - call_id: call_5IM4j9OVWM5mKSXhRTEfBl5g
+        output: '{"status": "completed", "output": "Updated tmp/hello.py"}'
+        status: completed
+        type: apply_patch_call_output
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      model: gpt-5.4
+      previous_response_id: resp_0eb637b779deacb70169b1acb632d8819a832d565353b260fc
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0eb637b779deacb70169b1acb75f7c819a84d8bcfd07449c5b","object":"response","created_at":1773212960,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"tool_choice":"auto","tools":[{"type":"apply_patch"}],"instructions":"Always use the apply_patch tool. Keep responses brief.","usage":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0eb637b779deacb70169b1acb75f7c819a84d8bcfd07449c5b","object":"response","created_at":1773212960,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"usage":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"apc_0eb637b779deacb70169b1acb81164819a81f06d444899b547","type":"apply_patch_call","status":"in_progress","call_id":"call_VL9BvRCyPrmiJIBYz5b09RsC","operation":{"type":"update_file","path":"tmp/hello.py","diff":""}},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"apc_0eb637b779deacb70169b1acb81164819a81f06d444899b547","type":"apply_patch_call","status":"completed","call_id":"call_VL9BvRCyPrmiJIBYz5b09RsC","operation":{"type":"update_file","path":"tmp/hello.py","diff":""}},"output_index":0,"sequence_number":3}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0eb637b779deacb70169b1acb75f7c819a84d8bcfd07449c5b","object":"response","created_at":1773212960,"completed_at":1773212965,"status":"completed","background":false,"model":"gpt-5.4-2026-03-05","output":[{"id":"apc_0eb637b779deacb70169b1acb81164819a81f06d444899b547","type":"apply_patch_call","status":"completed","call_id":"call_VL9BvRCyPrmiJIBYz5b09RsC","operation":{"type":"update_file","path":"tmp/hello.py","diff":""}}],"usage":{"input_tokens":825,"output_tokens":35,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}},"metadata":{}},"sequence_number":4}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - test-org
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - call_id: call_VL9BvRCyPrmiJIBYz5b09RsC
+        output: '{"status": "completed", "output": "Updated tmp/hello.py"}'
+        status: completed
+        type: apply_patch_call_output
+      instructions: Always use the apply_patch tool. Keep responses brief.
+      model: gpt-5.4
+      previous_response_id: resp_0eb637b779deacb70169b1acb75f7c819a84d8bcfd07449c5b
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: apply_patch
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0eb637b779deacb70169b1acb86544819aa1ca10915dc8eda0","object":"response","created_at":1773212970,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"tool_choice":"auto","tools":[{"type":"apply_patch"}],"instructions":"Always use the apply_patch tool. Keep responses brief.","usage":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0eb637b779deacb70169b1acb86544819aa1ca10915dc8eda0","object":"response","created_at":1773212970,"status":"in_progress","background":false,"model":"gpt-5.4-2026-03-05","output":[],"usage":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","output_index":0,"part":{"type":"output_text","annotations":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Done.","item_id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","output_index":0,"text":"Done.","sequence_number":5}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","output_index":0,"part":{"type":"output_text","annotations":[],"text":"Done."},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"text":"Done."}],"role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0eb637b779deacb70169b1acb86544819aa1ca10915dc8eda0","object":"response","created_at":1773212970,"completed_at":1773212975,"status":"completed","background":false,"model":"gpt-5.4-2026-03-05","output":[{"id":"msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"text":"Done."}],"role":"assistant"}],"usage":{"input_tokens":904,"output_tokens":6,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}},"metadata":{}},"sequence_number":8}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - test-org
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1

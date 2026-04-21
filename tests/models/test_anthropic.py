@@ -45,8 +45,15 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    ShellTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -57,6 +64,8 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets.shell import ShellToolset
+from pydantic_ai.toolsets.text_editor import TextEditorCommand, TextEditorOutput, TextEditorToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -103,6 +112,7 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
+        BetaTextEditorCodeExecutionToolResultBlock,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
@@ -294,6 +304,93 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_pause_turn_continues_run(allow_model_requests: None):
+    c1 = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c1.stop_reason = 'pause_turn'
+    c2 = completion_message([BetaTextBlock(text='final', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+
+    mock_client = MockAnthropic.create_mock([c1, c2])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('test prompt')
+
+    assert result.output == 'final'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
+    """Test that exceeding the default max continuations (50) raises UnexpectedModelBehavior."""
+    responses: list[BetaMessage | Exception] = []
+    for _ in range(51):
+        c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+        c.stop_reason = 'pause_turn'
+        responses.append(c)
+
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
+        await agent.run('test prompt', usage_limits=UsageLimits(request_limit=None))
+
+
+@pytest.mark.vcr()
+async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
+    agent = Agent(model, builtin_tools=[WebSearchTool()], model_settings=settings)
+
+    prompt = (
+        'Run a series of web searches to gather up-to-date context. '
+        'Do 6 separate searches, one at a time, and do not answer until all searches are complete. '
+        'Queries: '
+        '1) "San Francisco weather today", '
+        '2) "San Francisco sunrise time today", '
+        '3) "Golden Gate Bridge traffic today", '
+        '4) "San Francisco air quality today", '
+        '5) "San Francisco events this week", '
+        '6) "San Francisco ferry schedule today". '
+        '7) "prevailing information on quantum computing today", '
+        '8) "latest news on the stock market today", '
+        '9) "latest news on the weather in San Francisco today", '
+        '10) "latest news on the traffic in San Francisco today", '
+        '11) "latest news on the air quality in San Francisco today", '
+        '12) "latest news on the events in San Francisco this week", '
+        '13) "latest news on the ferry schedule in San Francisco today", '
+        '14) "latest news on the quantum computing in San Francisco today", '
+        '15) "latest news on the stock market in San Francisco today", '
+        'After the searches, provide a concise summary.'
+    )
+
+    result = await agent.run(prompt)
+
+    # With ContinueRequestNode, pause_turn responses are merged into the final response
+    # and no longer appear as separate messages in the history.
+    # Verify the agent completed successfully (which exercises the continuation path).
+    assert result.output
 
 
 async def test_async_request_prompt_caching(allow_model_requests: None):
@@ -6181,7 +6278,6 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     # Get tools from model
     tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
     assert web_fetch_tool_param is not None
@@ -6214,7 +6310,6 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
 
     # Get tools from model
     tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
     assert web_fetch_tool_param is not None
@@ -7000,7 +7095,7 @@ Here's how it breaks down following the order of operations:
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwoJjSVr9b94gf8DPEi'},
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7468,6 +7563,137 @@ Results match: True
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
+            ),
+        ]
+    )
+
+
+async def test_anthropic_shell_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'command': 'python3 -c "print(2 + 2)"'},
+                        tool_call_id='srvtoolu_018J4uFgCiKo2YeDS8DmVJtE',
+                        provider_name='anthropic',
+                        provider_details={'server_tool_name': 'bash_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_018J4uFgCiKo2YeDS8DmVJtE',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='2 + 2 = **4**'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=4627,
+                    output_tokens=82,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 4627,
+                        'output_tokens': 82,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CYvsF3eEuthoNQYxnMMYa'},
+                provider_response_id='msg_01ADHu3dgMsjDVUWBzFpAfSV',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_shell_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        await result.get_output()
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args='{"command": "python3 -c \\"print(2 + 2)\\""}',
+                        tool_call_id='srvtoolu_01UxJPPkQp71eQ8WTmHrfXff',
+                        provider_name='anthropic',
+                        provider_details={'server_tool_name': 'bash_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01UxJPPkQp71eQ8WTmHrfXff',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='The result of **2 + 2 = 4**, as calculated by Python!'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=4627,
+                    output_tokens=91,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 4627,
+                        'output_tokens': 91,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CYvsKSFQ7yFXaDtpirUvu'},
+                provider_response_id='msg_01CAcVpyAEzKZuodAeKRoBfp',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -9329,7 +9555,7 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     await agent.run('follow up', message_history=history)
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['container'] == BetaContainerParams(id='container_from_history')
+    assert completion_kwargs['container'] == 'container_from_history'
 
 
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
@@ -9941,3 +10167,1192 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
             requests=1,
         )
     )
+
+
+async def test_pause_turn_streaming_continuation(allow_model_requests: None):
+    """Test that pause_turn works with iter() + stream(), exercising ContinueRequestNode streaming."""
+    from pydantic_ai._agent_graph import ContinueRequestNode
+    from pydantic_graph import End
+
+    # First response: pause_turn (non-streaming, via ModelRequestNode.run())
+    c1 = completion_message([BetaTextBlock(text='first', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c1.stop_reason = 'pause_turn'
+
+    def _make_stream(text: str, stop_reason: str) -> list[BetaRawMessageStreamEvent]:
+        return [
+            BetaRawMessageStartEvent(
+                type='message_start',
+                message=BetaMessage(
+                    id=f'msg_{text}',
+                    model='claude-3-5-haiku-123',
+                    role='assistant',
+                    type='message',
+                    content=[],
+                    stop_reason=None,
+                    usage=BetaUsage(input_tokens=10, output_tokens=0),
+                ),
+            ),
+            BetaRawContentBlockStartEvent(
+                type='content_block_start',
+                index=0,
+                content_block=BetaTextBlock(type='text', text=text),
+            ),
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+            BetaRawMessageDeltaEvent(
+                type='message_delta',
+                delta=Delta(stop_reason=cast(Any, stop_reason)),
+                usage=BetaMessageDeltaUsage(input_tokens=10, output_tokens=5),
+            ),
+            BetaRawMessageStopEvent(type='message_stop'),
+        ]
+
+    # stream[0] is a placeholder (index 0 uses messages_ path for the initial non-streaming request).
+    # stream[1]: streaming continuation returns pause_turn again (covers line 1172).
+    # stream[2]: streaming continuation returns end_turn (final).
+    mock_client = cast(
+        AsyncAnthropic,
+        MockAnthropic(
+            messages_=[c1],
+            stream=[[], _make_stream('second', 'pause_turn'), _make_stream('done', 'end_turn')],
+        ),
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    continuation_count = 0
+    async with agent.iter('test prompt') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ContinueRequestNode):
+                continuation_count += 1
+                # Exercise the streaming path on ContinueRequestNode
+                async with node.stream(agent_run.ctx) as stream:
+                    async for _event in stream:
+                        pass
+            # Advance: for ContinueRequestNode this returns cached _result (line 1118)
+            node = await agent_run.next(node)
+
+    assert continuation_count == 2
+    assert agent_run.result
+    assert agent_run.result.output == snapshot('firstseconddone')
+
+
+async def test_pause_turn_streaming_continuation_stream_error(allow_model_requests: None):
+    """Test that an error during streaming continuation propagates and cancels the wrap task."""
+    from pydantic_ai._agent_graph import ContinueRequestNode
+    from pydantic_graph import End
+
+    c1 = completion_message([BetaTextBlock(text='first', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c1.stop_reason = 'pause_turn'
+
+    # Continuation stream that raises mid-stream
+    error_stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_err',
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=10, output_tokens=0),
+            ),
+        ),
+        RuntimeError('stream exploded'),
+    ]
+
+    mock_client = cast(
+        AsyncAnthropic,
+        MockAnthropic(messages_=[c1], stream=[[], error_stream]),
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    async with agent.iter('test prompt') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ContinueRequestNode):
+                with pytest.raises(RuntimeError, match='stream exploded'):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for _event in stream:
+                            pass
+                break
+            node = await agent_run.next(node)
+
+
+async def test_anthropic_local_shell_toolset(allow_model_requests: None, anthropic_api_key: str):
+    """Test ShellToolset with Anthropic using native bash_20250124 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        toolsets=[ShellToolset.local()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    assert '4' in result.output
+    messages = result.all_messages()
+    # Verify tool call used ToolCallPart (not BuiltinToolCallPart)
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    # Verify tool return exists
+    tool_returns = [p for msg in messages for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='shell',
+                        args={'command': 'python3 -c "print(2 + 2)"'},
+                        tool_call_id='toolu_016EHVaf6tCPBWQSjkredb5c',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=774,
+                    output_tokens=65,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 774,
+                        'output_tokens': 65,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01XHMT9Qb389yy3bPgZuugz1',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='shell',
+                        content='{"output": "4\\n", "exit_code": 0}',
+                        tool_call_id='toolu_016EHVaf6tCPBWQSjkredb5c',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The result of **2 + 2 is 4**! 🎉')],
+                usage=RequestUsage(
+                    input_tokens=953,
+                    output_tokens=22,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 953,
+                        'output_tokens': 22,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01YDLfT9HyYBeaKP57V4kUwS',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_local_shell_toolset_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Test ShellToolset streaming with Anthropic using native bash_20250124 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        toolsets=[ShellToolset.local()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        output = await result.get_output()
+    assert '4' in output
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='shell',
+                        args='{"command": "python3 -c \\"print(2 + 2)\\""}',
+                        tool_call_id='toolu_015Rk6ndKaiXYx9AiJcpUR2H',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=774,
+                    output_tokens=65,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 774,
+                        'output_tokens': 65,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_016qmMxFjrLSYY2paN55KqFC',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='shell',
+                        content='{"output": "4\\n", "exit_code": 0}',
+                        tool_call_id='toolu_015Rk6ndKaiXYx9AiJcpUR2H',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The result of **2 + 2 = 4**! 🎉')],
+                usage=RequestUsage(
+                    input_tokens=953,
+                    output_tokens=22,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 953,
+                        'output_tokens': 22,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_011fHpYwuemfFdxg8x6fvsd8',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def _text_editor_execute(cmd: TextEditorCommand) -> TextEditorOutput:
+    """Simple text editor executor for testing."""
+    command = cmd['command']
+    path = cmd['path']
+    if command == 'view':
+        return TextEditorOutput(output=f'Contents of {path}:\nprint("hello world")\n')
+    elif command == 'create':
+        return TextEditorOutput(output=f'File created: {path}')
+    elif command == 'str_replace':
+        return TextEditorOutput(output=f'Replacement performed in {path}')
+    elif command == 'insert':
+        return TextEditorOutput(output=f'Text inserted in {path}')
+    else:
+        return TextEditorOutput(output=f'Unknown command: {command}', success=False)
+
+
+async def test_anthropic_text_editor_toolset(allow_model_requests: None, anthropic_api_key: str):
+    """Test TextEditorToolset with Anthropic using native text_editor_20250728 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[TextEditorToolset(execute=_text_editor_execute, max_characters=100_000)],
+        instructions='Always use the text editor tool. Keep responses brief.',
+    )
+
+    result = await agent.run('View the file /tmp/example.py')
+    assert 'hello world' in result.output.lower() or 'example.py' in result.output.lower()
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='View the file /tmp/example.py', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the text editor tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='str_replace_based_edit_tool',
+                        args={'command': 'view', 'path': '/tmp/example.py'},
+                        tool_call_id='toolu_01F9jsn5Fg38kS5NSUURKpyy',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=1270,
+                    output_tokens=82,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1270,
+                        'output_tokens': 82,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_015xuYycvoFxnAxGM9ZDA7F8',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='str_replace_based_edit_tool',
+                        content='{"output": "Contents of /tmp/example.py:\\nprint(\\"hello world\\")\\n", "success": true}',
+                        tool_call_id='toolu_01F9jsn5Fg38kS5NSUURKpyy',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the text editor tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+The file `/tmp/example.py` contains a single line of Python code:
+
+```python
+print("hello world")
+```
+
+It's a simple script that prints `"hello world"` to the console.\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=1391,
+                    output_tokens=49,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1391,
+                        'output_tokens': 49,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01GgDAYdcLVErjsGgMa56dgw',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('command', 'expected_output', 'expected_success'),
+    [
+        ('create', 'File created: /tmp/example.py', True),
+        ('str_replace', 'Replacement performed in /tmp/example.py', True),
+        ('insert', 'Text inserted in /tmp/example.py', True),
+        ('unknown', 'Unknown command: unknown', False),
+    ],
+)
+async def test_text_editor_execute_helper_variants(
+    command: str,
+    expected_output: str,
+    expected_success: bool,
+) -> None:
+    result = await _text_editor_execute(cast(TextEditorCommand, {'command': command, 'path': '/tmp/example.py'}))
+    assert result.output == expected_output
+    assert result.success is expected_success
+
+
+async def test_anthropic_text_editor_toolset_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Test TextEditorToolset streaming with Anthropic using native text_editor_20250728 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[TextEditorToolset(execute=_text_editor_execute)],
+        instructions='Always use the text editor tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('View the file /tmp/example.py') as result:
+        output = await result.get_output()
+    assert 'hello world' in output.lower() or 'example.py' in output.lower()
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='View the file /tmp/example.py', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the text editor tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='str_replace_based_edit_tool',
+                        args='{"command": "view", "path": "/tmp/example.py"}',
+                        tool_call_id='toolu_015czvgRAN7XL7DZXTBbSXiP',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=1270,
+                    output_tokens=82,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1270,
+                        'output_tokens': 82,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_0163z5LYP99BxFSy96FRYrVQ',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='str_replace_based_edit_tool',
+                        content='{"output": "Contents of /tmp/example.py:\\nprint(\\"hello world\\")\\n", "success": true}',
+                        tool_call_id='toolu_015czvgRAN7XL7DZXTBbSXiP',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the text editor tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+The file `/tmp/example.py` contains a single line of Python code:
+
+```python
+print("hello world")
+```
+
+It's a simple script that prints **"hello world"** to the console.\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=1391,
+                    output_tokens=49,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 1391,
+                        'output_tokens': 49,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01W31jAUhgU7aDqWUQK1VHgy',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_shell_tool_skills_are_sent_in_container_and_betas(allow_model_requests: None):
+    from pydantic_ai.builtin_tools import SkillReference
+
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool(skills=[SkillReference(skill_id='computer-use', version='2', source='provider')])],
+    )
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['container']['skills'] == [
+        {'skill_id': 'computer-use', 'type': 'anthropic', 'version': '2'}
+    ]
+    assert 'skills-2025-10-02' in completion_kwargs['betas']
+
+
+async def test_anthropic_text_editor_toolset_sends_max_characters(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, str] = Agent(
+        m, toolsets=[TextEditorToolset(execute=_text_editor_execute, max_characters=100_000)]
+    )
+
+    await agent.run('View /tmp/example.py')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert {
+        'type': 'text_editor_20250728',
+        'name': 'str_replace_based_edit_tool',
+        'max_characters': 100_000,
+    } in completion_kwargs['tools']
+
+
+def _shell_tool_history_round_trip_cases() -> list[Any]:
+    if not imports_successful():
+        return []
+
+    cases = [
+        pytest.param(
+            'text_editor_code_execution',
+            {'command': 'view', 'path': '/tmp/example.py'},
+            BetaTextEditorCodeExecutionToolResultBlock(
+                tool_use_id='srv_123',
+                type='text_editor_code_execution_tool_result',
+                content={  # pyright: ignore[reportArgumentType]
+                    'type': 'text_editor_code_execution_view_result',
+                    'content': 'print("hello world")',
+                    'file_type': 'text',
+                },
+            ),
+            'text_editor_code_execution_tool_result',
+            id='text-editor',
+        )
+    ]
+
+    try:
+        from anthropic.types.beta import BetaBashCodeExecutionToolResultBlock
+    except ImportError:  # pragma: no cover — guard for older SDK versions
+        return cases
+
+    return [
+        pytest.param(
+            'bash_code_execution',
+            {'command': 'python3 -c "print(4)"'},
+            BetaBashCodeExecutionToolResultBlock(
+                tool_use_id='srv_123',
+                type='bash_code_execution_tool_result',
+                content={  # pyright: ignore[reportArgumentType]
+                    'content': [],
+                    'return_code': 0,
+                    'stderr': '',
+                    'stdout': '4\n',
+                    'type': 'bash_code_execution_result',
+                },
+            ),
+            'bash_code_execution_tool_result',
+            id='bash',
+        ),
+        *cases,
+    ]
+
+
+@pytest.mark.parametrize(
+    ('server_tool_name', 'server_tool_args', 'result_block', 'result_type'),
+    _shell_tool_history_round_trip_cases(),
+)
+async def test_anthropic_shell_tool_history_round_trip_preserves_server_tool_name(
+    server_tool_name: str,
+    server_tool_args: dict[str, Any],
+    result_block: BetaContentBlock,
+    result_type: str,
+    allow_model_requests: None,
+):
+    first_response = completion_message(
+        [
+            BetaServerToolUseBlock(
+                id='srv_123',
+                input=server_tool_args,
+                name=server_tool_name,  # pyright: ignore[reportArgumentType]
+                type='server_tool_use',
+            ),
+            result_block,
+            BetaTextBlock(text='done', type='text'),
+        ],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    second_response = completion_message(
+        [BetaTextBlock(text='summary', type='text')], BetaUsage(input_tokens=5, output_tokens=5)
+    )
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    first_result = await agent.run('Run the shell tool')
+    await agent.run('Summarize the previous tool result', message_history=first_result.all_messages())
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[1]
+    assistant_message: dict[str, Any] = completion_kwargs['messages'][1]
+    content: list[dict[str, Any]] = assistant_message['content']
+    assert assistant_message['role'] == 'assistant'
+    assert any(
+        item.get('type') == 'server_tool_use'
+        and item.get('name') == server_tool_name
+        and item.get('input') == server_tool_args
+        for item in content
+    )
+    assert any(item.get('type') == result_type and item.get('tool_use_id') == 'srv_123' for item in content)
+
+
+@pytest.mark.parametrize(
+    ('target', 'builtin_tools', 'expected_block_type'),
+    [
+        pytest.param('container', [], None, id='no-shell-tool'),
+        pytest.param('container', [ShellTool()], 'container_upload', id='shell-tool'),
+    ],
+)
+async def test_anthropic_uploaded_file_container_target_requires_shell_tool(
+    target: str,
+    builtin_tools: list[ShellTool],
+    expected_block_type: str | None,
+    allow_model_requests: None,
+):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=builtin_tools)
+    prompt = ['Use this file', UploadedFile(file_id='file-container-123', provider_name='anthropic', target=target)]  # pyright: ignore[reportArgumentType]
+
+    if expected_block_type is None:
+        with pytest.raises(UserError, match="`UploadedFile` with `target='container'` requires a `ShellTool`"):
+            await agent.run(prompt)
+    else:
+        await agent.run(prompt)
+        completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert completion_kwargs['messages'][0]['content'] == [
+            {'text': 'Use this file', 'type': 'text'},
+            {'file_id': 'file-container-123', 'type': expected_block_type},
+        ]
+
+
+async def test_anthropic_streamed_text_editor_tool_result_mapping(allow_model_requests: None):
+    stream_events: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                content=[],
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaTextEditorCodeExecutionToolResultBlock(
+                tool_use_id='srv_123',
+                type='text_editor_code_execution_tool_result',
+                content={  # pyright: ignore[reportArgumentType]
+                    'type': 'text_editor_code_execution_view_result',
+                    'content': 'print("hello world")',
+                    'file_type': 'text',
+                },
+            ),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn', stop_sequence=None),
+            usage=BetaMessageDeltaUsage(output_tokens=5),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream_events)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        None,
+        ModelRequestParameters(),
+    ) as response:
+        async for _ in response:
+            pass
+        mapped = response.get()
+
+    assert len(mapped.parts) == 1
+    part = mapped.parts[0]
+    assert isinstance(part, BuiltinToolReturnPart)
+    assert part.tool_name == 'shell'
+    assert part.tool_call_id == 'srv_123'
+    assert part.provider_name == 'anthropic'
+    assert part.content == {
+        'type': 'text_editor_code_execution_view_result',
+        'content': 'print("hello world")',
+        'file_type': 'text',
+        'num_lines': None,
+        'start_line': None,
+        'total_lines': None,
+    }
+
+
+@pytest.mark.parametrize(
+    ('command', 'path', 'expected_output', 'expected_success'),
+    [
+        ('create', '/tmp/create.py', 'File created: /tmp/create.py', True),
+        ('str_replace', '/tmp/edit.py', 'Replacement performed in /tmp/edit.py', True),
+        ('insert', '/tmp/insert.py', 'Text inserted in /tmp/insert.py', True),
+        ('unknown', '/tmp/unknown.py', 'Unknown command: unknown', False),
+    ],
+)
+async def test_text_editor_execute_helper_covers_all_command_variants(
+    command: str,
+    path: str,
+    expected_output: str,
+    expected_success: bool,
+):
+    output = await _text_editor_execute(cast(TextEditorCommand, {'command': command, 'path': path}))
+
+    assert output.output == expected_output
+    assert output.success is expected_success
+
+
+@pytest.mark.parametrize(
+    ('toolset', 'warning_kind'),
+    [
+        pytest.param(ShellToolset.local(), 'shell', id='shell'),
+        pytest.param(
+            TextEditorToolset(execute=_text_editor_execute, max_characters=100_000),
+            'text_editor',
+            id='text_editor',
+        ),
+    ],
+)
+async def test_anthropic_warns_when_native_tool_falls_back(
+    toolset: Any,
+    warning_kind: str,
+    allow_model_requests: None,
+) -> None:
+    import pydantic_ai.models as models_mod
+    from pydantic_ai.profiles import ModelProfile
+
+    models_mod.NATIVE_TOOL_FALLBACK_WARNED.clear()
+
+    profile = ModelProfile(
+        supports_native_shell_tool=False,
+        supports_native_text_editor_tool=False,
+    )
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client), profile=profile)
+    agent = Agent(m, toolsets=[toolset])
+
+    with pytest.warns(UserWarning, match=f'Native `{warning_kind}` tool: falling back to function tool format'):
+        await agent.run('hello')
+
+    # Verify fallback to function tool format in outgoing request
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tool_types = {t.get('type', 'custom') for t in completion_kwargs['tools']}
+    assert 'custom' in tool_types  # function tool, not native
+
+    # Second call should NOT warn again
+    c2 = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client2 = MockAnthropic.create_mock(c2)
+    m2 = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client2), profile=profile)
+    agent2 = Agent(m2, toolsets=[toolset])
+
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        await agent2.run('hello')
+
+    assert not any(warning_kind in str(w.message) for w in caught)
+
+
+async def test_anthropic_shell_tool_skills_version_none_omits_version_key(allow_model_requests: None):
+    """When a SkillReference has version=None, the mapped BetaSkillParams should not include a 'version' key."""
+    from pydantic_ai.builtin_tools import SkillReference
+
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool(skills=[SkillReference(skill_id='data-analysis', source='provider')])],
+    )
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    skills = completion_kwargs['container']['skills']
+    assert skills == snapshot([{'skill_id': 'data-analysis', 'type': 'anthropic'}])
+
+
+async def test_anthropic_shell_tool_skills_added_to_explicit_container(allow_model_requests: None):
+    """When an explicit anthropic_container is provided alongside ShellTool skills, skills are merged into it."""
+    from pydantic_ai.builtin_tools import SkillReference
+
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool(skills=[SkillReference(skill_id='computer-use', version='2', source='provider')])],
+    )
+
+    await agent.run(
+        'hello',
+        model_settings=AnthropicModelSettings(anthropic_container=BetaContainerParams(id='container_existing')),
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    container = completion_kwargs['container']
+    assert container == snapshot(
+        {'id': 'container_existing', 'skills': [{'skill_id': 'computer-use', 'type': 'anthropic', 'version': '2'}]}
+    )
+
+
+async def test_anthropic_container_setting_string(allow_model_requests: None):
+    """Test that anthropic_container as a plain string passes the string directly to API."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=cast(AnthropicModelSettings, {'anthropic_container': 'cntr_string_123'}))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['container'] == 'cntr_string_123'
+
+
+async def test_anthropic_container_setting_explicit_stream(allow_model_requests: None):
+    """Streaming with explicit anthropic_container skips the history-container check."""
+    usage = BetaUsage(input_tokens=5, output_tokens=5)
+    stream_events: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_stream',
+                content=[],
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=usage,
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaTextBlock(type='text', text='ok'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn', stop_sequence=None),
+            usage=BetaMessageDeltaUsage(output_tokens=5),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream_events)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream(
+        'hello', model_settings=AnthropicModelSettings(anthropic_container={'id': 'container_explicit'})
+    ) as result:
+        output = await result.get_output()
+    assert output == 'ok'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['container'] == BetaContainerParams(id='container_explicit')
+
+
+async def test_anthropic_container_error_retry_bash(allow_model_requests: None):
+    """Auto-retry with a fresh container when all bash exec results are errors (non-streaming)."""
+    from anthropic.types.beta import BetaBashCodeExecutionToolResultBlock, BetaBashCodeExecutionToolResultError
+
+    usage = BetaUsage(input_tokens=5, output_tokens=5)
+    error_block = BetaBashCodeExecutionToolResultBlock(
+        type='bash_code_execution_tool_result',
+        content=BetaBashCodeExecutionToolResultError(
+            type='bash_code_execution_tool_result_error',
+            error_code='invalid_tool_input',
+        ),
+        tool_use_id='tu_001',
+    )
+    error_response = completion_message([error_block], usage)
+    ok_response = completion_message([BetaTextBlock(text='retried ok', type='text')], usage)
+    mock_client = MockAnthropic.create_mock([error_response, ok_response])
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'retried ok'
+
+    # Two requests made: original + retry
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(kwargs) == 2
+
+
+async def test_anthropic_container_error_retry_text_editor(allow_model_requests: None):
+    """Auto-retry when all text editor exec results are errors (covers _is_exec_result_error for text editor)."""
+    from anthropic.types.beta import BetaTextEditorCodeExecutionToolResultError
+
+    usage = BetaUsage(input_tokens=5, output_tokens=5)
+    error_block = BetaTextEditorCodeExecutionToolResultBlock(
+        type='text_editor_code_execution_tool_result',
+        content=BetaTextEditorCodeExecutionToolResultError(
+            type='text_editor_code_execution_tool_result_error',
+            error_code='invalid_tool_input',
+        ),
+        tool_use_id='tu_002',
+    )
+    error_response = completion_message([error_block], usage)
+    ok_response = completion_message([BetaTextBlock(text='retried ok', type='text')], usage)
+    mock_client = MockAnthropic.create_mock([error_response, ok_response])
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'retried ok'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(kwargs) == 2
+
+
+async def test_anthropic_stream_container_error_retry(allow_model_requests: None):
+    """Streaming auto-retry when history container produces all error exec results."""
+    from anthropic.types.beta import BetaBashCodeExecutionToolResultBlock, BetaBashCodeExecutionToolResultError
+
+    usage = BetaUsage(input_tokens=5, output_tokens=5)
+
+    # Stream events with a bash execution error block
+    error_block = BetaBashCodeExecutionToolResultBlock(
+        type='bash_code_execution_tool_result',
+        content=BetaBashCodeExecutionToolResultError(
+            type='bash_code_execution_tool_result_error',
+            error_code='invalid_tool_input',
+        ),
+        tool_use_id='tu_err',
+    )
+    stream_events: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_err',
+                content=[],
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=usage,
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=error_block,
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn', stop_sequence=None),
+            usage=BetaMessageDeltaUsage(output_tokens=5),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+
+    # Non-streaming retry response
+    ok_response = completion_message([BetaTextBlock(text='retried ok', type='text')], usage)
+
+    # Construct mock with both stream (for first call) and messages (for retry)
+    # Index 0: stream call reads stream[0], index becomes 1
+    # Index 1: non-stream retry reads messages_[1], index becomes 2
+    dummy_response = completion_message([BetaTextBlock(text='dummy', type='text')], usage)
+    mock = MockAnthropic(
+        stream=[stream_events],
+        messages_=[dummy_response, ok_response],
+    )
+    mock_client = cast(AsyncAnthropic, mock)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Message history with a container_id so has_history_container is True
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[TextPart(content='world')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'cntr_from_history'},
+        ),
+    ]
+
+    async with agent.run_stream('follow up', message_history=history) as result:
+        output = await result.get_output()
+        assert output == 'retried ok'
+
+    # Two requests: stream + non-stream retry
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(kwargs) == 2
+
+
+async def test_anthropic_stream_history_container_success(allow_model_requests: None):
+    """Streaming with history container succeeds when no container errors in response."""
+    usage = BetaUsage(input_tokens=5, output_tokens=5)
+
+    stream_events: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_ok',
+                content=[],
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=usage,
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaTextBlock(text='', type='text'),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaTextDelta(type='text_delta', text='streamed ok'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn', stop_sequence=None),
+            usage=BetaMessageDeltaUsage(output_tokens=5),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+
+    mock_client = MockAnthropic.create_stream_mock(stream_events)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Message history with a container_id so has_history_container is True
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[TextPart(content='world')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'cntr_from_history'},
+        ),
+    ]
+
+    async with agent.run_stream('follow up', message_history=history) as result:
+        output = await result.get_output()
+        assert output == 'streamed ok'
+
+    # Only one request (no retry)
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(kwargs) == 1
+
+
+async def test_anthropic_code_execution_file_outputs(allow_model_requests: None, anthropic_api_key: str):
+    """Code execution that produces file outputs extracts UploadedFile parts."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions='Always use code execution. Create a small CSV file and save it. Keep responses brief.',
+    )
+
+    result = await agent.run('Create a CSV file with 3 rows of sample data (name, age) and save it as output.csv')
+    messages = result.all_messages()
+
+    # Check that UploadedFile parts were extracted from file outputs
+    uploaded_files = [part for msg in messages for part in msg.parts if isinstance(part, UploadedFile)]
+    # Code execution may or may not produce file outputs depending on the model's response
+    # but the BuiltinToolReturnPart should be present
+    tool_returns = [part for msg in messages for part in msg.parts if isinstance(part, BuiltinToolReturnPart)]
+    assert len(tool_returns) >= 1
+
+    # If file outputs were produced, verify they are UploadedFile with correct provider
+    for uploaded_file in uploaded_files:
+        assert uploaded_file.provider_name == 'anthropic'
+        assert uploaded_file.file_id  # non-empty
+
+
+async def test_anthropic_code_execution_file_outputs_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Streaming code execution that produces file outputs extracts UploadedFile parts."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions='Always use code execution. Create a small CSV file and save it. Keep responses brief.',
+    )
+
+    async with agent.run_stream(
+        'Create a CSV file with 3 rows of sample data (name, age) and save it as output.csv'
+    ) as result:
+        await result.get_output()
+
+    messages = result.all_messages()
+
+    # Check that UploadedFile parts were extracted from file outputs
+    uploaded_files = [part for msg in messages for part in msg.parts if isinstance(part, UploadedFile)]
+    tool_returns = [part for msg in messages for part in msg.parts if isinstance(part, BuiltinToolReturnPart)]
+    assert len(tool_returns) >= 1
+
+    for uploaded_file in uploaded_files:
+        assert uploaded_file.provider_name == 'anthropic'
+        assert uploaded_file.file_id
+
+
+async def test_anthropic_shell_tool_file_outputs_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Streaming shell tool (bash code execution) that produces file outputs extracts UploadedFile parts."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Create a file and save it. Keep responses brief.',
+    )
+
+    async with agent.run_stream(
+        'Use python to create a CSV file with 3 rows of data (name, age) and save it as output.csv'
+    ) as result:
+        await result.get_output()
+
+    messages = result.all_messages()
+    tool_returns = [part for msg in messages for part in msg.parts if isinstance(part, BuiltinToolReturnPart)]
+    assert len(tool_returns) >= 1
+    # Shell tool file outputs may or may not be present depending on model behavior
+    uploaded_files = [part for msg in messages for part in msg.parts if isinstance(part, UploadedFile)]
+    for uploaded_file in uploaded_files:
+        assert uploaded_file.provider_name == 'anthropic'
+        assert uploaded_file.file_id

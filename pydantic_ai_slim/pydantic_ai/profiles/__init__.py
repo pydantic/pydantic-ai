@@ -96,6 +96,34 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    supports_shell_network_policy: bool = False
+    """Whether this model supports network policy on hosted shell containers.
+
+    True for OpenAI Responses.
+    """
+
+    supports_native_shell_tool: bool = False
+    """Whether this model supports provider-native shell tool format.
+
+    When ``True``, adapters emit the provider-specific shell tool format
+    (e.g. Anthropic ``bash_20250124``, OpenAI ``shell`` with ``local`` env)
+    instead of a generic function tool.
+    """
+
+    supports_native_text_editor_tool: bool = False
+    """Whether this model supports provider-native text editor tool format.
+
+    When ``True``, adapters emit the provider-specific text editor format
+    (e.g. Anthropic ``text_editor_20250728``) instead of a generic function tool.
+    """
+
+    supports_native_apply_patch_tool: bool = False
+    """Whether this model supports provider-native apply_patch tool format.
+
+    When ``True``, adapters emit the provider-specific apply_patch format
+    (e.g. OpenAI ``apply_patch``) instead of a generic function tool.
+    """
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

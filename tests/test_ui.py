@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    UploadedFile,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -416,6 +417,26 @@ async def test_event_stream_file():
             '<stream>',
             '<response>',
             "<file media_type='image/png' />",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_uploaded_file():
+    async def event_generator():
+        yield PartStartEvent(index=0, part=UploadedFile(file_id='file_abc', provider_name='anthropic'))
+        yield PartEndEvent(index=0, part=UploadedFile(file_id='file_abc', provider_name='anthropic'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    # UploadedFile parts are silently skipped in the UI stream
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
             '</response>',
             '</stream>',
         ]

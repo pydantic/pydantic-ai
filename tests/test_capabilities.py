@@ -444,8 +444,28 @@ def test_model_json_schema_with_capabilities():
     assert schema == snapshot(
         {
             '$defs': {
+                'CodeExecutionNetworkPolicy': {
+                    'properties': {
+                        'mode': {'enum': ['disabled', 'allowlist'], 'title': 'Mode', 'type': 'string'},
+                        'allowed_domains': {
+                            'default': [],
+                            'items': {'type': 'string'},
+                            'title': 'Allowed Domains',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['mode'],
+                    'title': 'CodeExecutionNetworkPolicy',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                        'network_policy': {
+                            'anyOf': [{'$ref': '#/$defs/CodeExecutionNetworkPolicy'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
@@ -986,6 +1006,42 @@ though not all of these settings are supported by all models.\
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'ShellTool': {
+                    'properties': {
+                        'kind': {'default': 'shell', 'title': 'Kind', 'type': 'string'},
+                        'skills': {
+                            'default': [],
+                            'items': {'$ref': '#/$defs/SkillReference'},
+                            'title': 'Skills',
+                            'type': 'array',
+                        },
+                        'network_policy': {
+                            'anyOf': [{'$ref': '#/$defs/CodeExecutionNetworkPolicy'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                    },
+                    'title': 'ShellTool',
+                    'type': 'object',
+                },
+                'SkillReference': {
+                    'properties': {
+                        'skill_id': {'title': 'Skill Id', 'type': 'string'},
+                        'version': {
+                            'anyOf': [{'type': 'string'}, {'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Version',
+                        },
+                        'source': {
+                            'default': 'custom',
+                            'enum': ['custom', 'provider'],
+                            'title': 'Source',
+                            'type': 'string',
+                        },
+                    },
+                    'required': ['skill_id'],
+                    'title': 'SkillReference',
+                    'type': 'object',
+                },
                 'UrlContextTool': {
                     'deprecated': True,
                     'properties': {
@@ -1152,6 +1208,7 @@ Supported by:
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/ShellTool'},
                                     ]
                                 },
                                 {'type': 'null'},

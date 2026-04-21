@@ -2754,6 +2754,29 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
+def test_shell_tool_temporal_run_context_serializes_container_id():
+    from pydantic_ai.durable_exec.temporal._builtin_tools import ShellToolTemporalRunContext
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-shell',
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='hello')]),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                provider_name='anthropic',
+                provider_details={'container_id': 'cntr_temporal_abc'},
+            ),
+        ],
+    )
+
+    serialized = ShellToolTemporalRunContext.serialize_run_context(ctx)
+    assert serialized['container_id'] == 'cntr_temporal_abc'
+    assert serialized['run_id'] == 'run-shell'
+
+
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',
