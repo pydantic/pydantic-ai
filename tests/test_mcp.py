@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+from contextlib import asynccontextmanager
 from datetime import timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,7 +26,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import (
     ModelRetry,
     UnexpectedModelBehavior,
@@ -71,6 +72,11 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as logfire_imports_successful:
+    import logfire
+    from logfire.testing import TestExporter
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
@@ -151,13 +157,134 @@ async def test_parallel_agent_runs():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
 
-    async def run_agent(celsius: int) -> str:
-        result = await agent.run(f'Convert {celsius}C to F')
-        return result.output
+    async def run_agent(celsius: int) -> AgentRunResult[str]:
+        return await agent.run(f'Convert {celsius}C to F')
 
-    results = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
-    assert len(results) == 3
+    r0, r100, r50 = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
+
+    for r in (r0, r100, r50):
+        tool_calls = [
+            m
+            for m in r.all_messages()
+            if isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts)
+        ]
+        assert len(tool_calls) >= 1, f'Expected at least one tool call, got: {r.all_messages()}'
+
     assert not server.is_running
+
+
+async def test_parallel_agent_runs_share_one_connection():
+    """Parallel agent.run() calls on one MCPServer must reuse a single underlying connection.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
+    cross-task lifecycle fix: a prior attempt (via `ContextVar`) made each sibling
+    `asyncio.gather` child open its own subprocess, defeating the purpose of sharing a
+    server instance. This asserts that 5 concurrent runs open the stdio transport exactly
+    once.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    client_streams_calls = 0
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def counting_client_streams():
+        nonlocal client_streams_calls
+        client_streams_calls += 1
+        async with original_client_streams() as pair:
+            yield pair
+
+    with patch.object(server, 'client_streams', counting_client_streams):
+        await asyncio.gather(*[agent.run(f'Convert {c}C to F') for c in range(5)])
+
+    assert client_streams_calls == 1
+    assert not server.is_running
+
+
+async def test_server_shared_across_sibling_tasks():
+    """An MCPServer opened in one task must be shared with sibling tasks spawned later.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
+    fasta2a / FastAPI lifespan pattern: a lifespan task opens `async with server:` and
+    yields, then request-handler tasks — spawned as *siblings* (not descendants) of the
+    lifespan task — enter the same server object. A prior attempt using `ContextVar`
+    scoped connections to the lifespan's context, so sibling handler tasks would each
+    open their own subprocess instead of sharing. This test asserts the server opens
+    exactly once.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    client_streams_calls = 0
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def counting_client_streams():
+        nonlocal client_streams_calls
+        client_streams_calls += 1
+        async with original_client_streams() as pair:
+            yield pair
+
+    ready = asyncio.Event()
+    stop = asyncio.Event()
+
+    async def lifespan_holder() -> None:
+        async with server:
+            ready.set()
+            await stop.wait()
+
+    async def handler() -> ToolResult:
+        async with server:
+            return await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+
+    with patch.object(server, 'client_streams', counting_client_streams):
+        lifespan_task = asyncio.create_task(lifespan_holder())
+        await ready.wait()
+        results = await asyncio.gather(*[handler() for _ in range(5)])
+        stop.set()
+        await lifespan_task
+
+    assert results == [32.0] * 5
+    assert client_streams_calls == 1
+    assert not server.is_running
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_parallel_agent_runs_produce_independent_span_trees():
+    """Each parallel agent.run() sharing one MCPServer produces its own independent trace.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: the fix
+    moves the MCP session into a dedicated asyncio.Task. We must confirm that user-visible
+    span nesting is unchanged — each agent run's tool calls remain children of that run's
+    `agent run` span and do not leak across sibling runs' traces.
+    """
+    exporter = TestExporter()
+    logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
+    Agent.instrument_all(True)
+    try:
+        server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+        agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+        async with server:
+            await asyncio.gather(*[agent.run(str(c)) for c in range(3)])
+
+        spans = [s for s in exporter.exported_spans if s.context is not None]
+        trace_ids = {s.context.trace_id for s in spans if s.context is not None}
+        assert len(trace_ids) == 3, f'expected 3 independent traces, got {len(trace_ids)}'
+
+        for trace_id in trace_ids:
+            trace_spans = [s for s in spans if s.context is not None and s.context.trace_id == trace_id]
+            names = [s.name for s in trace_spans]
+            assert names.count('agent run') >= 1
+            assert 'running tool' in names
+            # Every span in this trace must actually belong to it — no cross-trace parenting
+            span_ids = {s.context.span_id for s in trace_spans if s.context is not None}
+            for s in trace_spans:
+                if s.parent is not None:
+                    assert s.parent.span_id in span_ids, (
+                        f'span {s.name!r} in trace {trace_id:x} has a parent outside its own trace'
+                    )
+    finally:
+        Agent.instrument_all(False)
 
 
 async def test_context_manager_initialization_error() -> None:
@@ -189,47 +316,6 @@ async def test_aexit_called_more_times_than_aenter():
 
     with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
-
-
-async def test_aexit_concurrent_does_not_corrupt_connections():
-    """Regression test: concurrent __aexit__ calls must not corrupt connection state.
-
-    With per-context connections, each context tracks its own connection via ContextVar.
-    Concurrent exits from the same context should still be safe — one succeeds,
-    the other raises ValueError.
-    """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    # Simulate one active connection for this context.
-    from pydantic_ai.mcp import _mcp_conn_ctx, _MCPConnectionState  # pyright: ignore[reportPrivateUsage]
-
-    conn_id = 0
-    mock_exit_stack = AsyncMock()
-    mock_client = AsyncMock()
-    server._connections[conn_id] = _MCPConnectionState(  # pyright: ignore[reportPrivateUsage]
-        exit_stack=mock_exit_stack,
-        client=mock_client,
-        ref_count=1,
-    )
-    _mcp_conn_ctx.set({id(server): conn_id})
-
-    # Replace the real lock with one that yields before acquiring.
-    class InterleavingLock(asyncio.Lock):
-        async def acquire(self) -> Literal[True]:
-            await asyncio.sleep(0)
-            return await super().acquire()
-
-    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
-
-    results = await asyncio.gather(
-        server.__aexit__(None, None, None),
-        server.__aexit__(None, None, None),
-        return_exceptions=True,
-    )
-
-    errors = [r for r in results if isinstance(r, ValueError)]
-    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
-    assert conn_id not in server._connections  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import re
@@ -8,7 +9,6 @@ from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -284,27 +284,26 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
 
-_next_conn_id: int = 0
-
-# Maps server id(self) → connection ID for the current context.
-# Child tasks inherit the parent's context, so graph node tasks
-# share the parent's MCP connection. Separate user-level tasks
-# get independent contexts and thus independent connections.
-_mcp_conn_ctx: ContextVar[dict[int, int]] = ContextVar('_mcp_conn_ctx')
-
-
 @dataclass
-class _MCPConnectionState:
-    """Per-context connection state for an MCPServer.
+class _MCPSessionState:
+    """State for the single background session task that owns an MCPServer's connection.
 
-    Each logical context (user-level task and its child graph tasks) gets its
-    own connection, ensuring cancel scopes are entered and exited in the same
-    task that opened them.
+    The session task is spawned on first `__aenter__`, runs in its own asyncio.Task
+    (escaping structured concurrency so it can outlive nested `async with` scopes),
+    and is torn down when the last `__aexit__` decrements the ref count to zero.
+
+    Because the task enters and exits its cancel scope in the same task, the
+    `RuntimeError: Attempted to exit cancel scope in a different task` error from
+    the underlying anyio transports cannot occur — regardless of which task
+    originally called `__aenter__` / `__aexit__`.
     """
 
-    exit_stack: AsyncExitStack
-    client: ClientSession
-    ref_count: int = 1
+    session_task: asyncio.Task[None] | None = None
+    ready_event: anyio.Event | None = None
+    stop_event: anyio.Event | None = None
+    nesting_counter: int = 0
+    client: ClientSession | None = None
+    connect_error: BaseException | None = None
 
 
 class MCPServer(AbstractToolset[Any], ABC):
@@ -399,7 +398,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _id: str | None
 
     _enter_lock: Lock = field(compare=False)
-    _connections: dict[int, _MCPConnectionState]
+    _session_state: _MCPSessionState = field(compare=False)
 
     _server_info: mcp_types.Implementation
     _server_capabilities: ServerCapabilities
@@ -451,7 +450,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     def __post_init__(self):
         self._enter_lock = Lock()
-        self._connections: dict[int, _MCPConnectionState] = {}
+        self._session_state = _MCPSessionState()
         self._cached_tools = None
         self._cached_resources = None
 
@@ -739,102 +738,133 @@ class MCPServer(AbstractToolset[Any], ABC):
             else [self._get_content(resource) for resource in result.contents]
         )
 
-    def _get_conn_id(self) -> int | None:
-        """Get the connection ID for this server in the current context."""
-        try:
-            return _mcp_conn_ctx.get().get(id(self))
-        except LookupError:
-            return None
-
     def _get_client(self) -> ClientSession:
-        """Get the MCP client session for the current context."""
-        conn_id = self._get_conn_id()
-        if conn_id is not None and (conn := self._connections.get(conn_id)):
-            return conn.client
-        raise RuntimeError(  # pragma: no cover
-            f'{self.__class__.__name__} has no connection for the current context. '
-            'Use `async with server:` to open a connection first.'
-        )
-
-    async def _open_connection(self) -> _MCPConnectionState:
-        """Open a new MCP connection in the current task."""
-        async with AsyncExitStack() as exit_stack:
-            read_stream, write_stream = await exit_stack.enter_async_context(self.client_streams())
-
-            session = ClientSession(
-                read_stream=read_stream,
-                write_stream=write_stream,
-                sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                elicitation_callback=self.elicitation_callback,
-                logging_callback=self.log_handler,
-                read_timeout_seconds=timedelta(seconds=self.read_timeout),
-                message_handler=self._handle_notification,
-                client_info=self.client_info,
+        client = self._session_state.client
+        if client is None:
+            raise RuntimeError(  # pragma: no cover
+                f'{self.__class__.__name__} is not connected. Use `async with server:` to open a connection first.'
             )
-            client = await exit_stack.enter_async_context(session)
+        return client
 
-            with anyio.fail_after(self.timeout):
-                result = await client.initialize()
-                self._server_info = result.serverInfo
-                self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
-                self._instructions = result.instructions
-                if log_level := self.log_level:
-                    await client.set_logging_level(log_level)
+    async def _session_runner(self) -> None:
+        """Own the MCP session's lifecycle for this server.
 
-            # pop_all() is safe: aclose() will be called from the same task
-            return _MCPConnectionState(exit_stack=exit_stack.pop_all(), client=client)
+        Entered AND exited inside this single dedicated asyncio.Task, so the underlying
+        anyio cancel scopes (from stdio_client / streamable_http_client / etc.) are
+        always exited in the same task they were entered in.
+        """
+        state = self._session_state
+        assert state.ready_event is not None
+        assert state.stop_event is not None
+        try:
+            async with AsyncExitStack() as stack:
+                read_stream, write_stream = await stack.enter_async_context(self.client_streams())
+                session = ClientSession(
+                    read_stream=read_stream,
+                    write_stream=write_stream,
+                    sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                    elicitation_callback=self.elicitation_callback,
+                    logging_callback=self.log_handler,
+                    read_timeout_seconds=timedelta(seconds=self.read_timeout),
+                    message_handler=self._handle_notification,
+                    client_info=self.client_info,
+                )
+                client = await stack.enter_async_context(session)
+
+                with anyio.fail_after(self.timeout):
+                    result = await client.initialize()
+                    self._server_info = result.serverInfo
+                    self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
+                    self._instructions = result.instructions
+                    if log_level := self.log_level:
+                        await client.set_logging_level(log_level)
+
+                state.client = client
+                state.ready_event.set()
+                await state.stop_event.wait()
+        except BaseException as e:
+            state.connect_error = e
+        finally:
+            state.client = None
+            state.ready_event.set()
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
-        This will initialize the connection to the server.
-        If this server is an [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio], the server will first be started as a subprocess.
+        The first call starts the connection (spawning a subprocess for stdio servers,
+        opening an HTTP connection for HTTP servers). Subsequent calls — from any task
+        — share the same connection via reference counting. The connection is torn
+        down when the last `async with` scope exits.
 
-        Each context (user-level task and its graph child tasks) gets its own
-        connection so that cancel scopes are entered and exited in the same task.
-        Reentrant access within the same context increments a reference count.
+        Because the session runs in a dedicated background task, entering and exiting
+        from different tasks (e.g. `asyncio.gather` children, fasta2a workers, or
+        graph node tasks) is safe: the underlying transport's cancel scopes never
+        cross task boundaries.
         """
-        global _next_conn_id
-        conn_id = self._get_conn_id()
         async with self._enter_lock:
-            if conn_id is not None and conn_id in self._connections:
-                self._connections[conn_id].ref_count += 1
-            else:
-                conn = await self._open_connection()
-                conn_id = _next_conn_id
-                _next_conn_id += 1
-                self._connections[conn_id] = conn
-                # Set the connection ID in the current context so child tasks inherit it
+            state = self._session_state
+            need_to_start = state.session_task is None or state.session_task.done()
+            if need_to_start:
+                state.stop_event = anyio.Event()
+                state.ready_event = anyio.Event()
+                state.connect_error = None
+                state.client = None
+                state.session_task = asyncio.create_task(self._session_runner())
                 try:
-                    conn_ctx = _mcp_conn_ctx.get()
-                except LookupError:
-                    conn_ctx: dict[int, int] = {}
-                    _mcp_conn_ctx.set(conn_ctx)
-                conn_ctx[id(self)] = conn_id
+                    await state.ready_event.wait()
+                except BaseException:
+                    # Cancelled while waiting for startup: tear down the session task
+                    # without impacting anyone else (we hold the lock and just started it)
+                    task = state.session_task
+                    state.stop_event.set()
+                    task.cancel()
+                    with anyio.CancelScope(shield=True):
+                        with anyio.move_on_after(3):
+                            try:
+                                await task
+                            except BaseException:
+                                pass
+                    state.session_task = None
+                    state.client = None
+                    raise
+                if state.connect_error is not None:
+                    # Connection failed during startup; surface the error and reset state
+                    state.session_task = None
+                    err = state.connect_error
+                    state.connect_error = None
+                    raise err
+            state.nesting_counter += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        conn_id = self._get_conn_id()
-        conn_to_close: _MCPConnectionState | None = None
+        state = self._session_state
+        session_task_to_await: asyncio.Task[None] | None = None
         async with self._enter_lock:
-            if conn_id is None or conn_id not in self._connections:
+            if state.nesting_counter == 0:
                 raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
-            conn = self._connections[conn_id]
-            conn.ref_count -= 1
-            if conn.ref_count == 0:
-                del self._connections[conn_id]
-                conn_to_close = conn
-                if not self._connections:
-                    self._cached_tools = None
-                    self._cached_resources = None
-        # Close outside the lock — same task as open, so cancel scopes are safe
-        if conn_to_close:
-            await conn_to_close.exit_stack.aclose()
+            state.nesting_counter -= 1
+            if state.nesting_counter > 0:
+                return None
+            if state.session_task is None:
+                return None  # pragma: no cover
+            assert state.stop_event is not None
+            state.stop_event.set()
+            session_task_to_await = state.session_task
+            state.session_task = None
+            self._cached_tools = None
+            self._cached_resources = None
+        # Await outside the lock: the session task's cancel scopes unwind inside the
+        # task itself, so this await can safely happen from any caller.
+        try:
+            await session_task_to_await
+        except BaseException:
+            pass
+        return None
 
     @property
     def is_running(self) -> bool:
         """Check if the MCP server is running."""
-        return bool(self._connections)
+        return self._session_state.nesting_counter > 0
 
     async def _sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
