@@ -58,6 +58,17 @@ agent = Agent(model)
 ...
 ```
 
+## Structured output
+
+Some models on Groq default to **native structured output** (JSON mode) instead of tool-based output:
+
+- GPT-OSS models (`openai/gpt-oss-20b`, `openai/gpt-oss-120b`)
+- MoonshotAI models (`moonshotai/kimi-k2-instruct`)
+- Meta Llama 4 models (`meta-llama/llama-4-scout-17b-16e-instruct`, `meta-llama/llama-4-maverick-17b-128e-instruct`)
+
+When function tools are present, Pydantic AI automatically falls back to tool-based output,
+since Groq does not support JSON mode and tool calling together.
+
 You can also customize the `GroqProvider` with a custom `httpx.AsyncClient`:
 
 ```python

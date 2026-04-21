@@ -1,0 +1,208 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '680'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '200'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: tool_use_failed
+        failed_generation: The capital of France is **Paris**.
+        message: Tool choice is required, but model did not call a tool
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1042'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=viP2fB4aQ7Ibgla6fxWhD9pm6XrdGAfW4jz9UnHfy8Y-1771291559.4981694-1.0.1.1-R_2PMwGiiMYOo0xbJVhCRnJlYN_m1.qIpwblqKDMJ0IBMI3s_FoGAgzXKJdJkUu6AvhVHcZK5jF1yoMrqBUl72MX3zCtwnWPpN2VetAvR8IhjmtF4rK.PDZubAeDPT4k
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - content: The capital of France is **Paris**.
+        role: assistant
+      - content: |-
+          1 validation error:
+          ```json
+          [
+            {
+              "type": "json_invalid",
+              "loc": [],
+              "msg": "Invalid JSON: expected value at line 1 column 1",
+              "input": "The capital of France is **Paris**."
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1210'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          reasoning: 'The user says there''s a validation error expecting JSON. Probably the system expects a function call
+            to final_result with JSON output. We need to respond using the final_result function, providing city and country.
+            The question: "What is the capital of France?" The answer: city = "Paris", country = "France". Use the function
+            final_result.'
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","country":"France"}'
+              name: final_result
+            id: fc_3b660a12-1bb6-48d9-b318-07f6d4a64bfb
+            type: function
+      created: 1771291560
+      id: chatcmpl-10de341a-7f97-4601-8254-96158e69442a
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_0708ac49a5
+      usage:
+        completion_time: 0.224267826
+        completion_tokens: 104
+        completion_tokens_details:
+          reasoning_tokens: 70
+        prompt_time: 0.010661565
+        prompt_tokens: 245
+        queue_time: 0.005156629
+        total_time: 0.234929391
+        total_tokens: 349
+      usage_breakdown: null
+      x_groq:
+        id: req_01khmk8j0fe66v2tfv1qz1rgx1
+        seed: 503100258
+    status:
+      code: 200
+      message: OK
+version: 1
