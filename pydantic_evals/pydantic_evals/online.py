@@ -27,35 +27,31 @@ async def my_function(x: int) -> int:
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import functools
 import inspect
-import random
 import threading
-import time
-import warnings
-from collections.abc import Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol
 
 import anyio
-import sniffio
-from anyio.to_thread import run_sync
-from typing_extensions import ParamSpec, TypeVar
+from opentelemetry import trace
+from typing_extensions import LiteralString, ParamSpec, TypeVar
 
+from . import _online as _online_internal, _task_run
+from ._online import CallbackSink, EvaluationSink, SinkPayload
 from ._utils import UNSET, Unset, logfire_span
-from .dataset import (
-    _CURRENT_TASK_RUN as _CURRENT_TASK_RUN,  # pyright: ignore[reportPrivateUsage]
-    _extract_span_tree_metrics as _extract_span_tree_metrics,  # pyright: ignore[reportPrivateUsage]
-    _TaskRun as _TaskRun,  # pyright: ignore[reportPrivateUsage]
-)
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
-from .otel._context_subtree import context_subtree
-from .otel.span_tree import SpanTree
+
+try:
+    import logfire as _logfire  # pyright: ignore[reportUnusedImport]  # noqa: F401
+
+    _LOGFIRE_INSTALLED = True
+except ImportError:  # pragma: lax no cover
+    _LOGFIRE_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
 __all__ = (
     'CallbackSink',
@@ -71,6 +67,7 @@ __all__ = (
     'SamplingContext',
     'SamplingMode',
     'SinkCallback',
+    'SinkPayload',
     'SpanReference',
     'configure',
     'disable_evaluation',
@@ -79,8 +76,17 @@ __all__ = (
     'wait_for_evaluations',
 )
 
+
 OnErrorLocation = Literal['sink', 'on_max_concurrency']
-"""The location within the online evaluation pipeline where an error occurred."""
+"""The location within the online evaluation pipeline where an error occurred.
+
+- `'sink'` — something went wrong delivering results downstream. This is most often
+  an exception raised by a registered [`EvaluationSink.submit`][pydantic_evals.online.EvaluationSink.submit],
+  but it's also used as a catch-all for failures in the default OTel event emission
+  path (which is rare in practice; the OTel SDK rarely raises during `emit()`).
+- `'on_max_concurrency'` — the evaluator's `on_max_concurrency` callback itself raised
+  while being notified about a dropped evaluation.
+"""
 
 SamplingMode = Literal['independent', 'correlated']
 """Controls how per-evaluator sample rates interact across evaluators for a single call.
@@ -143,91 +149,7 @@ location string indicating where the error occurred. Can be sync or async.
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
-
-# Protected by _background_lock for thread-safety (free-threaded Python, concurrent callers).
-_background_lock = threading.Lock()
-_background_tasks: set[asyncio.Task[Any]] = set()
-_background_events: set[anyio.Event] = set()  # For trio system tasks (no native handle)
-_background_threads: set[threading.Thread] = set()
-
-
-def _remove_background_task(task: asyncio.Task[Any]) -> None:
-    """Callback to remove a completed task from the tracking set (thread-safe)."""
-    with _background_lock:
-        _background_tasks.discard(task)
-
-
-def _dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    """Dispatch an evaluation coroutine on the caller's event loop.
-
-    Uses sniffio to detect the backend and dispatches accordingly:
-    - asyncio: asyncio.get_running_loop().create_task() — ContextVars propagate
-    - trio: trio.lowlevel.spawn_system_task()
-
-    The task runs on the caller's event loop, NOT in a separate thread,
-    so ContextVars from the caller's context are preserved.
-    """
-    library = sniffio.current_async_library()
-
-    if library == 'trio':  # pragma: no cover
-        import trio.lowlevel  # pyright: ignore[reportMissingImports]
-
-        done_event = anyio.Event()
-        with _background_lock:
-            _background_events.add(done_event)
-
-        async def _trio_task() -> None:
-            try:
-                await coro
-            finally:
-                done_event.set()
-                with _background_lock:
-                    _background_events.discard(done_event)
-
-        trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
-    else:
-        # asyncio (or any asyncio-compatible backend)
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(coro)
-        with _background_lock:
-            _background_tasks.add(task)
-        task.add_done_callback(_remove_background_task)
-
-
-def _dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
-    """Dispatch an async coroutine to a background daemon thread.
-
-    Used for sync decorated functions where there's no event loop to schedule on.
-    The thread runs its own event loop via anyio.run().
-
-    Captures the caller's contextvars so that evaluators running in the background
-    thread can access context set by the caller (e.g. request IDs, auth context).
-    """
-    # Capture caller's context before spawning the thread — background threads
-    # don't inherit contextvars, so we snapshot and run within it.
-    ctx = contextvars.copy_context()
-
-    async def _run() -> None:
-        await coro
-
-    def _thread_target() -> None:
-        try:
-            ctx.run(anyio.run, _run)
-        finally:
-            with _background_lock:
-                _background_threads.discard(thread)
-
-    thread = threading.Thread(target=_thread_target, daemon=True)
-    with _background_lock:
-        _background_threads.add(thread)
-    try:
-        thread.start()
-    except Exception:  # pragma: no cover
-        with _background_lock:
-            _background_threads.discard(thread)
-
-
-_EVALUATION_DISABLED: ContextVar[bool] = ContextVar('_evaluation_disabled', default=False)
+_EVALUATION_DISABLED = _online_internal.EVALUATION_DISABLED
 
 
 @contextmanager
@@ -266,57 +188,6 @@ Auto-wrapped in `CallbackSink` when passed as a `sink` parameter.
 """
 
 
-@runtime_checkable
-class EvaluationSink(Protocol):
-    """Protocol for evaluation result destinations.
-
-    Implementations receive evaluation results and can send them to any backend
-    (Logfire annotations, custom callback, stdout, etc.).
-    """
-
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: SpanReference | None,
-    ) -> None:
-        """Submit evaluation results to the sink.
-
-        Args:
-            results: Evaluation results from successful evaluator runs.
-            failures: Failures from evaluator runs that raised exceptions.
-            context: The full evaluator context for the function call.
-            span_reference: Reference to the OTel span for the function call, if available.
-        """
-        ...
-
-
-class CallbackSink:
-    """An `EvaluationSink` that delegates to a user-provided callable.
-
-    The callback receives the results, failures, and context. The span_reference is not
-    passed to the callback — use a custom `EvaluationSink` implementation if you need it.
-    """
-
-    def __init__(self, callback: SinkCallback) -> None:
-        self.callback = callback
-
-    async def submit(
-        self,
-        *,
-        results: Sequence[EvaluationResult],
-        failures: Sequence[EvaluatorFailure],
-        context: EvaluatorContext,
-        span_reference: SpanReference | None,
-    ) -> None:
-        _ = span_reference  # Not passed to callback; use a custom EvaluationSink if needed
-        result = self.callback(results, failures, context)
-        if inspect.isawaitable(result):
-            await result
-
-
 @dataclass(kw_only=True)
 class OnlineEvaluator:
     """Wraps an `Evaluator` with per-evaluator online configuration.
@@ -326,7 +197,12 @@ class OnlineEvaluator:
     """
 
     evaluator: Evaluator
-    """The evaluator to run."""
+    """The evaluator to run.
+
+    To version an evaluator, set `evaluator_version` as a class attribute on the
+    `Evaluator` subclass itself (see `Evaluator` docstring). The framework reads it
+    via `getattr` at dispatch time and propagates it to sinks alongside each result.
+    """
     sample_rate: float | Callable[[SamplingContext], float | bool] | None = None
     """Probability of running this evaluator (0.0–1.0), or a callable returning a float or bool.
 
@@ -341,7 +217,11 @@ class OnlineEvaluator:
     """Maximum number of concurrent evaluations for this evaluator."""
 
     sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
-    """Override sink(s) for this evaluator. If `None`, the config's `default_sink` is used."""
+    """Override additional sink(s) for this evaluator. If `None`, the config's
+    `default_sink` is used.
+
+    Sinks are *additive* to the default OTel event emission — not replacements.
+    See [`EvaluationSink`][pydantic_evals.online.EvaluationSink]."""
 
     on_max_concurrency: OnMaxConcurrencyCallback | None = None
     """Called when an evaluation is dropped because `max_concurrency` was reached.
@@ -361,7 +241,9 @@ class OnlineEvaluator:
     """Called when an exception occurs in a sink or on_max_concurrency callback.
 
     Receives the exception, evaluator context, evaluator instance, and a location string
-    (`'sink'` or `'on_max_concurrency'`). Can be sync or async.
+    (see [`OnErrorLocation`][pydantic_evals.online.OnErrorLocation]). Can be sync or async.
+    `'sink'` covers both custom sink failures and the rarer default OTel event emission
+    failures — the value is intentionally broad.
     If `None`, uses the config's `on_error` default. If neither is set, exceptions are
     silently suppressed.
     """
@@ -438,234 +320,81 @@ async def run_evaluators(
     return all_results, all_failures
 
 
-def _resolve_sample_rate_field(
-    online_eval: OnlineEvaluator,
-    config: OnlineEvalConfig,
-) -> float | Callable[[SamplingContext], float | bool]:
-    """Resolve an OnlineEvaluator's sample_rate, falling back to config default if None."""
-    if online_eval.sample_rate is None:
-        return config.default_sample_rate
-    return online_eval.sample_rate
-
-
-def _resolve_sample_rate(
-    rate: float | Callable[[SamplingContext], float | bool],
-    sampling_context: SamplingContext,
-) -> float | bool:
-    """Resolve a sample rate value, calling it if it's a callable."""
-    if callable(rate):
-        return rate(sampling_context)
-    return rate
-
-
-def _should_evaluate(
-    rate: float | Callable[[SamplingContext], float | bool],
-    global_enabled: bool,
-    sampling_context: SamplingContext,
-    sampling_mode: SamplingMode,
-) -> bool:
-    """Determine whether an evaluator should run based on sampling configuration."""
-    if not global_enabled:  # pragma: no cover
-        return False
-    if _EVALUATION_DISABLED.get():  # pragma: no cover
-        return False
-
-    resolved = _resolve_sample_rate(rate, sampling_context)
-
-    # Callable can return bool (True = always, False = never)
-    if isinstance(resolved, bool):
-        return resolved
-
-    # Float: probability
-    if resolved >= 1.0:
-        return True
-    if resolved <= 0.0:
-        return False
-
-    if sampling_mode == 'correlated':
-        # Use the shared per-call seed so all evaluators correlate
-        return sampling_context.call_seed < resolved
-    else:
-        # Independent: each evaluator rolls its own random check
-        return random.random() < resolved
-
-
-def _sample_evaluators(
-    online_evals: list[OnlineEvaluator],
-    config: OnlineEvalConfig,
-    inputs: dict[str, Any],
-) -> list[OnlineEvaluator]:
-    """Determine which evaluators should run, handling sample_rate exceptions.
-
-    If a sample_rate callable raises and the evaluator (or config) has an
-    `on_sampling_error` callback, the error is reported there and the evaluator
-    is skipped. If no callback is configured, the exception propagates to the caller.
-    """
-    call_seed = random.random()
-    sampled: list[OnlineEvaluator] = []
-    for oe in online_evals:
-        sampling_ctx = SamplingContext(
-            evaluator=oe.evaluator,
-            inputs=inputs,
-            metadata=config.metadata,
-            call_seed=call_seed,
-        )
-        try:
-            if _should_evaluate(
-                _resolve_sample_rate_field(oe, config), config.enabled, sampling_ctx, config.sampling_mode
-            ):
-                sampled.append(oe)
-        except Exception as exc:
-            handler = oe.on_sampling_error if oe.on_sampling_error is not None else config.on_sampling_error
-            if handler is not None:
-                try:
-                    handler(exc, oe.evaluator)
-                except Exception:
-                    pass  # Handler itself failed — suppress to protect other evaluators
-            else:
-                raise
-    return sampled
-
-
-def _resolve_sinks(
-    evaluator_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None,
-    default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None,
-) -> list[EvaluationSink]:
-    """Resolve the sinks to use for an evaluator, following the resolution order."""
-    raw = evaluator_sink if evaluator_sink is not None else default_sink
-    if raw is None:
-        return []
-    return _normalize_sinks(raw)
-
-
-def _normalize_sinks(
-    sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback,
-) -> list[EvaluationSink]:
-    """Normalize a sink specification to a list of EvaluationSink instances."""
-    if isinstance(sink, EvaluationSink):
-        return [sink]
-    if callable(sink):
-        return [CallbackSink(sink)]
-    return [_normalize_single_sink(s) for s in sink]
-
-
-def _normalize_single_sink(sink: EvaluationSink | SinkCallback) -> EvaluationSink:
-    if isinstance(sink, EvaluationSink):
-        return sink
-    return CallbackSink(sink)
-
-
-async def _call_on_error(
-    on_error: OnErrorCallback | None,
-    exc: Exception,
-    context: EvaluatorContext,
-    evaluator: Evaluator,
-    location: OnErrorLocation,
-) -> None:
-    """Invoke the on_error callback, suppressing any exception it raises."""
-    if on_error is None:
-        return
-    try:
-        result = on_error(exc, context, evaluator, location)
-        if inspect.isawaitable(result):
-            await result
-    except Exception:
-        pass  # Handler itself failed — suppress to protect sibling evaluators
-
-
-async def _submit_to_sink(
-    sink: EvaluationSink,
-    results: Sequence[EvaluationResult],
-    failures: Sequence[EvaluatorFailure],
-    context: EvaluatorContext,
-    span_reference: SpanReference | None,
-    on_error: OnErrorCallback | None,
-    evaluator: Evaluator,
-) -> None:
-    """Submit results to a single sink, routing exceptions to on_error."""
-    try:
-        await sink.submit(results=results, failures=failures, context=context, span_reference=span_reference)
-    except Exception as exc:
-        await _call_on_error(on_error, exc, context, evaluator, 'sink')
-
-
-async def _dispatch_single_evaluator(
-    online_eval: OnlineEvaluator,
-    context: EvaluatorContext,
-    span_reference: SpanReference | None,
-    sinks: list[EvaluationSink],
-    on_max_concurrency: Callable[[EvaluatorContext], Any] | None,
-    on_error: OnErrorCallback | None,
-) -> None:
-    """Run a single evaluator's evaluation and sink submission."""
-    evaluator = online_eval.evaluator
-
-    if not online_eval.semaphore.acquire(blocking=False):
-        if on_max_concurrency is not None:
-            try:
-                result = on_max_concurrency(context)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception as exc:
-                await _call_on_error(on_error, exc, context, evaluator, 'on_max_concurrency')
-        return
-
-    try:
-        raw_result = await run_evaluator(evaluator, context)
-
-        if isinstance(raw_result, EvaluatorFailure):
-            results: Sequence[EvaluationResult] = []
-            failures: Sequence[EvaluatorFailure] = [raw_result]
-        else:
-            results = raw_result
-            failures = []
-
-        async with anyio.create_task_group() as tg:
-            for sink in sinks:
-                tg.start_soon(_submit_to_sink, sink, results, failures, context, span_reference, on_error, evaluator)
-
-    finally:
-        online_eval.semaphore.release()
-
-
-async def _dispatch_evaluators(
-    online_evaluators: list[OnlineEvaluator],
-    context: EvaluatorContext,
-    span_reference: SpanReference | None,
-    config: OnlineEvalConfig,
-) -> None:
-    """Run all selected evaluators concurrently and submit results to their sinks.
-
-    Evaluators with no resolved sinks are skipped entirely — there's nowhere
-    to send results, so running the evaluator would be wasted work.
-    """
-    async with anyio.create_task_group() as tg:
-        for online_eval in online_evaluators:
-            sinks = _resolve_sinks(online_eval.sink, config.default_sink)
-            if not sinks:
-                continue
-            on_max_concurrency = online_eval.on_max_concurrency
-            if on_max_concurrency is None:
-                on_max_concurrency = config.on_max_concurrency
-            on_error = online_eval.on_error
-            if on_error is None:
-                on_error = config.on_error
-            tg.start_soon(
-                _dispatch_single_evaluator,
-                online_eval,
-                context,
-                span_reference,
-                sinks,
-                on_max_concurrency,
-                on_error,
-            )
-
-
 def _capture_inputs(sig: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
     """Capture function inputs as a dictionary using a pre-computed signature."""
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     return dict(bound.arguments)
+
+
+_ExtractedArgs = Literal[False, True] | tuple[str, ...]
+"""Resolved `extract_args` setting: `False` = record none, `True` = record all,
+or a tuple of explicit argument names to record."""
+
+
+def _resolve_extract_args(
+    func: Callable[..., Any],
+    sig: inspect.Signature,
+    extract_args: bool | Iterable[str],
+) -> _ExtractedArgs:
+    """Normalise `extract_args` and validate any explicit argument names."""
+    if extract_args is False or extract_args is True:
+        return extract_args
+    if isinstance(extract_args, str):
+        names: tuple[str, ...] = (extract_args,)
+    else:
+        names = tuple(extract_args)
+    if not names:
+        return False
+    unknown = [name for name in names if name not in sig.parameters]
+    if unknown:
+        raise ValueError(f'extract_args references parameters not in {func.__qualname__}: {sorted(unknown)}')
+    return names
+
+
+def _select_recorded_inputs(
+    inputs: dict[str, Any],
+    extract_args: _ExtractedArgs,
+) -> dict[str, Any] | None:
+    """Return the subset of inputs to record on the span, or `None` if disabled."""
+    if extract_args is False:
+        return None
+    if extract_args is True:
+        return inputs
+    return {name: inputs[name] for name in extract_args if name in inputs}
+
+
+def _default_call_span_name(func: Callable[..., Any]) -> str:
+    """Build a default span name/msg_template following `@logfire.instrument`'s convention."""
+    qualname = getattr(func, '__qualname__', getattr(func, '__name__', repr(func)))
+    module = inspect.getmodule(func)
+    module_name = getattr(module, '__name__', None)
+    if module_name:
+        return f'Calling {module_name}.{qualname}'
+    return f'Calling {qualname}'  # pragma: no cover
+
+
+@contextmanager
+def _open_call_span(
+    msg_template: str,
+    span_name: str | None,
+    recorded_inputs: dict[str, Any] | None,
+) -> Iterator[Any]:
+    """Open the span that represents the decorated function call.
+
+    When logfire is installed, uses `logfire.span` so argument and return
+    attributes get JSON-schema serialization. Otherwise falls back to a raw
+    OTel span via the configured tracer provider — preserving span parenting
+    for evaluator events even when logfire is not available.
+    """
+    if _LOGFIRE_INSTALLED:
+        attrs = recorded_inputs or {}
+        with logfire_span(msg_template, _span_name=span_name, **attrs) as span:
+            yield span
+    else:
+        tracer = trace.get_tracer('pydantic-evals')
+        with tracer.start_as_current_span(span_name or msg_template) as span:
+            yield span
 
 
 @dataclass(kw_only=True)
@@ -677,9 +406,39 @@ class OnlineEvalConfig:
     """
 
     default_sink: EvaluationSink | Sequence[EvaluationSink | SinkCallback] | SinkCallback | None = None
-    """Default sink(s) for evaluators that don't specify their own."""
+    """Additional sink(s) to receive results, for evaluators that don't specify their own.
+
+    Sinks run *in addition to* the default `gen_ai.evaluation.result` OTel event
+    emission — they are the escape hatch for custom destinations (in-memory test
+    capture, fan-out to Slack/DB, non-OTel backends). To disable OTel emission
+    itself, set [`emit_otel_events=False`][pydantic_evals.online.OnlineEvalConfig.emit_otel_events].
+    """
     default_sample_rate: float | Callable[[SamplingContext], float | bool] = 1.0
     """Default sample rate for evaluators that don't specify their own."""
+    emit_otel_events: bool = True
+    """Whether to emit `gen_ai.evaluation.result` OTel events for every evaluator run.
+
+    When `True` (the default), dispatch emits one OTel log event per `EvaluationResult`
+    or `EvaluatorFailure`, following the [OTel GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult).
+    If no OTel SDK is configured in the process, emission is a cheap no-op.
+
+    Set to `False` to disable — useful for tests that want to assert on a custom
+    sink alone, or in environments where OTel emission is undesirable. Custom
+    sinks registered via `default_sink` still run regardless of this flag. With
+    `emit_otel_events=False` AND no sinks configured, dispatch short-circuits
+    entirely (the evaluator never runs) since results would have nowhere to go.
+    """
+    include_baggage: bool = True
+    """Whether to copy OTel baggage entries onto every emitted evaluation event.
+
+    When `True` (the default), each emitted `gen_ai.evaluation.result` event also
+    carries the keys present in the current OTel baggage as attributes — useful
+    for propagating tenant/user/request identifiers from the calling context.
+    Standard `gen_ai.*` and `error.type` attributes always win on conflict, so
+    baggage cannot accidentally overwrite the semantic-convention attributes.
+
+    Set to `False` to skip the baggage snapshot per event.
+    """
     sampling_mode: SamplingMode = 'independent'
     """Controls how per-evaluator sample rates interact for a single call.
 
@@ -712,7 +471,9 @@ class OnlineEvalConfig:
     """Default handler called when an exception occurs in a sink or on_max_concurrency callback.
 
     Receives the exception, evaluator context, evaluator instance, and a location string
-    (`'sink'` or `'on_max_concurrency'`). Can be sync or async.
+    (see [`OnErrorLocation`][pydantic_evals.online.OnErrorLocation]). Can be sync or async.
+    `'sink'` covers both custom sink failures and the rarer default OTel event emission
+    failures — the value is intentionally broad.
     If `None` (the default), exceptions are silently suppressed.
     Per-evaluator `OnlineEvaluator.on_error` overrides this default.
     """
@@ -720,73 +481,163 @@ class OnlineEvalConfig:
     def evaluate(
         self,
         *evaluators: Evaluator | OnlineEvaluator,
+        target: str | None = None,
+        msg_template: LiteralString | None = None,
+        span_name: str | None = None,
+        extract_args: bool | Iterable[str] = False,
+        record_return: bool = False,
     ) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
         """Decorator to attach online evaluators to a function.
+
+        Each decorated call opens a dedicated span representing the function
+        invocation — evaluator events are parented to this span, and the span
+        itself appears in the user's configured OTel/logfire traces.
 
         Bare `Evaluator` instances are auto-wrapped in `OnlineEvaluator` at decoration time
         (so concurrency semaphores are shared across calls). Their `sample_rate` defaults to
         `None`, which resolves to the config's `default_sample_rate` at each call — so
         changes to the config after decoration take effect.
 
+        To version an evaluator, set `evaluator_version` on the `Evaluator` subclass
+        itself — the framework reads it at dispatch time and records it on every
+        [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and
+        [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] the evaluator emits:
+
+        ```python
+        from dataclasses import dataclass
+
+        from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+        from pydantic_evals.online import evaluate
+
+
+        @dataclass
+        class Tone(Evaluator):
+            evaluator_version = 'v2'
+
+            def evaluate(self, ctx: EvaluatorContext) -> str:
+                return 'neutral'
+
+
+        @evaluate(Tone())
+        async def summarize(text: str) -> str:
+            return text
+        ```
+
         Args:
             *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
+            target: Name of the thing being evaluated. Written to sinks and emitted
+                OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
+                function's `__name__` when omitted.
+            msg_template: Template for the call span's message. Defaults to
+                `"Calling {module}.{qualname}"` like `@logfire.instrument`.
+                When logfire is installed, `{arg=}`-style placeholders in the
+                template are formatted against the function's arguments.
+            span_name: Override for the call span's name. Defaults to `msg_template`.
+            extract_args: Whether to record function arguments as span attributes.
+                `False` (default) records nothing; `True` records all bound arguments;
+                an iterable of names records only those arguments. Requires logfire
+                to be installed so arguments are serialised with their JSON schema —
+                raises `RuntimeError` at decoration time otherwise.
+            record_return: Whether to record the function's return value as a `return`
+                span attribute. Requires logfire for the same reason as `extract_args`.
 
         Returns:
             A decorator that wraps the function with online evaluation.
         """
         online_evals = [e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in evaluators]
 
+        if (extract_args or record_return) and not _LOGFIRE_INSTALLED:
+            raise RuntimeError(
+                'extract_args and record_return require logfire to be installed for argument and '
+                'return-value serialization. Install `pydantic-evals[logfire]` (or disable both '
+                'options) to use them.'
+            )
+
+        # These options are intentionally decorator-only for now so they stay close to
+        # `@logfire.instrument`'s shape; we can lift them to `OnlineEvalConfig` as
+        # defaults if users ask for it.
+
         def decorator(func: Callable[_P, _R]) -> Callable[_P, _R]:
+            resolved_target = target if target is not None else func.__name__
+            sig = inspect.signature(func)
+            resolved_extract_args = _resolve_extract_args(func, sig, extract_args)
+            resolved_msg_template = msg_template if msg_template is not None else _default_call_span_name(func)
+            call_span = _CallSpanSpec(
+                msg_template=resolved_msg_template,
+                span_name=span_name,
+                extract_args=resolved_extract_args,
+                record_return=record_return,
+            )
             if inspect.iscoroutinefunction(func):
                 # ParamSpec can't distinguish async from sync return types — _wrap_async returns
                 # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
-                return _wrap_async(func, online_evals, self)  # pyright: ignore[reportReturnType]
+                return _wrap_async(func, sig, online_evals, self, resolved_target, call_span)  # pyright: ignore[reportReturnType]
             else:
-                return _wrap_sync(func, online_evals, self)
+                return _wrap_sync(func, sig, online_evals, self, resolved_target, call_span)
 
         return decorator
+
+    def should_evaluate(self) -> bool:
+        """Whether evaluators with this config should run, based on the current settings and context."""
+        return self.enabled and not _EVALUATION_DISABLED.get() and _task_run.CURRENT_TASK_RUN.get() is None
+
+
+@dataclass(kw_only=True, frozen=True)
+class _CallSpanSpec:
+    """Resolved configuration for the span that wraps a decorated call."""
+
+    msg_template: str
+    span_name: str | None
+    extract_args: _ExtractedArgs
+    record_return: bool
 
 
 def _wrap_async(
     func: Callable[_P, Awaitable[_R]],
+    sig: inspect.Signature,
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
+    target: str,
+    call_span: _CallSpanSpec,
 ) -> Callable[_P, Awaitable[_R]]:
     """Wrap an async function with online evaluation."""
-    sig = inspect.signature(func)
 
     @functools.wraps(func)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         # If evaluation is globally disabled, or we're already inside an evaluation
         # context (e.g. Dataset.evaluate), just run the function
-        if not config.enabled or _EVALUATION_DISABLED.get() or _CURRENT_TASK_RUN.get() is not None:
+        if not config.should_evaluate():
             return await func(*args, **kwargs)
 
         # Capture inputs early so sample_rate callables can use them
         inputs = _capture_inputs(sig, args, kwargs)
 
         # Determine which evaluators are sampled (before running the function)
-        sampled = _sample_evaluators(online_evals, config, inputs)
+        sampled = _online_internal.sample_evaluators(
+            online_evals,
+            config,
+            inputs,
+        )
         if not sampled:
             return await func(*args, **kwargs)
 
-        # Run the function with span tree capture and attribute/metric tracking
-        task_run = _TaskRun()
-        token = _CURRENT_TASK_RUN.set(task_run)
-        try:
-            with (
-                logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span,
-                context_subtree() as span_tree,
-            ):
-                t0 = time.perf_counter()
-                result = await func(*args, **kwargs)
-                duration = time.perf_counter() - t0
-        finally:
-            _CURRENT_TASK_RUN.reset(token)
+        recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
 
-        # Extract standard metrics (requests, cost, token usage) from the span tree
-        if isinstance(span_tree, SpanTree):  # pragma: no branch
-            _extract_span_tree_metrics(task_run, span_tree)
+        # Run the function with span tree capture and attribute/metric tracking
+        with (
+            _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
+            _task_run.run_task() as get_eval_context_kwargs,
+        ):
+            result = await func(*args, **kwargs)
+            if call_span.record_return:
+                # Swallow attribute-set failures so an exotic return value (e.g. one
+                # whose repr raises during logfire's JSON-schema serialisation) can't
+                # mask the function's real return. `record_return=True` is opt-in for
+                # observability, not a contract to fail the call.
+                try:
+                    span.set_attribute('return', result)
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None
@@ -796,17 +647,16 @@ def _wrap_async(
             output=result,
             expected_output=None,
             metadata=metadata,
-            duration=duration,
-            _span_tree=span_tree,
-            attributes=task_run.attributes,
-            metrics=task_run.metrics,
+            **get_eval_context_kwargs(),
         )
 
         # Extract span reference from the logfire span
         span_reference = _extract_span_reference(span)
 
         # Dispatch evaluators on the caller's event loop — preserves ContextVars
-        _dispatch_async(_dispatch_evaluators(sampled, context, span_reference, config))
+        _online_internal.dispatch_async(
+            _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
+        )
 
         return result
 
@@ -815,44 +665,50 @@ def _wrap_async(
 
 def _wrap_sync(
     func: Callable[_P, _R],
+    sig: inspect.Signature,
     online_evals: list[OnlineEvaluator],
     config: OnlineEvalConfig,
+    target: str,
+    call_span: _CallSpanSpec,
 ) -> Callable[_P, _R]:
     """Wrap a sync function with online evaluation."""
-    sig = inspect.signature(func)
 
     @functools.wraps(func)
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         # If evaluation is globally disabled, or we're already inside an evaluation
         # context (e.g. Dataset.evaluate), just run the function
-        if not config.enabled or _EVALUATION_DISABLED.get() or _CURRENT_TASK_RUN.get() is not None:
+        if not config.should_evaluate():
             return func(*args, **kwargs)
 
         # Capture inputs early so sample_rate callables can use them
         inputs = _capture_inputs(sig, args, kwargs)
 
         # Determine which evaluators are sampled
-        sampled = _sample_evaluators(online_evals, config, inputs)
+        sampled = _online_internal.sample_evaluators(
+            online_evals,
+            config,
+            inputs,
+        )
         if not sampled:
             return func(*args, **kwargs)
 
-        # Run the function with span tree capture and attribute/metric tracking
-        task_run = _TaskRun()
-        token = _CURRENT_TASK_RUN.set(task_run)
-        try:
-            with (
-                logfire_span('evaluate {func_name}', func_name=func.__qualname__) as span,
-                context_subtree() as span_tree,
-            ):
-                t0 = time.perf_counter()
-                result = func(*args, **kwargs)
-                duration = time.perf_counter() - t0
-        finally:
-            _CURRENT_TASK_RUN.reset(token)
+        recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
 
-        # Extract standard metrics (requests, cost, token usage) from the span tree
-        if isinstance(span_tree, SpanTree):  # pragma: no branch
-            _extract_span_tree_metrics(task_run, span_tree)
+        # Run the function with span tree capture and attribute/metric tracking
+        with (
+            _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
+            _task_run.run_task() as get_eval_context_kwargs,
+        ):
+            result = func(*args, **kwargs)
+            if call_span.record_return:
+                # Swallow attribute-set failures so an exotic return value (e.g. one
+                # whose repr raises during logfire's JSON-schema serialisation) can't
+                # mask the function's real return. `record_return=True` is opt-in for
+                # observability, not a contract to fail the call.
+                try:
+                    span.set_attribute('return', result)
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None
@@ -862,10 +718,7 @@ def _wrap_sync(
             output=result,
             expected_output=None,
             metadata=metadata,
-            duration=duration,
-            _span_tree=span_tree,
-            attributes=task_run.attributes,
-            metrics=task_run.metrics,
+            **get_eval_context_kwargs(),
         )
 
         # Extract span reference
@@ -879,11 +732,11 @@ def _wrap_sync(
         except RuntimeError:
             has_running_loop = False
 
-        coro = _dispatch_evaluators(sampled, context, span_reference, config)
+        coro = _online_internal.dispatch_evaluators(sampled, context, span_reference, target, config)
         if has_running_loop:
-            _dispatch_async(coro)
+            _online_internal.dispatch_async(coro)
         else:
-            _dispatch_in_background_thread(coro)
+            _online_internal.dispatch_in_background_thread(coro)
 
         return result
 
@@ -928,13 +781,32 @@ Module-level functions like `evaluate()` and `configure()` delegate to this inst
 """
 
 
-def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+def evaluate(
+    *evaluators: Evaluator | OnlineEvaluator,
+    target: str | None = None,
+    msg_template: LiteralString | None = None,
+    span_name: str | None = None,
+    extract_args: bool | Iterable[str] = False,
+    record_return: bool = False,
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Decorator to attach online evaluators to a function using the global default config.
 
     Equivalent to `DEFAULT_CONFIG.evaluate(...)`.
 
     Args:
         *evaluators: Evaluators to attach. Can be `Evaluator` or `OnlineEvaluator` instances.
+        target: Name of the thing being evaluated. Written to sinks and emitted
+            OTel events as `gen_ai.evaluation.target`. Defaults to the decorated
+            function's `__name__` when omitted.
+        msg_template: Template for the call span's message. Defaults to
+            `"Calling {module}.{qualname}"` like `@logfire.instrument`.
+        span_name: Override for the call span's name. Defaults to `msg_template`.
+        extract_args: Whether to record function arguments as span attributes.
+            `False` (default) records nothing; `True` records all bound arguments;
+            an iterable of names records only those arguments. Requires logfire
+            to be installed — raises `RuntimeError` at decoration time otherwise.
+        record_return: Whether to record the function's return value as a `return`
+            span attribute. Requires logfire for the same reason as `extract_args`.
 
     Returns:
         A decorator that wraps the function with online evaluation.
@@ -958,7 +830,14 @@ def evaluate(*evaluators: Evaluator | OnlineEvaluator) -> Callable[[Callable[_P,
         return x
     ```
     """
-    return DEFAULT_CONFIG.evaluate(*evaluators)
+    return DEFAULT_CONFIG.evaluate(
+        *evaluators,
+        target=target,
+        msg_template=msg_template,
+        span_name=span_name,
+        extract_args=extract_args,
+        record_return=record_return,
+    )
 
 
 def configure(
@@ -971,6 +850,8 @@ def configure(
     on_max_concurrency: OnMaxConcurrencyCallback | None | Unset = UNSET,
     on_sampling_error: OnSamplingErrorCallback | None | Unset = UNSET,
     on_error: OnErrorCallback | None | Unset = UNSET,
+    emit_otel_events: bool | Unset = UNSET,
+    include_baggage: bool | Unset = UNSET,
 ) -> None:
     """Configure the global default `OnlineEvalConfig`.
 
@@ -987,6 +868,8 @@ def configure(
         on_max_concurrency: Default handler for dropped evaluations. Pass `None` to clear.
         on_sampling_error: Default handler for sample_rate exceptions. Pass `None` to clear.
         on_error: Default handler for pipeline exceptions. Pass `None` to clear.
+        emit_otel_events: Whether to emit `gen_ai.evaluation.result` OTel events.
+        include_baggage: Whether to copy current OTel baggage onto every emitted event.
     """
     if not isinstance(default_sink, Unset):
         DEFAULT_CONFIG.default_sink = default_sink
@@ -1004,6 +887,10 @@ def configure(
         DEFAULT_CONFIG.on_sampling_error = on_sampling_error
     if not isinstance(on_error, Unset):
         DEFAULT_CONFIG.on_error = on_error
+    if not isinstance(emit_otel_events, Unset):
+        DEFAULT_CONFIG.emit_otel_events = emit_otel_events
+    if not isinstance(include_baggage, Unset):
+        DEFAULT_CONFIG.include_baggage = include_baggage
 
 
 async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
@@ -1019,29 +906,4 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
     Args:
         timeout: Maximum seconds to wait for each background thread. Defaults to 30.
     """
-    with _background_lock:
-        tasks_snapshot = list(_background_tasks)
-        events_snapshot = list(_background_events)
-        threads_snapshot = list(_background_threads)
-
-    # Await async tasks (from async decorated functions on asyncio)
-    for task in tasks_snapshot:
-        try:
-            await task
-        except BaseException:  # pragma: no cover
-            pass  # Exceptions are handled inside _dispatch_single_evaluator
-
-    # Await trio events (from async decorated functions on trio)
-    for event in events_snapshot:
-        await event.wait()  # pragma: no cover
-
-    # Join background threads (from sync decorated functions) without blocking the event loop
-    if threads_snapshot:
-
-        def _join_threads() -> None:
-            for thread in threads_snapshot:
-                thread.join(timeout=timeout)
-                if thread.is_alive():  # pragma: no cover
-                    warnings.warn(f'Background evaluation thread did not complete within {timeout:.1f}s timeout')
-
-        await run_sync(_join_threads)
+    await _online_internal.wait_for_evaluations(timeout=timeout)
