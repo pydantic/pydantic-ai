@@ -127,6 +127,7 @@ _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
 }
 
+
 class XaiModelSettings(ModelSettings, total=False):
     """Settings specific to xAI models.
 
