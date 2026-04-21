@@ -324,7 +324,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=89, output_tokens=14),
+                usage=RequestUsage(input_tokens=87, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -394,8 +394,7 @@ def test_result_pydantic_model_validation_error():
     "loc": [
       "b"
     ],
-    "msg": "Value error, must not be foo",
-    "input": "foo"
+    "msg": "Value error, must not be foo"
   }
 ]
 ```
@@ -2649,7 +2648,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=87, output_tokens=12),
+                usage=RequestUsage(input_tokens=81, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
