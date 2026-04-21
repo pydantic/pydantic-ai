@@ -22,6 +22,7 @@ from .builtin_tools import (
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
 )
 from .concurrency import (
     AbstractConcurrencyLimiter,
@@ -65,6 +66,7 @@ from .messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
@@ -202,6 +204,7 @@ __all__ = (
     'BuiltinToolCallPart',
     'BuiltinToolReturnPart',
     'CachePoint',
+    'CompactionPart',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
@@ -288,6 +291,7 @@ __all__ = (
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
+    'XSearchTool',
     # output
     'ToolOutput',
     'NativeOutput',

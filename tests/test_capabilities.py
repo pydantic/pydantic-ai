@@ -6,20 +6,31 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    CapabilityOrdering,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
@@ -52,6 +63,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -68,7 +80,10 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr, try_import
+
+with try_import() as xai_imports:
+    from pydantic_ai.models.xai import XSearch
 
 pytestmark = [
     pytest.mark.anyio,
@@ -508,23 +523,18 @@ def test_model_json_schema_with_capabilities():
                 },
                 'KnownModelName': {
                     'enum': [
-                        'anthropic:claude-3-5-haiku-20241022',
-                        'anthropic:claude-3-5-haiku-latest',
-                        'anthropic:claude-3-7-sonnet-20250219',
-                        'anthropic:claude-3-7-sonnet-latest',
                         'anthropic:claude-3-haiku-20240307',
-                        'anthropic:claude-3-opus-20240229',
-                        'anthropic:claude-3-opus-latest',
-                        'anthropic:claude-4-opus-20250514',
-                        'anthropic:claude-4-sonnet-20250514',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-preview',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-opus-4-0',
+                        'anthropic:claude-opus-4-1',
                         'anthropic:claude-opus-4-1-20250805',
                         'anthropic:claude-opus-4-20250514',
                         'anthropic:claude-opus-4-5-20251101',
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-6',
+                        'anthropic:claude-opus-4-7',
                         'anthropic:claude-sonnet-4-0',
                         'anthropic:claude-sonnet-4-20250514',
                         'anthropic:claude-sonnet-4-5-20250929',
@@ -602,16 +612,17 @@ def test_model_json_schema_with_capabilities():
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
                         'gateway/anthropic:claude-3-haiku-20240307',
-                        'gateway/anthropic:claude-4-opus-20250514',
-                        'gateway/anthropic:claude-4-sonnet-20250514',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-preview',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-opus-4-0',
+                        'gateway/anthropic:claude-opus-4-1',
                         'gateway/anthropic:claude-opus-4-1-20250805',
                         'gateway/anthropic:claude-opus-4-20250514',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-6',
+                        'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-sonnet-4-0',
                         'gateway/anthropic:claude-sonnet-4-20250514',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -1102,6 +1113,48 @@ Supported by:
                     'title': 'WebSearchUserLocation',
                     'type': 'object',
                 },
+                'XSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'default': False,
+                            'title': 'Enable Image Understanding',
+                            'type': 'boolean',
+                        },
+                        'enable_video_understanding': {
+                            'default': False,
+                            'title': 'Enable Video Understanding',
+                            'type': 'boolean',
+                        },
+                        'include_output': {
+                            'default': False,
+                            'title': 'Include Output',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'XSearchTool',
+                    'type': 'object',
+                },
                 'short_spec_BuiltinTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1110,6 +1163,7 @@ Supported by:
                                 {
                                     'oneOf': [
                                         {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
                                         {'$ref': '#/$defs/UrlContextTool'},
@@ -1429,7 +1483,7 @@ Supported by:
                 },
                 'end_strategy': {
                     'default': 'early',
-                    'enum': ['early', 'exhaustive'],
+                    'enum': ['early', 'graceful', 'exhaustive'],
                     'title': 'End Strategy',
                     'type': 'string',
                 },
@@ -2000,6 +2054,33 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     assert new_per_run.run_id == 1
 
 
+async def test_combined_capability_for_run_cancels_siblings_on_failure():
+    """When one child's for_run fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    @dataclass
+    class FailingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            raise RuntimeError('boom')
+
+    @dataclass
+    class SlowCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return self  # pragma: no cover
+
+    combined = CombinedCapability([FailingCap(), SlowCap()])
+    ctx = _build_run_context()
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.for_run(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
+
+
 def test_apply_single_capability():
     """AbstractCapability.apply() visits just the capability itself."""
 
@@ -2225,7 +2306,7 @@ class _ReplacingCapability(AbstractCapability[Any]):
     replaced: bool = field(default=False, init=False)
 
     async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai._agent_graph import ModelRequestNode
+        from pydantic_ai import ModelRequestNode
 
         if isinstance(node, ModelRequestNode) and not self.replaced:
             self.replaced = True
@@ -2261,6 +2342,11 @@ async def tool_calling_stream_function(
         return
 
     yield 'no tools available'  # pragma: no cover
+
+
+# Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
+class SingleBaseModelArg(BaseModel):
+    label: str = 'default'
 
 
 def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2936,6 +3022,104 @@ class TestToolExecuteHooks:
 
         await agent.run('call tool')
         assert cap.caught_error == 'tool failed'
+
+    async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
+        """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
+
+        The JSON schema sent to the model unwraps the BaseModel, so the model generates its fields at the
+        top level. Pydantic's validator returns a BaseModel instance directly, but the framework wraps it
+        as `{param_name: model}` so hooks and `call_tool` always see a dict.
+        """
+        captured_args: list[tuple[str, dict[str, Any]]] = []
+
+        @dataclass
+        class CapturingCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                captured_args.append(('validate', args))
+                return args
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                captured_args.append(('execute', args))
+                return await handler(args)
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CapturingCap()])
+
+        @agent.tool_plain
+        def my_tool(payload: SingleBaseModelArg) -> str:
+            return f'got {payload.label}'
+
+        await agent.run('call the tool')
+        assert captured_args == [
+            ('validate', {'payload': SingleBaseModelArg()}),
+            ('execute', {'payload': SingleBaseModelArg()}),
+        ]
+
+    async def test_tool_hooks_skip_output_tools(self):
+        """Tool hooks don't fire for internal output tools (#5111).
+
+        Output tools deliver structured output to the user via `result.output`; they're not
+        user-facing tool calls. Firing hooks on them lets e.g. `after_tool_execute` return a
+        `ToolReturn` that leaks through to `result.output` instead of the typed value.
+        """
+
+        class MyOutput(BaseModel):
+            answer: str
+
+        hooks = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def wrap_result(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> ToolReturn:
+            return ToolReturn(return_value=result, content='extra context')
+
+        cap = LoggingCapability()
+        agent = Agent(
+            TestModel(custom_output_args={'answer': 'hi'}),
+            output_type=MyOutput,
+            capabilities=[cap, hooks],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool and answer')
+
+        # Function tool still fires every tool hook.
+        assert 'before_tool_validate:my_tool' in cap.log
+        assert 'after_tool_validate:my_tool' in cap.log
+        assert 'wrap_tool_validate:my_tool:before' in cap.log
+        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert 'before_tool_execute:my_tool' in cap.log
+        assert 'after_tool_execute:my_tool' in cap.log
+        assert 'wrap_tool_execute:my_tool:before' in cap.log
+        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        # Output tool does not appear in any hook log entry.
+        assert all('final_result' not in entry for entry in cap.log)
+        # Regression for #5111: the ToolReturn from `after_tool_execute` would have corrupted
+        # `result.output` if output tool hooks still fired.
+        assert result.output == MyOutput(answer='hi')
 
 
 class TestCompositionOrder:
@@ -3857,6 +4041,55 @@ class TestWebSearchCapability:
 
         cap = WebSearch(local=my_search)
         assert isinstance(cap.local, Tool)
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+class TestXSearchCapability:
+    def test_xsearch_default(self):
+        """XSearch() with defaults → builtin XSearchTool, no local."""
+        cap = XSearch()
+        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is None
+
+    def test_xsearch_with_all_constraints(self):
+        """XSearch with all constraint fields → XSearchTool configured."""
+        cap = XSearch(
+            allowed_x_handles=['handle1'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+            include_output=True,
+        )
+        assert cap.get_builtin_tools() == snapshot(
+            [
+                XSearchTool(
+                    allowed_x_handles=['handle1'],
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                    enable_image_understanding=True,
+                    enable_video_understanding=True,
+                    include_output=True,
+                )
+            ]
+        )
+
+    def test_xsearch_requires_builtin_with_handles(self):
+        """XSearch with handle constraints requires builtin."""
+        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
+            [XSearchTool(excluded_x_handles=['h'])]
+        )
+
+    def test_xsearch_builtin_false_local_false_raises(self):
+        """XSearch(builtin=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            XSearch(builtin=False, local=False)
+
+    def test_xsearch_builtin_false_with_constraints_raises(self):
+        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            XSearch(builtin=False, allowed_x_handles=['handle1'])
 
 
 class TestWebFetchCapability:
@@ -5081,7 +5314,7 @@ class TestGetWrapperToolsetHook:
         )
 
     async def test_wrapper_chaining_order(self):
-        """Multiple capabilities' wrappers compose by nesting: first wraps innermost."""
+        """Multiple capabilities' wrappers compose by nesting: first wraps outermost."""
         from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
@@ -5105,8 +5338,8 @@ class TestGetWrapperToolsetHook:
             return 'r'  # pragma: no cover
 
         result = await agent.run('hello')
-        # First cap wraps innermost (a_tool), then second wraps that (b_a_tool)
-        assert result.output == "tools: ['b_a_tool']"
+        # First cap wraps outermost (matching wrap_* hooks): a_b_tool
+        assert result.output == "tools: ['a_b_tool']"
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -5115,7 +5348,7 @@ class TestGetWrapperToolsetHook:
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content="tools: ['b_a_tool']")],
+                    parts=[TextPart(content="tools: ['a_b_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
@@ -5382,6 +5615,13 @@ def test_web_fetch_unique_id():
     """WebFetch returns the correct builtin unique_id."""
     cap = WebFetch()
     assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+def test_xsearch_unique_id():
+    """XSearch returns the correct builtin unique_id."""
+    cap = XSearch()
+    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
@@ -8403,6 +8643,226 @@ class TestCtxAgentInCapability:
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
 
 
+# region --- Compaction capability tests ---
+
+
+class TestCompaction:
+    def test_compaction_part_serialization(self):
+        """CompactionPart round-trips through Pydantic serialization."""
+        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
+
+        # Anthropic-style (text content)
+        anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
+        assert anthropic_part.has_content()
+        assert anthropic_part.part_kind == 'compaction'
+
+        # OpenAI-style (encrypted, no content)
+        openai_part = CompactionPart(
+            content=None,
+            id='cmp_123',
+            provider_name='openai',
+            provider_details={'encrypted_content': 'abc123', 'type': 'compaction'},
+        )
+        assert not openai_part.has_content()
+        assert openai_part.part_kind == 'compaction'
+
+        # Round-trip through serialization
+        response = ModelResponse(parts=[anthropic_part, openai_part])
+        messages: list[ModelMessage] = [response]
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+        assert len(deserialized) == 1
+        assert isinstance(deserialized[0], ModelResponse)
+        parts = deserialized[0].parts
+        assert len(parts) == 2
+        assert isinstance(parts[0], CompactionPart)
+        assert parts[0].content == 'Summary of conversation'
+        assert parts[0].provider_name == 'anthropic'
+        assert isinstance(parts[1], CompactionPart)
+        assert parts[1].content is None
+        assert parts[1].id == 'cmp_123'
+        assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
+
+    async def test_openai_compaction_with_wrong_model(self):
+        """OpenAICompaction raises UserError when used with a non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    async def test_openai_compaction_with_wrapped_wrong_model(self):
+        """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        wrapped = WrapperModel(FunctionModel(simple_model_function))
+        agent = Agent(
+            wrapped,
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    def test_openai_compaction_should_compact_with_trigger(self):
+        """OpenAICompaction._should_compact delegates to custom trigger."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')]),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+        )
+
+    def test_openai_compaction_should_compact_no_config(self):
+        """Bare `OpenAICompaction()` is stateful mode and never triggers the before_model_request hook."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction()
+        assert cap.stateless is False
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_mode_inference(self):
+        """`stateless` is inferred from which mode-specific fields are passed."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction().stateless is False
+        assert OpenAICompaction(token_threshold=1000).stateless is False
+        assert OpenAICompaction(message_count_threshold=5).stateless is True
+        assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
+
+    def test_openai_compaction_stateful_model_settings(self):
+        """Stateful mode returns `openai_context_management` via get_model_settings."""
+        pytest.importorskip('openai')
+        from types import SimpleNamespace
+        from typing import cast
+
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        def _resolve(cap: OpenAICompaction[None], model_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+            resolver = cap.get_model_settings()
+            assert resolver is not None
+            ctx = SimpleNamespace(model_settings=model_settings)
+            return cast(dict[str, Any], resolver(cast(Any, ctx)))
+
+        assert _resolve(OpenAICompaction()) == {'openai_context_management': [{'type': 'compaction'}]}
+        assert _resolve(OpenAICompaction(token_threshold=50_000)) == {
+            'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]
+        }
+        # If the user already configured `openai_context_management` directly, we defer
+        # to them entirely and don't append our own entry. OpenAI's context_management
+        # list only meaningfully supports one `compaction` entry, so mixing the capability
+        # with manual config would produce ambiguous/conflicting state.
+        assert (
+            _resolve(
+                OpenAICompaction(token_threshold=50_000),
+                model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
+            )
+            == {}
+        )
+        # When user has other model settings but no `openai_context_management`,
+        # the capability's compaction entry is injected normally.
+        assert _resolve(
+            OpenAICompaction(token_threshold=50_000),
+            model_settings={'temperature': 0.5},
+        ) == {'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]}
+        # Stateless mode does not inject model settings
+        assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
+
+    def test_openai_compaction_rejects_mixed_fields(self):
+        """Mixing stateful-only and stateless-only fields raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='`token_threshold` is only valid for stateful compaction'):
+            OpenAICompaction(stateless=True, token_threshold=1000, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, trigger=lambda _msgs: True)
+
+    def test_openai_compaction_stateless_requires_trigger(self):
+        """`stateless=True` without message_count_threshold or trigger raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
+            OpenAICompaction(stateless=True)
+
+    def test_openai_compaction_instructions_deprecated(self):
+        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
+            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
+
+    def test_openai_compaction_serialization_name(self):
+        """OpenAICompaction has the correct serialization name."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
+
+    def test_anthropic_compaction_serialization_name(self):
+        """AnthropicCompaction has the correct serialization name."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
+
+    async def test_compaction_part_in_function_model_history(self):
+        """FunctionModel handles message history containing CompactionPart."""
+        from pydantic_ai.messages import CompactionPart
+
+        compaction_response = ModelResponse(
+            parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
+            provider_name='anthropic',
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+            compaction_response,
+            ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+        ]
+
+        agent = Agent(FunctionModel(simple_model_function))
+        result = await agent.run('Follow up', message_history=history)
+        assert result.output == 'response from model'
+
+    async def test_compaction_part_without_content_in_response(self):
+        """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
+        from pydantic_ai.messages import CompactionPart
+
+        def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content=None, id='cmp_123', provider_name='openai'),
+                    TextPart(content='actual response'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(model_with_compaction))
+        result = await agent.run('hello')
+        assert result.output == 'actual response'
+
+
+# endregion
+
+
 def test_thread_executor_not_serializable() -> None:
     assert ThreadExecutor.get_serialization_name() is None
 
@@ -8456,3 +8916,475 @@ async def test_thread_executor_static_method() -> None:
         assert tool_threads[0].startswith('static-pool')
     finally:
         executor.shutdown(wait=True)
+
+
+# --- Capability ordering tests ---
+
+
+@dataclass
+class OutermostCap(AbstractCapability[Any]):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
+@dataclass
+class InnermostCap(AbstractCapability[Any]):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='innermost')
+
+
+@dataclass
+class PlainCapA(AbstractCapability[Any]):
+    pass
+
+
+@dataclass
+class PlainCapB(AbstractCapability[Any]):
+    pass
+
+
+@dataclass
+class WrapsACap(AbstractCapability[Any]):
+    """Must wrap around PlainCapA."""
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(wraps=[PlainCapA])
+
+
+@dataclass
+class RequiresOutermostCap(AbstractCapability[Any]):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(requires=[OutermostCap])
+
+
+def _cap_names(combined: CombinedCapability) -> list[str]:
+    return [type(c).__name__ for c in combined.capabilities]
+
+
+def test_ordering_outermost():
+    """Capability declaring 'outermost' ends up at index 0."""
+    combined = CombinedCapability([PlainCapA(), OutermostCap(), PlainCapB()])
+    assert _cap_names(combined) == ['OutermostCap', 'PlainCapA', 'PlainCapB']
+
+
+def test_ordering_innermost():
+    """Capability declaring 'innermost' ends up last."""
+    combined = CombinedCapability([InnermostCap(), PlainCapA(), PlainCapB()])
+    assert _cap_names(combined) == ['PlainCapA', 'PlainCapB', 'InnermostCap']
+
+
+def test_ordering_both_outermost_and_innermost():
+    """Both outermost and innermost present."""
+    combined = CombinedCapability([PlainCapA(), InnermostCap(), OutermostCap()])
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[-1].__class__ is InnermostCap
+
+
+def test_ordering_multiple_outermost_tier():
+    """Multiple outermost capabilities form a tier; original order breaks ties."""
+
+    @dataclass
+    class OutermostCap2(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    combined = CombinedCapability([PlainCapA(), OutermostCap2(), OutermostCap()])
+    # Both outermost caps before PlainCapA; original order (OutermostCap2 before OutermostCap) preserved
+    assert _cap_names(combined) == ['OutermostCap2', 'OutermostCap', 'PlainCapA']
+
+
+def test_ordering_multiple_innermost_tier():
+    """Multiple innermost capabilities form a tier; original order breaks ties."""
+
+    @dataclass
+    class InnermostCap2(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+    combined = CombinedCapability([InnermostCap(), InnermostCap2(), PlainCapA()])
+    # PlainCapA first, then both innermost in original order
+    assert _cap_names(combined) == ['PlainCapA', 'InnermostCap', 'InnermostCap2']
+
+
+def test_ordering_outermost_tier_with_wraps():
+    """wraps/wrapped_by refines order within the outermost tier."""
+
+    @dataclass
+    class OuterA(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+    @dataclass
+    class OuterB(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[OuterA])
+
+    # OuterB listed after OuterA, but wraps=[OuterA] overrides tiebreaker
+    combined = CombinedCapability([OuterA(), PlainCapA(), OuterB()])
+    assert _cap_names(combined) == ['OuterB', 'OuterA', 'PlainCapA']
+
+
+def test_ordering_wraps():
+    """Explicit 'wraps' edge is respected."""
+    combined = CombinedCapability([PlainCapA(), WrapsACap()])
+    assert _cap_names(combined) == ['WrapsACap', 'PlainCapA']
+
+
+def test_ordering_wrapped_by():
+    """Explicit 'wrapped_by' edge is respected."""
+
+    @dataclass
+    class WrappedByACap(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[PlainCapA])
+
+    combined = CombinedCapability([WrappedByACap(), PlainCapA()])
+    assert _cap_names(combined) == ['PlainCapA', 'WrappedByACap']
+
+
+def test_ordering_requires_present():
+    """No error when required capability is present."""
+    combined = CombinedCapability([RequiresOutermostCap(), OutermostCap()])
+    assert len(combined.capabilities) == 2
+
+
+def test_ordering_requires_missing():
+    with pytest.raises(UserError, match='`RequiresOutermostCap` requires `OutermostCap`'):
+        CombinedCapability([RequiresOutermostCap(), PlainCapA()])
+
+
+def test_ordering_preserves_user_order():
+    """Capabilities without constraints keep their relative order."""
+    a, b = PlainCapB(), PlainCapA()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
+
+
+def test_ordering_nested_combined():
+    """Ordering from leaves inside a nested CombinedCapability is respected.
+
+    When a CombinedCapability is nested inside another, its leaves' ordering
+    constraints are merged and applied to the outer sort. Leaves without
+    ordering constraints are skipped during the merge.
+    """
+    # OutermostCap declares position='outermost'; PlainCapB has no ordering.
+    # The merged effective ordering for 'inner' should be position='outermost',
+    # placing it before PlainCapA despite being listed second.
+    inner = CombinedCapability([PlainCapB(), OutermostCap()])
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+
+
+def test_ordering_nested_combined_no_constraints():
+    """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
+    inner = CombinedCapability([PlainCapA(), PlainCapB()])
+    combined = CombinedCapability([inner, OutermostCap()])
+    # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
+    assert combined.capabilities[0].__class__ is OutermostCap
+    assert combined.capabilities[1] is inner
+
+
+def test_ordering_nested_combined_wraps_without_position():
+    """A nested CombinedCapability with wraps constraints (but no position) merges correctly."""
+    inner = CombinedCapability([PlainCapB(), WrapsACap()])
+    # WrapsACap has wraps=[PlainCapA] but no position.
+    # The nested group inherits that constraint, so it sorts before PlainCapA.
+    combined = CombinedCapability([PlainCapA(), inner])
+    assert combined.capabilities[0] is inner
+    assert combined.capabilities[1].__class__ is PlainCapA
+
+
+def test_ordering_single_capability():
+    """Single capability in CombinedCapability is unchanged."""
+    cap = OutermostCap()
+    combined = CombinedCapability([cap])
+    assert list(combined.capabilities) == [cap]
+
+
+def test_ordering_no_constraints_noop():
+    """When no capability declares ordering, list is unchanged."""
+    a, b = PlainCapA(), PlainCapB()
+    combined = CombinedCapability([a, b])
+    assert list(combined.capabilities) == [a, b]
+
+
+def test_ordering_cycle_detection():
+    @dataclass
+    class CycleA(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[CycleB])
+
+    @dataclass
+    class CycleB(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[CycleA])
+
+    with pytest.raises(UserError, match='Circular ordering constraints'):
+        CombinedCapability([CycleA(), CycleB()])
+
+
+def test_ordering_conflicting_positions_in_nested():
+    """Conflicting positions in a nested CombinedCapability raise UserError."""
+    inner = CombinedCapability([OutermostCap(), InnermostCap()])
+    with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
+        CombinedCapability([inner, PlainCapA()])
+
+
+def test_ordering_wrapper_capability_recurses():
+    """Ordering constraints on capabilities inside a WrapperCapability are preserved."""
+    wrapped = WrapperCapability(wrapped=OutermostCap())
+    # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
+    # and picks up OutermostCap's position='outermost' constraint.
+    combined = CombinedCapability([PlainCapA(), wrapped])
+    assert combined.capabilities[0] is wrapped
+
+
+def test_ordering_hooks_ordering_parameter():
+    """Hooks with ordering= are sorted according to those constraints."""
+    hooks = Hooks(ordering=CapabilityOrdering(position='outermost'))
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wraps():
+    """Hooks with ordering wraps= are placed before the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[PlainCapA]))
+    combined = CombinedCapability([PlainCapA(), hooks])
+    assert combined.capabilities[0] is hooks
+
+
+def test_ordering_hooks_ordering_wrapped_by():
+    """Hooks with ordering wrapped_by= are placed after the referenced type."""
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[PlainCapA]))
+    combined = CombinedCapability([hooks, PlainCapA()])
+    assert combined.capabilities[0].__class__ is PlainCapA
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_no_ordering():
+    """Hooks without ordering= preserve their list position."""
+    hooks = Hooks()
+    combined = CombinedCapability([PlainCapA(), hooks, PlainCapB()])
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_hooks_ordering_requires():
+    """Hooks with ordering requires= validates that the required type is present."""
+    hooks = Hooks(ordering=CapabilityOrdering(requires=[OutermostCap]))
+    with pytest.raises(UserError, match='`Hooks` requires `OutermostCap`'):
+        CombinedCapability([hooks, PlainCapA()])
+
+
+def test_ordering_wraps_instance_ref():
+    """wraps= with an instance ref only constrains the specific instance, not all instances of that type."""
+    target = PlainCapA()
+    other_a = PlainCapA()
+
+    @dataclass
+    class WrapsInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[target])
+
+    # Arrange so that instance ref vs type ref produces a distinguishable result:
+    # - Instance ref wraps=[target] → only target must come after WrapsInstance
+    # - A type ref wraps=[PlainCapA] would constrain both other_a and target
+    combined = CombinedCapability([other_a, target, WrapsInstance()])
+    # other_a stays before WrapsInstance (no constraint), WrapsInstance before target
+    assert combined.capabilities[0] is other_a
+    assert combined.capabilities[1].__class__ is WrapsInstance
+    assert combined.capabilities[2] is target
+
+
+def test_ordering_wrapped_by_instance_ref():
+    """wrapped_by= can reference a specific capability instance."""
+    wrapper = PlainCapA()
+
+    @dataclass
+    class WrappedByInstance(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wrapped_by=[wrapper])
+
+    combined = CombinedCapability([WrappedByInstance(), wrapper])
+    assert combined.capabilities[0] is wrapper
+    assert combined.capabilities[1].__class__ is WrappedByInstance
+
+
+def test_ordering_hooks_wraps_instance():
+    """Hooks can order relative to a specific capability instance via wraps=."""
+    target = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[target]))
+    combined = CombinedCapability([target, hooks])
+    assert combined.capabilities[0] is hooks
+    assert combined.capabilities[1] is target
+
+
+def test_ordering_hooks_wrapped_by_instance():
+    """Hooks can order relative to a specific capability instance via wrapped_by=."""
+    outer = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wrapped_by=[outer]))
+    combined = CombinedCapability([hooks, outer])
+    assert combined.capabilities[0] is outer
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_instance_ref_not_present():
+    """Instance ref in wraps= that isn't in the list has no effect (no edge added)."""
+    absent = PlainCapA()
+    hooks = Hooks(ordering=CapabilityOrdering(wraps=[absent]))
+    # absent is NOT in the capabilities list — the wraps ref should be a no-op
+    combined = CombinedCapability([PlainCapB(), hooks])
+    # Order preserved since the instance ref doesn't match anything
+    assert combined.capabilities[0].__class__ is PlainCapB
+    assert combined.capabilities[1] is hooks
+
+
+def test_ordering_mixed_type_and_instance_refs():
+    """wraps= can mix type refs and instance refs."""
+    target_instance = PlainCapB()
+
+    @dataclass
+    class MixedRefs(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[PlainCapA, target_instance])
+
+    combined = CombinedCapability([PlainCapA(), target_instance, MixedRefs()])
+    assert combined.capabilities[0].__class__ is MixedRefs
+
+
+# --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
+
+
+async def test_after_node_run_end_to_node_override():
+    """after_node_run can convert an End result back to a node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[TextPart('first answer')])
+        return ModelResponse(parts=[TextPart('second answer')])
+
+    redirected = False
+
+    @dataclass
+    class RedirectOnFirstEnd(AbstractCapability[Any]):
+        """Redirects the first End back to a ModelRequestNode to force a second model call."""
+
+        _redirected: bool = field(default=False, init=False)
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            nonlocal redirected
+            if isinstance(result, End) and not self._redirected:
+                self._redirected = True
+                redirected = True
+                return ModelRequestNode(ModelRequest(parts=[UserPromptPart(content='try again')]))  # pyright: ignore[reportUnknownVariableType]
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(llm), capabilities=[RedirectOnFirstEnd()])
+    result = await agent.run('hello')
+
+    assert redirected
+    assert call_count == 2
+    assert result.output == 'second answer'
+
+
+async def test_next_node_raises_on_error_marker():
+    """Accessing next_node after a node error re-raises the original exception."""
+    call_count = 0
+
+    def failing_then_ok_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        raise ValueError('model failure')
+
+    agent = Agent(FunctionModel(failing_then_ok_model))
+    async with agent.iter('hello') as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            try:
+                node = await agent_run.next(node)
+            except ValueError:
+                # After an unrecovered error, next_node should re-raise
+                with pytest.raises(ValueError, match='model failure'):
+                    _ = agent_run.next_node
+                break
+
+
+async def test_on_node_run_error_returns_end():
+    """on_node_run_error can recover from an exception by returning End, completing the run."""
+    from pydantic_ai.result import FinalResult
+
+    def always_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('model exploded')
+
+    @dataclass
+    class RecoverWithEnd(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            return End(FinalResult('recovered output'))
+
+    agent = Agent(FunctionModel(always_fails), capabilities=[RecoverWithEnd()])
+    result = await agent.run('hello')
+    assert result.output == 'recovered output'
+
+
+async def test_on_node_run_error_returns_node():
+    """on_node_run_error can recover by returning a retry node, continuing execution."""
+    from pydantic_ai import ModelRequestNode
+
+    call_count = 0
+
+    def fails_then_succeeds(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError('transient failure')
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    @dataclass
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+            # Retry by returning a new ModelRequestNode with the same request
+            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(fails_then_succeeds), capabilities=[RetryOnError()])
+    result = await agent.run('hello')
+    assert call_count == 2
+    assert result.output == 'recovered'
+
+
+async def test_after_node_run_node_to_end():
+    """after_node_run can short-circuit a run by converting a continuation node to End."""
+    from pydantic_ai.result import FinalResult
+
+    model_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+        # Always request a tool call, producing a CallToolsNode (not End)
+        return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}')])
+
+    @dataclass
+    class ShortCircuitAfterModelRequest(AbstractCapability[Any]):
+        """Short-circuit after the first model request node by converting the continuation to End."""
+
+        async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+            from pydantic_ai import ModelRequestNode
+
+            # The ModelRequestNode produces a CallToolsNode (not End); convert it to End.
+            if isinstance(node, ModelRequestNode) and not isinstance(result, End):
+                return End(FinalResult('short-circuited'))
+            return result  # pyright: ignore[reportUnknownVariableType]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ShortCircuitAfterModelRequest()])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool result'  # pragma: no cover
+
+    result = await agent.run('hello')
+    assert result.output == 'short-circuited'
+    assert model_call_count == 1

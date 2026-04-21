@@ -25,7 +25,9 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 ### Features, integrations, or API changes
 
-Before writing code, ask whether the change needs to live in core at all. Many additions work better as a [capability](capabilities.md) — a self-contained extension you publish as your own package and use immediately without waiting on us. Capabilities are the primary extension point for Pydantic AI. Once yours has real users and a stable shape, come back and we can talk about upstreaming.
+Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](harness/overview.md#what-goes-where) for the full distinction.
+
+**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable shape, we can talk about upstreaming to harness or core.
 
 If it does belong in core:
 
@@ -77,7 +79,12 @@ PRs are automatically reviewed by Devin and our own tooling. These reviews are a
 
 We receive far more contributions than we can review, and we focus where it has the most impact. We cannot promise to get to every PR, even good ones, and we'd rather say so up front than leave your work open indefinitely with no signal.
 
-Features that align with our roadmap and have active champions get priority. Features that could live as a [capability](capabilities.md) or workaround in user code: shipping it yourself is often the fastest path. Once it has traction, come back and we can talk about upstreaming.
+How we weigh priorities:
+
+- **User demand** -- features that more users need get priority. Champion-backed features with production use cases outrank speculative additions.
+- **Provider significance** -- work that affects frontier providers (Anthropic, OpenAI, Google) or providers we know are heavily used gets priority. A model integration for a niche provider will wait; a fix for Anthropic won't.
+- **Roadmap alignment** -- features that align with our current focus areas get priority. Right now that includes the capabilities/hooks API, provider-adaptive tools, and the [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) capability library.
+- **Capabilities over core** -- features that could live as a [capability](capabilities.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
 
 ## If your PR or issue has gone quiet
 

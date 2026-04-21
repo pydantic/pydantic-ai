@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import os
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -55,20 +54,24 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             'gpt-oss': harmony_model_profile,
         }
 
+        model_name = model_name.lower()
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
         # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # Ollama's /v1/chat/completions endpoint supports response_format with json_schema natively.
+        # Strict mode is not supported (issue #4116).
+        base = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
+            openai_supports_strict_tool_definition=False,
             supports_json_schema_output=True,
             supports_json_object_output=True,
         ).update(profile)
+        return base
 
     def __init__(
         self,
@@ -99,7 +102,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             if not base_url:
                 raise UserError(
                     'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
-                    'to use the Ollama provider.'
+                    ' to use the Ollama provider.'
                 )
 
             # This is a workaround for the OpenAI client requiring an API key, whilst locally served,

@@ -85,7 +85,7 @@ class TogetherProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `TOGETHER_API_KEY` environment variable or pass it via `TogetherProvider(api_key=...)`'
-                'to use the Together AI provider.'
+                ' to use the Together AI provider.'
             )
 
         if openai_client is not None:
