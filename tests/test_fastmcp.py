@@ -311,7 +311,8 @@ class TestFastMCPToolsetToolDiscovery:
             assert test_tool.toolset is toolset
             assert test_tool.tool_def.name == 'test_tool'
             assert test_tool.tool_def.description == 'A test tool that returns a formatted string.'
-            assert test_tool.max_retries is None
+            # toolset left max_retries unset and the fixture ctx defaults to 0, so the tool inherits 0
+            assert test_tool.max_retries == 0
             assert test_tool.tool_def.parameters_json_schema == snapshot(
                 {
                     'additionalProperties': False,
@@ -322,12 +323,12 @@ class TestFastMCPToolsetToolDiscovery:
             )
 
     async def test_fastmcp_tool_for_tool_def_uses_toolset_max_retries(self, fastmcp_client: Client[FastMCPTransport]):
-        """`tool_for_tool_def` mirrors `self.max_retries` — `None` by default, explicit int when set —
-        so durable execution paths inherit the agent's retries via `ToolManager` at execution time."""
+        """`tool_for_tool_def` resolves `self.max_retries`: explicit int when set, fallback to `1`
+        when unset (durable-execution path has no `ctx` to inherit from)."""
         tool_def = ToolDefinition(name='x', description='', parameters_json_schema={})
 
         toolset_default = FastMCPToolset(fastmcp_client)
-        assert toolset_default.tool_for_tool_def(tool_def).max_retries is None
+        assert toolset_default.tool_for_tool_def(tool_def).max_retries == 1
 
         toolset_explicit = FastMCPToolset(fastmcp_client, max_retries=5)
         assert toolset_explicit.tool_for_tool_def(tool_def).max_retries == 5

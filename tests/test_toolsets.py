@@ -746,50 +746,61 @@ async def test_tool_manager_retry_logic():
 
 async def test_toolset_max_retries_inherits_from_agent():
     """Agent(retries=...) should propagate to user-provided toolsets that don't set max_retries explicitly."""
+    attempts: list[int] = []
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
     def always_fails(x: int) -> int:
         """A tool that always fails."""
+        attempts.append(x)
         raise ModelRetry('Always fails')
 
-    # retries=0 means the tool should fail immediately, no retries allowed
     agent = Agent('test', toolsets=[toolset], retries=0)
 
     with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
         await agent.run('call always_fails', model=TestModel())
 
+    # retries=0 means the tool is called once and then fails immediately.
+    assert len(attempts) == 1
+
 
 async def test_toolset_explicit_max_retries_overrides_agent():
     """FunctionToolset(max_retries=X) should take precedence over Agent(retries=Y)."""
     toolset = FunctionToolset[None](max_retries=2)
+    attempts: list[int] = []
 
     @toolset.tool_plain
     def always_fails(x: int) -> int:
         """A tool that always fails."""
+        attempts.append(x)
         raise ModelRetry('Always fails')
 
     agent = Agent('test', toolsets=[toolset], retries=0)
 
-    # Toolset explicitly set max_retries=2, so it should use 2 despite agent retries=0
     with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
         await agent.run('call always_fails', model=TestModel())
+
+    # Initial call + 2 retries = 3 attempts.
+    assert len(attempts) == 3
 
 
 async def test_tool_explicit_retries_overrides_toolset_and_agent():
     """Tool(retries=X) should take precedence over both toolset and agent defaults."""
+    attempts: list[int] = []
 
     def always_fails(x: int) -> int:
         """A tool that always fails."""
+        attempts.append(x)
         raise ModelRetry('Always fails')
 
     toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
-
     agent = Agent('test', toolsets=[toolset], retries=0)
 
-    # Tool explicitly set max_retries=3
     with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
         await agent.run('call always_fails', model=TestModel())
+
+    # Initial call + 3 retries = 4 attempts.
+    assert len(attempts) == 4
 
 
 async def test_prepare_function_sees_agent_max_retries():
@@ -816,35 +827,17 @@ async def test_prepare_function_sees_agent_max_retries():
     assert captured_last_attempt[0] is False
 
 
-async def test_toolset_tool_max_retries_none_resolved_by_tool_manager():
-    """`ToolsetTool.max_retries` stays `None` out of `get_tools` when unset, and `ToolManager`
-    resolves it to `ctx.max_retries` at execution time."""
-    toolset = FunctionToolset[None]()
-
-    @toolset.tool_plain
-    def always_fails(x: int) -> int:
-        """A tool that always fails."""
-        raise ModelRetry('Always fails')
-
-    ctx = build_run_context(None, max_retries=2)
-    tools = await toolset.get_tools(ctx)
-    assert tools['always_fails'].max_retries is None
-
-    agent = Agent('test', toolsets=[toolset], retries=2)
-    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
-        await agent.run('call always_fails', model=TestModel())
-
-
 async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retries():
-    """When `ToolsetTool.max_retries` is `None` and `retries != output_retries`, the unresolved
-    value must fall back to the agent's **tool** retry count, not the output retry count.
-    Regression for devin r3076977400: `_resolve_max_retries` previously fell back to
-    `ctx.max_retries` which is populated from `max_result_retries`."""
+    """When a user toolset leaves `max_retries=None` and `retries != output_retries`, the fallback
+    must resolve to the agent's **tool** retry count, not the output retry count.
+    Regression: `ctx.max_retries` previously carried `max_result_retries` during `get_tools`."""
+    attempts: list[int] = []
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
     def always_fails(x: int) -> int:
         """A tool that always fails."""
+        attempts.append(x)
         raise ModelRetry('Always fails')
 
     agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
@@ -852,11 +845,14 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
     with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
         await agent.run('call always_fails', model=TestModel())
 
+    # retries=1 means initial call + 1 retry = 2 attempts, not 6 (which would be output_retries).
+    assert len(attempts) == 2
+
 
 async def test_prepare_function_sees_tool_retries_not_output_retries():
-    """Prepare functions should see the agent's **tool** retry count on `ctx.max_retries`,
-    not the output retry count. Regression for devin r3076977506: non-output toolsets in a
-    combined toolset previously received the output-tool preparation context."""
+    """Prepare functions must see the agent's **tool** retry count on `ctx.max_retries`,
+    not the output retry count. Regression for a non-output toolset previously receiving the
+    output-tool preparation context."""
     captured: list[int] = []
 
     async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
@@ -874,31 +870,6 @@ async def test_prepare_function_sees_tool_retries_not_output_retries():
     await agent.run('call my_tool', model=TestModel())
 
     assert captured[0] == 1
-
-
-async def test_function_toolset_get_tools_uses_tool_manager_default_max_retries():
-    """Direct `FunctionToolset.get_tools()` calls should still prefer the tool manager default
-    when the incoming context carries a different `max_retries` value."""
-    captured: list[int] = []
-
-    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        captured.append(ctx.max_retries)
-        return tool_def
-
-    toolset = FunctionToolset[None]()
-
-    @toolset.tool_plain(prepare=capture_prepare)
-    def my_tool(x: int) -> int:
-        """A tool."""
-        return x  # pragma: no cover
-
-    ctx = build_run_context(None, max_retries=5)
-    ctx.tool_manager = ToolManager[None](toolset, default_max_retries=1)
-
-    tools = await toolset.get_tools(ctx)
-
-    assert 'my_tool' in tools
-    assert captured == [1]
 
 
 async def test_tool_manager_multiple_failed_tools():

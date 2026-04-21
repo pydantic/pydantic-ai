@@ -67,7 +67,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await gather(
-            *(toolset.get_tools(self._tool_prep_ctx(ctx, toolset)) for toolset in self.toolsets)
+            *(toolset.get_tools(self._output_prep_ctx(ctx, toolset)) for toolset in self.toolsets)
         )
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
@@ -118,13 +118,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return parts or None
 
     @staticmethod
-    def _tool_prep_ctx(ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]) -> RunContext[AgentDepsT]:
-        """Use tool retry defaults for regular toolsets, while preserving output retry context for output tools."""
+    def _output_prep_ctx(ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]) -> RunContext[AgentDepsT]:
+        # Output-tool prepare functions expect `ctx.max_retries` to carry the output retry count,
+        # while the rest of the pipeline carries the tool retry count (the graph-level default).
+        # Override only for output toolsets; pass through for everything else.
         unwrapped = toolset
         while isinstance(unwrapped, WrapperToolset):
             unwrapped = unwrapped.wrapped
-
-        if isinstance(unwrapped, OutputToolset) or ctx.tool_manager is None:
+        if not isinstance(unwrapped, OutputToolset) or unwrapped.max_retries is None:
             return ctx
-
-        return replace(ctx, max_retries=ctx.tool_manager.default_max_retries)
+        return replace(ctx, max_retries=unwrapped.max_retries)
