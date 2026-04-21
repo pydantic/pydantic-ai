@@ -580,6 +580,10 @@ class OnlineEvalConfig:
 
         return decorator
 
+    def should_evaluate(self):
+        """Whether evaluators with this config should run, based on the current settings and context."""
+        return self.enabled and not _EVALUATION_DISABLED.get() and _task_run.CURRENT_TASK_RUN.get() is None
+
 
 @dataclass(kw_only=True, frozen=True)
 class _CallSpanSpec:
@@ -605,7 +609,7 @@ def _wrap_async(
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         # If evaluation is globally disabled, or we're already inside an evaluation
         # context (e.g. Dataset.evaluate), just run the function
-        if not config.enabled or _EVALUATION_DISABLED.get() or _task_run.CURRENT_TASK_RUN.get() is not None:
+        if not config.should_evaluate():
             return await func(*args, **kwargs)
 
         # Capture inputs early so sample_rate callables can use them
@@ -690,7 +694,7 @@ def _wrap_sync(
     def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         # If evaluation is globally disabled, or we're already inside an evaluation
         # context (e.g. Dataset.evaluate), just run the function
-        if not config.enabled or _EVALUATION_DISABLED.get() or _task_run.CURRENT_TASK_RUN.get() is not None:
+        if not config.should_evaluate():
             return func(*args, **kwargs)
 
         # Capture inputs early so sample_rate callables can use them

@@ -117,11 +117,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         config = self._resolved_config
 
         # Skip if disabled or already inside an evaluation context (e.g. Dataset.evaluate)
-        if (
-            not config.enabled
-            or _online_internal.EVALUATION_DISABLED.get()
-            or _task_run.CURRENT_TASK_RUN.get() is not None
-        ):
+        if not config.should_evaluate():
             return await handler()
 
         # Use the raw prompt so sampling and evaluation see the same inputs value.
