@@ -282,6 +282,20 @@ def _insert_cache_point_before_trailing_documents(
         return False  # pragma: no cover
 
 
+def _resolve_bedrock_service_tier(model_settings: BedrockModelSettings) -> ServiceTierTypeDef | None:
+    """Resolve the Bedrock `serviceTier` value from the per-provider setting then the top-level one.
+
+    Per-provider `bedrock_service_tier` wins (and is the only way to request `'reserved'`).
+    Top-level `service_tier='auto'` omits the field, matching its cross-provider spec.
+    """
+    if (per_provider := model_settings.get('bedrock_service_tier')) is not None:
+        return per_provider
+    top_level = model_settings.get('service_tier')
+    if top_level is None or top_level == 'auto':
+        return None
+    return {'type': top_level}
+
+
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
@@ -687,7 +701,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
-            if service_tier := model_settings.get('bedrock_service_tier', None):
+            if (service_tier := _resolve_bedrock_service_tier(model_settings)) is not None:
                 params['serviceTier'] = service_tier
 
         if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):

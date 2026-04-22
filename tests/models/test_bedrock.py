@@ -59,9 +59,19 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
-    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from mypy_boto3_bedrock_runtime.type_defs import (
+        MessageUnionTypeDef,
+        ServiceTierTypeDef,
+        SystemContentBlockTypeDef,
+        ToolTypeDef,
+    )
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (
+        BedrockConverseModel,
+        BedrockModelName,
+        BedrockModelSettings,
+        _resolve_bedrock_service_tier,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -681,6 +691,30 @@ async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_pr
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
+
+
+@pytest.mark.parametrize(
+    'settings,expected',
+    [
+        pytest.param(BedrockModelSettings(), None, id='nothing_set'),
+        pytest.param(BedrockModelSettings(service_tier='auto'), None, id='top_level_auto_omits'),
+        pytest.param(BedrockModelSettings(service_tier='default'), {'type': 'default'}, id='top_level_default'),
+        pytest.param(BedrockModelSettings(service_tier='flex'), {'type': 'flex'}, id='top_level_flex'),
+        pytest.param(BedrockModelSettings(service_tier='priority'), {'type': 'priority'}, id='top_level_priority'),
+        pytest.param(
+            BedrockModelSettings(bedrock_service_tier={'type': 'reserved'}),
+            {'type': 'reserved'},
+            id='per_provider_reserved',
+        ),
+        pytest.param(
+            BedrockModelSettings(service_tier='flex', bedrock_service_tier={'type': 'priority'}),
+            {'type': 'priority'},
+            id='per_provider_wins',
+        ),
+    ],
+)
+def test_resolve_bedrock_service_tier(settings: BedrockModelSettings, expected: ServiceTierTypeDef | None):
+    assert _resolve_bedrock_service_tier(settings) == expected
 
 
 async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):

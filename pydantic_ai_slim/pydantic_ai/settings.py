@@ -20,6 +20,18 @@ it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
 that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
+ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
+"""Cross-provider service-tier value for the [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] model setting.
+
+- `'auto'`: let the provider decide (the setting is omitted from the request).
+- `'default'`: ask for the provider's standard service tier explicitly.
+- `'flex'`: ask for a lower-cost, latency-tolerant tier where available.
+- `'priority'`: ask for a higher-priority tier where available.
+
+See [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier]
+for per-provider mapping details and precedence rules.
+"""
+
 
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
@@ -222,6 +234,36 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Groq
     * Outlines (all providers)
+    """
+
+    service_tier: ServiceTier
+    """Unified cross-provider request for a pricing/latency service tier.
+
+    Values are `'auto'`, `'default'`, `'flex'`, and `'priority'`. `'auto'` is
+    functionally identical to not setting the field (both omit it from the request)
+    — it exists so you can explicitly override an inherited `service_tier` from a
+    higher-level settings object. Provider-specific fields (e.g. `openai_service_tier`,
+    `bedrock_service_tier`, `google_gla_service_tier`, `google_vertex_service_tier`)
+    always take precedence.
+
+    Mapping summary:
+
+    * OpenAI: pass-through (identical values).
+    * Bedrock: pass-through for `default`/`flex`/`priority`; `auto` omits the field.
+      `bedrock_service_tier` is the only way to request `reserved`.
+    * Google (Gemini API / GLA only): `default` -> `'standard'`, `flex` -> `'flex'`,
+      `priority` -> `'priority'`, `auto` omits the field.
+    * Google (Vertex AI): **ignored.** Vertex's routing model (Provisioned Throughput /
+      Flex PayGo) doesn't map cleanly onto `service_tier`'s pricing/latency semantics,
+      so there is no silent cross-map. Use
+      [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier]
+      to request Vertex routing explicitly.
+
+    Supported by:
+
+    * OpenAI
+    * Bedrock
+    * Google (Gemini API only)
     """
 
 

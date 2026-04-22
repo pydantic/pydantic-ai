@@ -71,7 +71,7 @@ from ..messages import (
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ServiceTier
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -387,6 +387,21 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
     """
     for setting in profile.openai_unsupported_model_settings:
         model_settings.pop(setting, None)
+
+
+def _resolve_openai_service_tier(model_settings: OpenAIChatModelSettings) -> ServiceTier | None:
+    """Resolve the OpenAI `service_tier` value from the per-provider setting then the top-level one.
+
+    Returns `None` when no tier should be sent (includes top-level `service_tier='auto'`, which
+    omits the field per the `ServiceTier` spec). `OpenAIResponsesModelSettings` inherits from
+    `OpenAIChatModelSettings`, so both call sites are covered by this signature.
+    """
+    if (per_provider := model_settings.get('openai_service_tier')) is not None:
+        return per_provider
+    top_level = model_settings.get('service_tier')
+    if top_level is None or top_level == 'auto':
+        return None
+    return top_level
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -838,6 +853,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                openai_service_tier = _resolve_openai_service_tier(model_settings)
                 return await self.client.chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
@@ -854,7 +870,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=openai_service_tier if openai_service_tier is not None else OMIT,
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
@@ -1975,6 +1991,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 extra_headers.setdefault('User-Agent', get_user_agent())
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                openai_service_tier = _resolve_openai_service_tier(model_settings)
                 return await self.client.responses.create(
                     input=openai_messages,
                     model=self.model_name,
@@ -1988,7 +2005,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     top_p=model_settings.get('top_p', OMIT),
                     truncation=model_settings.get('openai_truncation', OMIT),
                     timeout=model_settings.get('timeout', NOT_GIVEN),
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=openai_service_tier if openai_service_tier is not None else OMIT,
                     previous_response_id=previous_response_id or OMIT,
                     context_management=model_settings.get('openai_context_management', OMIT),
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),

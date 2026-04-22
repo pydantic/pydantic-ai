@@ -105,13 +105,14 @@ with try_import() as imports_successful:
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
-        GoogleServiceTier,
+        GoogleVertexServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.settings import ServiceTier
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholder errors module so parametrize decorators can be parsed
@@ -135,6 +136,21 @@ pytestmark = [
 @pytest.fixture()
 def google_provider(gemini_api_key: str) -> GoogleProvider:
     return GoogleProvider(api_key=gemini_api_key)
+
+
+def _mock_vertex_provider() -> GoogleProvider:
+    """Return a `GoogleProvider` whose `.name` reports `google-vertex` without real Vertex credentials.
+
+    Useful for unit-testing request-build behaviour that branches on `GoogleModel.system`;
+    no actual network calls are made by the tests that use it.
+    """
+
+    class _FakeVertexProvider(GoogleProvider):
+        @property
+        def name(self) -> str:
+            return 'google-vertex'
+
+    return _FakeVertexProvider(api_key='test-key')
 
 
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
@@ -4507,7 +4523,8 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -4566,10 +4583,12 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 },
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 },
                             ],
                             tool_call_id=IsStr(),
@@ -4681,7 +4700,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -4758,7 +4778,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     part=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                            }
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -4778,7 +4801,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                            }
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -5794,6 +5820,7 @@ async def test_google_stream_safety_filter(
         usage_metadata=None,
         create_time=datetime.datetime.now(),
         response_id='resp_123',
+        sdk_http_response=None,
     )
     chunk.model_dump_json.return_value = '{"mock": "json"}'
 
@@ -6367,14 +6394,14 @@ async def test_google_prompt_feedback_streaming(
         ),
     ],
 )
-async def test_google_service_tier_vertex_headers(
+async def test_google_vertex_service_tier_headers(
     allow_model_requests: None,
-    service_tier: GoogleServiceTier,
+    service_tier: GoogleVertexServiceTier,
     expected_headers: dict[str, str],
 ):
-    """Test that Vertex `google_service_tier` values set the expected HTTP headers."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
-    model_settings = GoogleModelSettings(google_service_tier=service_tier)
+    """Test that Vertex `google_vertex_service_tier` values set the expected HTTP headers."""
+    m = GoogleModel('gemini-2.5-flash', provider=_mock_vertex_provider())
+    model_settings = GoogleModelSettings(google_vertex_service_tier=service_tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -6390,9 +6417,9 @@ async def test_google_service_tier_vertex_headers(
     assert actual_routing_headers == expected_headers
 
 
-async def test_google_service_tier_not_set_no_headers(allow_model_requests: None):
-    """Test that no Vertex PT/Flex routing headers are set when `google_service_tier` is omitted."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+async def test_google_vertex_service_tier_not_set_no_headers(allow_model_requests: None):
+    """Test that no Vertex PT/Flex routing headers are set when no service-tier field is set."""
+    m = GoogleModel('gemini-2.5-flash', provider=_mock_vertex_provider())
     model_settings = GoogleModelSettings()
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -6406,6 +6433,110 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
 
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
+
+
+async def test_google_service_tier_deprecated_shim(allow_model_requests: None):
+    """`google_service_tier` is forwarded to the Vertex resolver and emits a DeprecationWarning."""
+    m = GoogleModel('gemini-2.5-flash', provider=_mock_vertex_provider())
+    model_settings = GoogleModelSettings(google_service_tier='pt_only')
+
+    with pytest.warns(DeprecationWarning, match='`google_service_tier` is deprecated'):
+        _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+            messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+            model_settings=model_settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    headers = cast(dict[str, Any], config)['http_options']['headers']
+    assert headers.get('X-Vertex-AI-LLM-Request-Type') == 'dedicated'
+
+
+@pytest.mark.parametrize(
+    'top_level,expected_gla_service_tier',
+    [
+        pytest.param('auto', None, id='auto_omits_field'),
+        pytest.param('default', 'standard', id='default_maps_to_standard'),
+        pytest.param('flex', 'flex', id='flex'),
+        pytest.param('priority', 'priority', id='priority'),
+    ],
+)
+async def test_google_gla_top_level_service_tier_mapping(
+    allow_model_requests: None,
+    top_level: ServiceTier,
+    expected_gla_service_tier: str | None,
+):
+    """Top-level `service_tier` maps to the GLA `service_tier` config field."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier=top_level)
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict.get('service_tier') == expected_gla_service_tier
+
+
+async def test_google_gla_service_tier_override_wins(allow_model_requests: None):
+    """`google_gla_service_tier` beats the top-level `service_tier`."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='priority', google_gla_service_tier='flex')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert cast(dict[str, Any], config)['service_tier'] == 'flex'
+
+
+@pytest.mark.parametrize('top_level', ['auto', 'default', 'flex', 'priority'])
+async def test_google_vertex_ignores_top_level_service_tier(allow_model_requests: None, top_level: ServiceTier):
+    """Top-level `service_tier` is intentionally ignored on Vertex AI (no silent cross-map)."""
+    m = GoogleModel('gemini-2.5-flash', provider=_mock_vertex_provider())
+    model_settings = GoogleModelSettings(service_tier=top_level)
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    headers = cast(dict[str, Any], config)['http_options']['headers']
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers
+    assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
+
+
+async def test_google_gla_service_tier_not_sent_to_vertex(allow_model_requests: None):
+    """`google_gla_service_tier` is NOT added to the request when using Vertex."""
+    m = GoogleModel('gemini-2.5-flash', provider=_mock_vertex_provider())
+    model_settings = GoogleModelSettings(google_gla_service_tier='flex')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert 'service_tier' not in cast(dict[str, Any], config)
+
+
+async def test_google_vertex_service_tier_not_sent_to_gla(allow_model_requests: None):
+    """`google_vertex_service_tier` does NOT emit Vertex routing headers on the GLA API."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    headers = cast(dict[str, Any], config)['http_options']['headers']
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers
 
 
 @pytest.mark.vcr()

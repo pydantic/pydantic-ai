@@ -52,7 +52,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -3886,6 +3886,68 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     assert result.output == 'hello'
+
+
+@pytest.mark.parametrize(
+    'top_level,expected',
+    [
+        pytest.param('auto', None, id='auto_omits'),
+        pytest.param('default', 'default', id='default'),
+        pytest.param('flex', 'flex', id='flex'),
+        pytest.param('priority', 'priority', id='priority'),
+    ],
+)
+async def test_openai_chat_top_level_service_tier_mapping(
+    allow_model_requests: None,
+    top_level: ServiceTier,
+    expected: str | None,
+):
+    """Top-level `service_tier` is forwarded to OpenAI Chat requests (and `auto` is omitted)."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    await m._completions_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings=OpenAIChatModelSettings(service_tier=top_level),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if expected is None:
+        assert 'service_tier' not in kwargs
+    else:
+        assert kwargs['service_tier'] == expected
+
+
+async def test_openai_chat_service_tier_per_provider_wins(allow_model_requests: None):
+    """`openai_service_tier` takes precedence over the top-level `service_tier`."""
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    await m._completions_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings=OpenAIChatModelSettings(service_tier='priority', openai_service_tier='flex'),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'flex'
+
+
+async def test_openai_responses_top_level_service_tier_mapping(allow_model_requests: None):
+    """Top-level `service_tier` is forwarded to OpenAI Responses requests."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    await m._responses_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings=OpenAIResponsesModelSettings(service_tier='priority'),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['service_tier'] == 'priority'
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:

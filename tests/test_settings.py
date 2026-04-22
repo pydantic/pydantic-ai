@@ -1,10 +1,11 @@
 import importlib
+from typing import get_args
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings, merge_model_settings
+from pydantic_ai.settings import ModelSettings, ServiceTier, merge_model_settings
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
@@ -28,6 +29,16 @@ def test_specific_prefix_settings(settings: tuple[type[ModelSettings], str]):
     assert all(setting.startswith(prefix) for setting in specific_settings), (
         f'{prefix} is not a prefix for {specific_settings}'
     )
+
+
+def test_model_settings_has_service_tier():
+    """Guard against accidental rename or removal of the top-level service_tier key."""
+    assert 'service_tier' in ModelSettings.__annotations__
+
+
+def test_service_tier_literal_members():
+    """Lock in the cross-provider ServiceTier values so downstream mappings stay in sync."""
+    assert get_args(ServiceTier) == ('auto', 'default', 'flex', 'priority')
 
 
 @pytest.mark.parametrize(

@@ -153,11 +153,35 @@ agent = Agent(model)
 ...
 ```
 
-#### Vertex AI service tier (`google_service_tier`)
+#### Service tier
 
-On **Vertex AI**, optional HTTP headers control how each request uses [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) pricing. Set the [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] to one of the [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] values.
+Both the Gemini API (GLA) and Vertex AI expose a notion of service tier, but with very
+different semantics (GLA is a pricing/latency knob; Vertex controls Provisioned Throughput
+and Flex PayGo routing). Pydantic AI therefore exposes them as two dedicated fields, plus
+an optional top-level fallback that only applies to GLA:
 
-**Flex PayGo example**
+1. [`google_gla_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_gla_service_tier] — Gemini API only; sent as the request's `service_tier` field.
+2. [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] — Vertex AI only; sets [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) / [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) routing headers.
+3. Top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] — Gemini API (GLA) fallback. Mapped as follows:
+
+    | top-level value | Gemini API (GLA) `service_tier` |
+    |---|---|
+    | `'auto'` | (omitted) |
+    | `'default'` | `'standard'` |
+    | `'flex'` | `'flex'` |
+    | `'priority'` | `'priority'` |
+
+!!! note "Vertex AI ignores the top-level `service_tier`"
+    Vertex's routing model doesn't map cleanly onto the cross-provider pricing/latency
+    semantics (e.g. `'priority'` has no direct equivalent, and silently mapping to
+    `'pt_only'` would return `429` for users without Provisioned Throughput quota). Use
+    [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier]
+    explicitly for Vertex routing.
+
+The deprecated `google_service_tier` field is still accepted (mapped to `google_vertex_service_tier`),
+but emits a `DeprecationWarning` — migrate to the dedicated fields.
+
+**Flex PayGo example (Vertex AI)**
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -170,11 +194,11 @@ agent = Agent(model)
 
 result = agent.run_sync(
     'Hello!',
-    model_settings=GoogleModelSettings(google_service_tier='pt_then_flex'),
+    model_settings=GoogleModelSettings(google_vertex_service_tier='pt_then_flex'),
 )
 ```
 
-After a Flex request, you can inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX` when Flex was used) if the API returns it.
+After a Flex request, you can inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX` when Flex was used) if the API returns it. The Gemini API also returns an `x-gemini-service-tier` header which Pydantic AI surfaces as `provider_details['service_tier']`.
 
 #### Model Garden
 
