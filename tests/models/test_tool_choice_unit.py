@@ -372,14 +372,16 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
     if provider_name == 'anthropic':
         pytest.importorskip('anthropic')
         settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-        result = anthropic_support_tool_forcing(settings, resolved_tool_choice)
+        result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), resolved_tool_choice)
     else:  # bedrock
         pytest.importorskip('boto3')
         profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
         settings_bedrock: BedrockModelSettings = {
             'bedrock_additional_model_requests_fields': {'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
         }
-        result = bedrock_support_tool_forcing('test-model', profile, settings_bedrock, resolved_tool_choice)
+        result = bedrock_support_tool_forcing(
+            'test-model', profile, settings_bedrock, ModelRequestParameters(), resolved_tool_choice
+        )
     assert result is expected
 
 
@@ -415,9 +417,33 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
     ],
 )
 def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
-    """Thinking detection checks both anthropic_thinking and unified thinking field."""
-    result = anthropic_support_tool_forcing(settings, 'required')
+    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`."""
+    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required')
     assert result is expected
+
+
+@pytest.mark.parametrize(
+    'provider_name',
+    [
+        pytest.param(
+            'anthropic', marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+        ),
+        pytest.param('bedrock', marks=pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')),
+    ],
+)
+def test_support_tool_forcing_reads_params_thinking(provider_name: str):
+    """Regression: `Model.prepare_request` strips unified `thinking` from `model_settings` into
+    `model_request_parameters.thinking` before tool-choice helpers run, so the helpers must
+    inspect `params.thinking` — not just `model_settings`.
+    """
+    params = ModelRequestParameters(thinking=True)
+    if provider_name == 'anthropic':
+        # Empty settings simulates post-strip state
+        result = anthropic_support_tool_forcing({}, params, 'required')
+    else:
+        profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+        result = bedrock_support_tool_forcing('test-model', profile, {}, params, 'required')
+    assert result is False
 
 
 # =============================================================================

@@ -452,7 +452,7 @@ class BedrockConverseModel(Model[BaseClient]):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if model_request_parameters.output_tools and _is_thinking_enabled(settings):
+        if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
@@ -750,7 +750,9 @@ class BedrockConverseModel(Model[BaseClient]):
         tool_defs = model_request_parameters.tool_defs
 
         profile = BedrockModelProfile.from_profile(self.profile)
-        supports = _support_tool_forcing(self.model_name, profile, model_settings, resolved_tool_choice)
+        supports = _support_tool_forcing(
+            self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
+        )
 
         tool_choice: ToolChoiceTypeDef
         if resolved_tool_choice == 'auto':
@@ -1423,19 +1425,29 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise e  # pragma: lax no cover
 
 
-def _is_thinking_enabled(model_settings: ModelSettings | None) -> bool:
-    return bool(
-        model_settings
-        and (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
-        and (thinking := additional_fields.get('thinking'))
-        and thinking.get('type') == 'enabled'
-    )
+def _is_thinking_enabled(
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters | None = None,
+) -> bool:
+    if model_request_parameters is not None and model_request_parameters.thinking:
+        return True
+    if model_settings:
+        if model_settings.get('thinking'):
+            return True
+        if (
+            (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
+            and (thinking := additional_fields.get('thinking'))
+            and thinking.get('type') == 'enabled'
+        ):
+            return True
+    return False
 
 
 def _support_tool_forcing(
     model_name: str,
     profile: BedrockModelProfile,
     model_settings: BedrockModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
     effective_tool_choice: ResolvedToolChoice,
 ) -> bool:
     """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
@@ -1451,7 +1463,7 @@ def _support_tool_forcing(
             )
         return False
 
-    if _is_thinking_enabled(model_settings):
+    if _is_thinking_enabled(model_settings, model_request_parameters):
         explicit_choice = (model_settings or {}).get('tool_choice')
         if explicit_choice == 'required' or isinstance(explicit_choice, list):
             raise UserError(

@@ -853,8 +853,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         messages = _clean_message_history(messages)
 
-        self._validate_tool_choice(model_settings)
-
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
         usage = ctx.state.usage
@@ -896,25 +894,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(response)
 
         return self._result
-
-    @staticmethod
-    def _validate_tool_choice(model_settings: ModelSettings | None) -> None:
-        """Validate that tool_choice won't prevent the agent from completing.
-
-        `'required'` and `list[str]` exclude output tools, so the agent could never
-        produce a final response. These settings are only valid for direct model requests.
-
-        Note: `model_settings` already includes model-level defaults, merged by the agent
-        (in `Agent.run` / `Agent.run_stream`) before the graph is executed.
-        """
-        if model_settings:
-            tool_choice = model_settings.get('tool_choice')
-            if tool_choice == 'required' or isinstance(tool_choice, list):
-                raise exceptions.UserError(
-                    f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
-                    f'because output tools are excluded. Use `ToolOrOutput` to combine specific tools '
-                    f'with output capability, or use `model.request()` for direct model calls.'
-                )
 
     async def _resolve_wrap_result(
         self,

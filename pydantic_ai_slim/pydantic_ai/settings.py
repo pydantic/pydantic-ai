@@ -143,13 +143,18 @@ class ModelSettings(TypedDict, total=False):
     * `None` (default): Defaults to `'auto'` behavior
     * `'auto'`: All tools available, model decides whether to use them
     * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
-    * `'required'`: Forces tool use; excludes output tools so agent cannot complete (use with `model.request()` only)
-    * `list[str]`: Only specified tools; excludes output tools so agent cannot complete (use with `model.request()` only)
+    * `'required'`: Forces tool use; excludes output tools so the agent cannot produce a final response when set statically
+    * `list[str]`: Only specified tools; excludes output tools so the agent cannot produce a final response when set statically
     * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
 
-    Note: `'required'` and `list[str]` raise an error in `agent.run()` because they prevent the agent from
-    producing a final response. Use [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] to combine specific
-    function tools with output capability, or use [direct model requests](../direct.md) for single API calls.
+    Note: setting `'required'` or `list[str]` *statically* (via the `model_settings` argument
+    of [`Agent.run`][pydantic_ai.Agent.run] or the agent's own `model_settings`) raises a
+    `UserError`, because it would force a tool call on every step and prevent the agent from
+    producing a final response. To vary `tool_choice` per step (e.g. force a tool on the
+    first step only), return a callable from a capability's
+    [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] —
+    those values are trusted to adapt across steps. For single API calls without an agent
+    loop, use [`pydantic_ai.direct.model_request`][pydantic_ai.direct.model_request].
 
     Supported by:
 

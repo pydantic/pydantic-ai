@@ -4811,27 +4811,33 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
 
 
 async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_requests: None):
-    """Test error when tool_choice='required' is set on a model that doesn't support it."""
+    """OpenAI's `_support_tool_forcing` raises when the model profile disables tool forcing.
+
+    Goes via `direct.model_request` so the agent-level baseline validator is bypassed and
+    we actually exercise the OpenAI-specific error path.
+    """
+    from pydantic_ai.direct import model_request as direct_model_request
+
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    # Create profile that doesn't support tool_choice='required'
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
-    def get_weather(city: str) -> str:
-        return f'Weather in {city}'  # pragma: no cover
-
-    agent = Agent(model, tools=[get_weather])
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
 
     settings: ModelSettings = {'tool_choice': 'required'}
     with pytest.raises(
         UserError,
-        match=re.escape(
-            "`tool_choice='required'` prevents the agent from producing a final response because output tools are excluded. Use `ToolOrOutput` to combine specific tools with output capability, or use `model.request()` for direct model calls."
-        ),
+        match=re.escape("tool_choice='required' is not supported by model 'custom-model'"),
     ):
-        await agent.run('What is the weather?', model_settings=settings)
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
 
 
 def test_transformer_adds_properties_to_object_schemas():

@@ -2293,6 +2293,55 @@ async def test_concurrent_runs_capability_isolation():
     assert results[1].output == 'Done'
 
 
+@pytest.mark.parametrize(
+    'forced_choice',
+    [
+        pytest.param('required', id='required'),
+        pytest.param(['get_weather'], id='list'),
+    ],
+)
+async def test_capability_can_inject_forcing_tool_choice_per_step(forced_choice: Any):
+    """A capability returning a callable from get_model_settings() may inject `tool_choice='required'`
+    or `list[str]` per step without tripping the agent.run baseline validator.
+
+    Forces the tool on step 1, then steps aside so the agent can produce a final response.
+    """
+
+    class ForceFirstStep(AbstractCapability[None]):
+        def get_model_settings(self) -> Any:
+            def settings(ctx: RunContext[None]) -> _ModelSettings:
+                tool_called = any(
+                    isinstance(part, ToolReturnPart) and part.tool_name == 'get_weather'
+                    for message in ctx.messages
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                )
+                if tool_called:
+                    return _ModelSettings()
+                return _ModelSettings(tool_choice=forced_choice)
+
+            return settings
+
+    seen_tool_choices: list[Any] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_choices.append((info.model_settings or {}).get('tool_choice'))
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='sunny')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'})])
+
+    agent = Agent(FunctionModel(respond), capabilities=[ForceFirstStep()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run('Weather in Paris?')
+
+    assert result.output == 'sunny'
+    assert seen_tool_choices == [forced_choice, None]
+
+
 # --- Hooks test helpers ---
 
 

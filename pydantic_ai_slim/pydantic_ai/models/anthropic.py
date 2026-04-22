@@ -872,11 +872,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # tool_choice = {'type': resolved_tool_choice}`: pyright can't narrow this properly
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(model_settings, resolved_tool_choice, "tool_choice='required'")
+            supports = _support_tool_forcing(
+                model_settings, model_request_parameters, resolved_tool_choice, "tool_choice='required'"
+            )
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(model_settings, resolved_tool_choice)
+            supports = _support_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 tool_choice = {'type': 'tool', 'name': next(iter(tool_names))} if supports else {'type': 'auto'}
             else:
@@ -1961,6 +1963,7 @@ def _map_mcp_server_result_block(
 
 def _support_tool_forcing(
     model_settings: AnthropicModelSettings,
+    model_request_parameters: ModelRequestParameters,
     resolved_tool_choice: ResolvedToolChoice,
     context: str = 'forcing specific tools',
 ) -> bool:
@@ -1970,12 +1973,14 @@ def _support_tool_forcing(
     Otherwise the value may come from the `tool_choice` resolution logic, in which case we fall back softly.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    # Mirror the dual-check pattern from prepare_request()
-    thinking_enabled = False
-    if anthropic_thinking := model_settings.get('anthropic_thinking'):
-        thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-    elif model_settings.get('thinking'):
-        thinking_enabled = True
+    # Mirror the dual-check pattern from prepare_request(); also check params.thinking
+    # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
+    thinking_enabled = bool(model_request_parameters.thinking)
+    if not thinking_enabled:
+        if anthropic_thinking := model_settings.get('anthropic_thinking'):
+            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
+        elif model_settings.get('thinking'):
+            thinking_enabled = True
 
     if not thinking_enabled:
         return True

@@ -9204,10 +9204,12 @@ async def test_dynamic_tool_in_run_call():
     ],
 )
 async def test_tool_choice_required_or_list_rejected_in_agent_run(tool_choice: Any):
-    """Verify that tool_choice='required' or list[str] raises UserError in agent.run().
+    """Verify that statically-set tool_choice='required' or list[str] raises UserError in agent.run().
 
-    These settings exclude output tools, which would prevent the agent from ever
-    producing a final response. Users should use ToolOrOutput or model.request() instead.
+    These settings exclude output tools and would force a tool call on every step, preventing
+    the agent from producing a final response. Users should use ToolOrOutput, set tool_choice
+    dynamically via a capability that returns a callable from get_model_settings(), or use
+    pydantic_ai.direct.model_request for single-shot calls.
     """
     model = TestModel()
     agent = Agent(model)

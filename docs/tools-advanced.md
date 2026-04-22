@@ -344,15 +344,6 @@ If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool
 
 The `tool_choice` setting in [`ModelSettings`][pydantic_ai.settings.ModelSettings] controls which tools the model can use during a request. This is useful for disabling tools, forcing tool use, or restricting which tools are available.
 
-!!! warning "Per-Run Setting"
-    This feature is a stepping-stone to expanded functionality, like forcing an agent to call tools at specific steps.
-    Used directly, the `tool_choice` setting applies to **every model request** in an agent run:
-
-    - `'required'` forces a tool call at every step, not just the first
-    - `['tool_a']` restricts to that tool for the entire run, preventing completion if the agent needs output tools
-
-    For per-request control, use [direct model requests](direct.md) or [`prepare_tools`](tools-advanced.md#tool-prepare).
-
 Pydantic AI distinguishes between **[function tools](tools.md)** (tools you register via `@agent.tool`, [toolsets](toolsets.md), or [MCP](mcp/client.md)), and **output tools** (internal tools used for [structured output](output.md#tool-output)).
 
 ### Options
@@ -361,8 +352,8 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 |-------|-------------|
 | `'auto'` (default) | Model decides whether to use tools. All tools available. |
 | `'none'` | Disable function tools. Model can respond with text or use output tools. |
-| `'required'` | Force the model to use a function tool. Only for [direct model requests](direct.md); raises an error in `agent.run()`. |
-| `['tool_a', ...]` | Restrict to specific tools by name. Only for [direct model requests](direct.md); raises an error in `agent.run()`. |
+| `'required'` | Force the model to use a function tool. Excludes output tools, so set dynamically via a [capability](#dynamic-tool-choice-via-capabilities) or use [direct model requests](direct.md); raises an error when set statically in `agent.run()`. |
+| `['tool_a', ...]` | Restrict to specific tools by name. Excludes output tools — same dynamic/direct requirement as `'required'`. |
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 ### Example
@@ -393,6 +384,49 @@ result = agent.run_sync(
     'Hello', model_settings={'tool_choice': ToolOrOutput(function_tools=['get_weather'])}
 )
 ```
+
+### Dynamic tool choice via capabilities {#dynamic-tool-choice-via-capabilities}
+
+`tool_choice='required'` and `['tool_a', ...]` exclude output tools, so setting either one *statically* would force a tool call on every step and leave the agent unable to produce a final response. `agent.run()` raises a `UserError` when it detects these values on the static baseline (the `model_settings` argument of [`Agent.run`][pydantic_ai.Agent.run], the agent's own `model_settings`, or the underlying model's defaults).
+
+To vary `tool_choice` *per step* — for example, to force a specific tool on the first step and then let the model decide — return a callable from a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]. The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] with full access to `ctx.messages` and `ctx.run_step`, so it can inspect what has already happened in the run and adapt.
+
+```python {title="force_first_call.py"}
+from pydantic_ai import Agent, ModelSettings, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
+
+
+class RequireFirstCall(AbstractCapability[None]):
+    '''Force `tool_name` to be called successfully before anything else.'''
+
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+
+    def get_model_settings(self):
+        def settings(ctx: RunContext[None]) -> ModelSettings:
+            called = any(
+                isinstance(part, ToolReturnPart) and part.tool_name == self.tool_name
+                for message in ctx.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+            )
+            if called:
+                return ModelSettings()
+            return ModelSettings(tool_choice=[self.tool_name])
+
+        return settings
+
+
+agent = Agent('openai:gpt-5.2', capabilities=[RequireFirstCall('get_weather')])
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f'Sunny in {city}'
+```
+
+Because capability-supplied settings are resolved per step, the callable's returned `tool_choice` is trusted to change across steps and is not rejected by the baseline validator. For a single model request without an agent loop, use [`pydantic_ai.direct.model_request`][pydantic_ai.direct.model_request] instead.
 
 ### Provider Support
 
