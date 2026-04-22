@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import copy
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
@@ -27,7 +29,13 @@ from typing import (
     overload,
 )
 
+import anyio
 from anyio.to_thread import run_sync
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
@@ -188,6 +196,37 @@ def as_dict(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return cast(dict[str, Any], value)
     return None
+
+
+async def gather(*coros: Awaitable[T]) -> list[T]:
+    """Run awaitables concurrently via an `anyio` task group and return results in input order.
+
+    Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
+    as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
+    match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+    """
+    sentinel = Unset()
+    results: list[T | Unset] = [sentinel] * len(coros)
+
+    async def _run(index: int, coro: Awaitable[T]) -> None:
+        results[index] = await coro
+
+    try:
+        async with anyio.create_task_group() as tg:
+            for i, coro in enumerate(coros):
+                tg.start_soon(_run, i, coro)
+    except BaseExceptionGroup as eg:
+        if len(eg.exceptions) == 1:
+            exc = eg.exceptions[0]
+            exc.__suppress_context__ = True
+            raise exc
+        raise
+
+    final_results: list[T] = []
+    for result in results:
+        assert not isinstance(result, Unset)
+        final_results.append(result)
+    return final_results
 
 
 class Unset:
@@ -566,12 +605,37 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
 
-    # Handle unions
-    for union_type in ['anyOf', 'oneOf']:
-        if union_type in s:
-            union_items: list[dict[str, Any]] = s[union_type]
-            for item in union_items:
+    # Handle additionalProperties
+    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
+        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(additional_props, name_mapping)
+
+    # Handle unions and composition keywords
+    for keyword in ['anyOf', 'oneOf', 'allOf']:
+        if keyword in s:
+            keyword_items: list[dict[str, Any]] = s[keyword]
+            for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
+
+    # Handle negation
+    if 'not' in s and isinstance(s['not'], dict):
+        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(not_schema, name_mapping)
+
+
+def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
+    """Generate a unique definition name by appending the schema title and/or a numeric suffix."""
+    new_name = name
+    if title := schema.get('title'):
+        new_name = f'{title}_{name}'
+
+    i = 1
+    original_new_name = new_name
+    new_name = f'{new_name}_{i}'
+    while new_name in all_defs:
+        i += 1
+        new_name = f'{original_new_name}_{i}'
+    return new_name
 
 
 def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -597,19 +661,36 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
                 all_defs[name] = def_schema
                 schema_name_mapping[name] = name
             elif def_schema != all_defs[name]:
-                new_name = name
-                if title := schema.get('title'):
-                    new_name = f'{title}_{name}'
+                # Different def with same name — assign a unique name
+                schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[schema_name_mapping[name]] = def_schema
+            # else: structurally equal — handled below
 
-                i = 1
-                original_new_name = new_name
-                new_name = f'{new_name}_{i}'
-                while new_name in all_defs:
-                    i += 1
-                    new_name = f'{original_new_name}_{i}'
+        # Defs that are structurally equal (same dict) may still be semantically
+        # different if they contain $refs that point to defs that were renamed in
+        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
+        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
+        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
+        # Loop until stable, since creating a copy can trigger further copies
+        # in defs that reference it (transitive chains).
+        changed = True
+        while changed:
+            changed = False
+            for name, def_schema in defs.items():
+                if name not in schema_name_mapping:
+                    updated = copy.deepcopy(def_schema)
+                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
+                    if updated != def_schema:
+                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
+                        all_defs[schema_name_mapping[name]] = updated
+                        changed = True
+                    else:
+                        schema_name_mapping[name] = name
 
-                all_defs[new_name] = def_schema
-                schema_name_mapping[name] = new_name
+        # Update refs inside definitions so internal cross-references
+        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
+        for new_name in schema_name_mapping.values():
+            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
 
         _update_mapped_json_schema_refs(schema, schema_name_mapping)
         rewritten_schemas.append(schema)

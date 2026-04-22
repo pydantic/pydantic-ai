@@ -413,9 +413,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -671,9 +671,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.all_messages_json(output_tool_return_content=output_tool_return_content)
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
