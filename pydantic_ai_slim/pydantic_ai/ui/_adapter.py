@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import KW_ONLY, Field, dataclass, replace
+from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -280,13 +280,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             builtin_tools: Optional additional builtin tools to use for this run.
         """
         frontend_messages = self.messages
-        has_frontend_system_prompt = any(
+        if self.manage_system_prompt == 'server' and any(
             isinstance(part, SystemPromptPart)
             for msg in frontend_messages
             if isinstance(msg, ModelRequest)
             for part in msg.parts
-        )
-        if has_frontend_system_prompt and self.manage_system_prompt == 'server':
+        ):
             warnings.warn(
                 "Frontend system prompts were provided but `manage_system_prompt` is `'server'` "
                 '(the default), so they will be stripped. '
@@ -294,15 +293,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 UserWarning,
                 stacklevel=2,
             )
-            filtered: list[ModelMessage] = []
-            for msg in frontend_messages:
-                if isinstance(msg, ModelRequest):
-                    filtered_parts = [part for part in msg.parts if not isinstance(part, SystemPromptPart)]
-                    if filtered_parts:
-                        filtered.append(replace(msg, parts=filtered_parts))
-                else:
-                    filtered.append(msg)
-            frontend_messages = filtered
 
         message_history = [*(message_history or []), *frontend_messages]
 
@@ -331,7 +321,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         capabilities: list[AbstractCapability[AgentDepsT]] = []
         if self.manage_system_prompt == 'server':
-            capabilities.append(ReinjectSystemPrompt())
+            capabilities.append(ReinjectSystemPrompt(replace_existing=True))
 
         return self.agent.run_stream_events(
             output_type=output_type,

@@ -29,16 +29,25 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
 
     Intended for callers that reconstruct a `message_history` from a source that doesn't
     round-trip system prompts — UI frontends, database persistence layers, conversation
-    compaction pipelines. If any `SystemPromptPart` is already present anywhere in the
-    history (for example, preserved from a prior run or handed off from another agent), this
-    capability leaves the messages untouched so that existing system prompts remain
-    authoritative.
+    compaction pipelines. By default, if any `SystemPromptPart` is already present anywhere
+    in the history (for example, preserved from a prior run or handed off from another
+    agent), this capability leaves the messages untouched so that existing system prompts
+    remain authoritative. Set `replace_existing=True` to instead strip any existing
+    `SystemPromptPart`s before prepending the agent's configured prompt — useful when the
+    history comes from an untrusted source (such as a UI frontend) and the server's prompt
+    must win.
 
-    The UI adapters automatically add this capability in `manage_system_prompt='server'` mode.
-    Add it explicitly with `Agent(..., capabilities=[ReinjectSystemPrompt()])` or per-run via
-    the `capabilities=` argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to get
-    the same behavior anywhere.
+    The UI adapters automatically add this capability in `manage_system_prompt='server'` mode
+    with `replace_existing=True`. Add it explicitly with
+    `Agent(..., capabilities=[ReinjectSystemPrompt()])` or per-run via the `capabilities=`
+    argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to get the same behavior
+    anywhere.
     """
+
+    replace_existing: bool = False
+    """If `True`, strip any existing `SystemPromptPart`s from the history before prepending
+    the agent's configured prompt. If `False` (the default), the capability is a no-op when
+    any `SystemPromptPart` is already present."""
 
     async def before_model_request(
         self,
@@ -46,7 +55,9 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         messages = request_context.messages
-        if _has_system_prompt(messages):
+        if self.replace_existing:
+            _strip_system_prompts(messages)
+        elif _has_system_prompt(messages):
             return request_context
         if ctx.agent is None:
             return request_context  # pragma: no cover — ctx.agent is always set during an agent run
@@ -68,6 +79,17 @@ def _has_system_prompt(messages: list[ModelMessage]) -> bool:
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
             return True
     return False
+
+
+def _strip_system_prompts(messages: list[ModelMessage]) -> None:
+    kept: list[ModelMessage] = []
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            msg.parts = [p for p in msg.parts if not isinstance(p, SystemPromptPart)]
+            if not msg.parts:
+                continue
+        kept.append(msg)
+    messages[:] = kept
 
 
 def _prepend_to_first_request(messages: list[ModelMessage], sys_parts: list[SystemPromptPart]) -> None:

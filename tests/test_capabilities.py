@@ -1133,6 +1133,12 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
+                'short_spec_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
+                    'title': 'short_spec_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -1304,6 +1310,7 @@ Supported by:
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
@@ -1447,6 +1454,7 @@ Supported by:
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
