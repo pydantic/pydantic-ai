@@ -9531,4 +9531,302 @@ async def test_deferred_tool_handler_via_handle_call_resolve_false():
     assert result.output == 'final'
 
 
+async def test_deferred_tool_handler_approved_tool_returns_tool_return():
+    """Approved tool returning a ToolReturn preserves metadata and user content."""
+    from pydantic_ai.messages import ToolReturn as _ToolReturn, UserPromptPart
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]):
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return _ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done.'
+    # Verify ToolReturn.metadata preserved
+    tool_returns = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'my_tool'
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].metadata == {'source': 'tool'}
+    # Verify ToolReturn.content appears as UserPromptPart
+    user_parts = [
+        p
+        for m in result.all_messages()
+        for p in m.parts
+        if isinstance(p, UserPromptPart) and p.content == 'user prompt extra'
+    ]
+    assert len(user_parts) == 1
+
+
+async def test_deferred_tool_handler_approved_tool_raises_model_retry():
+    """Approved tool that raises ModelRetry produces a RetryPromptPart."""
+    retry_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Retried and done.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        nonlocal retry_count
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        retry_count += 1
+        if retry_count == 1:
+            raise ModelRetry('try again')
+        return 'done'
+
+    result = await agent.run('Hello')
+    assert result.output == 'Retried and done.'
+    # Verify the retry happened
+    retry_parts = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart) and p.tool_name == 'my_tool'
+    ]
+    assert len(retry_parts) == 1
+
+
+async def test_deferred_tool_handler_approved_tool_override_args():
+    """Approved tool with ToolApproved(override_args=...) uses the override."""
+    from pydantic_ai.tools import ToolApproved
+
+    received_x = None
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        # Override the args: replace x=5 with x=42
+        return DeferredToolResults(
+            approvals={call.tool_call_id: ToolApproved(override_args={'x': 42}) for call in requests.approvals}
+        )
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        nonlocal received_x
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        received_x = x
+        return x * 10
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done.'
+    assert received_x == 42  # Override was applied
+
+
+async def test_deferred_tool_handler_via_handle_call_retry():
+    """handle_call path: approved tool raising ModelRetry propagates ToolRetryError."""
+    from pydantic_ai.exceptions import ToolRetryError
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+    retry_count = 0
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        nonlocal retry_count
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        retry_count += 1
+        raise ModelRetry('try again')
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+            return 'no retry'  # pragma: no cover
+        except ToolRetryError:
+            return 'got retry'
+
+    result = await agent.run('go')
+    assert result.output == 'final'
+    assert retry_count == 1
+
+
+async def test_deferred_tool_handler_re_deferred_without_metadata():
+    """Approved tool that re-raises without metadata — no metadata added to remaining."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        nonlocal call_count
+        call_count += 1
+        # No metadata
+        raise ApprovalRequired
+
+    result = await agent.run('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    # No metadata set (tool raised without metadata both times)
+    assert 'call1' not in result.output.metadata
+
+
+async def test_deferred_tool_handler_mixed_unresolved_and_re_deferred():
+    """Handler resolves some, another call is re-deferred — both end up in remaining."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('re_raising_tool', {}, tool_call_id='re1'),
+                ToolCallPart('unhandled_tool', {}, tool_call_id='un1'),
+            ]
+        )
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        # Only approve the re-raising one; leave unhandled_tool unresolved
+        return DeferredToolResults(
+            approvals={call.tool_call_id: True for call in requests.approvals if call.tool_name == 're_raising_tool'}
+        )
+
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    def re_raising_tool(ctx: RunContext[None]) -> str:
+        # Always raises — even after approval
+        raise ApprovalRequired
+
+    @agent.tool
+    def unhandled_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    # Both calls in remaining: unhandled_tool (never resolved) + re_raising_tool (re-deferred after approval)
+    approval_ids = {call.tool_call_id for call in result.output.approvals}
+    assert 're1' in approval_ids
+    assert 'un1' in approval_ids
+
+
+async def test_deferred_tool_handler_re_deferred_as_call_deferred():
+    """Approved tool that re-raises CallDeferred (not ApprovalRequired) stays in remaining.calls."""
+    from pydantic_ai.exceptions import CallDeferred
+
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ApprovalRequired
+        # After approval, raise CallDeferred (external execution needed)
+        raise CallDeferred(metadata={'reason': 'external'})
+
+    result = await agent.run('Hello')
+    assert isinstance(result.output, DeferredToolRequests)
+    # Should be in calls (external), not approvals
+    assert len(result.output.calls) == 1
+    assert len(result.output.approvals) == 0
+    assert result.output.metadata == {'call1': {'reason': 'external'}}
+
+
+async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id():
+    """handle_call path: handler returns results for wrong ID → remaining non-empty → raises original exc."""
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'done'  # pragma: no cover
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        # Resolve a non-existent ID — our tool's ID stays in remaining
+        return DeferredToolResults(approvals={'wrong_id': True})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+            return 'no raise'  # pragma: no cover
+        except ApprovalRequired:
+            return 'caught'
+
+    result = await agent.run('go')
+    assert result.output == 'final'
+
+
 # endregion

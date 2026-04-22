@@ -650,7 +650,7 @@ class ToolManager(Generic[AgentDepsT]):
             no handler is available or the handler declined to handle the requests.
         """
         if self.root_capability is None or self.ctx is None:
-            return None
+            return None  # pragma: no cover
         return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
 
     async def execute_deferred_tool_results(
