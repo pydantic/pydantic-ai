@@ -144,28 +144,7 @@ The [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.ant
 !!! note
     Older models (`claude-sonnet-4-5`, `claude-opus-4-5`, etc.) do not support adaptive thinking and require `{'type': 'enabled', 'budget_tokens': N}` as shown [above](#anthropic).
 
-### Task Budgets (Beta)
-
-Claude Opus 4.7 also supports [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) as a beta feature. In Pydantic AI, configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which maps to `output_config.task_budget`. This support is currently limited to native Anthropic `claude-opus-4-7` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
-
-When you set `anthropic_task_budget`, Pydantic AI automatically enables the required `task-budgets-2026-03-13` Anthropic beta. Task budgets can be used alongside `anthropic_effort`.
-
-```python {title="anthropic_task_budget.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-
-model = AnthropicModel('claude-opus-4-7')
-settings = AnthropicModelSettings(
-    anthropic_thinking={'type': 'adaptive'},
-    anthropic_effort='high',
-    anthropic_task_budget={'type': 'tokens', 'total': 20_000},
-)
-agent = Agent(model, model_settings=settings)
-...
-```
-
-!!! note
-    Task budgets are advisory, not a hard cap. Omit `remaining` when you resend the full, uncompacted history. Only set `remaining` when you are intentionally carrying a budget across compaction or other rewritten context.
+Thinking tokens count against Anthropic's loop-wide [task budgets](models/anthropic.md#task-budgets-beta), so adaptive thinking naturally scales down as the budget depletes.
 
 ## Google
 

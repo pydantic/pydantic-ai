@@ -154,7 +154,35 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 ## Task Budgets (Beta)
 
-Claude Opus 4.7 task budgets are available for native Anthropic `claude-opus-4-7` requests through [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget]. Task budget support is currently limited to native Anthropic `claude-opus-4-7` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs. See [Thinking](../thinking.md#task-budgets-beta) for the request shape, beta semantics, and guidance on when to supply `remaining`.
+Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which maps to `output_config.task_budget`.
+
+Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. Support is currently limited to native Anthropic `claude-opus-4-7` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
+
+```python {title="anthropic_task_budget.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-opus-4-7')
+settings = AnthropicModelSettings(
+    anthropic_task_budget={'type': 'tokens', 'total': 20_000},
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+Task budgets compose with [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_effort]: effort tunes per-step reasoning depth, while task budgets cap total work across the loop. Both fields end up under the same `output_config` object.
+
+!!! note
+    Task budgets are advisory, not a hard cap; pair them with `max_tokens` for an enforced ceiling. Omit `remaining` when you resend the full, uncompacted history so the server tracks the countdown for you. Only set `remaining` explicitly when carrying a budget across compaction or other rewritten context.
+
+### Carrying budgets across compaction
+
+The `remaining` field on `task_budget` is for *client-side* compaction patterns (you summarize earlier turns yourself between requests, so the server has no memory of how much budget was spent before the rewrite). Compute it from your own tracked usage and pass it on the next request so the countdown continues from where you left off rather than resetting to `total`.
+
+!!! warning
+    `task_budget.remaining` is mutually exclusive with [`AnthropicCompaction`](#message-compaction): Anthropic rejects requests that combine `remaining` with a `compact_20260112` context-management edit, because server-side compaction tracks the budget itself. Pydantic AI raises a `UserError` before sending the request when this combination is configured. Choose one: `remaining` for client-side budget tracking, or `AnthropicCompaction` for server-side compaction.
+
+Setting `remaining` also invalidates any prompt-cache prefix that contains the budget. If you want to preserve caching, set `total` once and let the server self-regulate against the running countdown.
 
 ## Prompt Caching
 

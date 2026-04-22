@@ -1295,6 +1295,32 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
         await agent.run('Hello')
 
 
+async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(allow_model_requests: None):
+    """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
+
+    Anthropic's API rejects requests that combine `output_config.task_budget.remaining`
+    with a `compact_20260112` context-management edit; we surface this as a `UserError`
+    before sending the request so users see a clear message instead of an opaque 400.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 50_000, 'remaining': 10_000},
+        ),
+    )
+    agent = Agent(model, capabilities=[AnthropicCompaction(token_threshold=50_000)])
+
+    with pytest.raises(UserError, match='cannot be combined with the `compact_20260112`'):
+        await agent.run('Hello')
+
+
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
     """Exercise both strict=True and strict=False tool definitions against the live API."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
