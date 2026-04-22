@@ -766,8 +766,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         async def main():
             events: list[AgentStreamEvent | AgentRunResultEvent] = []
-            async for event in agent.run_stream_events('What is the capital of France?'):
-                events.append(event)
+            async with agent.run_stream_events('What is the capital of France?') as stream:
+                async for event in stream:
+                    events.append(event)
             print(events)
             '''
             [

@@ -33,6 +33,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -62,7 +63,7 @@ with try_import() as imports_successful:
     )
     from huggingface_hub.errors import HfHubHTTPError
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceStreamedResponse
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception
@@ -1166,3 +1167,33 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_huggingface_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = HuggingFaceStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='hf-model',
+        _model_profile=cast(Any, object()),
+        _response=cast(Any, stream),
+        _stream=cast(Any, stream),
+        _provider_name='huggingface',
+        _provider_url='https://api-inference.huggingface.co',
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()

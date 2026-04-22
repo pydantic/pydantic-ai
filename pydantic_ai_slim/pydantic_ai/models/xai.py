@@ -906,7 +906,11 @@ class XaiStreamedResponse(StreamedResponse):
         # stops consumption on our side, but the SDK does not expose the inner
         # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
         # RPC cancellation hook.
-        await self._stream.aclose()  # type: ignore[union-attr]
+        try:
+            await self._stream.aclose()  # type: ignore[union-attr]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     @property
     def system(self) -> str:

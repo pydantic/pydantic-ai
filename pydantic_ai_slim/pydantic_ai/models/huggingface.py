@@ -498,8 +498,9 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         # generator will be cleaned up when request_stream's ACM exits.
         try:
             await self._stream.aclose()  # type: ignore[union-attr]
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name), self._stream_cancel_guard():

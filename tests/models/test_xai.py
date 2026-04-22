@@ -17,9 +17,9 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -104,6 +104,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
+        XaiStreamedResponse,
         _extract_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.xai import XaiProvider
@@ -5520,6 +5521,35 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_xai_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = XaiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='grok-4-fast-non-reasoning',
+        _response=cast(Any, stream),
+        _stream=cast(Any, stream),
+        _timestamp=datetime.now(timezone.utc),
+        _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()
 
 
 # End of tests

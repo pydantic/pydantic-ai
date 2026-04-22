@@ -1015,8 +1015,9 @@ class GeminiStreamedResponse(StreamedResponse):
         # be cleaned up when request_stream's ACM exits.
         try:
             await self._stream.aclose()  # type: ignore[union-attr]
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
