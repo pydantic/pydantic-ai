@@ -1632,32 +1632,43 @@ Mexico City is an important cultural, financial, and political center for the co
     )
 
 
-@pytest.mark.parametrize(
-    'thinking_settings',
-    [
-        pytest.param(
-            BedrockModelSettings(
-                bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-            ),
-            id='legacy_field',
-        ),
-        pytest.param(BedrockModelSettings(thinking=True), id='unified_field'),
-    ],
-)
-async def test_bedrock_output_tool_with_thinking_raises(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, thinking_settings: BedrockModelSettings
-):
+async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
 
-    Parametrized across both the legacy `bedrock_additional_model_requests_fields` form and the
-    unified `thinking` field — the latter is stripped by `Model.prepare_request` into
-    `ModelRequestParameters.thinking`, so `_is_thinking_enabled` must inspect both pre-strip and
-    post-strip state. Fixes https://github.com/pydantic/pydantic-ai/issues/3092.
+    Uses the legacy `bedrock_additional_model_requests_fields` form. See
+    `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
+    Fixes https://github.com/pydantic/pydantic-ai/issues/3092.
     """
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
         provider=bedrock_provider,
-        settings=thinking_settings,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        ),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_output_tool_with_unified_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sibling of `test_bedrock_output_tool_with_thinking_raises` for the unified `thinking` field.
+
+    `Model.prepare_request` strips unified `thinking` into `ModelRequestParameters.thinking`, so
+    `_is_thinking_enabled` must inspect both pre-strip (settings) and post-strip (params) state to
+    catch the conflict regardless of which form the user picked.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
