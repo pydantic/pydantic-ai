@@ -25,6 +25,12 @@ class ModelProfile:
 
     supports_tools: bool = True
     """Whether the model supports tools."""
+    supports_tool_return_schema: bool = False
+    """Whether the model natively supports tool return schemas.
+
+    When True, the model's API accepts a structured return schema alongside each tool definition.
+    When False, return schemas are injected as JSON text into tool descriptions as a fallback.
+    """
     supports_json_schema_output: bool = False
     """Whether the model supports JSON schema output.
 

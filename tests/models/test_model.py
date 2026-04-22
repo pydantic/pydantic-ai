@@ -66,12 +66,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/anthropic:claude-sonnet-4-6',
-        'claude-sonnet-4-6',
+        'gateway/anthropic:claude-opus-4-7',
+        'claude-opus-4-7',
         'anthropic',
         'anthropic',
         AnthropicModel,
-        id='gateway/anthropic:claude-sonnet-4-6',
+        id='gateway/anthropic:claude-opus-4-7',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
@@ -417,15 +417,13 @@ def test_context_window_provided_in_profile():
         pytest.param('nebius', 'Qwen/Qwen3-32B', 40960, id='nebius-huggingface-qwen'),
         pytest.param(
             'together',
-            'meta-llama/Llama-3.2-3B-Instruct',
+            'meta-llama/Llama-3.3-70B-Instruct',
             131072,
             id='together-huggingface-meta',
         ),
     ],
 )
-def test_context_window_loaded_from_genai_prices_best_effort(
-    provider_name: str, model_name: str, context_window: int
-):
+def test_context_window_loaded_from_genai_prices_best_effort(provider_name: str, model_name: str, context_window: int):
     if provider_name == 'openai-base-url':
         from pydantic_ai.providers.openai import OpenAIProvider
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
-from uuid import uuid4
 
 from pydantic_core import to_json
 
@@ -91,6 +90,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
     """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
+    server_message_id: str | None = None
+    """Optional server-generated message ID to include in the `StartChunk`."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
@@ -103,7 +104,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         return f'data: {event.encode(self.sdk_version)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
-        yield StartChunk()
+        yield StartChunk(message_id=self.server_message_id)
 
     async def before_response(self) -> AsyncIterator[BaseChunk]:
         if self._step_started:
@@ -128,7 +129,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
-                    approval_id=str(uuid4()),
+                    approval_id=tool_call.tool_call_id,
                     tool_call_id=tool_call.tool_call_id,
                 )
             return

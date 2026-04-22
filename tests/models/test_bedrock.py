@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 from datetime import date, datetime, timezone
+from itertools import count
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,6 +27,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -1012,6 +1014,31 @@ The document you're referring to appears to be a test document, which means its 
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
 """
+    )
+
+
+async def test_map_user_prompt_with_text_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(
+            content=[
+                'What is the main content on this document?',
+                TextContent(content='This is a test document.', metadata={'format': 'plain_text'}),
+            ]
+        ),
+        document_count=count(1),
+        supports_prompt_caching=False,
+    )
+    assert m == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is the main content on this document?'},
+                    {'text': 'This is a test document.'},
+                ],
+            }
+        ]
     )
 
 
@@ -2296,7 +2323,7 @@ async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process this document:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2333,7 +2360,7 @@ async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_poi
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Some text content'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
         ]
     )
 
@@ -2358,7 +2385,7 @@ async def test_bedrock_cache_point_before_binary_content(allow_model_requests: N
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process the attached text file. Return the answer only.'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2394,7 +2421,7 @@ async def test_bedrock_cache_point_with_multiple_trailing_documents(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process these documents.'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2453,7 +2480,7 @@ async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
                     'source': {'bytes': b'\x89PNG\r\n\x1a\n'},
                 }
             },
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 2',
@@ -2547,7 +2574,7 @@ async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_ba
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Analyze these:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
             {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
         ]
@@ -2565,9 +2592,9 @@ async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, 
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'First chunk'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'text': 'Second chunk'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'text': 'Question'},
         ]
     )
@@ -2666,6 +2693,69 @@ async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_pr
     )
 
 
+async def test_bedrock_cache_instructions_mixed_static_dynamic(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that cache point is placed after last static instruction when mixed with dynamic."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # Cache point should be after the static instruction, before the dynamic one
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Dynamic only.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # No cache point should be inserted — nothing static to cache
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Dynamic only.'},
+        ]
+    )
+
+
 async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that bedrock_cache_messages adds cache point to the last user message."""
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
@@ -2682,6 +2772,82 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
                 'content': [
                     {'text': 'User message to cache.'},
                     {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_and_messages_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions to cache.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions='1h', bedrock_cache_messages='1h'),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions to cache.'},
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Hi!'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_tool_definitions_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions='1h'),
+    )
+    assert tool_config and len(tool_config['tools']) == 3
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_manual_cache_point_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context to cache', CachePoint(ttl='1h'), 'Question'])])
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(),
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context to cache'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'text': 'Question'},
                 ],
             }
         ]

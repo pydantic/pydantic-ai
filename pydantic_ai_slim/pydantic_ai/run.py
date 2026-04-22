@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.graph import EndMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph.beta.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
 from pydantic_graph.beta.step import NodeStep
 
 from . import (
@@ -123,6 +123,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
         task = self._graph_run.next_task
+        if isinstance(task, ErrorMarker):
+            raise task.error
         return self._task_to_node(task)
 
     @property
@@ -161,9 +163,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[_messages.ModelMessage]:
-        """Return new messages for the run so far.
+        """Return the messages produced during this run so far.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
         """
         return self.all_messages()[self.ctx.deps.new_message_index :]
 
@@ -228,6 +230,18 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _node_to_task(self, node: _agent_graph.AgentNode[AgentDepsT, OutputDataT]) -> GraphTaskRequest:
         return GraphTaskRequest(NodeStep(type(node)).id, inputs=node, fork_stack=())
 
+    def _sync_graph_state(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> None:
+        """Synchronize the graph runner's state to match a hook-modified result.
+
+        After a capability hook changes the result (e.g. `on_node_run_error` recovering,
+        or `after_node_run` converting End↔node), the graph runner's internal `_next` must
+        be updated so that `output` and `next_node` reflect the hook's decision.
+        """
+        if isinstance(result, End):
+            self._graph_run.override_next(EndMarker(result.data))
+        else:
+            self._graph_run.override_next([self._node_to_task(result)])
+
     async def _advance_graph(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -260,7 +274,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
         except Exception as e:
             result = await cap.on_node_run_error(run_context, node=node, error=e)
+            # on_node_run_error recovered by returning a result.
+            # The graph runner is in ErrorMarker state; update it to match.
+            self._sync_graph_state(result)
+        pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
+
+        # If after_node_run changed the result, sync the graph runner state so
+        # agent_run.result correctly reflects whether the run is finished.
+        if result is not pre_hook_result:
+            self._sync_graph_state(result)
+
         return result
 
     async def _run_node_with_hooks(
@@ -454,9 +478,9 @@ class AgentRunResult(Generic[OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.

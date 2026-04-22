@@ -1,0 +1,567 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '233'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      context_management:
+      - compact_threshold: 1000
+        type: compaction
+      input:
+      - content: Tell me a 300-word story about a fox exploring a forest. Be very descriptive.
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3030'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '12109'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776297304
+      created_at: 1776297292
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0c1d85ffb99ec1d00069e0254c7cac81909bc7eacb2c4c565f
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Beneath a canopy of emerald leaves, the early morning sun painted the forest floor in delicate dappled gold. Rustling quietly through undergrowth beaded with dew, a red fox named Lira slipped between bramble and fern, her russet fur glowing against the shadowy world.
+
+            The air was thick with the scent of moss and wild garlic. Every step quickened Lira's heart--younger foxes might shy away from the unknown, but curiosity lit her amber eyes. Birds warbled high overhead, while a squirrel chattered in indignation from a low-hanging branch, its tail flickering like a candle flame. Lira paused, nose twitching, savoring the earthy perfume of leaf litter as she contemplated her path.
+
+            Slipping through a patch of bluebells, their soft petals brushing her sides, she startled a family of rabbits who disappeared into a tangle of roots. Not far away, a chorus of frogs sang by a crystal brook. Lira padded closer, watching their comical leaps with tilted head, her own reflection rippling on the water's surface.
+
+            Continuing on, she found a fallen oak, its ancient trunk sprawled across her path--a bridge blanketed in moss and lichen. With a light leap, she climbed atop it, where the world seemed to slow. Up here, she watched shafts of sunlight pierce the gloom, catching motes of pollen swirling in the air like gold dust. The forest buzzed around her, insect wings humming and leaves murmuring old secrets.
+
+            Lira cocked her head, listening to the heartbeat of the forest--the distant hoot of an owl, the thump of a distant deer. Each sound was familiar, comforting, and a little thrilling. With one last glance at the waking world, she bounded off the log, disappearing into the green shadows, eager for whatever wonders lay hidden in the heart of the ancient wood.
+          type: output_text
+        id: msg_0c1d85ffb99ec1d00069e0254d60dc8190b4536ee2c1c3f002
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 25
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 386
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 411
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2149'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=etsoaW1ccusauMIytS5v66CfDNgglhmD1G2Y65qTOWU-1776297291.895674-1.0.1.1-98PLJKycMzSlLl2dyJ.oZS3oO1fznEi6ianH3LRcfcOy6UbvIChAFoEkqvaK1zUGgKPZrJHPLz0eH0ggoTIp0K2CSN03u.CWEJ4LR.svgVoCLx.55L3y6P3NJDFegU4z
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      context_management:
+      - compact_threshold: 1000
+        type: compaction
+      input:
+      - content: Tell me a 300-word story about a fox exploring a forest. Be very descriptive.
+        role: user
+      - content: |-
+          Beneath a canopy of emerald leaves, the early morning sun painted the forest floor in delicate dappled gold. Rustling quietly through undergrowth beaded with dew, a red fox named Lira slipped between bramble and fern, her russet fur glowing against the shadowy world.
+
+          The air was thick with the scent of moss and wild garlic. Every step quickened Lira's heart--younger foxes might shy away from the unknown, but curiosity lit her amber eyes. Birds warbled high overhead, while a squirrel chattered in indignation from a low-hanging branch, its tail flickering like a candle flame. Lira paused, nose twitching, savoring the earthy perfume of leaf litter as she contemplated her path.
+
+          Slipping through a patch of bluebells, their soft petals brushing her sides, she startled a family of rabbits who disappeared into a tangle of roots. Not far away, a chorus of frogs sang by a crystal brook. Lira padded closer, watching their comical leaps with tilted head, her own reflection rippling on the water's surface.
+
+          Continuing on, she found a fallen oak, its ancient trunk sprawled across her path--a bridge blanketed in moss and lichen. With a light leap, she climbed atop it, where the world seemed to slow. Up here, she watched shafts of sunlight pierce the gloom, catching motes of pollen swirling in the air like gold dust. The forest buzzed around her, insect wings humming and leaves murmuring old secrets.
+
+          Lira cocked her head, listening to the heartbeat of the forest--the distant hoot of an owl, the thump of a distant deer. Each sound was familiar, comforting, and a little thrilling. With one last glance at the waking world, she bounded off the log, disappearing into the green shadows, eager for whatever wonders lay hidden in the heart of the ancient wood.
+        role: assistant
+      - content: Now a 300-word story about a rabbit in a meadow. Be very descriptive.
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3065'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '8773'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776297313
+      created_at: 1776297304
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0ab254158f5dbe3b0069e02558c7b481938dca8f1cacc977fd
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            In the gentle embrace of sunrise, a silvery mist hovered above the meadow, clinging to each blade of grass like a whispered secret. A young rabbit named Willow emerged from the safety of her burrow, her velvety fur brushed by dew. Her ears, soft as petals, turned toward the distant chirruping of larks as she took her first tentative steps into the open.
+
+            The meadow, awash in golden light, unfurled before her like a colossal quilt, stitched together with wildflowers--violet clover, butter-yellow dandelions, and delicate, nodding daisies. Willow nibbled at clover leaves glistening with morning moisture, the sweetness flooding her senses as she tasted the new day.
+
+            A gentle breeze swept through the grasses, bending them in rippling green waves. Willow's nose twitched, picking up the scent of earth and honeysuckle, and she paused to watch bees buzzing from blossom to blossom, their legs weighed down with pollen. Pastel butterflies drifted lazily over the tall grass, their wings flashing soft blues and oranges whenever the sunlight struck them.
+
+            From her vantage beneath a tuft of trembling fescue, Willow saw the meadow's secret wonders unfold--a shimmer of wings as a red dragonfly darted past, the flicker of a shrew vanishing beneath a leaf. Overhead, clouds sailed across an endless sky as swallows swooped and turned, slicing through the air with playful grace.
+
+            A sudden gust sent dandelion seeds swirling into the breeze, dancing like tiny stars in the air around Willow. She froze, perfectly still, as a shadow crossed her path--just a kestrel, wheeling high above, its sharp cry quickly swallowed by the wide, open day.
+
+            With the world brightening around her, Willow hopped joyfully through the tall grass, heart pounding with the simple thrill of freedom beneath the sunlit sky.
+          type: output_text
+        id: msg_0ab254158f5dbe3b0069e0255993ec81938e1c70891196c284
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 435
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 388
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 823
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4095'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=etsoaW1ccusauMIytS5v66CfDNgglhmD1G2Y65qTOWU-1776297291.895674-1.0.1.1-98PLJKycMzSlLl2dyJ.oZS3oO1fznEi6ianH3LRcfcOy6UbvIChAFoEkqvaK1zUGgKPZrJHPLz0eH0ggoTIp0K2CSN03u.CWEJ4LR.svgVoCLx.55L3y6P3NJDFegU4z
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      context_management:
+      - compact_threshold: 1000
+        type: compaction
+      input:
+      - content: Tell me a 300-word story about a fox exploring a forest. Be very descriptive.
+        role: user
+      - content: |-
+          Beneath a canopy of emerald leaves, the early morning sun painted the forest floor in delicate dappled gold. Rustling quietly through undergrowth beaded with dew, a red fox named Lira slipped between bramble and fern, her russet fur glowing against the shadowy world.
+
+          The air was thick with the scent of moss and wild garlic. Every step quickened Lira's heart--younger foxes might shy away from the unknown, but curiosity lit her amber eyes. Birds warbled high overhead, while a squirrel chattered in indignation from a low-hanging branch, its tail flickering like a candle flame. Lira paused, nose twitching, savoring the earthy perfume of leaf litter as she contemplated her path.
+
+          Slipping through a patch of bluebells, their soft petals brushing her sides, she startled a family of rabbits who disappeared into a tangle of roots. Not far away, a chorus of frogs sang by a crystal brook. Lira padded closer, watching their comical leaps with tilted head, her own reflection rippling on the water's surface.
+
+          Continuing on, she found a fallen oak, its ancient trunk sprawled across her path--a bridge blanketed in moss and lichen. With a light leap, she climbed atop it, where the world seemed to slow. Up here, she watched shafts of sunlight pierce the gloom, catching motes of pollen swirling in the air like gold dust. The forest buzzed around her, insect wings humming and leaves murmuring old secrets.
+
+          Lira cocked her head, listening to the heartbeat of the forest--the distant hoot of an owl, the thump of a distant deer. Each sound was familiar, comforting, and a little thrilling. With one last glance at the waking world, she bounded off the log, disappearing into the green shadows, eager for whatever wonders lay hidden in the heart of the ancient wood.
+        role: assistant
+      - content: Now a 300-word story about a rabbit in a meadow. Be very descriptive.
+        role: user
+      - content: |-
+          In the gentle embrace of sunrise, a silvery mist hovered above the meadow, clinging to each blade of grass like a whispered secret. A young rabbit named Willow emerged from the safety of her burrow, her velvety fur brushed by dew. Her ears, soft as petals, turned toward the distant chirruping of larks as she took her first tentative steps into the open.
+
+          The meadow, awash in golden light, unfurled before her like a colossal quilt, stitched together with wildflowers--violet clover, butter-yellow dandelions, and delicate, nodding daisies. Willow nibbled at clover leaves glistening with morning moisture, the sweetness flooding her senses as she tasted the new day.
+
+          A gentle breeze swept through the grasses, bending them in rippling green waves. Willow's nose twitched, picking up the scent of earth and honeysuckle, and she paused to watch bees buzzing from blossom to blossom, their legs weighed down with pollen. Pastel butterflies drifted lazily over the tall grass, their wings flashing soft blues and oranges whenever the sunlight struck them.
+
+          From her vantage beneath a tuft of trembling fescue, Willow saw the meadow's secret wonders unfold--a shimmer of wings as a red dragonfly darted past, the flicker of a shrew vanishing beneath a leaf. Overhead, clouds sailed across an endless sky as swallows swooped and turned, slicing through the air with playful grace.
+
+          A sudden gust sent dandelion seeds swirling into the breeze, dancing like tiny stars in the air around Willow. She froze, perfectly still, as a shadow crossed her path--just a kestrel, wheeling high above, its sharp cry quickly swallowed by the wide, open day.
+
+          With the world brightening around her, Willow hopped joyfully through the tall grass, heart pounding with the simple thrill of freedom beneath the sunlit sky.
+        role: assistant
+      - content: Now a 300-word story about a bear in a cave. Be very descriptive.
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7968'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '12589'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776297326
+      created_at: 1776297313
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0b0c928ec0ba401f0069e02561a8f08193b3a4eb469dd1efbb
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "In the silent hush of early evening, when shadows deepened and the forest outside shimmered in faint silvery
+            light, a solitary bear named Rune stirred in the heart of his cave. Thick stone walls pressed close around him,
+            their surfaces mottled with patches of moss and ancient, glimmering lichen. The air inside was cool and damp,
+            tinged with the scent of earth and the faint whisper of pine carried in on secret breezes.\n\nRune shifted atop
+            a bed of leaves and pine needles, each strand woven carefully over seasons past. The soft, crinkling sound echoed
+            through the cavern, mingling with the quiet drip of water that slipped, drop by measured drop, from the cave roof
+            to form mirror-like pools in the dimness below. Shadows danced along the rough, uneven walls--sometimes taking
+            the shape of silent ancestors or remembered prey, watching as strangers from the past.\n\nThe bear's senses sharpened
+            with the approach of night. Outside, the forest's muffled symphony drifted in--a distant river splashing over
+            stones, the hushed scurry of nocturnal feet, owl calls lingering on the breeze. Rune's breath misted gently in
+            the chill air, each exhale curling upward and vanishing into the gloom. \n\nHe stretched, massive paws spreading,
+            claws scraping softly over stone. Hunger stirred in his belly, a reminder of distant berries, honeycombs, and
+            fat, darting fish in sunlit streams. Yet tonight, Rune remained cradled in his haven--safe, content to listen
+            as the wind hummed low songs through cracks and crevices. \n\nFrom the darkness, Rune peered out at the world
+            framed by his cave's mighty arch--where the moon laid a pale ribbon across the forest, promising adventure. For
+            now, he settled deeper into leaf and fur, a guardian of secrets, dreaming beneath a mountain of stone, wrapped
+            in the cave's ancient, earthy embrace."
+          type: output_text
+        id: msg_0b0c928ec0ba401f0069e02562d8208193a2d4f97dc63a656c
+        role: assistant
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABp4CVuo_va1l5KdyyIfA553gFmrl8KTk8SKrPp_SIQ7wQf_vL8JoOsSqrLAocOUzN7QdFyegZUmEurqviM9OCWvMDLW9CdLYo3y5x_fNXQ366BegyUse32vdV3BHPCxLwVuhAvjUvML_i2lkPBvuucutd5MslUkLVHXu9tqEm2XyQmw9vKoWMm1G1ULBzxmh_888dDCADvmzNFOqai-MLu5gB8CeuaBjAuRlTQLIr4nY0VVlXa_3egSQqRt1G1svVSCfoli6GolGAFDD90z3UEet4F39mnmy1sY4hkGTWgRVtPNw7OAVNxvPndrtHB-MjL2sdTQL3C6LFj6fhlio09BlLS15sh5r6dJFSiu2C3r86KNIYueAE43OlSP952J_tcat9rqNjM8V-XgSPHi41QHFjBw8cNujTluzOsLuHpMMkh1XeruJsCNPZSgCqCMpO4Wbo6pjfMH-mIupx-GkQ1hFeXMz5Id1jLTbPx2Eyz-nia5ymFSqKeavKpjSkepwmgNl45PkPHHDn_M0XqUizMl7RpC5X8lc-9P6LLUkkUafUTsaIQi_x1eJ385vhmpk2jmYPBG4f2SfYsSID0gTG1U27snuZA3DxwSqhN9EEIMgmzaeOcJlHaVWq3nz2K0LguGMv3w5N5GrPQt9n19-yNKudlo1JCVP3nysfDjVv4y2AMp8yBPB6TE2oxLBtY3dpo3cW6nHV9rseveusuZ-ksfWT6CF3RPg1fbi99EsuI-CJyxhsGH6kkTO1KrvViGihzLzzYo_q0EcxQNM0oCYo4lLCDZnzMBpdimvhNgpZVLzCPkv49ycsvvYKWTXCoZVuKzcVtucLatEI8ARk0FK-C-P8zDPBX80zYcq3LI79F4Y8xMy9AMhORYKJHR1YWj3GlajNUgp9zY_JKPHx3Xv1l-ygTaCTJ-Zeuqx3jDvtHQZBIgHyGKkxZSk5QtPrnfa-L45Tok3lq6acFJUQW_hqgi4bHe-4pdti3rN04-v6_u44WzYi1KcAVR6EGxb_ng9uXik7fs0O5FBtY_4I0tAtzGgbdy1FKTnFxCTNeibVdU7hq6TS27XRFJV4kAEmjvCOMBRukzxx-S7LuHPRgX_IwyaKAxsyc3JhXn7Frw3JgNdU2eG-h1YVDcpit2MtzcsguEUINU34JBVT5kjXbepq9Leqzo7LMCxkfUAEtGbS6-n0JSeDRL2QbvjjtYHHsVTDkLSEqwZQ_Gg2mnVDNIdYmXW7PowW-oV7pBUfjzjySu9IVBB98KjQ1Rr7Vx7A59Vf9ak_bzdIPnO349eAgNjqttxlkqnbFfVccx1m-B-DzxjY7GDB37PTH4GZXrIVLfHsKvcqlSdK75UYrYU5OeaziXk0LUCV17bvSmV2xGJhpnbtdYJqaQqgF0eEoqLcr6rmI_3-o24EI_ReilOCxi227D_lyYCFtVbbsLKjUCpFI4pGk5y3r1WFlYAOIGhsGfoktbgOCI9fTTXGD15SJQRXAbjv0bBc_htWE0dZZelh49k9V5_zBSp2aLYoVVf6jKufMtUdQauA7_5mIQ4DE4U3nxFSorZh1HvMjCZv6w7CcnMCuyal_N7JtfLyuCwkRnJkBzAwkQMvm2DM_YbZi-tcYKa-cr3EccvTT2aHZEBnnYzER9L9Pb1Ns6ls_ZzmnStOWuXoNGvhYZhB0FCweCGfzYuTTbTBPd5jUYg44EeKMBsYoSJgIEWgVZOdHUxZzCM6myL81tnnner2lmW6vlIARgsvu2Qr548m8RWRC_kNxPr2tAlRZn3dNK4zY6NwDadVeVHgQeggyLDY9eeGXgQCXm5KEo6DLprBEW-MupV0SsnwD_alc73nWszpQ8856lXWrj3QkMY1kbQYpcUIW3K9gCahXQNoGN1FrIto8uBRzh5SA5Qiqjx198xk2xeTpeplzJi1kSvjbbAWmjHkZ-47ezOkxtQhSCg5ZX5QC4gcoLrHFdEGZglvPW6xsiCDBKi4algpQEE_h-QKk3ZoSEepFt1or3lIdGx9lWXj6Jm6VsmFM3D5t6n1oK5N0KiZwBhIlrZb7ReMT7yhmkKo95RKm4tkj2wbLnlTw-_ccGhzG1Cz9PVhUr5f9g0X9js6RtpzdhPJku-4sa5Xi_WH5nVftOZLn_lFqVC5EqIXlvhiSMbC89YJFvzmlwRJ96iUSQJnFXfbLNNmG1qCNuHy-V_gAvopPRRjRsHQ-QjCDlsC1qxRqdwb7fHMAZsLXg3Tn8XHrsdPHHyEsAEXn0-7U4INmN3zyEXYiWJfULcuWR9SFSf2S1gMdy7mxsbaoPykoHv_1bG2dCb_gdAQmbHGMKepz32ASoe52mosR4md_cWXTzd00UurhNkOjV9uR8hNsHT_asJQcqbp2mf_bsKS1cfuhvRfCiHWIJmGrIAzF5cGIIU9MHlSXJzHuy6cLI67gRd4tYqZfzMU02Q_tAps9PBeffGZ273ve5MtqHEKXYWkfczHqn0SGNPwR_C25ZuRB_RC31KLAx1tlKSiOIvAUzwEyQmbM1NspQWx7YwgfBR41aIRtRaUGMfWU72FmGO7Goi03EO_RdMXwADNSkQzfn0T7d8TjnQNsxl6KuL4qUsupKoNC74rNp-bC87gyhQxjciTxZJYlXGhhoRrIiyfm8gkAJad3KWzW69x8ni0s5nK5xNCKUunHDWxNbYG03C2GsJl8LiKaKUEwyZ3fm7-nKIkYsoI8HJcZloGtgVIn4KzGcX4xFUfndIK2mZ800o02wXBDlC2uF-6KejEVzZTiTnI1tp6u3C3yPaHkjL453kAHZMdRbO-3kd2nvzUNVW22weTQeK7aMTV94oiPadv0V5dHLtStAW8UMTdGnH-iDEJYep0E4q7f08WtkqqrnT6JMRYFvl8v6thQOf1993XHPfyR509cpx3esLcvjuTGO0g2obbZWeteSnvih0dlrRGJtdQOvfAe4ltPigOH_JVxWRaaWLldrxcYfjpmt1rZr3chqEe6iAKfIwryxu1jpC3UYxQ8ZKetPJ_mEg_aWK6emeWdYGXzwRkHrPn1gPljfIRobApb39Q1Mn6gQ4EuHLSUEkvNQo-ABRcgYg-NlhngngsUE5WdPINiAHAm4MGOJ6LLenRoh9N0fV535UAzoLMw5lIR7raXiZwpnz9M1Dur3-KPtjy73FIe_YDtj5go1RO9__Rjj9BgMAmDnKz0k5QxWEzoFkorilci-tU0PZu_v7jUqN6qgEmKlP9wjQCwqu4sqenswN9wnH-9QW-m17Tyd9NSps_nTn1BAd7DRO9YVgb_2mkHNP4an7abMneG58JYns5lFYqV6QzqtcbwEaQ-IIsPJvW-Hs-voHp7kmoPDh7cp7Ef5N75uAxPS0x37_DG6W81fUaZ4HFSw7AN0ZpfYc8rAXIZllw75x2GseRbRWLJavujVBW5B8Z1eS4VLSQHvF6KHJGoFsLvVVrG1iGrQLDZj250Pd7-0kr1Ve8Tl_WxAITiELSQKPsq0FJzHwkE8qqCzlpHxNlH6qxuQsg1gp9lGVsHqzJlRaLzkWNcQO31prlbWMmE6JDwwCUiTkuPiw3R_SxX1aFUQf4iHFtgjWA2iAJDPKVZT5MmuiNfrUWRjJN1mZHIRm6tm1eBXMaWPier_j1iIGt-n38DaSTrcunsJdf4SyXYHQhwGBHGY1cjHq6yOlHewwLt7deflLC_bRfRjbjE5pQt579OZ4WGYC7rs1Mdp96pgVZybOKzKFzEUeYL8dLoxHwAuvgktp3XeLjDSkCgQeAc1ciF1aKSmKkc6MWmAGNJQRwCP79H1WVrq-39WuGAh5xajznzbSyI5tW6Xd1dwA5hiT9HP7J7EJ70GSoNAdeXAzlS0j7aN12uqlsSS_vWaD_LoZo0YCu3kMVTL1qt7D_otLHfsLR2-ot0iPvEKeHF1y82OyM3AJvCcBMllMsBa1tNseIdbVIl34tH3eH5oJZA0fE7oFVvwxiJ-5VUqbQ_IdxJfQW17emNik4JxaLOm39QKreCVyezZuom2KYUy82-YbVEn4RVC2VYYaqR2Td-jzpt7bBPPylPb5gFiN4jCyXjuviLw408HnUoJP7Trd70DTtm7gtTyixm3ptxylleeuYbzRdyJjllKqp8wPcC7CShj_ZMbPfOvhiMu-t9c7R_wAGY1WXvzHOKHQiFUPwAFY5NRkaeQ-RfnApHG1HuMK4-LMNuB7qH31jtklUJ72OcloUczIBLteyIrl04vOejvbUFs_0YfsQFzORXop7Uia6PXvqr19gqFR_cRyA1--FpnPylKipbEx7UXDLXhPj3lxfzyU0leH4RH6lzcsWGbxSUAnSKZ397ECFujdsgpJy37fI01mTcw95lxudTBWUSTYORHQozVb2Ihbwsj3CBsEgyp7qUd9HF5N_6FezghLFXtd2iIeSvw-4qQGYwFYsauIJOwaf3EMfMeAYvo00Pw072E_2SreY5iCzqH6AgohnsEMrL2Jpl4trhVjNGfiWdjluUvBVcR6QIl9OiCQmnidS1eyoMy-UKblb9ZdMb_cQaFoToI5Lf-k7OaX-vukR8I-V2ozdUTaAoLS0FEB2uVuxSKlOykuDDTGLjuJKMdicUAAWBJeRC66BF6AIJVX85WrjP9xITupWiNhQ5682qUmAO_aoO26DZtL-25iiv1u8NnKCgitJFcugYQvz-MFQb3M5YKnMqrtB0prW7rz51hZQ_ZoUHEzdGThn1nZlEGNe40Olxyj3_atWhEgdWbuy0A_YjEe3xapn2sPS29w==
+        id: cmp_0b0c928ec0ba401f0069e0256e19388193b74237b70aeed0f5
+        type: compaction
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 847
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 1179
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 2026
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '10889'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=etsoaW1ccusauMIytS5v66CfDNgglhmD1G2Y65qTOWU-1776297291.895674-1.0.1.1-98PLJKycMzSlLl2dyJ.oZS3oO1fznEi6ianH3LRcfcOy6UbvIChAFoEkqvaK1zUGgKPZrJHPLz0eH0ggoTIp0K2CSN03u.CWEJ4LR.svgVoCLx.55L3y6P3NJDFegU4z
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      context_management:
+      - compact_threshold: 1000
+        type: compaction
+      input:
+      - content: Tell me a 300-word story about a fox exploring a forest. Be very descriptive.
+        role: user
+      - content: |-
+          Beneath a canopy of emerald leaves, the early morning sun painted the forest floor in delicate dappled gold. Rustling quietly through undergrowth beaded with dew, a red fox named Lira slipped between bramble and fern, her russet fur glowing against the shadowy world.
+
+          The air was thick with the scent of moss and wild garlic. Every step quickened Lira's heart--younger foxes might shy away from the unknown, but curiosity lit her amber eyes. Birds warbled high overhead, while a squirrel chattered in indignation from a low-hanging branch, its tail flickering like a candle flame. Lira paused, nose twitching, savoring the earthy perfume of leaf litter as she contemplated her path.
+
+          Slipping through a patch of bluebells, their soft petals brushing her sides, she startled a family of rabbits who disappeared into a tangle of roots. Not far away, a chorus of frogs sang by a crystal brook. Lira padded closer, watching their comical leaps with tilted head, her own reflection rippling on the water's surface.
+
+          Continuing on, she found a fallen oak, its ancient trunk sprawled across her path--a bridge blanketed in moss and lichen. With a light leap, she climbed atop it, where the world seemed to slow. Up here, she watched shafts of sunlight pierce the gloom, catching motes of pollen swirling in the air like gold dust. The forest buzzed around her, insect wings humming and leaves murmuring old secrets.
+
+          Lira cocked her head, listening to the heartbeat of the forest--the distant hoot of an owl, the thump of a distant deer. Each sound was familiar, comforting, and a little thrilling. With one last glance at the waking world, she bounded off the log, disappearing into the green shadows, eager for whatever wonders lay hidden in the heart of the ancient wood.
+        role: assistant
+      - content: Now a 300-word story about a rabbit in a meadow. Be very descriptive.
+        role: user
+      - content: |-
+          In the gentle embrace of sunrise, a silvery mist hovered above the meadow, clinging to each blade of grass like a whispered secret. A young rabbit named Willow emerged from the safety of her burrow, her velvety fur brushed by dew. Her ears, soft as petals, turned toward the distant chirruping of larks as she took her first tentative steps into the open.
+
+          The meadow, awash in golden light, unfurled before her like a colossal quilt, stitched together with wildflowers--violet clover, butter-yellow dandelions, and delicate, nodding daisies. Willow nibbled at clover leaves glistening with morning moisture, the sweetness flooding her senses as she tasted the new day.
+
+          A gentle breeze swept through the grasses, bending them in rippling green waves. Willow's nose twitched, picking up the scent of earth and honeysuckle, and she paused to watch bees buzzing from blossom to blossom, their legs weighed down with pollen. Pastel butterflies drifted lazily over the tall grass, their wings flashing soft blues and oranges whenever the sunlight struck them.
+
+          From her vantage beneath a tuft of trembling fescue, Willow saw the meadow's secret wonders unfold--a shimmer of wings as a red dragonfly darted past, the flicker of a shrew vanishing beneath a leaf. Overhead, clouds sailed across an endless sky as swallows swooped and turned, slicing through the air with playful grace.
+
+          A sudden gust sent dandelion seeds swirling into the breeze, dancing like tiny stars in the air around Willow. She froze, perfectly still, as a shadow crossed her path--just a kestrel, wheeling high above, its sharp cry quickly swallowed by the wide, open day.
+
+          With the world brightening around her, Willow hopped joyfully through the tall grass, heart pounding with the simple thrill of freedom beneath the sunlit sky.
+        role: assistant
+      - content: Now a 300-word story about a bear in a cave. Be very descriptive.
+        role: user
+      - content: "In the silent hush of early evening, when shadows deepened and the forest outside shimmered in faint silvery
+          light, a solitary bear named Rune stirred in the heart of his cave. Thick stone walls pressed close around him,
+          their surfaces mottled with patches of moss and ancient, glimmering lichen. The air inside was cool and damp, tinged
+          with the scent of earth and the faint whisper of pine carried in on secret breezes.\n\nRune shifted atop a bed of
+          leaves and pine needles, each strand woven carefully over seasons past. The soft, crinkling sound echoed through
+          the cavern, mingling with the quiet drip of water that slipped, drop by measured drop, from the cave roof to form
+          mirror-like pools in the dimness below. Shadows danced along the rough, uneven walls--sometimes taking the shape
+          of silent ancestors or remembered prey, watching as strangers from the past.\n\nThe bear's senses sharpened with
+          the approach of night. Outside, the forest's muffled symphony drifted in--a distant river splashing over stones,
+          the hushed scurry of nocturnal feet, owl calls lingering on the breeze. Rune's breath misted gently in the chill
+          air, each exhale curling upward and vanishing into the gloom. \n\nHe stretched, massive paws spreading, claws scraping
+          softly over stone. Hunger stirred in his belly, a reminder of distant berries, honeycombs, and fat, darting fish
+          in sunlit streams. Yet tonight, Rune remained cradled in his haven--safe, content to listen as the wind hummed low
+          songs through cracks and crevices. \n\nFrom the darkness, Rune peered out at the world framed by his cave's mighty
+          arch--where the moon laid a pale ribbon across the forest, promising adventure. For now, he settled deeper into
+          leaf and fur, a guardian of secrets, dreaming beneath a mountain of stone, wrapped in the cave's ancient, earthy
+          embrace."
+        role: assistant
+      - encrypted_content: gAAAAABp4CVuo_va1l5KdyyIfA553gFmrl8KTk8SKrPp_SIQ7wQf_vL8JoOsSqrLAocOUzN7QdFyegZUmEurqviM9OCWvMDLW9CdLYo3y5x_fNXQ366BegyUse32vdV3BHPCxLwVuhAvjUvML_i2lkPBvuucutd5MslUkLVHXu9tqEm2XyQmw9vKoWMm1G1ULBzxmh_888dDCADvmzNFOqai-MLu5gB8CeuaBjAuRlTQLIr4nY0VVlXa_3egSQqRt1G1svVSCfoli6GolGAFDD90z3UEet4F39mnmy1sY4hkGTWgRVtPNw7OAVNxvPndrtHB-MjL2sdTQL3C6LFj6fhlio09BlLS15sh5r6dJFSiu2C3r86KNIYueAE43OlSP952J_tcat9rqNjM8V-XgSPHi41QHFjBw8cNujTluzOsLuHpMMkh1XeruJsCNPZSgCqCMpO4Wbo6pjfMH-mIupx-GkQ1hFeXMz5Id1jLTbPx2Eyz-nia5ymFSqKeavKpjSkepwmgNl45PkPHHDn_M0XqUizMl7RpC5X8lc-9P6LLUkkUafUTsaIQi_x1eJ385vhmpk2jmYPBG4f2SfYsSID0gTG1U27snuZA3DxwSqhN9EEIMgmzaeOcJlHaVWq3nz2K0LguGMv3w5N5GrPQt9n19-yNKudlo1JCVP3nysfDjVv4y2AMp8yBPB6TE2oxLBtY3dpo3cW6nHV9rseveusuZ-ksfWT6CF3RPg1fbi99EsuI-CJyxhsGH6kkTO1KrvViGihzLzzYo_q0EcxQNM0oCYo4lLCDZnzMBpdimvhNgpZVLzCPkv49ycsvvYKWTXCoZVuKzcVtucLatEI8ARk0FK-C-P8zDPBX80zYcq3LI79F4Y8xMy9AMhORYKJHR1YWj3GlajNUgp9zY_JKPHx3Xv1l-ygTaCTJ-Zeuqx3jDvtHQZBIgHyGKkxZSk5QtPrnfa-L45Tok3lq6acFJUQW_hqgi4bHe-4pdti3rN04-v6_u44WzYi1KcAVR6EGxb_ng9uXik7fs0O5FBtY_4I0tAtzGgbdy1FKTnFxCTNeibVdU7hq6TS27XRFJV4kAEmjvCOMBRukzxx-S7LuHPRgX_IwyaKAxsyc3JhXn7Frw3JgNdU2eG-h1YVDcpit2MtzcsguEUINU34JBVT5kjXbepq9Leqzo7LMCxkfUAEtGbS6-n0JSeDRL2QbvjjtYHHsVTDkLSEqwZQ_Gg2mnVDNIdYmXW7PowW-oV7pBUfjzjySu9IVBB98KjQ1Rr7Vx7A59Vf9ak_bzdIPnO349eAgNjqttxlkqnbFfVccx1m-B-DzxjY7GDB37PTH4GZXrIVLfHsKvcqlSdK75UYrYU5OeaziXk0LUCV17bvSmV2xGJhpnbtdYJqaQqgF0eEoqLcr6rmI_3-o24EI_ReilOCxi227D_lyYCFtVbbsLKjUCpFI4pGk5y3r1WFlYAOIGhsGfoktbgOCI9fTTXGD15SJQRXAbjv0bBc_htWE0dZZelh49k9V5_zBSp2aLYoVVf6jKufMtUdQauA7_5mIQ4DE4U3nxFSorZh1HvMjCZv6w7CcnMCuyal_N7JtfLyuCwkRnJkBzAwkQMvm2DM_YbZi-tcYKa-cr3EccvTT2aHZEBnnYzER9L9Pb1Ns6ls_ZzmnStOWuXoNGvhYZhB0FCweCGfzYuTTbTBPd5jUYg44EeKMBsYoSJgIEWgVZOdHUxZzCM6myL81tnnner2lmW6vlIARgsvu2Qr548m8RWRC_kNxPr2tAlRZn3dNK4zY6NwDadVeVHgQeggyLDY9eeGXgQCXm5KEo6DLprBEW-MupV0SsnwD_alc73nWszpQ8856lXWrj3QkMY1kbQYpcUIW3K9gCahXQNoGN1FrIto8uBRzh5SA5Qiqjx198xk2xeTpeplzJi1kSvjbbAWmjHkZ-47ezOkxtQhSCg5ZX5QC4gcoLrHFdEGZglvPW6xsiCDBKi4algpQEE_h-QKk3ZoSEepFt1or3lIdGx9lWXj6Jm6VsmFM3D5t6n1oK5N0KiZwBhIlrZb7ReMT7yhmkKo95RKm4tkj2wbLnlTw-_ccGhzG1Cz9PVhUr5f9g0X9js6RtpzdhPJku-4sa5Xi_WH5nVftOZLn_lFqVC5EqIXlvhiSMbC89YJFvzmlwRJ96iUSQJnFXfbLNNmG1qCNuHy-V_gAvopPRRjRsHQ-QjCDlsC1qxRqdwb7fHMAZsLXg3Tn8XHrsdPHHyEsAEXn0-7U4INmN3zyEXYiWJfULcuWR9SFSf2S1gMdy7mxsbaoPykoHv_1bG2dCb_gdAQmbHGMKepz32ASoe52mosR4md_cWXTzd00UurhNkOjV9uR8hNsHT_asJQcqbp2mf_bsKS1cfuhvRfCiHWIJmGrIAzF5cGIIU9MHlSXJzHuy6cLI67gRd4tYqZfzMU02Q_tAps9PBeffGZ273ve5MtqHEKXYWkfczHqn0SGNPwR_C25ZuRB_RC31KLAx1tlKSiOIvAUzwEyQmbM1NspQWx7YwgfBR41aIRtRaUGMfWU72FmGO7Goi03EO_RdMXwADNSkQzfn0T7d8TjnQNsxl6KuL4qUsupKoNC74rNp-bC87gyhQxjciTxZJYlXGhhoRrIiyfm8gkAJad3KWzW69x8ni0s5nK5xNCKUunHDWxNbYG03C2GsJl8LiKaKUEwyZ3fm7-nKIkYsoI8HJcZloGtgVIn4KzGcX4xFUfndIK2mZ800o02wXBDlC2uF-6KejEVzZTiTnI1tp6u3C3yPaHkjL453kAHZMdRbO-3kd2nvzUNVW22weTQeK7aMTV94oiPadv0V5dHLtStAW8UMTdGnH-iDEJYep0E4q7f08WtkqqrnT6JMRYFvl8v6thQOf1993XHPfyR509cpx3esLcvjuTGO0g2obbZWeteSnvih0dlrRGJtdQOvfAe4ltPigOH_JVxWRaaWLldrxcYfjpmt1rZr3chqEe6iAKfIwryxu1jpC3UYxQ8ZKetPJ_mEg_aWK6emeWdYGXzwRkHrPn1gPljfIRobApb39Q1Mn6gQ4EuHLSUEkvNQo-ABRcgYg-NlhngngsUE5WdPINiAHAm4MGOJ6LLenRoh9N0fV535UAzoLMw5lIR7raXiZwpnz9M1Dur3-KPtjy73FIe_YDtj5go1RO9__Rjj9BgMAmDnKz0k5QxWEzoFkorilci-tU0PZu_v7jUqN6qgEmKlP9wjQCwqu4sqenswN9wnH-9QW-m17Tyd9NSps_nTn1BAd7DRO9YVgb_2mkHNP4an7abMneG58JYns5lFYqV6QzqtcbwEaQ-IIsPJvW-Hs-voHp7kmoPDh7cp7Ef5N75uAxPS0x37_DG6W81fUaZ4HFSw7AN0ZpfYc8rAXIZllw75x2GseRbRWLJavujVBW5B8Z1eS4VLSQHvF6KHJGoFsLvVVrG1iGrQLDZj250Pd7-0kr1Ve8Tl_WxAITiELSQKPsq0FJzHwkE8qqCzlpHxNlH6qxuQsg1gp9lGVsHqzJlRaLzkWNcQO31prlbWMmE6JDwwCUiTkuPiw3R_SxX1aFUQf4iHFtgjWA2iAJDPKVZT5MmuiNfrUWRjJN1mZHIRm6tm1eBXMaWPier_j1iIGt-n38DaSTrcunsJdf4SyXYHQhwGBHGY1cjHq6yOlHewwLt7deflLC_bRfRjbjE5pQt579OZ4WGYC7rs1Mdp96pgVZybOKzKFzEUeYL8dLoxHwAuvgktp3XeLjDSkCgQeAc1ciF1aKSmKkc6MWmAGNJQRwCP79H1WVrq-39WuGAh5xajznzbSyI5tW6Xd1dwA5hiT9HP7J7EJ70GSoNAdeXAzlS0j7aN12uqlsSS_vWaD_LoZo0YCu3kMVTL1qt7D_otLHfsLR2-ot0iPvEKeHF1y82OyM3AJvCcBMllMsBa1tNseIdbVIl34tH3eH5oJZA0fE7oFVvwxiJ-5VUqbQ_IdxJfQW17emNik4JxaLOm39QKreCVyezZuom2KYUy82-YbVEn4RVC2VYYaqR2Td-jzpt7bBPPylPb5gFiN4jCyXjuviLw408HnUoJP7Trd70DTtm7gtTyixm3ptxylleeuYbzRdyJjllKqp8wPcC7CShj_ZMbPfOvhiMu-t9c7R_wAGY1WXvzHOKHQiFUPwAFY5NRkaeQ-RfnApHG1HuMK4-LMNuB7qH31jtklUJ72OcloUczIBLteyIrl04vOejvbUFs_0YfsQFzORXop7Uia6PXvqr19gqFR_cRyA1--FpnPylKipbEx7UXDLXhPj3lxfzyU0leH4RH6lzcsWGbxSUAnSKZ397ECFujdsgpJy37fI01mTcw95lxudTBWUSTYORHQozVb2Ihbwsj3CBsEgyp7qUd9HF5N_6FezghLFXtd2iIeSvw-4qQGYwFYsauIJOwaf3EMfMeAYvo00Pw072E_2SreY5iCzqH6AgohnsEMrL2Jpl4trhVjNGfiWdjluUvBVcR6QIl9OiCQmnidS1eyoMy-UKblb9ZdMb_cQaFoToI5Lf-k7OaX-vukR8I-V2ozdUTaAoLS0FEB2uVuxSKlOykuDDTGLjuJKMdicUAAWBJeRC66BF6AIJVX85WrjP9xITupWiNhQ5682qUmAO_aoO26DZtL-25iiv1u8NnKCgitJFcugYQvz-MFQb3M5YKnMqrtB0prW7rz51hZQ_ZoUHEzdGThn1nZlEGNe40Olxyj3_atWhEgdWbuy0A_YjEe3xapn2sPS29w==
+        id: cmp_0b0c928ec0ba401f0069e0256e19388193b74237b70aeed0f5
+        type: compaction
+      - content: What is 2+2?
+        role: user
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1262'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '593'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776297326
+      created_at: 1776297326
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0b0c928ec0ba401f0069e0256e5d688193badfd8d3c8b5c563
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 2 + 2 = 4
+          type: output_text
+        id: msg_0b0c928ec0ba401f0069e0256ebd9481939fd9cafef1cebf8c
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 552
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 560
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
