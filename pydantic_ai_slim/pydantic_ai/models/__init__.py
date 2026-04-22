@@ -863,26 +863,57 @@ class Model(ABC, Generic[InterfaceClient]):
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
         if _profile.context_window is None:
-            context_window_lookup_attempts = [
-                (self.model_name, self.system, None),
-                (self.model_name, None, self.base_url),
-                (self.model_name, None, None),
-                (_profile._origin_model_name, _profile._origin_provider, None),  # pyright: ignore[reportPrivateUsage]
-                (_profile._origin_model_name, None, None),  # pyright: ignore[reportPrivateUsage]
-            ]
-            for model_ref, provider_id, provider_api_url in context_window_lookup_attempts:
-                if model_ref is None:
-                    continue
-                try:
-                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, provider_api_url)
-                except LookupError:
-                    continue
-
-                if model_info.context_window is not None:
-                    _profile = replace(_profile, context_window=model_info.context_window)
-                    break
+            _profile = self._with_context_window(_profile)
 
         return _profile
+
+    def _with_context_window(self, profile: ModelProfile) -> ModelProfile:
+        for model_ref, provider_id, provider_api_url in self._context_window_lookup_attempts(profile):
+            try:
+                _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, provider_api_url)
+            except LookupError:
+                continue
+
+            if model_info.context_window is not None:
+                return replace(profile, context_window=model_info.context_window)
+
+        return profile
+
+    def _context_window_lookup_attempts(self, profile: ModelProfile) -> list[tuple[str, str | None, str | None]]:
+        attempts: list[tuple[str, str | None, str | None]] = []
+
+        try:
+            model_name = self.model_name
+        except AttributeError:
+            model_name = None
+
+        if model_name is not None:
+            try:
+                system = self.system
+            except AttributeError:
+                system = None
+            else:
+                attempts.append((model_name, system, None))
+
+            try:
+                base_url = self.base_url
+            except (AttributeError, UserError):
+                base_url = None
+
+            if base_url is not None:
+                attempts.append((model_name, None, base_url))
+
+            attempts.append((model_name, None, None))
+
+        origin_model_name = profile._origin_model_name  # pyright: ignore[reportPrivateUsage]
+        if origin_model_name is not None:
+            origin_provider = profile._origin_provider  # pyright: ignore[reportPrivateUsage]
+            if origin_provider is not None:
+                attempts.append((origin_model_name, origin_provider, None))
+
+            attempts.append((origin_model_name, None, None))
+
+        return attempts
 
     @property
     @abstractmethod
