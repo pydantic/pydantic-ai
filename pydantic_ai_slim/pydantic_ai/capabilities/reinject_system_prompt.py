@@ -95,7 +95,5 @@ def _strip_system_prompts(messages: list[ModelMessage]) -> None:
 
 
 def _prepend_to_first_request(messages: list[ModelMessage], sys_parts: list[SystemPromptPart]) -> None:
-    for i, msg in enumerate(messages):
-        if isinstance(msg, ModelRequest):
-            messages[i] = replace(msg, parts=[*sys_parts, *msg.parts])
-            return
+    i, first_request = next((i, m) for i, m in enumerate(messages) if isinstance(m, ModelRequest))
+    messages[i] = replace(first_request, parts=[*sys_parts, *first_request.parts])
