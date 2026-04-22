@@ -39,6 +39,20 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
     When this capability is registered, [`agent.run()`][pydantic_ai.Agent.run] automatically
     enables streaming so the handler fires without requiring an explicit `event_stream_handler`
     argument.
+
+    !!! note "Durable execution"
+
+        Under the current durable-execution integrations
+        ([Temporal][pydantic_ai.durable_exec.temporal.TemporalAgent],
+        [DBOS][pydantic_ai.durable_exec.dbos.DBOSAgent],
+        [Prefect][pydantic_ai.durable_exec.prefect.PrefectAgent]), model streaming happens
+        inside an activity/step rather than in the outer agent loop. This capability's
+        `wrap_run_event_stream` hook fires for tool-call events and the final post-streaming
+        batch, but it does **not** see individual model-response events live — the underlying
+        durable model consumes those inside the activity before returning. The in-flight
+        `event_stream_handler` parameter does still observe the live events, and a future
+        refactor threading the capability chain through the activity boundary is tracked
+        separately.
     """
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]

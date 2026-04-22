@@ -80,34 +80,6 @@ EventStreamProcessor: TypeAlias = Callable[
 Used with the [`HandleEventStream`][pydantic_ai.capabilities.HandleEventStream] capability to modify, drop, or add events visible to the rest of the capability chain."""
 
 
-async def run_event_stream_through_capabilities(
-    agent: AbstractAgent[Any, Any] | None,
-    ctx: RunContext[Any],
-    stream: AsyncIterable[_messages.AgentStreamEvent],
-    *,
-    handler: EventStreamHandler[Any] | None,
-) -> None:
-    """Route a stream through the agent's capability chain, then to the handler.
-
-    Runs [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream]
-    on the root capability (when any capability overrides it) so capabilities observe or
-    transform the events, then invokes `handler` on the resulting stream. If `handler` is
-    `None`, the stream is iterated so any capability wrappers still see events.
-
-    Used by the durable-execution model wrappers, which stream events inside an activity
-    or step where [`agent.run()`][pydantic_ai.Agent.run]'s outer loop doesn't get a chance
-    to fire the capability chain.
-    """
-    if agent is not None and agent.root_capability.has_wrap_run_event_stream:
-        stream = agent.root_capability.wrap_run_event_stream(ctx, stream=stream)
-
-    if handler is not None:
-        await handler(ctx, stream)
-    else:
-        async for _ in stream:
-            pass
-
-
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
 AgentInstructions = _instructions.AgentInstructions

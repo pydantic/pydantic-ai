@@ -14,7 +14,6 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
@@ -99,6 +98,8 @@ class TemporalModel(WrapperModel):
         self.request_activity.__annotations__['deps'] = deps_type | None
 
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
+            # An error is raised in `request_stream` if no `event_stream_handler` is set.
+            assert self.event_stream_handler is not None
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -109,9 +110,7 @@ class TemporalModel(WrapperModel):
                 params.model_request_parameters,
                 run_context,
             ) as streamed_response:
-                await run_event_stream_through_capabilities(
-                    self._agent, run_context, streamed_response, handler=self.event_stream_handler
-                )
+                await self.event_stream_handler(run_context, streamed_response)
 
                 async for _ in streamed_response:
                     pass
@@ -186,13 +185,9 @@ class TemporalModel(WrapperModel):
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
 
-        # We can never get here without either an `event_stream_handler` or a capability that overrides
-        # `wrap_run_event_stream`: `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying
-        # to use `TemporalAgent.run` instead, and `TemporalAgent.run` only calls `request_stream` when one
-        # of those is set.
-        assert self.event_stream_handler is not None or (
-            self._agent is not None and self._agent.root_capability.has_wrap_run_event_stream
-        )
+        # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
+        # and that only calls `request_stream` if `event_stream_handler` is set.
+        assert self.event_stream_handler is not None
 
         self._validate_model_request_parameters(model_request_parameters)
 

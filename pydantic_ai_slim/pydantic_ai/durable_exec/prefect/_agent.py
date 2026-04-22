@@ -102,7 +102,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             wrapped.model,
             task_config=self._model_task_config,
             event_stream_handler=self.event_stream_handler,
-            agent=wrapped,
         )
         self._model = prefect_model
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dbos import DBOS
 
@@ -11,16 +11,12 @@ from pydantic_ai import (
     ModelResponse,
 )
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.agent.abstract import run_event_stream_through_capabilities
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 from ._utils import StepConfig
-
-if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import AbstractAgent
 
 
 class DBOSModel(WrapperModel):
@@ -33,12 +29,10 @@ class DBOSModel(WrapperModel):
         step_name_prefix: str,
         step_config: StepConfig,
         event_stream_handler: EventStreamHandler[Any] | None = None,
-        agent: AbstractAgent[Any, Any] | None = None,
     ):
         super().__init__(model)
         self.step_config = step_config
         self.event_stream_handler = event_stream_handler
-        self._agent = agent
         self._step_name_prefix = step_name_prefix
 
         # Wrap the request in a DBOS step.
@@ -69,15 +63,11 @@ class DBOSModel(WrapperModel):
             async with super(DBOSModel, self).request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
-                if self.event_stream_handler is not None or (
-                    self._agent is not None and self._agent.root_capability.has_wrap_run_event_stream
-                ):
+                if self.event_stream_handler is not None:
                     assert run_context is not None, (
                         'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await run_event_stream_through_capabilities(
-                        self._agent, run_context, streamed_response, handler=self.event_stream_handler
-                    )
+                    await self.event_stream_handler(run_context, streamed_response)
 
                 async for _ in streamed_response:
                     pass

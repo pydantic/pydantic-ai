@@ -101,7 +101,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             step_name_prefix=self._name,
             step_config=self._model_step_config,
             event_stream_handler=self.event_stream_handler,
-            agent=wrapped,
         )
         self._model = dbos_model
 
