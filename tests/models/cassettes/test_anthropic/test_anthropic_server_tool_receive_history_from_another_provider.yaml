@@ -111,7 +111,7 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20250825
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:

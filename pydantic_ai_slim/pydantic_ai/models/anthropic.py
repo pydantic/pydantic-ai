@@ -88,7 +88,7 @@ try:
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
-        BetaCodeExecutionTool20250522Param,
+        BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionToolResultBlock,
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
@@ -827,8 +827,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
-                beta_features.add('code-execution-2025-05-22')
+                tools.append(BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825'))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
