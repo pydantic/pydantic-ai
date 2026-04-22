@@ -45,6 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
@@ -4816,8 +4817,6 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
     Goes via `direct.model_request` so the agent-level baseline validator is bypassed and
     we actually exercise the OpenAI-specific error path.
     """
-    from pydantic_ai.direct import model_request as direct_model_request
-
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
@@ -4849,8 +4848,6 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
     `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
     `('required', {chosen})` rather than collapsing to scalar `'required'`.
     """
-    from pydantic_ai.direct import model_request as direct_model_request
-
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 

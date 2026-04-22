@@ -42,6 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -49,7 +50,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -180,9 +181,6 @@ async def test_openai_responses_tool_choice_list_unsupported_raises_error(allow_
     Same regression as the Chat-side test — a list[str] `tool_choice` resolved to `('required', {names})`
     used to be sent without checking the model profile.
     """
-    from pydantic_ai.direct import model_request as direct_model_request
-    from pydantic_ai.profiles.openai import OpenAIModelProfile
-
     c = response_message(
         [
             ResponseOutputMessage(
