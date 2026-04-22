@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
@@ -85,13 +85,17 @@ def _strip_system_prompts(messages: list[ModelMessage]) -> None:
     kept: list[ModelMessage] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            msg.parts = [p for p in msg.parts if not isinstance(p, SystemPromptPart)]
-            if not msg.parts:
+            filtered_parts = [p for p in msg.parts if not isinstance(p, SystemPromptPart)]
+            if not filtered_parts:
                 continue
+            if len(filtered_parts) != len(msg.parts):
+                msg = replace(msg, parts=filtered_parts)
         kept.append(msg)
     messages[:] = kept
 
 
 def _prepend_to_first_request(messages: list[ModelMessage], sys_parts: list[SystemPromptPart]) -> None:
-    first_request = next(msg for msg in messages if isinstance(msg, ModelRequest))
-    first_request.parts = [*sys_parts, *first_request.parts]
+    for i, msg in enumerate(messages):
+        if isinstance(msg, ModelRequest):
+            messages[i] = replace(msg, parts=[*sys_parts, *msg.parts])
+            return

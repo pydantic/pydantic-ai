@@ -810,6 +810,27 @@ async def test_reinject_system_prompt_capability_injects_when_history_missing():
     )
 
 
+async def test_reinject_system_prompt_capability_does_not_mutate_input_history():
+    """Regression guard: the capability must not mutate `ModelRequest` objects from the caller's
+    `message_history` list. `request_context.messages` is a shallow copy, so mutating `.parts`
+    on shared `ModelRequest` instances would leak back into the user's input.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Server prompt')
+
+    history_request = ModelRequest(parts=[SystemPromptPart(content='Client prompt'), UserPromptPart(content='Hi')])
+    history_response = ModelResponse(parts=[TextPart(content='Hello')])
+    original_parts = list(history_request.parts)
+    history: list[ModelMessage] = [history_request, history_response]
+
+    await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    assert history_request.parts == original_parts, 'capability mutated caller-owned ModelRequest'
+
+
 async def test_reinject_system_prompt_capability_agent_without_model():
     """Regression guard: agent constructed without a model gets its model passed via `run(model=...)`.
 
