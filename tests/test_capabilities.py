@@ -9138,11 +9138,8 @@ async def test_deferred_tool_handler_accumulation():
         return results
 
     def handler_b(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
-        results = DeferredToolResults()
-        for call in requests.approvals:
-            if call.tool_name == 'tool_b':
-                results.approvals[call.tool_call_id] = True
-        return results
+        # handler_a resolved tool_a, so we only see tool_b
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
         FunctionModel(llm),
@@ -9379,9 +9376,7 @@ async def test_deferred_tool_handler_re_deferred_with_metadata():
     call_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
-        return ModelResponse(parts=[TextPart('Done.')])
+        return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
     async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
@@ -9490,7 +9485,7 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
 
 
 async def test_deferred_tool_handler_via_handle_call_resolve_false():
-    """handle_call(resolve_deferred=False) lets exceptions propagate."""
+    """handle_call(resolve_deferred=False) lets exceptions propagate (no handler configured)."""
     from pydantic_ai.toolsets import FunctionToolset
 
     inner_toolset = FunctionToolset()
@@ -9501,19 +9496,12 @@ async def test_deferred_tool_handler_via_handle_call_resolve_false():
             raise ApprovalRequired
         return 'result'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
-        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
-
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('final')])
 
-    agent = Agent(
-        FunctionModel(llm),
-        toolsets=[inner_toolset],
-        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
-    )
+    agent = Agent(FunctionModel(llm), toolsets=[inner_toolset])
 
     @agent.tool
     async def caller_tool(ctx: RunContext[None]) -> str:
@@ -9571,7 +9559,6 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
 
 async def test_deferred_tool_handler_approved_tool_raises_model_retry():
     """Approved tool that raises ModelRetry produces a RetryPromptPart."""
-    retry_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -9585,13 +9572,9 @@ async def test_deferred_tool_handler_approved_tool_raises_model_retry():
 
     @agent.tool
     def my_tool(ctx: RunContext[None]) -> str:
-        nonlocal retry_count
         if not ctx.tool_call_approved:
             raise ApprovalRequired
-        retry_count += 1
-        if retry_count == 1:
-            raise ModelRetry('try again')
-        return 'done'
+        raise ModelRetry('try again')
 
     result = await agent.run('Hello')
     assert result.output == 'Retried and done.'
