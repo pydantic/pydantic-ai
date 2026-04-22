@@ -4,6 +4,7 @@ from importlib import import_module
 from unittest.mock import patch
 
 import pytest
+from genai_prices.data_snapshot import get_snapshot
 
 from pydantic_ai import UserError
 from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
@@ -23,6 +24,13 @@ with try_import() as imports_successful:
 
 if not imports_successful():
     pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
+
+
+def _snapshot_context_window(
+    model_name: str, *, provider_id: str | None = None, provider_api_url: str | None = None
+) -> int | None:
+    _, model_info = get_snapshot().find_provider_model(model_name, None, provider_id, provider_api_url)
+    return model_info.context_window
 
 
 # TODO(Marcelo): We need to add Vertex AI to the test cases.
@@ -387,17 +395,27 @@ def test_custom_provider_instance_method_model_profile():
 
 
 @pytest.mark.parametrize(
-    ('mock_env_vars', 'model_id', 'context_window'),
+    ('mock_env_vars', 'model_id', 'expected_model_name', 'expected_provider_id'),
     [
-        pytest.param({'OPENAI_API_KEY': 'test_key'}, 'openai:gpt-5', 400000),
-        pytest.param({'ANTHROPIC_API_KEY': 'test_key'}, 'anthropic:claude-sonnet-4-5', 1000000),
-        pytest.param({'OPENAI_API_KEY': 'test_key'}, 'openai:potato-gpt', None),
+        pytest.param({'OPENAI_API_KEY': 'test_key'}, 'openai:gpt-5', 'gpt-5', 'openai'),
+        pytest.param(
+            {'ANTHROPIC_API_KEY': 'test_key'}, 'anthropic:claude-sonnet-4-5', 'claude-sonnet-4-5', 'anthropic'
+        ),
+        pytest.param({'OPENAI_API_KEY': 'test_key'}, 'openai:potato-gpt', None, None),
     ],
 )
-def test_context_window_loaded_from_genai_prices(mock_env_vars: dict[str, str], model_id: str, context_window: int):
+def test_context_window_loaded_from_genai_prices(
+    mock_env_vars: dict[str, str], model_id: str, expected_model_name: str | None, expected_provider_id: str | None
+):
     with patch.dict(os.environ, mock_env_vars):
         model = infer_model(model_id)
-        assert model.profile.context_window == context_window
+        if expected_model_name is None:
+            assert model.profile.context_window is None
+        else:
+            assert model.profile.context_window == _snapshot_context_window(
+                expected_model_name,
+                provider_id=expected_provider_id,
+            )
 
 
 def test_context_window_provided_in_profile():
@@ -410,20 +428,37 @@ def test_context_window_provided_in_profile():
 
 
 @pytest.mark.parametrize(
-    ('provider_name', 'model_name', 'context_window'),
+    ('provider_name', 'model_name', 'expected_model_name', 'expected_provider_id', 'expected_provider_api_url'),
     [
-        pytest.param('openai-base-url', 'Qwen/Qwen3-32B', 40960, id='openai-base-url-huggingface-router'),
-        pytest.param('github', 'microsoft/gpt-4o', 128000, id='github-microsoft-openai'),
-        pytest.param('nebius', 'Qwen/Qwen3-32B', 40960, id='nebius-huggingface-qwen'),
+        pytest.param(
+            'openai-base-url',
+            'Qwen/Qwen3-32B',
+            'Qwen/Qwen3-32B',
+            None,
+            'https://router.huggingface.co/nebius',
+            id='openai-base-url-huggingface-router',
+        ),
+        pytest.param('github', 'microsoft/gpt-4o', 'gpt-4o', 'openai', None, id='github-microsoft-openai'),
+        pytest.param(
+            'nebius', 'Qwen/Qwen3-32B', 'Qwen/Qwen3-32B', 'huggingface_nebius', None, id='nebius-huggingface-qwen'
+        ),
         pytest.param(
             'together',
             'meta-llama/Llama-3.3-70B-Instruct',
-            131072,
+            'meta-llama/Llama-3.3-70B-Instruct',
+            'huggingface_together',
+            None,
             id='together-huggingface-meta',
         ),
     ],
 )
-def test_context_window_loaded_from_genai_prices_best_effort(provider_name: str, model_name: str, context_window: int):
+def test_context_window_loaded_from_genai_prices_best_effort(
+    provider_name: str,
+    model_name: str,
+    expected_model_name: str,
+    expected_provider_id: str | None,
+    expected_provider_api_url: str | None,
+):
     if provider_name == 'openai-base-url':
         from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -444,4 +479,8 @@ def test_context_window_loaded_from_genai_prices_best_effort(provider_name: str,
         raise AssertionError(f'Unknown provider: {provider_name}')
 
     model = OpenAIChatModel(model_name, provider=provider)
-    assert model.profile.context_window == context_window
+    assert model.profile.context_window == _snapshot_context_window(
+        expected_model_name,
+        provider_id=expected_provider_id,
+        provider_api_url=expected_provider_api_url,
+    )

@@ -9296,8 +9296,8 @@ def test_context_window_used():
     )
 
 
-def test_context_window_used_no_model_response():
-    """context_window_used returns None when there are only ModelRequest messages."""
+def test_context_window_used_with_tool_call_response():
+    """context_window_used returns a value when the most recent response is a tool call."""
 
     call_count = 0
 
@@ -9320,6 +9320,19 @@ def test_context_window_used_no_model_response():
 
     result = agent.run_sync('test')
     assert result.output == 'done'
+
+
+def test_context_window_used_no_model_response():
+    """context_window_used returns `None` when there are only `ModelRequest` messages."""
+
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(profile=ModelProfile(context_window=100000)),
+        usage=RunUsage(),
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+    )
+
+    assert ctx.context_window_used is None
 
 
 def test_context_window_used_no_context_window():

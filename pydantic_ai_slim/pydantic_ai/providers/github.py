@@ -61,15 +61,19 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         if '/' not in model_name:
             return openai_model_profile(model_name)
 
-        provider, model_name = model_name.lower().split('/', 1)
+        provider, raw_model_name = model_name.split('/', 1)
+        provider = provider.lower()
         if provider in provider_to_profile:
-            model_name, *_ = model_name.split(':', 1)  # drop tags
-            profile = provider_to_profile[provider](model_name)
+            normalized_model_name = raw_model_name.lower().split(':', 1)[0]  # drop tags
+            origin_model_name = raw_model_name.split(':', 1)[0]
+            profile = provider_to_profile[provider](normalized_model_name)
+        else:
+            origin_model_name = raw_model_name.split(':', 1)[0]
 
         # As GitHubProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
-        return result.with_origin(provider, model_name)
+        return result.with_origin(provider, origin_model_name)
 
     @overload
     def __init__(self) -> None: ...
