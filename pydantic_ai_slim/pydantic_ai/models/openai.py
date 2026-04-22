@@ -4,8 +4,8 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
@@ -13,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import assert_never, deprecated
+from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -22,6 +22,7 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     is_str_dict as _is_str_dict,
+    is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
 )
@@ -34,6 +35,7 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
+from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -42,6 +44,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -69,9 +72,10 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
+    ModelRequestContext,
     ModelRequestParameters,
     OpenAIChatCompatibleProvider,
     OpenAIResponsesCompatibleProvider,
@@ -108,7 +112,14 @@ try:
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
-    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses import (
+        ComputerToolParam,
+        FileSearchToolParam,
+        ResponseCompactionItem,
+        WebSearchToolParam,
+    )
+    from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
+    from openai.types.responses.response_create_params import ContextManagement
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
@@ -129,7 +140,20 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except APIStatusError as e:
+        if (status_code := e.status_code) >= 400:
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
+        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+    except APIConnectionError as e:
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+
+
 __all__ = (
+    'DEPRECATED_OPENAI_MODELS',
     'OpenAIModel',
     'OpenAIChatModel',
     'OpenAIResponsesModel',
@@ -138,6 +162,34 @@ __all__ = (
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
+
+DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
+    {
+        # https://developers.openai.com/api/docs/deprecations#2025-11-18-chatgpt-4o-latest-snapshot
+        'chatgpt-4o-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-11-17-codex-mini-latest-model-snapshot
+        'codex-mini-latest',
+        # https://developers.openai.com/api/docs/deprecations#2025-09-26-legacy-gpt-model-snapshots
+        'gpt-4-0125-preview',
+        'gpt-4-1106-preview',
+        'gpt-4-turbo-preview',
+        # https://developers.openai.com/api/docs/deprecations#2024-06-06-gpt-4-32k-and-vision-preview-models
+        'gpt-4-32k',
+        'gpt-4-32k-0314',
+        'gpt-4-32k-0613',
+        'gpt-4-vision-preview',
+        # https://developers.openai.com/api/docs/deprecations#2025-06-10-gpt-4o-audio-preview-2024-10-01
+        'gpt-4o-audio-preview-2024-10-01',
+        # Does not exist
+        'gpt-5.1-mini',
+        # https://developers.openai.com/api/docs/deprecations#2025-04-28-o1-preview-and-o1-mini
+        'o1-mini',
+        'o1-mini-2024-09-12',
+        'o1-preview',
+        'o1-preview-2024-09-12',
+    }
+)
+"""Models that are deprecated or don't exist but are still present in the OpenAI SDK's type definitions."""
 
 OpenAIModelName = str | AllModels
 """
@@ -363,7 +415,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """Whether or not to store the output of this request in OpenAI's systems.
 
     If `False`, OpenAI will not store the request for its own internal review or training.
-    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store).
+
+    When used with `OpenAIResponsesModel`, stored responses appear in OpenAI's dashboard and
+    can be referenced via [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+    Pair this with `openai_previous_response_id='auto'` to avoid storing duplicate copies of
+    the conversation history across retries and subsequent requests within the same run.
+    """
 
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
@@ -466,12 +524,23 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_previous_response_id: Literal['auto'] | str
-    """The ID of a previous response from the model to use as the starting point for a continued conversation.
+    """Reference a prior OpenAI response to continue a conversation server-side, omitting already-stored messages from the input.
 
-    When set to `'auto'`, the request automatically uses the most recent
-    `provider_response_id` from the message history and omits earlier messages.
+    - `'auto'`: chain to the most recent `provider_response_id` in the message history.
+      If the history contains no such response, no `previous_response_id` is sent.
+    - A concrete response ID string: use it as the seed for the first request in the run
+      (e.g. to continue from a prior turn). On subsequent in-run requests (retries,
+      tool-call continuations), the most recent `provider_response_id` from the message
+      history takes precedence so the chain extends correctly without re-sending messages
+      that are already server-side.
 
-    This enables the model to use server-side conversation state and faithfully reference previous reasoning.
+    In both cases, messages that precede the chosen response in the history are omitted
+    from the input, since OpenAI reconstructs them from server-side state.
+
+    Requires the referenced response to have been stored (see
+    [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+    which defaults to `True` on OpenAI's side). Not compatible with Zero Data Retention.
+
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
     """
@@ -503,9 +572,21 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     added via https://github.com/pydantic/pydantic-ai/issues/3126.
     """
 
+    openai_context_management: list[ContextManagement]
+    """Context management configuration for the request.
+
+    This enables OpenAI's server-side automatic compaction inside the regular
+    `/responses` call, as opposed to the standalone `/responses/compact` endpoint.
+    See [OpenAI's compaction guide](https://developers.openai.com/api/docs/guides/compaction)
+    for details.
+
+    The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
+    sets this automatically in its default (stateful) mode.
+    """
+
 
 @dataclass(init=False)
-class OpenAIChatModel(Model):
+class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -750,51 +831,48 @@ class OpenAIChatModel(Model):
 
         _drop_unsupported_params(profile, model_settings)
 
-        try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
+        with _map_api_errors(self.model_name):
+            try:
+                extra_headers = model_settings.get('extra_headers', {})
+                extra_headers.setdefault('User-Agent', get_user_agent())
 
-            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-            return await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                stream=stream,
-                stream_options=self._get_stream_options(model_settings) if stream else OMIT,
-                stop=model_settings.get('stop_sequences', OMIT),
-                max_completion_tokens=model_settings.get('max_tokens', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                response_format=response_format or OMIT,
-                seed=model_settings.get('seed', OMIT),
-                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
-                user=model_settings.get('openai_user', OMIT),
-                web_search_options=web_search_options or OMIT,
-                service_tier=model_settings.get('openai_service_tier', OMIT),
-                prediction=model_settings.get('openai_prediction', OMIT),
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                presence_penalty=model_settings.get('presence_penalty', OMIT),
-                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
-                logit_bias=model_settings.get('logit_bias', OMIT),
-                logprobs=model_settings.get('openai_logprobs', OMIT),
-                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                store=model_settings.get('openai_store', OMIT),
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=prompt_cache_retention,
-                extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
-            )
-        except APIStatusError as e:
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+                prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                return await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=openai_messages,
+                    parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    stream=stream,
+                    stream_options=self._get_stream_options(model_settings) if stream else OMIT,
+                    stop=model_settings.get('stop_sequences', OMIT),
+                    max_completion_tokens=model_settings.get('max_tokens', OMIT),
+                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    response_format=response_format or OMIT,
+                    seed=model_settings.get('seed', OMIT),
+                    reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
+                    user=model_settings.get('openai_user', OMIT),
+                    web_search_options=web_search_options or OMIT,
+                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    prediction=model_settings.get('openai_prediction', OMIT),
+                    temperature=model_settings.get('temperature', OMIT),
+                    top_p=model_settings.get('top_p', OMIT),
+                    presence_penalty=model_settings.get('presence_penalty', OMIT),
+                    frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                    logit_bias=model_settings.get('logit_bias', OMIT),
+                    logprobs=model_settings.get('openai_logprobs', OMIT),
+                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                    store=model_settings.get('openai_store', OMIT),
+                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                    prompt_cache_retention=prompt_cache_retention,
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                    return model_response
+                raise
 
     def _validate_completion(self, response: chat.ChatCompletion) -> _ChatCompletion:
         """Hook that validates chat completions before processing.
@@ -917,10 +995,18 @@ class OpenAIChatModel(Model):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(message, field_name, None)
-            if reasoning:  # pragma: no branch
-                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
-                return items
+            reasoning: object = getattr(message, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
+                )
+                continue
+            items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+            return items
 
         return items or None
 
@@ -932,7 +1018,8 @@ class OpenAIChatModel(Model):
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Streamed response ended without content or tool calls'
@@ -1020,6 +1107,9 @@ class OpenAIChatModel(Model):
                     self._map_response_builtin_part(item)
                 elif isinstance(item, FilePart):  # pragma: no cover
                     self._map_response_file_part(item)
+                elif isinstance(item, CompactionPart):  # pragma: no cover
+                    # Compaction parts are not sent back to the Chat Completions API.
+                    pass
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1146,11 +1236,26 @@ class OpenAIChatModel(Model):
                 openai_messages.append(self._map_model_response(message))
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
-            openai_messages.insert(
-                system_prompt_count, chat.ChatCompletionSystemMessageParam(content=instructions, role='system')
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role or 'system'
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
+            if system_prompt_role == 'developer':
+                instruction_messages: list[chat.ChatCompletionMessageParam] = [
+                    chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
+                    for part in instruction_parts
+                ]
+            elif system_prompt_role == 'user':
+                instruction_messages = [
+                    chat.ChatCompletionUserMessageParam(role='user', content=part.content) for part in instruction_parts
+                ]
+            else:
+                instruction_messages = [
+                    chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+                    for part in instruction_parts
+                ]
+            openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
         return openai_messages
 
     @staticmethod
@@ -1233,7 +1338,7 @@ class OpenAIChatModel(Model):
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
         profile = OpenAIModelProfile.from_profile(self.profile)
-        if self._is_text_like_media_type(item.media_type):
+        if _is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
                 item.data.decode('utf-8'),
@@ -1253,6 +1358,8 @@ class OpenAIChatModel(Model):
                 audio = InputAudio(data=item.base64, format=item.format)
             return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
         elif item.is_document:
+            if not profile.openai_chat_supports_document_input:
+                self._raise_document_input_not_supported_error()
             return File(
                 file=FileFile(
                     file_data=item.data_uri,
@@ -1290,7 +1397,7 @@ class OpenAIChatModel(Model):
                 ),
                 type='file',
             )
-        if self._is_text_like_media_type(item.media_type):
+        if _is_text_like_media_type(item.media_type):
             downloaded_text = await download_item(item, data_format='text')
             return self._inline_text_file_part(
                 downloaded_text['data'],
@@ -1298,6 +1405,8 @@ class OpenAIChatModel(Model):
                 identifier=item.identifier,
             )
         else:
+            if not profile.openai_chat_supports_document_input:
+                self._raise_document_input_not_supported_error()
             downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
             return File(
                 file=FileFile(
@@ -1366,15 +1475,14 @@ class OpenAIChatModel(Model):
                     content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
-    @staticmethod
-    def _is_text_like_media_type(media_type: str) -> bool:
-        return (
-            media_type.startswith('text/')
-            or media_type == 'application/json'
-            or media_type.endswith('+json')
-            or media_type == 'application/xml'
-            or media_type.endswith('+xml')
-            or media_type in ('application/x-yaml', 'application/yaml')
+    def _raise_document_input_not_supported_error(self) -> Never:
+        if self._provider.name == 'azure':
+            raise UserError(
+                "Azure's Chat Completions API does not support document input. "
+                'Use `OpenAIResponsesModel` with `AzureProvider` instead.'
+            )
+        raise UserError(
+            f'The {self._provider.name!r} provider does not support document input via the Chat Completions API.'
         )
 
     @staticmethod
@@ -1403,7 +1511,7 @@ responses_output_text_annotations_ta = TypeAdapter(list[responses.response_outpu
 
 
 @dataclass(init=False)
-class OpenAIResponsesModel(Model):
+class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
 
     The [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) is the
@@ -1466,6 +1574,97 @@ class OpenAIResponsesModel(Model):
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
+
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages using the OpenAI Responses compaction endpoint.
+
+        This calls OpenAI's `responses.compact` API to produce an encrypted compaction
+        that summarizes the conversation history. The returned `ModelResponse` contains
+        a single `CompactionPart` that must be round-tripped in subsequent requests.
+
+        Args:
+            request_context: The model request context containing messages, settings, and parameters.
+            instructions: Optional custom instructions for the compaction summarization.
+                If provided, these override the agent-level instructions.
+
+        Returns:
+            A `ModelResponse` with a single `CompactionPart` containing the encrypted compaction data.
+        """
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            request_context.model_settings,
+            request_context.model_request_parameters,
+        )
+        response = await self._responses_compact(
+            request_context.messages,
+            cast(OpenAIResponsesModelSettings, model_settings or {}),
+            model_request_parameters,
+            instructions_override=instructions,
+        )
+
+        # Handle ModelResponse (e.g. from content filter)
+        if isinstance(response, ModelResponse):  # pragma: no cover
+            return response
+
+        if not response.output:  # pragma: no cover
+            raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
+
+        compaction = response.output[-1]
+        if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
+            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
+
+        part = _map_compaction_item(compaction, self.system)
+        return ModelResponse(
+            parts=[part],
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
+            model_name=self._model_name,
+            provider_response_id=response.id,
+            # Marks this ModelResponse as coming from the stateless `/compact` endpoint.
+            # `_get_previous_response_id_and_new_messages` uses this to break the auto-chain,
+            # since compaction response ids cannot be used as `previous_response_id`.
+            provider_details={'compaction': True},
+            timestamp=_now_utc(),
+            provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
+        )
+
+    async def _responses_compact(
+        self,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        instructions_override: str | None = None,
+    ) -> responses.CompactedResponse | ModelResponse:
+        """Call the OpenAI Responses compaction endpoint."""
+        previous_response_id, messages = self._resolve_previous_response_id(
+            model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
+        )
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        if instructions_override is not None:
+            instructions = instructions_override
+
+        try:
+            return await self.client.responses.compact(
+                input=openai_messages,
+                model=self.model_name,
+                instructions=instructions,
+                previous_response_id=previous_response_id or OMIT,
+            )
+        except APIStatusError as e:  # pragma: no cover
+            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                return model_response
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
+        except APIConnectionError as e:  # pragma: no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     async def request(
         self,
@@ -1567,9 +1766,11 @@ class OpenAIResponsesModel(Model):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
+                        # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                content.text,
+                                content.text or '',
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
@@ -1597,6 +1798,8 @@ class OpenAIResponsesModel(Model):
                 if file_part:  # pragma: no branch
                     items.append(file_part)
                 items.append(return_part)
+            elif isinstance(item, ResponseCompactionItem):
+                items.append(_map_compaction_item(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1657,7 +1860,8 @@ class OpenAIResponsesModel(Model):
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
@@ -1692,7 +1896,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
-    async def _responses_create(  # noqa: C901
+    async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
@@ -1712,9 +1916,9 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+        previous_response_id, messages = self._resolve_previous_response_id(
+            model_settings.get('openai_previous_response_id'), messages
+        )
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -1733,7 +1937,9 @@ class OpenAIResponsesModel(Model):
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
             assert isinstance(instructions, str)
-            system_prompt_count = sum(1 for m in openai_messages if m.get('role') == 'system')
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
             openai_messages.insert(
                 system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
             )
@@ -1771,46 +1977,43 @@ class OpenAIResponsesModel(Model):
                 )
             )
 
-        try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
-            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
-            return await self.client.responses.create(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                max_output_tokens=model_settings.get('max_tokens', OMIT),
-                stream=stream,
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                truncation=model_settings.get('openai_truncation', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                service_tier=model_settings.get('openai_service_tier', OMIT),
-                previous_response_id=previous_response_id or OMIT,
-                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                store=model_settings.get('openai_store', OMIT),
-                reasoning=reasoning,
-                user=model_settings.get('openai_user', OMIT),
-                text=text or OMIT,
-                include=include or OMIT,
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=prompt_cache_retention,
-                extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
-            )
-        except APIStatusError as e:
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        with _map_api_errors(self.model_name):
+            try:
+                extra_headers = model_settings.get('extra_headers', {})
+                extra_headers.setdefault('User-Agent', get_user_agent())
+                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+                prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                return await self.client.responses.create(
+                    input=openai_messages,
+                    model=self.model_name,
+                    instructions=instructions,
+                    parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    max_output_tokens=model_settings.get('max_tokens', OMIT),
+                    stream=stream,
+                    temperature=model_settings.get('temperature', OMIT),
+                    top_p=model_settings.get('top_p', OMIT),
+                    truncation=model_settings.get('openai_truncation', OMIT),
+                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    previous_response_id=previous_response_id or OMIT,
+                    context_management=model_settings.get('openai_context_management', OMIT),
+                    top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                    store=model_settings.get('openai_store', OMIT),
+                    reasoning=reasoning,
+                    user=model_settings.get('openai_user', OMIT),
+                    text=text or OMIT,
+                    include=include or OMIT,
+                    prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                    prompt_cache_retention=prompt_cache_retention,
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                    return model_response
+                raise
 
     def _translate_thinking(
         self,
@@ -1934,24 +2137,64 @@ class OpenAIResponsesModel(Model):
             ),
         }
 
-    def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage]
+    def _resolve_previous_response_id(
+        self,
+        setting: str | None,
+        messages: list[ModelMessage],
+        *,
+        allow_no_new_messages: bool = False,
     ) -> tuple[str | None, list[ModelMessage]]:
-        # When `openai_previous_response_id` is set to 'auto', the most recent
-        # `provider_response_id` from the message history is selected and all
-        # earlier messages are omitted. This allows the OpenAI SDK to reuse
-        # server-side history for efficiency. The returned tuple contains the
-        # `previous_response_id` (if found) and the trimmed list of messages.
+        # Resolve the effective `previous_response_id` and trim already-stored messages.
+        #
+        # A concrete ID in `setting` acts as a seed for the first request in a run (to
+        # continue from a prior turn's stored response). On subsequent in-run requests
+        # (retries, tool-call continuations), the most recent `provider_response_id`
+        # from the message history takes precedence, so we chain to the latest stored
+        # response instead of re-sending messages that are already server-side.
+        #
+        # A compaction response in the tail is a hard chain boundary even with a
+        # concrete seed: crossing it would re-inject the context that compaction was
+        # meant to replace.
+        if setting is None:
+            return None, messages
+        auto_id, trimmed = self._get_previous_response_id_and_new_messages(
+            messages, allow_no_new_messages=allow_no_new_messages
+        )
+        if auto_id is not None:
+            return auto_id, trimmed
+        if setting == 'auto' or self._is_at_compaction_boundary(messages):
+            return None, messages
+        return setting, messages
+
+    def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                return bool(m.provider_details and m.provider_details.get('compaction'))
+        return False
+
+    def _get_previous_response_id_and_new_messages(
+        self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
+    ) -> tuple[str | None, list[ModelMessage]]:
+        # Find the most recent `provider_response_id` from messages produced by this
+        # provider, and return it along with the messages that came after it (which
+        # still need to be sent as new input). When nothing suitable is found, returns
+        # `(None, messages)` with the full list unchanged.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                # Responses from the stateless `/compact` endpoint can't be used as
+                # `previous_response_id`, so the compaction acts as a hard chain boundary:
+                # the next request must pass the `CompactionPart` via the `input` array
+                # (handled by `_map_messages`) without a `previous_response_id`.
+                if m.provider_details and m.provider_details.get('compaction'):
+                    return None, messages
                 previous_response_id = m.provider_response_id
                 break
             else:
                 trimmed_messages.append(m)
 
-        if previous_response_id and trimmed_messages:
+        if previous_response_id and (allow_no_new_messages or trimmed_messages):
             return previous_response_id, list(reversed(trimmed_messages))
         else:
             return None, messages
@@ -2215,6 +2458,19 @@ class OpenAIResponsesModel(Model):
                                     role='assistant', content='\n'.join([start_tag, item.content, end_tag])
                                 )
                             )
+                    elif isinstance(item, CompactionPart):
+                        if (
+                            item.provider_name == self.system
+                            and item.provider_details
+                            and 'encrypted_content' in item.provider_details
+                        ):  # pragma: no branch
+                            openai_messages.append(
+                                ResponseCompactionItemParamParam(
+                                    id=item.id,
+                                    encrypted_content=item.provider_details['encrypted_content'],
+                                    type='compaction',
+                                )
+                            )
                     else:
                         assert_never(item)
             else:
@@ -2367,55 +2623,56 @@ class OpenAIStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._provider_timestamp is not None:  # pragma: no branch
-            self.provider_details = {'timestamp': self._provider_timestamp}
-        async for chunk in self._validate_response():
-            chunk_usage = self._map_usage(chunk)
-            if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                # so we replace rather than increment to avoid double-counting.
-                self._usage = chunk_usage
-            else:
-                self._usage += chunk_usage
+        with _map_api_errors(self._model_name):
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
+            async for chunk in self._validate_response():
+                chunk_usage = self._map_usage(chunk)
+                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
+                    # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                    # so we replace rather than increment to avoid double-counting.
+                    self._usage = chunk_usage
+                else:
+                    self._usage += chunk_usage
 
-            if chunk.id:  # pragma: no branch
-                self.provider_response_id = chunk.id
+                if chunk.id:  # pragma: no branch
+                    self.provider_response_id = chunk.id
 
-            if chunk.model:
-                self._model_name = chunk.model
+                if chunk.model:
+                    self._model_name = chunk.model
 
-            try:
-                choice = chunk.choices[0]
-            except IndexError:
-                continue
+                try:
+                    choice = chunk.choices[0]
+                except IndexError:
+                    continue
 
-            # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
-            if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
-                continue
+                # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
+                if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
+                    continue
 
-            # Handle refusal responses (structured output safety filter).
-            # Note: OpenAI sends refusal instead of content (not alongside it), so in practice
-            # text parts won't have been yielded before _has_refusal is set.
-            if choice.delta.refusal:
-                self._has_refusal = True
-                self.finish_reason = 'content_filter'
-                self._refusal_text += choice.delta.refusal
-                continue
+                # Handle refusal responses (structured output safety filter).
+                # Note: OpenAI sends refusal instead of content (not alongside it), so in practice
+                # text parts won't have been yielded before _has_refusal is set.
+                if choice.delta.refusal:
+                    self._has_refusal = True
+                    self.finish_reason = 'content_filter'
+                    self._refusal_text += choice.delta.refusal
+                    continue
 
-            if raw_finish_reason := choice.finish_reason:
-                if not self._has_refusal:
-                    self.finish_reason = self._map_finish_reason(raw_finish_reason)
+                if raw_finish_reason := choice.finish_reason:
+                    if not self._has_refusal:
+                        self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
-            if provider_details := self._map_provider_details(chunk):  # pragma: no branch
-                if self._has_refusal:
-                    provider_details.pop('finish_reason', None)
-                self.provider_details = {**(self.provider_details or {}), **provider_details}
+                if provider_details := self._map_provider_details(chunk):  # pragma: no branch
+                    if self._has_refusal:
+                        provider_details.pop('finish_reason', None)
+                    self.provider_details = {**(self.provider_details or {}), **provider_details}
 
-            for event in self._map_part_delta(choice):
-                yield event
+                for event in self._map_part_delta(choice):
+                    yield event
 
-        if self._refusal_text:
-            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if self._refusal_text:
+                self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -2455,15 +2712,23 @@ class OpenAIStreamedResponse(StreamedResponse):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(choice.delta, field_name, None)
-            if reasoning:  # pragma: no branch
-                yield from self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=field_name,
-                    id=field_name,
-                    content=reasoning,
-                    provider_name=self.provider_name,
+            reasoning: object = getattr(choice.delta, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
                 )
-                break
+                continue
+            yield from self._parts_manager.handle_thinking_delta(
+                vendor_part_id=field_name,
+                id=field_name,
+                content=reasoning,
+                provider_name=self.provider_name,
+            )
+            break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
@@ -2554,377 +2819,414 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        # Track annotations by item_id and content_index
-        _annotations_by_item: dict[str, list[Any]] = {}
+        with _map_api_errors(self._model_name):
+            # Track annotations by item_id and content_index
+            _annotations_by_item: dict[str, list[Any]] = {}
 
-        if self._provider_timestamp is not None:  # pragma: no branch
-            self.provider_details = {'timestamp': self._provider_timestamp}
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
 
-        async for chunk in self._response:
-            # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
-            if isinstance(chunk, responses.ResponseCompletedEvent):
-                self._usage += self._map_usage(chunk.response)
+            async for chunk in self._response:
+                # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
+                if isinstance(chunk, responses.ResponseCompletedEvent):
+                    self._usage += self._map_usage(chunk.response)
 
-                raw_finish_reason = (
-                    details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
-                )
-
-                if raw_finish_reason:  # pragma: no branch
-                    if not self._has_refusal:
-                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                        self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
-
-            elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
-                pass  # there's nothing we need to do here
-
-            elif isinstance(chunk, responses.ResponseContentPartDoneEvent):
-                pass  # there's nothing we need to do here
-
-            elif isinstance(chunk, responses.ResponseCreatedEvent):
-                if chunk.response.id:  # pragma: no branch
-                    self.provider_response_id = chunk.response.id
-
-            elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
-                self._usage += self._map_usage(chunk.response)
-
-            elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=chunk.item_id,
-                    args=chunk.delta,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
-
-            elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                pass  # there's nothing we need to do here
-
-            elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
-                self._usage += self._map_usage(chunk.response)
-
-            elif isinstance(chunk, responses.ResponseInProgressEvent):
-                self._usage += self._map_usage(chunk.response)
-
-            elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
-                if isinstance(chunk.item, responses.ResponseFunctionToolCall):
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=chunk.item.id,
-                        tool_name=chunk.item.name,
-                        args=chunk.item.arguments,
-                        tool_call_id=chunk.item.call_id,
-                        id=chunk.item.id,
-                        provider_name=self.provider_name,
+                    raw_finish_reason = (
+                        details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                     )
-                elif isinstance(chunk.item, responses.ResponseReasoningItem):
-                    pass
-                elif isinstance(chunk.item, responses.ResponseOutputMessage):
-                    pass
-                elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                    call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                    )
-                elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
-                    call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                    )
-                elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
-                    args_json = call_part.args_as_json_str()
-                    # Drop the final `"}` so that we can add code deltas
-                    args_json_delta = args_json[:-2]
-                    assert args_json_delta.endswith('"code":"'), f'Expected {args_json_delta!r} to end in `"code":"`'
+                    if raw_finish_reason:  # pragma: no branch
+                        if not self._has_refusal:
+                            self.provider_details = {
+                                **(self.provider_details or {}),
+                                'finish_reason': raw_finish_reason,
+                            }
+                            self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                    )
+                elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseContentPartDoneEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseCreatedEvent):
+                    if chunk.response.id:  # pragma: no branch
+                        self.provider_response_id = chunk.response.id
+
+                elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
+                    self._usage += self._map_usage(chunk.response)
+
+                elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        args=args_json_delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
-                    call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
-                elif isinstance(chunk.item, responses.response_output_item.McpCall):
-                    call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
-
-                    args_json = call_part.args_as_json_str()
-                    # Drop the final `{}}` so that we can add tool args deltas
-                    args_json_delta = args_json[:-3]
-                    assert args_json_delta.endswith('"tool_args":'), (
-                        f'Expected {args_json_delta!r} to end in `"tool_args":"`'
-                    )
-
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
-                    )
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        args=args_json_delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                    call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
-                else:
-                    warnings.warn(  # pragma: no cover
-                        f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
-                        UserWarning,
-                    )
-
-            elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                if isinstance(chunk.item, responses.ResponseReasoningItem):
-                    if signature := chunk.item.encrypted_content:  # pragma: no branch
-                        # Add the signature to the part corresponding to the first summary/raw CoT
-                        for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=chunk.item.id,
-                            id=chunk.item.id,
-                            signature=signature,
-                            provider_name=self.provider_name,
-                        ):
-                            yield event
-                elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
-                    for i, file_part in enumerate(file_parts):
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-file-{i}', part=file_part
-                        )
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-                elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                    call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
-
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        args=call_part.args,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-                elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
-                    call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
-
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=f'{chunk.item.id}-call',
-                        args=call_part.args,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-                elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
-                    _, return_part, file_part = _map_image_generation_tool_call(chunk.item, self.provider_name)
-                    if file_part:  # pragma: no branch
-                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-file', part=file_part)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-
-                elif isinstance(chunk.item, responses.response_output_item.McpCall):
-                    _, return_part = _map_mcp_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-                elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                    _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-
-            elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
-                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
-                for event in self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=vendor_id,
-                    content=chunk.part.text,
-                    id=chunk.item_id,
-                    provider_name=self.provider_name,
-                ):
-                    yield event
-
-            elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
-                pass  # there's nothing we need to do here
-
-            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
-                pass  # there's nothing we need to do here
-
-            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
-                # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
-                vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
-                for event in self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=vendor_id,
-                    content=chunk.delta,
-                    id=chunk.item_id,
-                    provider_name=self.provider_name,
-                ):
-                    yield event
-
-            elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
-                # Handle raw CoT from gpt-oss models using callback pattern
-                for event in self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=chunk.item_id,
-                    id=chunk.item_id,
-                    provider_name=self.provider_name,
-                    provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
-                ):
-                    yield event
-
-            elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
-                pass  # content already accumulated via delta events
-
-            elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                # Collect annotations if the setting is enabled
-                if self._model_settings.get('openai_include_raw_annotations'):
-                    _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
-
-            elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.item_id,
-                    content=chunk.delta,
-                    id=chunk.item_id,
-                    provider_name=self.provider_name,
-                ):
-                    yield event
-
-            elif isinstance(chunk, responses.ResponseTextDoneEvent):
-                # Add annotations to provider_details if available
-                provider_details: dict[str, Any] = {}
-                annotations = _annotations_by_item.get(chunk.item_id)
-                if annotations:
-                    provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
-                        list(annotations), warnings=False
-                    )
-
-                if provider_details:
-                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id=chunk.item_id,
-                        content='',
+                        args=chunk.delta,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
+
+                elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
+                    self._usage += self._map_usage(chunk.response)
+
+                elif isinstance(chunk, responses.ResponseInProgressEvent):
+                    self._usage += self._map_usage(chunk.response)
+
+                elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
+                    if isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                        yield self._parts_manager.handle_tool_call_part(
+                            vendor_part_id=chunk.item.id,
+                            tool_name=chunk.item.name,
+                            args=chunk.item.arguments,
+                            tool_call_id=chunk.item.call_id,
+                            id=chunk.item.id,
+                            provider_name=self.provider_name,
+                        )
+                    elif isinstance(chunk.item, responses.ResponseReasoningItem):
+                        pass
+                    elif isinstance(chunk.item, responses.ResponseOutputMessage):
+                        pass
+                    elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
+                        call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        )
+                    elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
+                        call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        )
+                    elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
+                        call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
+
+                        args_json = call_part.args_as_json_str()
+                        # Drop the final `"}` so that we can add code deltas
+                        args_json_delta = args_json[:-2]
+                        assert args_json_delta.endswith('"code":"'), (
+                            f'Expected {args_json_delta!r} to end in `"code":"`'
+                        )
+
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        )
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=f'{chunk.item.id}-call',
+                            args=args_json_delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
+                        call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    elif isinstance(chunk.item, responses.response_output_item.McpCall):
+                        call_part, _ = _map_mcp_call(chunk.item, self.provider_name)
+
+                        args_json = call_part.args_as_json_str()
+                        # Drop the final `{}}` so that we can add tool args deltas
+                        args_json_delta = args_json[:-3]
+                        assert args_json_delta.endswith('"tool_args":'), (
+                            f'Expected {args_json_delta!r} to end in `"tool_args":"`'
+                        )
+
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        )
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=f'{chunk.item.id}-call',
+                            args=args_json_delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    elif isinstance(chunk.item, responses.response_output_item.McpListTools):
+                        call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    elif isinstance(chunk.item, ResponseCompactionItem):
+                        # Emit a PartStartEvent so UIs can render compaction in progress.
+                        # The "done" event replaces this with the final encrypted_content.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_compaction_item(chunk.item, self.provider_name),
+                        )
+                    else:
+                        warnings.warn(  # pragma: no cover
+                            f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
+                            UserWarning,
+                        )
+
+                elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
+                    if isinstance(chunk.item, responses.ResponseReasoningItem):
+                        if signature := chunk.item.encrypted_content:  # pragma: no branch
+                            # Add the signature to the part corresponding to the first summary/raw CoT
+                            for event in self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=chunk.item.id,
+                                id=chunk.item.id,
+                                signature=signature,
+                                provider_name=self.provider_name,
+                            ):
+                                yield event
+                    elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
+                        _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
+                        for i, file_part in enumerate(file_parts):
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{chunk.item.id}-file-{i}', part=file_part
+                            )
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
+                        call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
+
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=f'{chunk.item.id}-call',
+                            args=call_part.args,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
+                        call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
+
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=f'{chunk.item.id}-call',
+                            args=call_part.args,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
+                        _, return_part, file_part = _map_image_generation_tool_call(chunk.item, self.provider_name)
+                        if file_part:  # pragma: no branch
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{chunk.item.id}-file', part=file_part
+                            )
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+
+                    elif isinstance(chunk.item, responses.response_output_item.McpCall):
+                        _, return_part = _map_mcp_call(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, responses.response_output_item.McpListTools):
+                        _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                    elif isinstance(chunk.item, ResponseCompactionItem):
+                        # Replace the preliminary part from the "added" event with the
+                        # final encrypted_content for round-tripping.
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_compaction_item(chunk.item, self.provider_name),
+                        )
+
+                elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                    # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+                    vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
+                    for event in self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=vendor_id,
+                        content=chunk.part.text,
+                        id=chunk.item_id,
                         provider_name=self.provider_name,
-                        provider_details=provider_details,
                     ):
                         yield event
 
-            elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
-                # Accumulate refusal text from deltas as a fallback in case the done event is missing.
-                self._has_refusal = True
-                self.finish_reason = 'content_filter'
-                self._refusal_text += chunk.delta
+                elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
-                # The done event contains the full refusal text, replacing any accumulated deltas.
-                self._has_refusal = True
-                self.finish_reason = 'content_filter'
-                self._refusal_text = chunk.refusal
+                elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                    # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
+                    vendor_id = chunk.item_id if chunk.summary_index == 0 else f'{chunk.item_id}-{chunk.summary_index}'
+                    for event in self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=vendor_id,
+                        content=chunk.delta,
+                        id=chunk.item_id,
+                        provider_name=self.provider_name,
+                    ):
+                        yield event
 
-            elif isinstance(chunk, responses.ResponseWebSearchCallSearchingEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseReasoningTextDeltaEvent):
+                    # Handle raw CoT from gpt-oss models using callback pattern
+                    for event in self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=chunk.item_id,
+                        id=chunk.item_id,
+                        provider_name=self.provider_name,
+                        provider_details=_make_raw_content_updater(chunk.delta, chunk.content_index),
+                    ):
+                        yield event
 
-            elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseReasoningTextDoneEvent):
+                    pass  # content already accumulated via delta events
 
-            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
+                    # Collect annotations if the setting is enabled
+                    if self._model_settings.get('openai_include_raw_annotations'):
+                        _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
 
-            elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
-                json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=f'{chunk.item_id}-call',
-                    args=json_args_delta,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                elif isinstance(chunk, responses.ResponseTextDeltaEvent):
+                    # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
+                    if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=chunk.item_id,
+                            content=chunk.delta,
+                            id=chunk.item_id,
+                            provider_name=self.provider_name,
+                        ):
+                            yield event
 
-            elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=f'{chunk.item_id}-call',
-                    args='"}',
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                elif isinstance(chunk, responses.ResponseTextDoneEvent):
+                    # Add annotations to provider_details if available
+                    provider_details: dict[str, Any] = {}
+                    annotations = _annotations_by_item.get(chunk.item_id)
+                    if annotations:
+                        provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
+                            list(annotations), warnings=False
+                        )
+                    if chunk.logprobs:
+                        provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
+                    if provider_details:
+                        for event in self._parts_manager.handle_text_delta(
+                            vendor_part_id=chunk.item_id,
+                            content='',
+                            provider_name=self.provider_name,
+                            provider_details=provider_details,
+                        ):
+                            yield event
 
-            elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
+                    # Accumulate refusal text from deltas as a fallback in case the done event is missing.
+                    self._has_refusal = True
+                    self.finish_reason = 'content_filter'
+                    self._refusal_text += chunk.delta
 
-            elif isinstance(chunk, responses.ResponseCodeInterpreterCallInProgressEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
+                    # The done event contains the full refusal text, replacing any accumulated deltas.
+                    self._has_refusal = True
+                    self.finish_reason = 'content_filter'
+                    self._refusal_text = chunk.refusal
 
-            elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):  # pragma: no cover
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseWebSearchCallSearchingEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseImageGenCallInProgressEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseImageGenCallPartialImageEvent):
-                # Not present on the type, but present on the actual object.
-                # See https://github.com/openai/openai-python/issues/2649
-                output_format = getattr(chunk, 'output_format', 'png')
-                file_part = FilePart(
-                    content=BinaryImage(
-                        data=base64.b64decode(chunk.partial_image_b64),
-                        media_type=f'image/{output_format}',
-                    ),
-                    id=chunk.item_id,
-                )
-                yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
+                elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
+                    json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item_id}-call',
+                        args=json_args_delta,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
-            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=f'{chunk.item_id}-call',
-                    args='}',
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item_id}-call',
+                        args='"}',
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
-            elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=f'{chunk.item_id}-call',
-                    args=chunk.delta,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseCodeInterpreterCallInProgressEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):  # pragma: no cover
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseImageGenCallInProgressEvent):
+                    pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseImageGenCallPartialImageEvent):
+                    # Not present on the type, but present on the actual object.
+                    # See https://github.com/openai/openai-python/issues/2649
+                    output_format = getattr(chunk, 'output_format', 'png')
+                    file_part = FilePart(
+                        content=BinaryImage(
+                            data=base64.b64decode(chunk.partial_image_b64),
+                            media_type=f'image/{output_format}',
+                        ),
+                        id=chunk.item_id,
+                    )
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
-            elif isinstance(chunk, responses.ResponseFileSearchCallCompletedEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseMcpCallArgumentsDoneEvent):
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item_id}-call',
+                        args='}',
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
-            elif isinstance(chunk, responses.ResponseFileSearchCallSearchingEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseMcpCallArgumentsDeltaEvent):
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item_id}-call',
+                        args=chunk.delta,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
-            elif isinstance(chunk, responses.ResponseFileSearchCallInProgressEvent):
-                pass  # there's nothing we need to do here
+                elif isinstance(chunk, responses.ResponseMcpListToolsInProgressEvent):
+                    pass  # there's nothing we need to do here
 
-            else:  # pragma: no cover
-                warnings.warn(
-                    f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
-                    UserWarning,
-                )
+                elif isinstance(chunk, responses.ResponseMcpListToolsCompletedEvent):
+                    pass  # there's nothing we need to do here
 
-        if self._refusal_text:
-            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+                elif isinstance(chunk, responses.ResponseMcpListToolsFailedEvent):  # pragma: no cover
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseMcpCallInProgressEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseMcpCallFailedEvent):  # pragma: no cover
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseMcpCallCompletedEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseFileSearchCallCompletedEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseFileSearchCallSearchingEvent):
+                    pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseFileSearchCallInProgressEvent):
+                    pass  # there's nothing we need to do here
+
+                else:  # pragma: no cover
+                    warnings.warn(
+                        f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
+                        UserWarning,
+                    )
+
+            if self._refusal_text:
+                self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
@@ -2950,6 +3252,206 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+class OpenAICompaction(AbstractCapability[AgentDepsT]):
+    """Compaction capability for OpenAI Responses API.
+
+    Automatically compacts conversation history to keep long-running agent
+    runs within manageable context limits. Two modes are supported, selected
+    by the `stateless` flag:
+
+    - **Stateful mode** (default, `stateless=False`): configures
+      [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
+      via the `context_management` field on the regular `/responses` request.
+      The server triggers compaction when input tokens cross a threshold,
+      and the compacted item is returned alongside the normal response.
+      Compatible with [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+      and server-side conversation state.
+
+      Configurable with `token_threshold` (`compact_threshold` on the API).
+      If omitted, OpenAI picks a server-side default.
+
+    - **Stateless mode** (`stateless=True`): calls the stateless
+      `/responses/compact` endpoint from a `before_model_request` hook when
+      your trigger condition is met. Use this in
+      [ZDR](https://openai.com/enterprise-privacy/) environments where
+      OpenAI must not retain conversation data, when you set
+      [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
+      or when you need explicit out-of-band control over when compaction runs.
+
+      Requires either `message_count_threshold` or a custom `trigger` callable.
+
+    If `stateless` is not set, it is inferred from which parameters you
+    provide: passing any stateless-only parameter (`message_count_threshold`
+    or `trigger`) implies `stateless=True`; otherwise stateful mode is used.
+
+    Example usage::
+
+        from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        # Stateful mode with OpenAI's server-side default threshold:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction()],
+        )
+
+        # Stateful mode with a custom token threshold:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction(token_threshold=100_000)],
+        )
+
+        # Stateless mode for ZDR environments or explicit control:
+        agent = Agent(
+            'openai-responses:gpt-5.2',
+            capabilities=[OpenAICompaction(message_count_threshold=20)],
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        stateless: bool | None = None,
+        token_threshold: int | None = None,
+        message_count_threshold: int | None = None,
+        trigger: Callable[[list[ModelMessage]], bool] | None = None,
+        instructions: str | None = None,
+    ) -> None:
+        """Initialize the OpenAI compaction capability.
+
+        Args:
+            stateless: Select the compaction mode explicitly. If `None` (the
+                default), the mode is inferred from the other parameters:
+                passing any stateless-only parameter (`message_count_threshold`
+                or `trigger`) implies `stateless=True`; otherwise stateful
+                mode is used.
+            token_threshold: Stateful-mode only. Input token threshold at which
+                OpenAI's server-side compaction is triggered. Corresponds to
+                `compact_threshold` in the `context_management` API field. If
+                `None`, OpenAI picks a server-side default.
+            message_count_threshold: Stateless-mode only. Compact when the
+                message count exceeds this threshold.
+            trigger: Stateless-mode only. Custom callable that decides whether
+                to compact based on the current messages. Takes precedence
+                over `message_count_threshold`.
+            instructions: Deprecated. OpenAI's `/compact` endpoint treats
+                `instructions` as a system/developer message inserted into
+                the compaction model's context, not as a directive for how
+                to summarize the conversation. This does not match
+                [`AnthropicCompaction.instructions`][pydantic_ai.models.anthropic.AnthropicCompaction]
+                semantics, so the field is deprecated and will be removed
+                in a future version.
+        """
+        if instructions is not None:
+            warnings.warn(
+                '`OpenAICompaction(instructions=...)` is deprecated and will be removed in a future version. '
+                "OpenAI's `/compact` endpoint treats `instructions` as a system/developer message inserted "
+                "into the compaction model's context, not as a directive for how to summarize the conversation, "
+                'so this field does not match `AnthropicCompaction(instructions=...)` semantics.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        has_stateless_only = message_count_threshold is not None or trigger is not None
+        has_stateful_only = token_threshold is not None
+
+        if stateless is None:
+            stateless = has_stateless_only
+
+        if stateless:
+            if has_stateful_only:
+                raise UserError(
+                    '`token_threshold` is only valid for stateful compaction (`stateless=False`). '
+                    'For stateless `/compact` endpoint compaction, use `message_count_threshold` or `trigger`.'
+                )
+            if not has_stateless_only:
+                raise UserError(
+                    '`stateless=True` requires `message_count_threshold` or `trigger` '
+                    'to determine when to invoke the `/compact` endpoint.'
+                )
+        else:
+            if has_stateless_only:
+                raise UserError(
+                    '`message_count_threshold` and `trigger` are only valid for stateless compaction '
+                    '(`stateless=True`). For stateful server-side compaction, use `token_threshold` '
+                    '(or omit it to use the OpenAI-managed default).'
+                )
+
+        self.stateless = stateless
+        self.token_threshold = token_threshold
+        self.message_count_threshold = message_count_threshold
+        self.trigger = trigger
+        self.instructions = instructions
+
+    def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+        if self.stateless:
+            return None
+        edit: ContextManagement = {'type': 'compaction'}
+        if self.token_threshold is not None:
+            edit['compact_threshold'] = self.token_threshold
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            # If the user already set `openai_context_management` on their model settings,
+            # defer to it entirely — we don't want to end up with two conflicting `compaction`
+            # entries, since OpenAI's context_management list only meaningfully supports one.
+            if ctx.model_settings:
+                existing = cast(dict[str, Any], ctx.model_settings).get('openai_context_management')
+                if existing:
+                    return cast(ModelSettings, {})
+            return cast(ModelSettings, {'openai_context_management': [edit]})
+
+        return resolve
+
+    def _should_compact(self, messages: list[ModelMessage]) -> bool:
+        if not self.stateless:
+            return False
+        if self.trigger is not None:
+            return self.trigger(messages)
+        if self.message_count_threshold is not None:
+            return len(messages) > self.message_count_threshold
+        return False  # pragma: no cover
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        if not self._should_compact(request_context.messages):
+            return request_context
+
+        from .wrapper import WrapperModel
+
+        model = request_context.model
+        while isinstance(model, WrapperModel):
+            model = model.wrapped
+        if not isinstance(model, OpenAIResponsesModel):
+            raise UserError(
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
+                f'Use the provider-specific compaction capability for your model.'
+            )
+
+        # Need at least 2 messages (history + current request) to compact
+        if len(request_context.messages) < 2:  # pragma: no cover
+            return request_context
+
+        # Compact all messages except the last (current) request
+        compact_ctx = ModelRequestContext(
+            model=request_context.model,
+            messages=request_context.messages[:-1],
+            model_settings=request_context.model_settings,
+            model_request_parameters=request_context.model_request_parameters,
+        )
+        compacted_response = await request_context.model.compact_messages(compact_ctx, instructions=self.instructions)
+
+        # Replace message history with compaction + last request
+        request_context.messages = [compacted_response, request_context.messages[-1]]
+        return request_context
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return 'OpenAICompaction'
+
+
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
     """Create a callback that updates `provider_details['raw_content']`.
 
@@ -2972,23 +3474,41 @@ def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any
 # Convert logprobs to a serializable format
 def _map_logprobs(
     logprobs: list[chat_completion_token_logprob.ChatCompletionTokenLogprob]
-    | list[responses.response_output_text.Logprob],
+    | list[responses.response_output_text.Logprob]
+    | list[responses.response_text_done_event.Logprob],
 ) -> list[dict[str, Any]]:
     return [
         {
             'token': lp.token,
-            'bytes': lp.bytes,
+            'bytes': lp.bytes if not isinstance(lp, responses.response_text_done_event.Logprob) else None,
             'logprob': lp.logprob,
             'top_logprobs': [
-                {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                {
+                    'token': tlp.token,
+                    'bytes': tlp.bytes
+                    if not isinstance(tlp, responses.response_text_done_event.LogprobTopLogprob)
+                    else None,
+                    'logprob': tlp.logprob,
+                }
+                for tlp in (lp.top_logprobs or [])
             ],
         }
         for lp in logprobs
     ]
 
 
+def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
+    """Convert an OpenAI ``ResponseCompactionItem`` to a ``CompactionPart``."""
+    return CompactionPart(
+        content=None,
+        id=item.id,
+        provider_name=system,
+        provider_details=item.model_dump(),
+    )
+
+
 def _map_usage(
-    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
     provider_url: str,
     model: str,

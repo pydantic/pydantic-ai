@@ -12,7 +12,7 @@ DEFAULT_INSTRUMENTATION_VERSION = 2
 """Default instrumentation version for `InstrumentationSettings`."""
 
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
-RUN_ID_BAGGAGE_KEY = 'pydantic_ai.run_id'
+RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:

@@ -46,15 +46,17 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
-from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
+from ..capabilities._ordering import has_capability_type
+from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
+from ..tool_manager import ParallelExecutionMode, ToolManager
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -164,6 +166,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """The strategy for handling multiple tool calls when a final result is found.
 
     - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+    - `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
     - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
     """
 
@@ -402,6 +405,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
 
+        _inject_auto_capabilities(capabilities)
+
         self._root_capability = CombinedCapability(capabilities)
 
         self.model_settings = model_settings
@@ -630,6 +635,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors: Processors for message history.
             event_stream_handler: Handler for streaming events.
             tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
+
             max_concurrency: Limit on concurrent agent runs.
             capabilities: Additional capabilities merged with those from the spec.
 
@@ -1138,6 +1144,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build initial RunContext for for_run lifecycle hooks
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
+            agent=self,
             model=model_used,
             usage=usage,
             prompt=user_prompt,
@@ -1223,19 +1230,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions=cap_instructions,
         )
 
-        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                instructions_literal,
-                *[await func.run(run_context) for func in instructions_functions],
-            ]
+        async def get_instructions(
+            run_context: RunContext[AgentDepsT],
+        ) -> list[_messages.InstructionPart] | None:
+            parts: list[_messages.InstructionPart] = []
 
-            parts = [p for p in parts if p]
-            if not parts:
-                return None
-            return '\n\n'.join(parts).strip()
+            if instructions_literal:
+                parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
+
+            for func in instructions_functions:
+                text = await func.run(run_context)
+                if text:
+                    parts.append(_messages.InstructionPart(content=text, dynamic=True))
+
+            return parts or None
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
+            agent=self,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
@@ -1274,7 +1286,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'model_name': model_used.model_name if model_used else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
-            'pydantic_ai.run_id': state.run_id,
+            'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
@@ -1292,7 +1305,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             async with AsyncExitStack() as stack:
                 if run_span.is_recording():
                     ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-                    ctx = _otel_set_baggage('pydantic_ai.run_id', state.run_id, context=ctx)
+                    ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
                     token = _otel_attach(ctx)
                     stack.callback(_otel_detach, token)
                 await stack.enter_async_context(
@@ -1474,6 +1487,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             state.message_history,
                             graph_deps.new_message_index,
                             run_metadata,
+                            model_request_parameters=state.last_model_request_parameters,
                         )
                     )
             finally:
@@ -1522,6 +1536,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
         metadata: dict[str, Any] | None = None,
+        model_request_parameters: models.ModelRequestParameters | None = None,
     ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
@@ -1530,8 +1545,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             }
         else:
-            # Store the last instructions here for convenience
-            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            last_instructions = InstrumentedModel._get_instructions(message_history, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
             attrs: dict[str, Any] = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
                 **settings.system_instructions_attributes(last_instructions),
@@ -1595,7 +1609,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         validated_spec, template_context = _validate_spec(spec, self._deps_type)
 
-        capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
+        capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
         # Warn for unsupported fields with non-default values
@@ -1714,9 +1728,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        # Set capability from spec, replacing the agent's existing root capability
+        # Set capability from spec, replacing the agent's existing root capability.
+        # Auto-inject infrastructure capabilities since the override replaces
+        # (not merges with) the agent's root capability.
         if resolved is not None and resolved.capability is not None:
-            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
+            override_caps = list(resolved.capability.capabilities)
+            _inject_auto_capabilities(override_caps)
+            override_capability = CombinedCapability(override_caps)
+            cap_token = self._override_root_capability.set(_utils.Some(override_capability))
         else:
             cap_token = None
 
@@ -1966,6 +1985,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1986,6 +2007,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -2043,6 +2066,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
 
         def tool_decorator(
@@ -2065,6 +2092,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             return func_
 
@@ -2091,6 +2120,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -2111,6 +2142,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -2169,6 +2202,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -2189,6 +2226,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
+                include_return_schema=include_return_schema,
             )
             return func_
 
@@ -2356,11 +2395,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        # Let capabilities wrap the assembled non-output toolset
+        # Capability wrapper toolsets (including ToolSearch and CodeMode) are
+        # applied here via get_wrapper_toolset. ToolSearch is auto-injected
+        # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
-            wrapper = run_capability.get_wrapper_toolset(toolset)
-            if wrapper is not None:
-                toolset = wrapper
+            toolset = run_capability.get_wrapper_toolset(toolset) or toolset
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
@@ -2369,6 +2408,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
+
+    @property
+    def root_capability(self) -> CombinedCapability[AgentDepsT]:
+        """The root capability of the agent, containing all registered capabilities."""
+        return self._root_capability
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -2430,7 +2474,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
-        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
+        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used,
+        and enter the model so the provider's HTTP client will be closed cleanly on exit.
 
         This is a no-op if the agent has already been entered.
         """
@@ -2439,6 +2484,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with AsyncExitStack() as exit_stack:
                     toolset = self._get_toolset()
                     await exit_stack.enter_async_context(toolset)
+
+                    if self.model is not None:
+                        model = self._get_model(None)
+                        await exit_stack.enter_async_context(model)
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
@@ -2576,6 +2625,20 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'deps_schema',
 )
 """AgentSpec fields that are not supported at run/override time."""
+
+_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
+"""Infrastructure capabilities auto-injected when not already present."""
+
+
+def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
+    """Ensure all auto-injected infrastructure capabilities are present.
+
+    Each capability's own ``CapabilityOrdering`` (e.g. ``position='outermost'``)
+    determines its final placement, so insertion order here doesn't matter.
+    """
+    for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
+        if not has_capability_type(capabilities, cap_type):
+            capabilities.append(cap_type())
 
 
 def _validate_spec(

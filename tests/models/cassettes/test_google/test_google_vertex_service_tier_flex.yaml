@@ -1,0 +1,113 @@
+interactions:
+  - request:
+      body: grant_type=refresh_token&client_id=scrubbed&client_secret=scrubbed&refresh_token=scrubbed
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "268"
+        content-type:
+          - application/x-www-form-urlencoded
+      method: POST
+      uri: https://oauth2.googleapis.com/token
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        cache-control:
+          - no-cache, no-store, max-age=0, must-revalidate
+        content-length:
+          - "258"
+        content-type:
+          - application/json; charset=utf-8
+        expires:
+          - Mon, 01 Jan 1990 00:00:00 GMT
+        pragma:
+          - no-cache
+        transfer-encoding:
+          - chunked
+        vary:
+          - Origin
+          - X-Origin
+          - Referer
+      parsed_body:
+        access_token: scrubbed
+        expires_in: 3599
+        id_token: scrubbed
+        scope:
+          https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/sqlservice.login
+          openid
+        token_type: Bearer
+      status:
+        code: 200
+        message: OK
+  - request:
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "133"
+        content-type:
+          - application/json
+        host:
+          - aiplatform.googleapis.com
+      method: POST
+      parsed_body:
+        contents:
+          - parts:
+              - text: "Reply with exactly: OK"
+            role: user
+        generationConfig:
+          responseModalities:
+            - TEXT
+      uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        content-length:
+          - "890"
+        content-type:
+          - application/json; charset=UTF-8
+        transfer-encoding:
+          - chunked
+        vary:
+          - Origin
+          - X-Origin
+          - Referer
+      parsed_body:
+        candidates:
+          - avgLogprobs: -22.959847840578107
+            content:
+              parts:
+                - text: OK
+                  thoughtSignature: Cu0BAY89a1+YFBnyy6Df6gHB+lKXUH+CC3FC4qGOCuzd1D3pwX5qSY4kqzKzi7OaHpq584hJ0VoNt2kUMzSLZOPzQbaIfZAL22tg3JzKOjVJCl9HaSsNENPYbEX4RzcWmSOLvVAcPdiJ3TWYgnQLsl2laBm8dglEJ2MryXYlEUVXhC5+KFX+pZMu+pGPExbkx8Ujhd/QejmwIt+a4OgAkW35AuzKWmnDmmp5MBVrwaQjmR9tb4EQB0JxRDDiMlZgwwAvRcowDTYN3d5EIMCvyg+JMY3wuSDTZD1CRjUR5rsHq6pHraGmvzlIquELvZdq
+              role: model
+            finishReason: STOP
+        createTime: "2026-03-21T18:11:27.235482Z"
+        modelVersion: gemini-3-flash-preview
+        responseId: T9--adqvDqL4vdIPz7X2iQ4
+        usageMetadata:
+          candidatesTokenCount: 1
+          candidatesTokensDetails:
+            - modality: TEXT
+              tokenCount: 1
+          promptTokenCount: 5
+          promptTokensDetails:
+            - modality: TEXT
+              tokenCount: 5
+          thoughtsTokenCount: 51
+          totalTokenCount: 57
+          trafficType: ON_DEMAND_FLEX
+      status:
+        code: 200
+        message: OK
+version: 1

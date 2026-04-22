@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, deprecated
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -690,7 +690,9 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
+    * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
 
 
 UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
@@ -841,9 +843,23 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
+_ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
+"""Type variable for the return value type in `ToolReturn[T]`.
+
+When `ToolReturn` is used without a type parameter (bare `ToolReturn`), this defaults to `Any`,
+meaning no return schema is generated. When specified (e.g. `ToolReturn[User]`), the return
+schema is generated from the inner type.
+"""
+
+
 @dataclass(repr=False)
-class ToolReturn:
-    """A structured tool return that separates the tool result from additional content sent to the model."""
+class ToolReturn(Generic[_ToolReturnValueT]):
+    """A structured tool return that separates the tool result from additional content sent to the model.
+
+    Can be parameterized with a type to enable return schema generation:
+    - `ToolReturn[User]` — generates a return schema for `User`
+    - `ToolReturn` (bare) — no return schema generated
+    """
 
     return_value: ToolReturnContent
     """The return value to be used in the tool response."""
@@ -1336,7 +1352,11 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
+            # Strip input from top-level errors where it duplicates the entire generated output
+            exclude = {
+                i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
+            }
+            json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
@@ -1385,6 +1405,45 @@ ModelRequestPart = Annotated[
 
 
 @dataclass(repr=False)
+class InstructionPart:
+    """A single instruction block with metadata about its origin.
+
+    Instructions are composed of one or more parts, each of which can be static (from a literal string)
+    or dynamic (from a function, template, or toolset). This distinction allows model implementations
+    to make intelligent caching decisions — e.g. Anthropic's prompt caching can cache the static prefix
+    while leaving dynamic instructions uncached.
+    """
+
+    content: str
+    """The text content of this instruction block."""
+
+    _: KW_ONLY
+
+    dynamic: bool = False
+    """Whether this instruction came from a dynamic source (function, template, or toolset).
+
+    Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
+    Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
+    or toolset `get_instructions()` methods.
+    """
+
+    part_kind: Literal['instruction'] = 'instruction'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    @staticmethod
+    def join(parts: Sequence[InstructionPart]) -> str | None:
+        """Join instruction parts into a single string, separated by double newlines."""
+        return '\n\n'.join(p.content for p in parts).strip() or None
+
+    @staticmethod
+    def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
+        """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
+        return sorted(parts, key=lambda p: p.dynamic)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ModelRequest:
     """A request generated by Pydantic AI and sent to a model, e.g. a message from the Pydantic AI app to the model."""
 
@@ -1399,7 +1458,7 @@ class ModelRequest:
     """The timestamp when the request was sent to the model."""
 
     instructions: str | None = None
-    """The instructions for the model."""
+    """The instructions string for this request, rendered from structured instruction parts."""
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
@@ -1503,6 +1562,57 @@ class ThinkingPart:
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
+        return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class CompactionPart:
+    """A compaction part that summarizes previous conversation history.
+
+    Compaction parts contain an opaque or readable summary of prior messages,
+    produced by provider-specific compaction mechanisms. They must be round-tripped
+    back to the same provider in subsequent requests.
+
+    For Anthropic, `content` contains a readable text summary.
+    For OpenAI, `content` is `None` and the encrypted data is stored in `provider_details`.
+    """
+
+    content: str | None = None
+    """The compaction summary text, if available.
+
+    For Anthropic: a readable text summary of compacted messages.
+    For OpenAI: `None` (the compacted content is encrypted and stored in `provider_details`).
+    """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the compaction part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the compaction.
+
+    Compaction data is only sent back to the same provider.
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    For OpenAI: contains `encrypted_content` and other fields from `ResponseCompactionItem`.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['compaction'] = 'compaction'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the compaction content is non-empty."""
         return bool(self.content)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1653,7 +1763,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | CompactionPart | FilePart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1827,6 +1937,9 @@ class ModelResponse:
                 body.setdefault('content', []).append(
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
+            elif isinstance(part, CompactionPart):
+                # Compaction parts don't map to standard OTel GenAI convention types
+                pass
             elif isinstance(part, FilePart):
                 body.setdefault('content', []).append(
                     {
@@ -1892,6 +2005,9 @@ class ModelResponse:
                     return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
+            elif isinstance(part, CompactionPart):
+                # Compaction parts don't map to standard OTel message part types
+                pass
         return parts
 
     @property
@@ -2265,7 +2381,8 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -2305,7 +2422,8 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        | None
     ) = None
     """The kind of the next part, if any.
 

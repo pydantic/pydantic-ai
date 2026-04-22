@@ -9,7 +9,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
 
@@ -86,13 +86,18 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if not api_key:
                 raise UserError(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
-                    'to use the Anthropic provider.'
+                    ' to use the Anthropic provider.'
                 )
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = cached_async_http_client(provider='anthropic')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass(init=False)

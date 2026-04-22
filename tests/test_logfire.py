@@ -237,7 +237,8 @@ def test_logfire(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"my_ret":"1"}',
@@ -294,7 +295,8 @@ def test_logfire(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 103,
@@ -515,7 +517,10 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -525,6 +530,7 @@ def test_logfire(
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     }
                 )
@@ -533,7 +539,7 @@ def test_logfire(
             'logfire.json_schema': IsJson(),
             'logfire.span_type': 'span',
             'gen_ai.agent.name': 'my_agent',
-            'pydantic_ai.run_id': IsStr(),
+            'gen_ai.agent.call.id': IsStr(),
             'logfire.msg': 'chat test',
             'gen_ai.response.model': 'test',
             'gen_ai.usage.input_tokens': 51,
@@ -601,7 +607,8 @@ def test_instructions_with_structured_output(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -721,7 +728,8 @@ def test_instructions_with_structured_output(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -813,7 +821,8 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'model_name': 'test',
             'agent_name': 'my_agent',
             'gen_ai.agent.name': 'my_agent',
-            'pydantic_ai.run_id': IsStr(),
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -932,7 +941,8 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'model_name': 'test',
             'agent_name': 'my_agent',
             'gen_ai.agent.name': 'my_agent',
-            'pydantic_ai.run_id': IsStr(),
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -1007,12 +1017,18 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'defer_loading': False,
                                 'prefer_builtin': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
                             }
                         ],
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
+                        'instruction_parts': [
+                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
+                        ],
                         'thinking': None,
                     }
                 )
@@ -1021,7 +1037,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
             'gen_ai.agent.name': 'my_agent',
-            'pydantic_ai.run_id': IsStr(),
+            'gen_ai.agent.call.id': IsStr(),
             'gen_ai.input.messages': IsJson(snapshot([{'role': 'user', 'parts': [{'type': 'text'}]}])),
             'gen_ai.output.messages': IsJson(
                 snapshot(
@@ -1112,12 +1128,14 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             'model_name': 'function:model_function:',
             'agent_name': 'agent',
             'gen_ai.agent.name': 'agent',
-            'pydantic_ai.run_id': IsStr(),
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'agent run',
             'logfire.span_type': 'span',
             'final_result': 'Hello!',
             'gen_ai.aggregated_usage.input_tokens': 10,
             'gen_ai.aggregated_usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.cache_read.input_tokens': 2,
             'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
             'pydantic_ai.all_messages': [
                 {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
@@ -1175,12 +1193,13 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'gen_ai.agent.name': 'agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'test',
@@ -1221,7 +1240,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'model_name': 'test',
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
@@ -1330,7 +1350,7 @@ def test_include_tool_args_span_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': """\
 Tool error
 
@@ -1361,7 +1381,7 @@ Fix the errors and try again.\
                         )
                     ),
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.span_type': 'span',
                 }
             )
@@ -1385,7 +1405,7 @@ Fix the errors and try again.\
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 }
             )
@@ -1408,7 +1428,7 @@ Fix the errors and try again.\
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                 }
             )
 
@@ -1491,7 +1511,7 @@ def test_logfire_output_function_v2_v3(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1540,7 +1560,7 @@ def test_logfire_output_function_v2_v3(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1595,7 +1615,7 @@ def test_output_type_function_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1608,7 +1628,7 @@ def test_output_type_function_logfire_attributes(
                 'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1663,7 +1683,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1676,7 +1696,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1739,7 +1759,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -1762,7 +1782,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -1779,7 +1799,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -1791,7 +1811,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                 },
             ]
         )
@@ -1845,7 +1865,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1860,7 +1880,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1920,7 +1940,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -1935,7 +1955,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -1996,7 +2016,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -2011,7 +2031,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2067,7 +2087,7 @@ def test_output_type_async_function_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
@@ -2082,7 +2102,7 @@ def test_output_type_async_function_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2141,7 +2161,7 @@ def test_text_output_function_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': 'HELLO WORLD',
             }
         )
@@ -2153,7 +2173,7 @@ def test_text_output_function_logfire_attributes(
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2217,7 +2237,7 @@ def test_prompted_output_function_logfire_attributes(
                 ),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'tool_response': 'HELLO WORLD',
             }
         )
@@ -2229,7 +2249,7 @@ def test_prompted_output_function_logfire_attributes(
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
             }
         )
 
@@ -2293,7 +2313,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -2314,7 +2334,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     ),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -2328,7 +2348,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 },
                 {
@@ -2337,7 +2357,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'pydantic_ai.run_id': IsStr(),
+                    'gen_ai.agent.call.id': IsStr(),
                 },
             ]
         )
@@ -2372,7 +2392,8 @@ def test_static_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -2492,7 +2513,8 @@ def test_static_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -2598,7 +2620,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 107,
@@ -2746,7 +2769,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -2883,7 +2907,8 @@ def test_function_instructions_with_history_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 52,
@@ -3029,7 +3054,8 @@ def test_function_instructions_with_history_in_agent_run_span(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"content": "a"}',
@@ -3138,7 +3164,8 @@ async def test_run_stream(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': 'success (no tool calls)',
@@ -3235,7 +3262,8 @@ async def test_run_stream(
                 'model_name': 'test',
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': 'success (no tool calls)',
@@ -3327,7 +3355,7 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
                 'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
                 'logfire.level_num': 17,
@@ -3386,7 +3414,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
                 'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
                 'logfire.level_num': 17,
@@ -3445,7 +3473,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
                 'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
             },
@@ -3491,7 +3519,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
                 'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
             },
@@ -3539,7 +3567,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
             },
         }
@@ -3591,7 +3619,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
-                'pydantic_ai.run_id': IsStr(),
+                'gen_ai.agent.call.id': IsStr(),
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
                 'pydantic_ai.tool.deferral.metadata': "{'obj': <CustomObj>}",
             },
