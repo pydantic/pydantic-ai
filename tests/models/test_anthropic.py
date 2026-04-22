@@ -1321,6 +1321,28 @@ async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(al
         await agent.run('Hello')
 
 
+async def test_anthropic_task_budget_remaining_allows_non_compact_context_management(allow_model_requests: None):
+    """`task_budget.remaining` is allowed alongside non-`compact_20260112` context-management edits."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 50_000, 'remaining': 10_000},
+            anthropic_context_management={'edits': [{'type': 'clear_tool_uses_20250919'}]},
+        ),
+    )
+    agent = Agent(model)
+
+    result = await agent.run('Hello')
+    assert result.output == 'Hello!'
+
+
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
     """Exercise both strict=True and strict=False tool definitions against the live API."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
