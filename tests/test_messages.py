@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelResponse,
     MultiModalContent,
     RequestUsage,
+    RetryPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -1469,3 +1470,64 @@ class TestInstructionParts:
         assert repr(part) == "InstructionPart(content='hello')"
         dynamic_part = InstructionPart(content='world', dynamic=True)
         assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
+
+
+def test_retry_prompt_strips_input_from_top_level_errors():
+    """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"required_field"' in response
+
+
+def test_retry_prompt_keeps_input_for_nested_errors():
+    """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' in response
+    assert '"sub_field"' in response
+
+
+def test_retry_prompt_mixed_top_level_and_nested_errors():
+    """When both top-level and nested errors exist, only top-level input should be stripped."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
+            {
+                'type': 'missing',
+                'loc': ('items', 0, 'nested_field'),
+                'msg': 'Field required',
+                'input': {'nested_key': 'nested_val'},
+            },
+        ],
+    )
+    response = part.model_response()
+    # Nested error's input should be present
+    assert '"nested_key"' in response
+    # But root-level input should not
+    assert '"root_key"' not in response
+
+
+def test_retry_prompt_strips_input_from_top_level_type_errors():
+    """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
+    part = RetryPromptPart(
+        content=[
+            {
+                'type': 'int_parsing',
+                'loc': ('age',),
+                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                'input': 'not_a_number',
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"age"' in response
