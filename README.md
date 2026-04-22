@@ -218,3 +218,8 @@ Read the [docs](https://ai.pydantic.dev/agents/) to learn more about building ap
 Read the [API Reference](https://ai.pydantic.dev/api/agent/) to understand Pydantic AI's interface.
 
 Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/pydantic-pydantic-ai-mcp-run-python).
+
