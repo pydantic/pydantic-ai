@@ -78,6 +78,7 @@ try:
         APIConnectionError,
         APIStatusError,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
         omit as OMIT,
@@ -168,6 +169,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+_FAST_MODE_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _STR_OBJECT_DICT = TypeAdapter(dict[str, object])
@@ -655,7 +657,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
 
-        if model_settings.get('anthropic_speed') == 'fast' and anthropic_profile.anthropic_supports_fast_speed:
+        if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
 
         if betas_from_setting := model_settings.get('anthropic_betas'):
@@ -669,11 +671,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _effective_speed(
         self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
     ) -> Literal['standard', 'fast']:
-        """Speed to send to the API, or OMIT if the model does not support the `speed` parameter."""
+        """Speed to send to the API, or OMIT when the model or client does not support the `speed` parameter."""
         s = model_settings.get('anthropic_speed')
-        if s in ('standard', 'fast') and anthropic_profile.anthropic_supports_fast_speed:
+        if s in ('standard', 'fast') and self._client_supports_fast_speed(anthropic_profile):
             return s
         return OMIT  # pyright: ignore[reportReturnType]
+
+    def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
+        """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
+        return anthropic_profile.anthropic_supports_fast_speed and not isinstance(
+            self.client, _FAST_MODE_UNSUPPORTED_CLIENTS
+        )
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings

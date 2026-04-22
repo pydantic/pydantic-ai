@@ -1972,6 +1972,28 @@ async def test_anthropic_speed_ignored_on_unsupported_model(
     assert 'fast-mode-2026-02-01' not in betas
 
 
+@pytest.mark.parametrize('client_cls_name', ['AsyncAnthropicBedrock', 'AsyncAnthropicVertex', 'AsyncAnthropicFoundry'])
+async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls_name: str) -> None:
+    """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import anthropic
+
+    client_cls = getattr(anthropic, client_cls_name)
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MagicMock()
+    mock_client.__class__ = client_cls
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']))
+    await agent.run('hello')
+
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert call_kwargs['speed'] is anthropic.omit
+    assert 'fast-mode-2026-02-01' not in call_kwargs['betas']
+
+
 async def test_stream_structured(allow_model_requests: None):
     """Test streaming structured responses with Anthropic's API.
 
