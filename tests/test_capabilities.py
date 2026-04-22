@@ -9770,6 +9770,61 @@ async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     assert result.output.metadata == {'call1': {'reason': 'external'}}
 
 
+async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
+    """After approval, if tool re-raises CallDeferred (not ApprovalRequired), the new exception type is propagated."""
+    from pydantic_ai.exceptions import CallDeferred
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+    call_count = 0
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ApprovalRequired
+        # After approval, raise a *different* deferral type with new metadata
+        raise CallDeferred(metadata={'reason': 'external-after-approval'})
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    caught_exc_type: type | None = None
+    caught_metadata: dict[str, Any] | None = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        nonlocal caught_exc_type, caught_metadata
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+            return 'no raise'  # pragma: no cover
+        except (CallDeferred, ApprovalRequired) as e:
+            caught_exc_type = type(e)
+            caught_metadata = e.metadata
+            return 'caught'
+
+    result = await agent.run('go')
+    assert result.output == 'final'
+    # The new CallDeferred exception should surface, not the original ApprovalRequired
+    assert caught_exc_type is CallDeferred
+    assert caught_metadata == {'reason': 'external-after-approval'}
+
+
 async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id():
     """handle_call path: handler returns results for wrong ID → remaining non-empty → raises original exc."""
     from pydantic_ai.toolsets import FunctionToolset

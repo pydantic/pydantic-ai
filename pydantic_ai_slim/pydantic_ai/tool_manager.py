@@ -827,7 +827,12 @@ class ToolManager(Generic[AgentDepsT]):
 
         executed, remaining = await self.execute_deferred_tool_results(requests, deferred_results)
         if remaining:
-            raise exc
+            # The tool may have re-raised with a different exception type/metadata.
+            # Reconstruct the exception from the remaining requests so the caller sees the current state.
+            new_metadata = remaining.metadata.get(call.tool_call_id)
+            if any(c.tool_call_id == call.tool_call_id for c in remaining.calls):
+                raise CallDeferred(metadata=new_metadata)
+            raise ApprovalRequired(metadata=new_metadata)
         if executed:
             _call_part, result_part, _user_content = executed[0]
             if isinstance(result_part, _messages.RetryPromptPart):
