@@ -153,12 +153,12 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
             if isinstance(additional_properties, dict) or additional_properties is True:
                 warnings.warn(
                     '`dict` fields are not supported by Anthropic in strict mode '
-                    '(including Native Output mode, which is used with extended thinking). '
-                    "Anthropic's schema transformation will set `additionalProperties` to `false`, "
-                    'effectively forcing empty dicts. '
-                    'Consider using a `list` of `tuple[str, str]`, `TypedDict`, or `dataclass` '
-                    'with explicit `key` and `value` fields instead, '
-                    'or use `output_type=PromptedOutput(...)` as an alternative.',
+                    '(including `NativeOutput`, which is automatically selected when thinking is enabled). '
+                    "Anthropic's schema transformation sets `additionalProperties` to `false`, "
+                    'which forces the model to return `{}`. '
+                    'Use a `list` of `tuple[str, str]`, or a `TypedDict` or `dataclass` '
+                    'with explicit `key` and `value` fields, '
+                    'or set `output_type=PromptedOutput(...)`.',
                     UserWarning,
                 )
         return schema

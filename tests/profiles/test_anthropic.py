@@ -17,7 +17,7 @@ See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
 from __future__ import annotations as _annotations
 
 import warnings
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
 from pydantic import BaseModel, Field
@@ -259,7 +259,6 @@ def test_strict_true_warns_on_any_dict_field():
 
 def test_strict_true_warns_on_basemodel_with_any_dict_field():
     """With strict=True, a BaseModel containing a dict[str, Any] field emits a warning."""
-    from typing import Any
 
     class ModelWithAnyDict(BaseModel):
         name: str
