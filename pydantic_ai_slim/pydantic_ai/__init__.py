@@ -122,7 +122,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .result import StreamEventsResult
+from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import (
@@ -318,6 +318,6 @@ __all__ = (
     'AgentRunResult',
     'AgentRunResultEvent',
     # result
-    'StreamEventsResult',
+    'AgentEventStream',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

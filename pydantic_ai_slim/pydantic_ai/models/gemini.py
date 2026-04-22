@@ -474,50 +474,37 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
-    async def _close_stream(self) -> None:
-        # _stream is httpx's aiter_bytes(), an async generator at runtime.
-        # If _close_stream() is called while another task is awaiting __anext__ on
-        # the same generator, aclose() raises RuntimeError("asynchronous generator
-        # is already running"). Safe to suppress: _cancelled is already set by the
-        # base cancel(), and the generator will be cleaned up when request_stream's
-        # ACM exits.
-        try:
-            await self._stream.aclose()  # type: ignore[union-attr]
-        except RuntimeError:
-            pass
-
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with self._stream_cancel_guard():
-            async for gemini_response in self._get_gemini_responses():
-                candidate = gemini_response['candidates'][0]
-                if 'content' not in candidate:
-                    raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
-                gemini_part: _GeminiPartUnion
-                for gemini_part in candidate['content']['parts']:
-                    if 'text' in gemini_part:
-                        # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
-                        # amongst the tool call deltas
-                        for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=None, content=gemini_part['text']
-                        ):
-                            yield event
+        async for gemini_response in self._get_gemini_responses():
+            candidate = gemini_response['candidates'][0]
+            if 'content' not in candidate:
+                raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
+            gemini_part: _GeminiPartUnion
+            for gemini_part in candidate['content']['parts']:
+                if 'text' in gemini_part:
+                    # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
+                    # amongst the tool call deltas
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id=None, content=gemini_part['text']
+                    ):
+                        yield event
 
-                    elif 'function_call' in gemini_part:
-                        # Here, we assume all function_call parts are complete and don't have deltas.
-                        # We do this by assigning a unique randomly generated "vendor_part_id".
-                        # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
-                        # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=uuid4(),
-                            tool_name=gemini_part['function_call']['name'],
-                            args=gemini_part['function_call']['args'],
-                            tool_call_id=None,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
-                    else:
-                        if not any([key in gemini_part for key in ['function_response', 'thought']]):
-                            raise AssertionError(f'Unexpected part: {gemini_part}')  # pragma: no cover
+                elif 'function_call' in gemini_part:
+                    # Here, we assume all function_call parts are complete and don't have deltas.
+                    # We do this by assigning a unique randomly generated "vendor_part_id".
+                    # We need to confirm whether this is actually true, but if it isn't, we can still handle it properly
+                    # it would just be a bit more complicated. And we'd need to confirm the intended semantics.
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=uuid4(),
+                        tool_name=gemini_part['function_call']['name'],
+                        args=gemini_part['function_call']['args'],
+                        tool_call_id=None,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
+                else:
+                    if not any([key in gemini_part for key in ['function_response', 'thought']]):
+                        raise AssertionError(f'Unexpected part: {gemini_part}')  # pragma: no cover
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
         # This method exists to ensure we only yield completed items, so we don't need to worry about

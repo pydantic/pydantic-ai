@@ -63,7 +63,9 @@ from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.filterwarnings('ignore:Iterating `StreamEventsResult` directly is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings(
+        'ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning'
+    ),
 ]
 
 
@@ -4305,7 +4307,9 @@ async def test_run_stream_events_standalone_deprecation():
 
     assert len(caught) == 1
     assert issubclass(caught[0].category, DeprecationWarning)
-    assert 'Iterating `StreamEventsResult` directly is deprecated' in str(caught[0].message)
+    assert 'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated' in str(
+        caught[0].message
+    )
 
 
 async def test_run_stream_events_external_task_cancellation():

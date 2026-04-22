@@ -2086,44 +2086,6 @@ def test_map_usage():
     )
 
 
-async def test_stream_cancel(get_gemini_client: GetGeminiClient):
-    responses = [
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
-    ]
-    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
-    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
-    gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('Hello') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Hello ')],
-                model_name='gemini-1.5-flash',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
-                run_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
 def test_map_empty_usage():
     response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
     assert 'usage_metadata' in response

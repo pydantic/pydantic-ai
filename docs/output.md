@@ -877,7 +877,35 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Cancelling Streams
 
-Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to limit costs. Both [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] support explicit cancellation, which closes the underlying HTTP connection to stop token generation immediately.
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to limit costs. The primary streaming API, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], along with [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter], all support explicit cancellation.
+
+#### Cancelling `run_stream_events`
+
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager. Call `cancel()` on the stream to stop it:
+
+```python {title="stream_cancel_run_stream_events.py"}
+from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
+        async for event in stream:
+            if isinstance(event, PartStartEvent):
+                print(f'Started: {event.part!r}')
+                #> Started: TextPart(content='Python is a ')
+            elif isinstance(event, FinalResultEvent):
+                await stream.cancel()  # (2)!
+                break
+```
+
+1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
+2. `cancel()` closes the underlying generator, which triggers task cancellation and connection cleanup.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+Breaking out of the loop only stops local iteration; the stream is cleaned up when the surrounding `async with` exits. Call `cancel()` when you want to stop generation immediately instead of waiting for context exit.
 
 #### Cancelling `run_stream`
 
@@ -912,37 +940,9 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
 
-#### Cancelling `run_stream_events`
-
-[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns a `StreamEventsResult` that should be used as an async context manager. Call `cancel()` on the stream to stop it:
-
-```python {title="stream_cancel_run_stream_events.py"}
-from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
-
-agent = Agent('openai:gpt-5.2')
-
-
-async def main():
-    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
-        async for event in stream:
-            if isinstance(event, PartStartEvent):
-                print(f'Started: {event.part!r}')
-                #> Started: TextPart(content='Python is a ')
-            elif isinstance(event, FinalResultEvent):
-                await stream.cancel()  # (2)!
-                break
-```
-
-1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
-2. `cancel()` closes the underlying generator, which triggers task cancellation and connection cleanup.
-
-_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
-
-Breaking out of the loop only stops local iteration; the stream is cleaned up when the surrounding `async with` exits. Call `cancel()` when you want to stop generation immediately instead of waiting for context exit.
-
 #### Cancelling with `iter`
 
-When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained control over the agent graph, you can cancel at the `AgentStream` level inside a `ModelRequestNode.stream()` context:
+When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained control over the agent graph, you can cancel the [`AgentStream`][pydantic_ai.result.AgentStream] inside a `ModelRequestNode.stream()` context:
 
 ```python {title="stream_cancel_iter.py"}
 from pydantic_ai import Agent, FinalResultEvent

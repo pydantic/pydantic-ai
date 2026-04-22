@@ -41,7 +41,7 @@ from .._output import types_from_output_spec
 from .._template import TemplateStr
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
-from ..result import AgentStream, FinalResult, StreamedRunResult, StreamEventsResult
+from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
 from ..tool_manager import ToolManager
@@ -918,7 +918,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> StreamEventsResult[OutputDataT]: ...
+    ) -> AgentEventStream[OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -939,7 +939,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> StreamEventsResult[RunOutputDataT]: ...
+    ) -> AgentEventStream[RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -959,7 +959,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> StreamEventsResult[Any]:
+    ) -> AgentEventStream[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -1026,7 +1026,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # unfortunately this hack of returning a generator rather than defining it right here is
         # required to allow overloads of this method to work in python's typing system, or at least with pyright
         # or at least I couldn't make it work without
-        return StreamEventsResult(
+        return AgentEventStream(
             generator=self._run_stream_events(
                 user_prompt,
                 output_type=output_type,

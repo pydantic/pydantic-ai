@@ -858,11 +858,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.is_complete
 
 
-class StreamEventsResult(Generic[OutputDataT]):
-    """Result of [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+class AgentEventStream(Generic[OutputDataT]):
+    """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
     Wraps the underlying async generator to support explicit cancellation
-    via [`cancel()`][pydantic_ai.result.StreamEventsResult.cancel] and
+    via [`cancel()`][pydantic_ai.result.AgentEventStream.cancel] and
     deterministic cleanup via the async context manager protocol.
 
     Usage:
@@ -876,8 +876,8 @@ class StreamEventsResult(Generic[OutputDataT]):
     # cleanup is automatic on __aexit__
     ```
 
-    Direct iteration (without `async with`) is deprecated and will be
-    removed in v2.
+    Direct iteration with `async for event in stream:` (without `async with`)
+    is deprecated and will be removed in v2.
     """
 
     def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
@@ -885,7 +885,7 @@ class StreamEventsResult(Generic[OutputDataT]):
         self._managed = False
         self._closed = False
 
-    async def __aenter__(self) -> StreamEventsResult[OutputDataT]:
+    async def __aenter__(self) -> AgentEventStream[OutputDataT]:
         self._managed = True
         return self
 
@@ -900,12 +900,13 @@ class StreamEventsResult(Generic[OutputDataT]):
             await self._generator.aclose()
         return False
 
-    def __aiter__(self) -> StreamEventsResult[OutputDataT]:
+    def __aiter__(self) -> AgentEventStream[OutputDataT]:
         # TODO(v2): remove standalone iteration support and require `async with`
         if not self._managed:
             warnings.warn(
-                'Iterating `StreamEventsResult` directly is deprecated. '
-                'Use `async with agent.run_stream_events(...) as stream:` instead '
+                'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated. '
+                'Use `async with agent.run_stream_events(...) as stream:` and '
+                '`async for event in stream:` instead '
                 'to ensure proper cleanup.',
                 DeprecationWarning,
                 stacklevel=2,
