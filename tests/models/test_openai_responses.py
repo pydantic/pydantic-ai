@@ -174,6 +174,34 @@ async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: 
     assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
 
 
+async def test_responses_tool_choice_kept_when_only_builtin_tools(allow_model_requests: None) -> None:
+    """Regression: with builtin tools but no function/output tools and `allow_text_output=False`,
+    `_get_responses_tool_choice` previously returned `tool_choice=None` because `tool_defs` was empty,
+    which silently dropped the resolved `'required'` value. Builtin tools merged in by
+    `_responses_create` then went out with the API default `'auto'`.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    mrp = ModelRequestParameters(builtin_tools=[WebSearchTool()], allow_text_output=False)
+    await model.request([ModelRequest.user_text_prompt('search the web')], None, mrp)
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert kwargs.get('tool_choice') == 'required'
+    assert kwargs.get('tools')
+
+
 @pytest.mark.parametrize(
     ('aspect_ratio', 'explicit_size', 'expected_size'),
     [

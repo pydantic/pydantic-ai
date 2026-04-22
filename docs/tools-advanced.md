@@ -398,7 +398,7 @@ from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
 
 class RequireFirstCall(AbstractCapability[None]):
-    '''Force `tool_name` to be called successfully before anything else.'''
+    """Force `tool_name` to be called successfully before anything else."""
 
     def __init__(self, tool_name: str) -> None:
         self.tool_name = tool_name

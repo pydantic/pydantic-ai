@@ -1935,6 +1935,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             + list(model_settings.get('openai_builtin_tools', []))
             + function_tools
         )
+        if not tools:
+            tool_choice = None
         profile = OpenAIModelProfile.from_profile(self.profile)
 
         previous_response_id, messages = self._resolve_previous_response_id(
@@ -2103,9 +2105,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         tools: list[responses.FunctionToolParam] = [
             self._map_tool_definition(t) for t in model_request_parameters.tool_defs.values()
         ]
-        if not tools:
-            return tools, None
-
         return tools, tool_choice
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
