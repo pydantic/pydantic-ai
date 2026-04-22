@@ -1022,10 +1022,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(message, field_name, None)
-            if reasoning:  # pragma: no branch
-                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
-                return items
+            reasoning: object = getattr(message, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
+                )
+                continue
+            items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+            return items
 
         return items or None
 
@@ -2816,15 +2824,23 @@ class OpenAIStreamedResponse(StreamedResponse):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(choice.delta, field_name, None)
-            if reasoning:  # pragma: no branch
-                yield from self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=field_name,
-                    id=field_name,
-                    content=reasoning,
-                    provider_name=self.provider_name,
+            reasoning: object = getattr(choice.delta, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
                 )
-                break
+                continue
+            yield from self._parts_manager.handle_thinking_delta(
+                vendor_part_id=field_name,
+                id=field_name,
+                content=reasoning,
+                provider_name=self.provider_name,
+            )
+            break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
