@@ -419,7 +419,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
             if toolsets is not None:  # pragma: no cover
                 raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
-            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
+            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning, stacklevel=2)
             toolsets = mcp_servers
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)

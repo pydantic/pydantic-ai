@@ -170,7 +170,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
     if isinstance(identifier, str):
         identifier = identifier.encode('utf-8')
-    return hashlib.sha1(identifier).hexdigest()[:6]
+    return hashlib.sha1(identifier, usedforsecurity=False).hexdigest()[:6]
 
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))

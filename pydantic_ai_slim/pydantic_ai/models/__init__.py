@@ -1261,6 +1261,7 @@ def infer_model(  # noqa: C901
         warnings.warn(
             "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
             DeprecationWarning,
+            stacklevel=2,
         )
         provider_name = 'google-vertex'
 
