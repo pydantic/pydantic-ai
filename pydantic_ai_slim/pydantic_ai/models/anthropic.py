@@ -305,7 +305,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6 only).
     On unsupported models, this setting is silently ignored.
-    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock or Vertex);
+    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
     see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """

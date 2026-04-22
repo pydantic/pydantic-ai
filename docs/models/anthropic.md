@@ -412,8 +412,8 @@ agent = Agent(
 !!! note "Prompt cache interaction"
     Switching between `'fast'` and `'standard'` invalidates the prompt cache. Requests at different speeds do not share cached prefixes, so pick one speed per cache-sensitive conversation.
 
-!!! note "Bedrock and Vertex"
-    Fast mode is only available on the direct Anthropic API. Bedrock and Vertex do not support the `speed` parameter.
+!!! note "Bedrock, Vertex, and Foundry"
+    Fast mode is only available on the direct Anthropic API. Bedrock, Vertex, and Foundry clients do not support the `speed` parameter, so `anthropic_speed` is silently omitted on those clients.
 
 ## Message Compaction
 
