@@ -78,6 +78,7 @@ with try_import() as starlette_import_successful:
         DynamicToolOutputDeniedPart,
         FileUIPart,
         ReasoningUIPart,
+        RegenerateMessage,
         SubmitMessage,
         TextUIPart,
         ToolApprovalRequested,
@@ -114,6 +115,25 @@ pytestmark = [
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
+
+
+def test_build_run_input_allows_regenerate_without_message_id():
+    data = {
+        'trigger': 'regenerate-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [{'type': 'text', 'text': 'Hello'}],
+            }
+        ],
+    }
+
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    assert isinstance(run_input, RegenerateMessage)
+    assert run_input.message_id is None
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
