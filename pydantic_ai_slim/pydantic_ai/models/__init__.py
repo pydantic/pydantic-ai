@@ -931,20 +931,24 @@ class Model(ABC):
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
         if _profile.context_window is None:
-            for model_ref, provider_id in [
-                (self.model_name, self.system),
-                (self.model_name, None),
-                (_profile._origin_model_name, _profile._origin_provider),  # pyright: ignore[reportPrivateUsage]
-            ]:
-                if model_ref is None:  # model_ref is required
+            context_window_lookup_attempts = [
+                (self.model_name, self.system, None),
+                (self.model_name, None, self.base_url),
+                (self.model_name, None, None),
+                (_profile._origin_model_name, _profile._origin_provider, None),  # pyright: ignore[reportPrivateUsage]
+                (_profile._origin_model_name, None, None),  # pyright: ignore[reportPrivateUsage]
+            ]
+            for model_ref, provider_id, provider_api_url in context_window_lookup_attempts:
+                if model_ref is None:
                     continue
                 try:
-                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, None)
-                    if model_info.context_window is not None:
-                        _profile = replace(_profile, context_window=model_info.context_window)
-                        break
+                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, provider_api_url)
                 except LookupError:
-                    pass
+                    continue
+
+                if model_info.context_window is not None:
+                    _profile = replace(_profile, context_window=model_info.context_window)
+                    break
 
         return _profile
 

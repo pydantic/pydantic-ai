@@ -407,3 +407,43 @@ def test_context_window_provided_in_profile():
         'gpt-4o', provider=openai.OpenAIProvider(api_key='test'), profile=ModelProfile(context_window=50000)
     )
     assert m.profile.context_window == 50000
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'model_name', 'context_window'),
+    [
+        pytest.param('openai-base-url', 'Qwen/Qwen3-32B', 40960, id='openai-base-url-huggingface-router'),
+        pytest.param('github', 'microsoft/gpt-4o', 128000, id='github-microsoft-openai'),
+        pytest.param('nebius', 'Qwen/Qwen3-32B', 40960, id='nebius-huggingface-qwen'),
+        pytest.param(
+            'together',
+            'meta-llama/Llama-3.2-3B-Instruct',
+            131072,
+            id='together-huggingface-meta',
+        ),
+    ],
+)
+def test_context_window_loaded_from_genai_prices_best_effort(
+    provider_name: str, model_name: str, context_window: int
+):
+    if provider_name == 'openai-base-url':
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        provider = OpenAIProvider(base_url='https://router.huggingface.co/nebius')
+    elif provider_name == 'github':
+        from pydantic_ai.providers.github import GitHubProvider
+
+        provider = GitHubProvider(api_key='test')
+    elif provider_name == 'nebius':
+        from pydantic_ai.providers.nebius import NebiusProvider
+
+        provider = NebiusProvider(api_key='test')
+    elif provider_name == 'together':
+        from pydantic_ai.providers.together import TogetherProvider
+
+        provider = TogetherProvider(api_key='test')
+    else:  # pragma: no cover
+        raise AssertionError(f'Unknown provider: {provider_name}')
+
+    model = OpenAIChatModel(model_name, provider=provider)
+    assert model.profile.context_window == context_window
