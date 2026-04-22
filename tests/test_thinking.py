@@ -270,24 +270,6 @@ class TestAnthropicThinkingTranslation:
         output_config = model._build_output_config(params, settings)
         assert output_config == snapshot({'effort': 'high'})
 
-    def test_task_budget_coexists_with_effort(self):
-        """Anthropic task budgets share the same output_config object as effort."""
-        from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-        from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._model_name = 'claude-opus-4-7'
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            anthropic_supports_effort=True,
-            anthropic_supports_task_budgets=True,
-        )
-
-        params = ModelRequestParameters(thinking='high')
-        settings = AnthropicModelSettings(anthropic_task_budget={'type': 'tokens', 'total': 2_000})
-        output_config = model._build_output_config(params, settings)
-        assert output_config == snapshot({'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 2_000}})
-
     def test_medium_uses_adaptive(self, adaptive_model: FunctionModel):
         """thinking='medium' on adaptive model -> adaptive (not budget)."""
         from pydantic_ai.models.anthropic import AnthropicModel
@@ -1179,7 +1161,6 @@ class TestProfileThinkingCapabilities:
         assert profile.anthropic_supports_adaptive_thinking is True
         assert profile.anthropic_supports_xhigh_effort is True
         assert profile.anthropic_disallows_budget_thinking is True
-        assert profile.anthropic_supports_task_budgets is True
 
     def test_google_profile_thinking_support(self):
         from pydantic_ai.profiles.google import google_model_profile

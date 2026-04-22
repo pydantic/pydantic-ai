@@ -152,10 +152,6 @@ agent = Agent(model)
 
 See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for setup instructions including Entra ID authentication.
 
-## Task Budgets (Beta)
-
-Claude Opus 4.7 task budgets are available through [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget]. See [Thinking](../thinking.md#task-budgets-beta) for the request shape, beta semantics, and guidance on when to supply `remaining`.
-
 ## Prompt Caching
 
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports both automatic and explicit caching approaches:
@@ -400,18 +396,24 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 ## Fast mode
 
-Fast mode provides higher output tokens per second and is supported on **Claude Opus 4.6** (`anthropic:claude-opus-4-6`) and **Claude Sonnet 4.6** (`anthropic:claude-sonnet-4-6`). It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On other models, `anthropic_speed='fast'` is ignored. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
+Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6** (`anthropic:claude-opus-4-6`) only. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On other models, `anthropic_speed` is silently ignored. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-opus-4-6',
     model_settings=AnthropicModelSettings(anthropic_speed='fast'),
 )
 ...
 ```
+
+!!! note "Prompt cache interaction"
+    Switching between `'fast'` and `'standard'` invalidates the prompt cache. Requests at different speeds do not share cached prefixes, so pick one speed per cache-sensitive conversation.
+
+!!! note "Bedrock and Vertex"
+    Fast mode is only available on the direct Anthropic API. Bedrock and Vertex do not support the `speed` parameter.
 
 ## Message Compaction
 

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -116,7 +117,6 @@ with try_import() as imports_successful:
         AnthropicCompaction,
         AnthropicModel,
         AnthropicModelSettings,
-        AnthropicTaskBudget,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -1230,158 +1230,6 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
-async def test_anthropic_task_budget_adds_output_config_and_beta(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000, 'remaining': 500},
-        ),
-    )
-    agent = Agent(model)
-
-    await agent.run('Hello')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['output_config'] == {'task_budget': {'type': 'tokens', 'total': 2_000, 'remaining': 500}}
-    assert 'task-budgets-2026-03-13' in completion_kwargs['betas']
-
-
-async def test_anthropic_task_budget_remaining_zero(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000, 'remaining': 0},
-        ),
-    )
-    agent = Agent(model)
-
-    await agent.run('Hello')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['output_config'] == {'task_budget': {'type': 'tokens', 'total': 2_000, 'remaining': 0}}
-
-
-async def test_anthropic_task_budget_merges_with_other_beta_sources(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000},
-            anthropic_betas=['interleaved-thinking-2025-05-14'],
-            extra_headers={'anthropic-beta': 'custom-feature-1'},
-        ),
-    )
-    agent = Agent(model)
-
-    await agent.run('Hello')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    betas = completion_kwargs['betas']
-    assert 'task-budgets-2026-03-13' in betas
-    assert 'interleaved-thinking-2025-05-14' in betas
-    assert 'custom-feature-1' in betas
-
-
-async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-6',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000},
-        ),
-    )
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match='does not support `anthropic_task_budget`'):
-        await agent.run('Hello')
-
-
-async def test_anthropic_task_budget_rejects_invalid_type(allow_model_requests: None):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(
-            anthropic_task_budget={'type': 'chars', 'total': 2_000},  # pyright: ignore[reportArgumentType]
-        ),
-    )
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match=r"`anthropic_task_budget\['type'\]` must be `'tokens'`\.$"):
-        await agent.run('Hello')
-
-
-@pytest.mark.parametrize(
-    ('task_budget', 'error_message'),
-    [
-        pytest.param(
-            {'type': 'tokens', 'total': 0},
-            r"`anthropic_task_budget\['total'\]` must be a positive integer\.",
-            id='invalid-total',
-        ),
-        pytest.param(
-            {'type': 'tokens', 'total': 2_000, 'remaining': -1},
-            r"`anthropic_task_budget\['remaining'\]` must be a non-negative integer when provided\.",
-            id='invalid-remaining',
-        ),
-        pytest.param(
-            {'type': 'tokens', 'total': 2_000, 'remaining': 2_001},
-            r"`anthropic_task_budget\['remaining'\]` must be less than or equal to `anthropic_task_budget\['total'\]`\.",
-            id='remaining-exceeds-total',
-        ),
-    ],
-)
-async def test_anthropic_task_budget_validation_errors(
-    allow_model_requests: None, task_budget: AnthropicTaskBudget, error_message: str
-):
-    c = completion_message(
-        [BetaTextBlock(text='Hello!', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-
-    model = AnthropicModel(
-        'claude-opus-4-7',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(anthropic_task_budget=task_budget),
-    )
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match=error_message):
-        await agent.run('Hello')
-
-
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
     """Exercise both strict=True and strict=False tool definitions against the live API."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -2080,46 +1928,42 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
 
 
 @pytest.mark.parametrize('speed', ['fast', 'standard', None])
-async def test_anthropic_speed_setting(allow_model_requests: None, speed: str | None) -> None:
+async def test_anthropic_speed_setting(allow_model_requests: None, speed: Literal['fast', 'standard'] | None) -> None:
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
-    # Use opus-4-6 for 'fast' so the profile supports fast speed; haiku for others
-    model_name = 'claude-opus-4-6' if speed == 'fast' else 'claude-haiku-4-5'
-    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    if speed == 'fast':
-        model_settings = AnthropicModelSettings(anthropic_speed='fast')
-    elif speed == 'standard':
-        model_settings = AnthropicModelSettings(anthropic_speed='standard', anthropic_betas=['custom-beta'])
-    else:
-        model_settings = AnthropicModelSettings(anthropic_betas=['custom-beta'])
-    await agent.run('hello', model_settings=model_settings)
+    settings = AnthropicModelSettings(anthropic_betas=['custom-beta'])
+    if speed is not None:
+        settings['anthropic_speed'] = speed
+    await agent.run('hello', model_settings=settings)
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
 
     if speed is not None:
         assert kwargs['speed'] == speed
     else:
         assert kwargs.get('speed') is OMIT
-    if speed == 'fast':
-        assert 'fast-mode-2026-02-01' in kwargs['betas']
-    else:
-        betas = kwargs.get('betas')
-        assert isinstance(betas, (list, tuple))
-        assert 'fast-mode-2026-02-01' not in betas
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert ('fast-mode-2026-02-01' in betas) is (speed == 'fast')
 
 
-async def test_anthropic_speed_fast_ignored_on_unsupported_model(allow_model_requests: None) -> None:
-    """When anthropic_speed='fast' is set on a model that does not support fast (e.g. haiku), we warn and omit speed and the fast-mode beta."""
+@pytest.mark.parametrize('speed', ['fast', 'standard'])
+async def test_anthropic_speed_ignored_on_unsupported_model(
+    allow_model_requests: None, speed: Literal['fast', 'standard']
+) -> None:
+    """On models without fast-mode support, `anthropic_speed` is silently omitted regardless of value."""
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.warns(UserWarning, match="anthropic_speed='fast' is not supported by"):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         await agent.run(
             'hello',
-            model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']),
+            model_settings=AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta']),
         )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('speed') is OMIT
@@ -3843,29 +3687,6 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
             },
         )
     )
-
-
-async def test_anthropic_task_budget_coexists_with_effort(allow_model_requests: None):
-    responses = [
-        completion_message(
-            [BetaTextBlock(text='4', type='text')],
-            usage=BetaUsage(input_tokens=10, output_tokens=1),
-        ),
-    ]
-    mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        model_settings=AnthropicModelSettings(
-            anthropic_effort='high',
-            anthropic_task_budget={'type': 'tokens', 'total': 2_000},
-        ),
-    )
-
-    await agent.run('What is 2+2?')
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['output_config'] == {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 2_000}}
 
 
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])

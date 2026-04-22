@@ -16,7 +16,7 @@ class AnthropicModelProfile(ModelProfile):
     anthropic_supports_fast_speed: bool = False
     """Whether the model supports fast inference speed (`anthropic_speed='fast'`).
 
-    Currently Claude Opus 4.6 and Claude Sonnet 4.6 support fast mode. See the Anthropic docs for the latest list.
+    Currently only Claude Opus 4.6 supports fast mode. See the Anthropic docs for the latest list.
     """
 
     anthropic_supports_adaptive_thinking: bool = False
@@ -52,12 +52,6 @@ class AnthropicModelProfile(ModelProfile):
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """
 
-    anthropic_supports_task_budgets: bool = False
-    """Whether the model supports `output_config.task_budget`.
-
-    Anthropic currently documents task budgets as a Claude Opus 4.7 beta feature.
-    """
-
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -86,8 +80,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
-    models_that_support_fast_speed = ('claude-opus-4-6', 'claude-sonnet-4-6')
-    anthropic_supports_fast_speed = model_name.startswith(models_that_support_fast_speed)
+    anthropic_supports_fast_speed = model_name.startswith('claude-opus-4-6')
 
     # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
     supports_adaptive = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7'))
@@ -99,7 +92,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
-    supports_task_budgets = model_name.startswith('claude-opus-4-7')
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -111,5 +103,4 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
-        anthropic_supports_task_budgets=supports_task_budgets,
     )
