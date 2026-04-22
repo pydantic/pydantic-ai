@@ -2510,3 +2510,57 @@ async def test_mcp_mixed_audience_content_partial_filter(mcp_server: MCPServerSt
     user_content = result.metadata['mcp_user_content']
     assert len(user_content) == 1
     assert user_content[0]['text'] == 'This is for the user only.'
+
+
+def test_wrap_with_user_metadata_routes_multimodal_content() -> None:
+    """When the assistant-visible part is multi-modal, it must land in ToolReturn.content.
+
+    The agent graph (``_agent_graph.py``) raises a UserError if a ToolReturn
+    has a ``MULTI_MODAL_CONTENT_TYPES`` instance (or a list containing one) in
+    ``return_value``. The MCP audience-filtering wrapper must therefore put
+    such items in ``content`` and place a text placeholder in ``return_value``,
+    matching the convention used elsewhere in the agent graph for plain
+    multi-modal tool results.
+    """
+    from mcp.types import Annotations, TextContent
+
+    from pydantic_ai import _mcp_audience
+
+    binary = _messages.BinaryContent(data=b'fake-png-bytes', media_type='image/png')
+    user_only_block = TextContent(
+        type='text',
+        text='Show this to the user only.',
+        annotations=Annotations(audience=['user']),
+    )
+
+    # Single multi-modal item: must become a single placeholder, not a list.
+    single = _mcp_audience.wrap_with_user_metadata(binary, [user_only_block])
+    assert isinstance(single, _messages.ToolReturn)
+    assert isinstance(single.return_value, str)
+    assert single.return_value.startswith('See file ')
+    assert not isinstance(single.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
+    assert single.content is not None
+    assert any(isinstance(item, _messages.BinaryContent) for item in single.content)
+    assert single.metadata is not None
+    assert single.metadata['mcp_user_content'][0]['text'] == 'Show this to the user only.'
+
+    # Mixed list: the multi-modal entry is replaced with its placeholder, plain
+    # text entries are passed through unchanged, and content carries the binary.
+    mixed = _mcp_audience.wrap_with_user_metadata(['hello', binary, 'world'], [user_only_block])
+    assert isinstance(mixed, _messages.ToolReturn)
+    assert isinstance(mixed.return_value, list)
+    assert mixed.return_value[0] == 'hello'
+    assert isinstance(mixed.return_value[1], str) and mixed.return_value[1].startswith('See file ')
+    assert mixed.return_value[2] == 'world'
+    assert not any(
+        isinstance(item, _messages.MULTI_MODAL_CONTENT_TYPES) for item in mixed.return_value
+    )
+    assert mixed.content is not None
+    assert any(isinstance(item, _messages.BinaryContent) for item in mixed.content)
+
+    # No multi-modal items: behaviour is unchanged from the previous wrapper, so
+    # plain assistant content stays in return_value and content stays empty.
+    plain = _mcp_audience.wrap_with_user_metadata('just text', [user_only_block])
+    assert isinstance(plain, _messages.ToolReturn)
+    assert plain.return_value == 'just text'
+    assert plain.content is None

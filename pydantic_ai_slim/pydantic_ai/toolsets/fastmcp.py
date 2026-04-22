@@ -34,12 +34,8 @@ try:
         TextResourceContents,
     )
 
-    from pydantic_ai.mcp import (
-        TOOL_SCHEMA_VALIDATOR,
-        mcp_partition_content,
-        mcp_user_only_placeholder,
-        mcp_wrap_with_user_metadata,
-    )
+    from pydantic_ai import _mcp_audience
+    from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
 except ImportError as _import_error:
     raise ImportError(
@@ -166,14 +162,14 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # Audience filtering must happen before the structured-content path: if every
         # content block is annotated as user-only, the model should not see the
         # JSON-serialised equivalent either.
-        filtered, user_only = mcp_partition_content(call_tool_result.content)
+        filtered, user_only = _mcp_audience.partition_content(call_tool_result.content)
 
         # If audience filtering removed all non-empty content, return a placeholder and
         # expose the user-only content via ToolReturnPart.metadata for the application.
         # (This check must come before the structuredContent check so that a tool
         # whose entire output is user-only doesn't expose its JSON-serialised equivalent.)
         if not filtered and call_tool_result.content:
-            return mcp_user_only_placeholder(user_only)
+            return _mcp_audience.user_only_placeholder(user_only)
 
         # Prefer structured content when available — covers both the case where the tool
         # returned data directly (empty content + structuredContent) and the normal case
@@ -192,7 +188,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         assistant_content = _map_fastmcp_tool_results(parts=filtered)
 
         if user_only:
-            return mcp_wrap_with_user_metadata(assistant_content, user_only)
+            return _mcp_audience.wrap_with_user_metadata(assistant_content, user_only)
 
         return assistant_content
 
