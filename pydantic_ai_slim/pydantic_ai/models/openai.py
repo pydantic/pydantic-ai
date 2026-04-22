@@ -2059,8 +2059,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         profile = OpenAIModelProfile.from_profile(self.profile)
-        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
-        _drop_unsupported_params(profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
@@ -2080,6 +2078,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             profile,
         )
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
+        _drop_unsupported_params(profile, model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
