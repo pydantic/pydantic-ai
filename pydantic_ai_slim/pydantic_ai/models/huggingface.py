@@ -489,9 +489,9 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         # huggingface_hub types _stream as AsyncIterable but it is an
-        # AsyncGenerator at runtime. If _close_stream() is called while another
+        # AsyncGenerator at runtime. If close_stream() is called while another
         # task is awaiting __anext__ on the same generator, aclose() raises
         # RuntimeError("asynchronous generator is already running"). Safe to
         # suppress: _cancelled is already set by the base cancel(), and the

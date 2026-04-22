@@ -1830,7 +1830,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         await self._stream.close()
 
     @property

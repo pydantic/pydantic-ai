@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
@@ -982,15 +982,6 @@ class Model(ABC, Generic[InterfaceClient]):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
-    _stream_cancel_errors: ClassVar[tuple[type[BaseException], ...]] = (httpx.StreamError, httpx.TransportError)
-    """Exceptions suppressed by `_stream_cancel_guard` when `cancel()` tears down the stream.
-
-    The default covers providers whose SDKs iterate `httpx` responses directly (Anthropic,
-    OpenAI, Groq, Mistral, Google GenAI, HuggingFace, and the custom Gemini client), since
-    they let bare `httpx` errors propagate from chunk reads. Transports that don't use
-    `httpx` (gRPC, botocore) override this tuple in their subclass.
-    """
-
     model_request_parameters: ModelRequestParameters
 
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
@@ -1073,20 +1064,31 @@ class StreamedResponse(ABC):
     async def cancel(self) -> None:
         """Cancel the stream, stopping token generation.
 
-        Sets `self._cancelled = True` before delegating to `_close_stream()`
+        Sets `self._cancelled = True` before delegating to `close_stream()`
         so the flag is visible to any iterator that observes the transport error
         raised when the underlying connection is torn down, even if
-        `_close_stream()` itself raises.
+        `close_stream()` itself raises.
         """
         if self.cancelled:
             return
         self._cancelled = True
-        await self._close_stream()
+        await self.close_stream()
 
-    async def _close_stream(self) -> None:
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        """Return transport errors caused by `cancel()` tearing down the stream.
+
+        The default covers model classes whose SDKs iterate `httpx` responses
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
+        and the custom Gemini client), since they let bare `httpx` errors
+        propagate from chunk reads. Model classes that use other transports
+        (for example gRPC or botocore) should override this method.
+        """
+        return (httpx.StreamError, httpx.TransportError)
+
+    async def close_stream(self) -> None:
         """Close the underlying HTTP/gRPC connection.
 
-        Providers must override this to stop token generation (and billing)
+        Model classes must override this to stop token generation (and billing)
         on the remote side. A missing override is a real bug — silently
         setting `_cancelled` without closing the connection would let the
         user believe the stream was cancelled while they continue being
@@ -1094,7 +1096,7 @@ class StreamedResponse(ABC):
         """
         raise NotImplementedError(
             f'Stream cancellation is not implemented for {type(self).__name__}. '
-            'This provider must override `_close_stream()` to support streaming cancellation.'
+            'This model class must override `close_stream()` to support streaming cancellation.'
         )
 
     @contextmanager
@@ -1104,14 +1106,15 @@ class StreamedResponse(ABC):
         When `cancel()` closes the underlying connection while
         `_get_event_iterator()` is awaiting the next chunk, the SDK raises
         a transport-level error (e.g. `httpx.StreamClosed`). Subclasses
-        extend `_stream_cancel_errors` for non-`httpx` transports. When
+        extend `get_stream_cancel_errors()` for non-`httpx` transports. When
         `self.cancelled` is `True` we know the error was caused by our
         own cancellation, so we suppress it and let the async generator exit
         cleanly via `StopAsyncIteration`.
         """
+        stream_cancel_errors = self.get_stream_cancel_errors()
         try:
             yield
-        except self._stream_cancel_errors:
+        except stream_cancel_errors:
             if not self.cancelled:
                 raise
 

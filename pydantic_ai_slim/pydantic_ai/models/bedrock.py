@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
@@ -1205,8 +1205,6 @@ class BedrockConverseModel(Model[BaseClient]):
 class BedrockStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Bedrock models."""
 
-    _stream_cancel_errors: ClassVar[tuple[type[BaseException], ...]] = (BotoCoreError,)
-
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
@@ -1214,7 +1212,10 @@ class BedrockStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
-    async def _close_stream(self) -> None:
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (BotoCoreError,)
+
+    async def close_stream(self) -> None:
         # Bedrock's EventStream.close() is synchronous.
         self._event_stream.close()
 

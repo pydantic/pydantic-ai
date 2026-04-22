@@ -586,7 +586,7 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         await self._stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901

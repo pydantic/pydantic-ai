@@ -504,7 +504,7 @@ class _SkipStreamedResponse(models.StreamedResponse):
     def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
-    async def _close_stream(self) -> None:  # pragma: no cover
+    async def close_stream(self) -> None:  # pragma: no cover
         # _SkipStreamedResponse is produced by short-circuit paths that never
         # open a connection; there is nothing to close.
         pass

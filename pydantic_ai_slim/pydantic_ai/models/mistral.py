@@ -667,7 +667,7 @@ class MistralStreamedResponse(StreamedResponse):
 
     _delta_content: str = field(default='', init=False)
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         # Close the underlying httpx response directly, avoiding the fragile
         # __aexit__(None, None, None) pattern on EventStreamAsync.
         # TODO: Check if MistralEventStreamAsync exposes a public close() method

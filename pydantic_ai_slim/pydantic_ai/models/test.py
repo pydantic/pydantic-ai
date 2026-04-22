@@ -375,7 +375,7 @@ class TestStreamedResponse(StreamedResponse):
         """Get the provider base URL."""
         return self._provider_url
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         # TestModel has no underlying connection to close.
         pass
 

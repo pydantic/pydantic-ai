@@ -2617,7 +2617,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         await self._stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -2809,7 +2809,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
 
-    async def _close_stream(self) -> None:
+    async def close_stream(self) -> None:
         await self._stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
