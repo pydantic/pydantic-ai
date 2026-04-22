@@ -209,6 +209,71 @@ async def main():
     """
 ```
 
+## ❓ FAQ & Troubleshooting
+
+### Common Questions
+
+**Q: Which LLM providers does Pydantic AI support?**
+
+A: Pydantic AI supports multiple providers including OpenAI, Anthropic, Google Gemini, Groq, and more. See the [model providers documentation](https://ai.pydantic.dev/models/) for the full list and configuration details.
+
+**Q: How do I add custom tools to my agent?**
+
+A: Use the `@agent.tool()` decorator to define tools. Tools can accept dependencies for dependency injection. See the [tools documentation](https://ai.pydantic.dev/tools/) for detailed examples.
+
+**Q: Can Pydantic AI handle multi-turn conversations?**
+
+A: Yes! Pydantic AI maintains conversation history automatically. Each call to `agent.run()` continues the conversation context. See [message history documentation](https://ai.pydantic.dev/message-history/).
+
+**Q: How do I use structured output with Pydantic AI?**
+
+A: Pass a Pydantic model as the `result_type` parameter to `agent.run()`. Pydantic AI will validate the LLM output against your model schema. See [structured outputs documentation](https://ai.pydantic.dev/result-types/).
+
+**Q: Does Pydantic AI support streaming responses?**
+
+A: Yes, use `agent.run_stream()` for streaming responses. This is useful for long-running agents or when you want to display partial results. See [streaming documentation](https://ai.pydantic.dev/streaming/).
+
+**Q: How do I test agents that use LLMs?**
+
+A: Pydantic AI provides a `TestModel` for deterministic testing without calling real LLMs. See the [testing documentation](https://ai.pydantic.dev/testing/) for examples.
+
+### Troubleshooting
+
+**Issue: Getting validation errors on LLM output**
+
+- Ensure your Pydantic model schema is clear and matches what you're asking the LLM to produce
+- Add field descriptions to guide the LLM
+- Consider using simpler types or providing examples in your prompt
+- Check the [result types documentation](https://ai.pydantic.dev/result-types/) for best practices
+
+**Issue: Agent not calling tools as expected**
+
+- Verify tool schemas are correctly defined with proper type hints
+- Ensure tool descriptions clearly explain what the tool does and when to use it
+- Check that dependencies are properly injected
+- Review the [tools documentation](https://ai.pydantic.dev/tools/) for examples
+
+**Issue: Rate limit errors from LLM provider**
+
+- Implement retry logic with exponential backoff
+- Consider using a different provider or model tier
+- Cache results where appropriate
+- Check your provider's rate limit documentation
+
+**Issue: Long response times**
+
+- Use streaming (`run_stream()`) for better perceived performance
+- Consider using faster models (e.g., Groq) for time-sensitive operations
+- Optimize your prompts to be more concise
+- Use `max_retries` and `timeout` settings appropriately
+
+**Getting More Help**
+
+- 📚 Browse the full [Documentation](https://ai.pydantic.dev/)
+- 📖 Read the [API Reference](https://ai.pydantic.dev/api/)
+- 💬 Join the [Pydantic Slack](https://logfire.pydantic.dev/docs/join-slack/)
+- 🐛 Report bugs via [GitHub Issues](https://github.com/pydantic/pydantic-ai/issues)
+
 ## Next Steps
 
 To try Pydantic AI for yourself, [install it](https://ai.pydantic.dev/install) and follow the instructions [in the examples](https://ai.pydantic.dev/examples/setup).
