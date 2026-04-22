@@ -174,6 +174,48 @@ async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: 
     assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
 
 
+async def test_openai_responses_tool_choice_list_unsupported_raises_error(allow_model_requests: None) -> None:
+    """Tuple-resolved forcing must consult `_support_tool_forcing` in the Responses tuple branch too.
+
+    Same regression as the Chat-side test — a list[str] `tool_choice` resolved to `('required', {names})`
+    used to be sent without checking the model profile.
+    """
+    from pydantic_ai.direct import model_request as direct_model_request
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIResponsesModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tools = [
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ToolDefinition(name='get_time', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ]
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice=['get_weather'] is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest.user_text_prompt('What is the weather?')],
+            model_settings={'tool_choice': ['get_weather']},
+            model_request_parameters=mrp,
+        )
+
+
 async def test_responses_tool_choice_kept_when_only_builtin_tools(allow_model_requests: None) -> None:
     """Regression: with builtin tools but no function/output tools and `allow_text_output=False`,
     `_get_responses_tool_choice` previously returned `tool_choice=None` because `tool_defs` was empty,

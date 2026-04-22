@@ -4840,6 +4840,42 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
         )
 
 
+async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model_requests: None):
+    """tuple-resolved forcing (e.g. `tool_choice=['x']` with extra tools) must also be checked against `_support_tool_forcing`.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
+    branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
+    profile, which would push an unsupported parameter to the API for models that have
+    `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
+    `('required', {chosen})` rather than collapsing to scalar `'required'`.
+    """
+    from pydantic_ai.direct import model_request as direct_model_request
+
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tools = [
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ToolDefinition(name='get_time', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ]
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True)
+
+    settings: ModelSettings = {'tool_choice': ['get_weather']}
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice=['get_weather'] is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
+
+
 def test_transformer_adds_properties_to_object_schemas():
     """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
 

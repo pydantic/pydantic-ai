@@ -1065,12 +1065,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}} if supports else 'auto'
             else:
                 # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = tool_choice_mode
+                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
         else:
             assert_never(resolved_tool_choice)
 
@@ -2091,12 +2092,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
+                tool_choice = (
+                    ToolChoiceFunctionParam(type='function', name=next(iter(tool_names))) if supports else 'auto'
+                )
             else:
+                effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
                 tool_choice = ToolChoiceAllowedParam(
                     type='allowed_tools',
-                    mode=tool_choice_mode,
+                    mode=effective_mode,
                     tools=[{'type': 'function', 'name': n} for n in tool_names],
                 )
         else:
