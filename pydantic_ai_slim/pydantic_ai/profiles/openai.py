@@ -336,4 +336,12 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                     for k in schema['properties'].keys():
                         if k not in required:
                             self.is_strict_compatible = False
+
+        if schema_type == 'array':
+            items = schema.get('items')
+            if items is not None and not items:
+                # Empty `items: {}` (from bare `list` without type params) is not
+                # valid in OpenAI strict mode — the `items` schema must have a `type`.
+                self.is_strict_compatible = False
+
         return schema
