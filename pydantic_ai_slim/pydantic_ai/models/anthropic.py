@@ -952,7 +952,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         discovered_tools = _extract_discovered_tool_names(request_part, custom_tool_search_active)
-                        if discovered_tools is not None:
+                        if discovered_tools:
+                            # Anthropic rejects an empty `content` list on a `tool_result`
+                            # block, so when the custom search returned no matches fall
+                            # through to the normal text-formatting path (which sends the
+                            # "No matching tools found..." string from ``ToolSearchToolset``).
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
                                 type='tool_result',
