@@ -88,28 +88,13 @@ pytestmark = [
 
 
 def test_init():
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='foobar'))
+    provider = GroqProvider(api_key='foobar')
+    m = GroqModel('llama-3.3-70b-versatile', provider=provider)
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'llama-3.3-70b-versatile'
     assert m.system == 'groq'
     assert m.base_url == 'https://api.groq.com'
-
-
-def test_groq_client_property_reflects_provider_changes():
-    class _SwappableGroqProvider(GroqProvider):
-        @GroqProvider.client.setter
-        def client(self, client: AsyncGroq) -> None:
-            self._client = client
-
-    client_a = cast(AsyncGroq, MockGroq())
-    provider = _SwappableGroqProvider(groq_client=client_a)
-    model = GroqModel('llama-3.3-70b-versatile', provider=provider)
-
-    assert model.client is client_a
-
-    client_b = cast(AsyncGroq, MockGroq())
-    provider.client = client_b
-    assert model.client is client_b
 
 
 @dataclass

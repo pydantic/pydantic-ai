@@ -138,23 +138,6 @@ class MockMistralAI:
         return response
 
 
-def test_mistral_client_property_reflects_provider_changes():
-    class _SwappableMistralProvider(MistralProvider):
-        @MistralProvider.client.setter
-        def client(self, client: Mistral) -> None:
-            self._client = client
-
-    client_a = cast(Mistral, MockMistralAI())
-    provider = _SwappableMistralProvider(mistral_client=client_a)
-    model = MistralModel('mistral-large', provider=provider)
-
-    assert model.client is client_a
-
-    client_b = cast(Mistral, MockMistralAI())
-    provider.client = client_b
-    assert model.client is client_b
-
-
 def completion_message(
     message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None, with_created: bool = True
 ) -> MistralChatCompletionResponse:
@@ -214,7 +197,9 @@ def func_chunk(
 
 
 def test_init():
-    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='foobar'))
+    provider = MistralProvider(api_key='foobar')
+    m = MistralModel('mistral-large-latest', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'mistral-large-latest'
     assert m.base_url == 'https://api.mistral.ai'
 

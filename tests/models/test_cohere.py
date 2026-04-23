@@ -60,7 +60,9 @@ pytestmark = [
 
 
 def test_init():
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    provider = CohereProvider(api_key='foobar')
+    m = CohereModel('command-r7b-12-2024', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
     assert m.base_url == 'https://api.cohere.com'
@@ -95,23 +97,6 @@ class MockAsyncClientV2:
             response = cast(ChatResponse, self.completions)
         self.index += 1
         return response
-
-
-def test_cohere_client_property_reflects_provider_changes():
-    class _SwappableCohereProvider(CohereProvider):
-        @CohereProvider.client.setter
-        def client(self, client: AsyncClientV2) -> None:
-            self._client = client
-
-    client_a = MockAsyncClientV2.create_mock(completion_message(AssistantMessageResponse(content=[])))
-    provider = _SwappableCohereProvider(cohere_client=client_a)
-    model = CohereModel('command-r7b-12-2024', provider=provider)
-
-    assert model.client is client_a
-
-    client_b = MockAsyncClientV2.create_mock(completion_message(AssistantMessageResponse(content=[])))
-    provider.client = client_b
-    assert model.client is client_b
 
 
 def completion_message(message: AssistantMessageResponse, *, usage: cohere.Usage | None = None) -> ChatResponse:

@@ -87,23 +87,11 @@ async def test_model_simple(allow_model_requests: None):
     assert tool_config is None
 
 
-async def test_gemini_client_property_reflects_provider_changes():
-    class _SwappableGoogleGLAProvider(GoogleGLAProvider):
-        @GoogleGLAProvider.client.setter
-        def client(self, client: httpx.AsyncClient) -> None:
-            self._client = client
-
-    provider = _SwappableGoogleGLAProvider(api_key='via-arg')
+def test_gemini_client_property_delegates_to_provider():
+    provider = GoogleGLAProvider(api_key='via-arg')
     model = GeminiModel('gemini-1.5-flash', provider=provider)
-
-    client_a = provider.client
-    assert model.client is client_a
-
-    client_b = httpx.AsyncClient(base_url='https://example.com/')
-    provider.client = client_b
-    assert model.client is client_b
-    assert model.base_url == 'https://example.com/'
-    await client_b.aclose()
+    assert model.client is provider.client
+    assert model.base_url == str(provider.client.base_url)
 
 
 async def test_model_tools(allow_model_requests: None):

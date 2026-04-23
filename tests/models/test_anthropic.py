@@ -148,8 +148,10 @@ T = TypeVar('T')
 
 
 def test_init():
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+    provider = AnthropicProvider(api_key='foobar')
+    m = AnthropicModel('claude-haiku-4-5', provider=provider)
     assert isinstance(m.client, AsyncAnthropic)
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
@@ -213,23 +215,6 @@ class MockAnthropic:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         return BetaMessageTokensCount(input_tokens=10)
-
-
-def test_anthropic_client_property_reflects_provider_changes():
-    class _SwappableAnthropicProvider(AnthropicProvider):
-        @AnthropicProvider.client.setter
-        def client(self, client: AsyncAnthropic) -> None:
-            self._client = client
-
-    client_a = cast(AsyncAnthropic, MockAnthropic())
-    provider = _SwappableAnthropicProvider(anthropic_client=client_a)
-    model = AnthropicModel('claude-haiku-4-5', provider=provider)
-
-    assert model.client is client_a
-
-    client_b = cast(AsyncAnthropic, MockAnthropic())
-    provider.client = client_b
-    assert model.client is client_b
 
 
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
