@@ -4605,7 +4605,8 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -4664,10 +4665,12 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 },
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 },
                             ],
                             tool_call_id=IsStr(),
@@ -4779,7 +4782,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -4856,7 +4860,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     part=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                            }
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -4876,7 +4883,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                            }
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -5892,6 +5902,7 @@ async def test_google_stream_safety_filter(
         usage_metadata=None,
         create_time=datetime.datetime.now(),
         response_id='resp_123',
+        sdk_http_response=None,
     )
     chunk.model_dump_json.return_value = '{"mock": "json"}'
 
