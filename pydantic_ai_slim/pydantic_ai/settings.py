@@ -36,7 +36,6 @@ Supported by:
 * Gemini
 * Anthropic
 * Bedrock
-* Groq
 """
 
 

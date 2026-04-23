@@ -207,7 +207,7 @@ or [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
-    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_safety_settings: list[SafetySettingDict]
     """The safety settings to use for the model.
@@ -272,16 +272,16 @@ class GoogleModelSettings(ModelSettings, total=False):
     """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
 
 
-def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier | ServiceTier) -> dict[str, str]:
+def _google_vertex_service_tier_headers(service_tier: str) -> dict[str, str]:
     """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
     service_tier_str = service_tier.lower()
-    if service_tier_str in ('default', 'standard', 'flex', 'priority', 'pt_then_on_demand', 'auto'):
+    if service_tier_str in ('default', 'standard', 'priority', 'pt_then_on_demand', 'auto'):
         return {}
     if service_tier_str == 'pt_only':
         return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
     if service_tier_str == 'on_demand':
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
-    if service_tier_str == 'pt_then_flex':
+    if service_tier_str in ('pt_then_flex', 'flex'):
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
     if service_tier_str == 'flex_only':
         return {
@@ -668,8 +668,11 @@ class GoogleModel(Model[Client]):
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
-        service_tier_vertex = model_settings.get('google_vertex_service_tier') or model_settings.get(
-            'google_service_tier', 'pt_then_on_demand'
+        service_tier_vertex = (
+            model_settings.get('google_vertex_service_tier')
+            or model_settings.get('google_service_tier')
+            or model_settings.get('service_tier')
+            or 'pt_then_on_demand'
         )
         headers.update(_google_vertex_service_tier_headers(service_tier_vertex))
 
