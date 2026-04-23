@@ -2392,7 +2392,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 'call_id': call_id,
                                 'status': 'completed',
                             }
-                            if id and should_send_item_id:
+                            if id and should_send_item_id:  # pragma: no branch
                                 tool_search_call['id'] = id
                             openai_messages.append(tool_search_call)
                         else:
@@ -3042,12 +3042,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
-                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):  # pragma: lax no cover
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         # Added carries the full discovered-tools payload; emit the return
                         # part here. Done repeats the same item — handled as a no-op
-                        # below to avoid double-emission. Marked lax because CI's combined
-                        # coverage occasionally misses this branch even though the
-                        # streaming test exercises it end-to-end.
+                        # below to avoid double-emission.
                         call_id = chunk.item.call_id or chunk.item.id
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return',
@@ -3168,7 +3166,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             )
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
-                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):  # pragma: lax no cover
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         # Already emitted on the matching Added event — the Done payload
                         # is a duplicate.
                         pass
@@ -3816,10 +3814,10 @@ def _find_search_tool_definition(
     In custom-callable tool search mode, ``ToolSearchToolset`` leaves its ``search_tools``
     function tool in ``function_tools`` (no ``prefer_builtin``), so we look it up by name.
     """
-    for tool_def in model_request_parameters.function_tools:
-        if tool_def.name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
-            return tool_def
-    return None
+    return next(
+        (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),
+        None,
+    )
 
 
 def _map_tool_search_call(

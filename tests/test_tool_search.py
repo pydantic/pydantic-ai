@@ -1751,6 +1751,111 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None):
     )
 
 
+async def test_openai_client_tool_search_streaming(allow_model_requests: None):
+    """OpenAI Responses streaming for a client-executed `tool_search_call`:
+    Added/Done events surface as a regular `ToolCallPart` on ``search_tools`` so the
+    standard agent-graph tool-execution path can run the local callable strategy.
+    Also covers the per-call ``namespace`` round-trip that the Responses API attaches
+    to function calls emitted against discovered deferred tools.
+    """
+    from openai.types import responses as resp
+    from openai.types.responses import (
+        ResponseFunctionToolCall,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseToolSearchCall,
+    )
+
+    from pydantic_ai.messages import ToolCallPart
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses
+
+    base = resp.Response(
+        id='123',
+        model='gpt-5.4',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    client_call = ResponseToolSearchCall(
+        id='tsc_1',
+        arguments={'keywords': 'exchange rate'},
+        call_id='call_client_1',
+        execution='client',
+        status='completed',
+        type='tool_search_call',
+    )
+    # Discovered deferred tool: OpenAI attaches a per-call `namespace` we preserve on the
+    # resulting `ToolCallPart.provider_details` so we can round-trip it on replay.
+    namespaced_fn_call = ResponseFunctionToolCall(
+        id='fc_1',
+        arguments='{"from_currency":"USD","to_currency":"EUR"}',
+        call_id='call_fc_1',
+        name='get_exchange_rate',
+        namespace='get_exchange_rate',
+        status='completed',
+        type='function_call',
+    )
+    final = ResponseOutputMessage(
+        id='msg_1',
+        role='assistant',
+        status='completed',
+        type='message',
+        content=[ResponseOutputText(type='output_text', text='done.', annotations=[])],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=client_call, output_index=0, type='response.output_item.added', sequence_number=2
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=client_call, output_index=0, type='response.output_item.done', sequence_number=3
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=namespaced_fn_call, output_index=1, type='response.output_item.added', sequence_number=4
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=namespaced_fn_call, output_index=1, type='response.output_item.done', sequence_number=5
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=final, output_index=2, type='response.output_item.added', sequence_number=6
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=final, output_index=2, type='response.output_item.done', sequence_number=7
+        ),
+        resp.ResponseCompletedEvent(
+            response=base.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=8,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    from pydantic_ai.models import ModelRequestParameters as _ModelRequestParameters
+
+    params = _ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
+    async with model.request_stream([], None, params) as streamed:
+        async for _ in streamed:
+            pass
+        response = streamed.get()
+    # Route A: the client-executed `tool_search_call` surfaces as a regular
+    # `ToolCallPart` against our local `search_tools` function.
+    search_calls = [p for p in response.parts if isinstance(p, ToolCallPart) and p.tool_name == 'search_tools']
+    assert search_calls and search_calls[0].args_as_dict() == {'keywords': 'exchange rate'}
+    # The discovered function call carries its `namespace` in `provider_details` for replay.
+    fn_calls = [p for p in response.parts if isinstance(p, ToolCallPart) and p.tool_name == 'get_exchange_rate']
+    assert fn_calls and fn_calls[0].provider_details == {'namespace': 'get_exchange_rate'}
+
+
 async def test_agent_graph_without_builtin_tools(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
     """Covers `_agent_graph`'s empty `ctx.deps.builtin_tools` branch.
 
