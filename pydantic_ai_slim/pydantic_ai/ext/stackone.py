@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import os
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
@@ -20,6 +21,22 @@ if TYPE_CHECKING:
 
 __all__ = ('tool_from_stackone', 'StackOneToolset')
 
+_SEARCH_AND_EXECUTE_MIN_VERSION = (2, 5, 0)
+
+
+def _require_search_and_execute_support() -> None:
+    """Raise `ImportError` if the installed `stackone-ai` is too old for `mode='search_and_execute'`."""
+    try:
+        version = importlib.metadata.version('stackone-ai')
+    except importlib.metadata.PackageNotFoundError:
+        return
+    parts = tuple(int(p) for p in version.split('.')[:3] if p.isdigit())
+    if parts < _SEARCH_AND_EXECUTE_MIN_VERSION:
+        raise ImportError(
+            f"mode='search_and_execute' requires `stackone-ai>=2.5.0` (found {version}). "
+            'Install with `pip install -U stackone-ai`.'
+        )
+
 
 def _resolve_account_ids(
     account_ids: str | list[str] | None,
@@ -33,7 +50,7 @@ def _resolve_account_ids(
     """
     if isinstance(account_ids, str):
         return [account_ids]
-    if account_ids:
+    if account_ids is not None:
         return list(account_ids)
     env = os.getenv('STACKONE_ACCOUNT_ID')
     if env:
@@ -113,26 +130,22 @@ class StackOneToolset(FunctionToolset):
             raise ValueError("'search_config' and 'execute_config' require mode='search_and_execute'")
 
         if mode == 'search_and_execute':
+            _require_search_and_execute_support()
             if tools is not None or filter_pattern is not None:
                 raise ValueError("Cannot combine mode='search_and_execute' with 'tools' or 'filter_pattern'")
             has_execute_accounts = execute_config is not None and 'account_ids' in execute_config
             if has_execute_accounts and account_ids is not None:
                 raise ValueError("Cannot specify both 'account_ids' and 'execute_config[\"account_ids\"]'")
-            resolved = [] if has_execute_accounts else _resolve_account_ids(account_ids)
             stackone_toolset = StackOneToolSet(
                 api_key=api_key,
                 base_url=base_url,
                 search=search_config or {},
                 execute=execute_config,
             )
-            if resolved:
-                stackone_toolset.set_accounts(resolved)
-            if not hasattr(stackone_toolset, '_build_tools'):
-                raise ImportError(
-                    "mode='search_and_execute' requires stackone-ai >= 2.5.0. "
-                    'Install with `pip install stackone-ai>=2.5.0`'
-                )
-            meta_tools = stackone_toolset._build_tools()
+            if not has_execute_accounts:
+                stackone_toolset.set_accounts(_resolve_account_ids(account_ids))
+            # TODO: switch to a public API once `stackone-ai` exposes native support for pydantic tools.
+            meta_tools = stackone_toolset._build_tools()  # pyright: ignore[reportPrivateUsage]
             pydantic_tools = [_tool_from_stackone_tool(t) for t in meta_tools]
             super().__init__(pydantic_tools, id=id)
             return
@@ -152,9 +165,5 @@ class StackOneToolset(FunctionToolset):
             actions = filter_pattern
 
         fetched_tools = stackone_toolset.fetch_tools(actions=actions)
-
-        pydantic_tools: list[Tool] = []
-        for stackone_tool in fetched_tools:
-            pydantic_tools.append(_tool_from_stackone_tool(stackone_tool))
-
+        pydantic_tools = [_tool_from_stackone_tool(tool) for tool in fetched_tools]
         super().__init__(pydantic_tools, id=id)
