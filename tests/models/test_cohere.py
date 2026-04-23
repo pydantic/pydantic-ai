@@ -60,7 +60,9 @@ pytestmark = [
 
 
 def test_init():
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    provider = CohereProvider(api_key='foobar')
+    m = CohereModel('command-r7b-12-2024', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
     assert m.base_url == 'https://api.cohere.com'

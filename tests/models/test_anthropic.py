@@ -148,8 +148,10 @@ T = TypeVar('T')
 
 
 def test_init():
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+    provider = AnthropicProvider(api_key='foobar')
+    m = AnthropicModel('claude-haiku-4-5', provider=provider)
     assert isinstance(m.client, AsyncAnthropic)
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'

@@ -110,8 +110,10 @@ pytestmark = [
 
 
 def test_init():
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    provider = OpenAIProvider(api_key='foobar')
+    m = OpenAIChatModel('gpt-4o', provider=provider)
     assert m.base_url == 'https://api.openai.com/v1/'
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
 
