@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, ToolSearchTool
 from ..exceptions import UserError
 from ..settings import ThinkingLevel
 from . import ModelProfile
@@ -180,6 +181,13 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
+    # OpenAI's native `tool_search` tool with `defer_loading` is currently available on
+    # GPT-5.4 and later.
+    supports_tool_search = model_name.startswith('gpt-5.4')
+    supported_builtin_tools = (
+        SUPPORTED_BUILTIN_TOOLS if supports_tool_search else SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
+    )
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -196,6 +204,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        supported_builtin_tools=supported_builtin_tools,
     )
 
 

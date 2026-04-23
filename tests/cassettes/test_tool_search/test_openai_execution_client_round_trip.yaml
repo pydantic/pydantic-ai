@@ -1,0 +1,744 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1993'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3081'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1203'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776914175
+      created_at: 1776914174
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0776f2bc26bc16870069e98efebda481939e63fb135457b519
+      incomplete_details: null
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      moderation: null
+      object: response
+      output:
+      - arguments:
+          keywords: exchange rate currency usd eur forex
+        call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+        execution: client
+        id: tsc_0776f2bc26bc16870069e98eff60ac8193a117a74295c420f0
+        status: completed
+        type: tool_search_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 223
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 25
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 248
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2720'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=YJi3YX5OB1EqPt4cbVIoyXBvffAq.dWG2JMrN9pIHg0-1776914174.694682-1.0.1.1-x6ULyNfuhLQlCr0f1ONjaI0Fdb71xJYuLGaAfd.JtPC2SnCFeMzLDMkYAUhIkzGVrlyR_HSspo6y16NDEmoC9UZDTqcylc_vN.JENilOtX8ZVhKo8y7czHyu2sFL9aYR
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      - arguments:
+          keywords: exchange rate currency usd eur forex
+        call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+        execution: client
+        id: tsc_0776f2bc26bc16870069e98eff60ac8193a117a74295c420f0
+        status: completed
+        type: tool_search_call
+      - call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+        execution: client
+        status: completed
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: false
+          type: function
+        type: tool_search_output
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3234'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1239'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776914177
+      created_at: 1776914176
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0776f2bc26bc16870069e98f00b9ec8193b3ff962d32ea5a42
+      incomplete_details: null
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      moderation: null
+      object: response
+      output:
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_f1ak53o1XuudmPiM1ZaA2gox
+        id: fc_0776f2bc26bc16870069e98f01781081939dac02d73ce9e196
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 457
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 26
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 483
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3093'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=YJi3YX5OB1EqPt4cbVIoyXBvffAq.dWG2JMrN9pIHg0-1776914174.694682-1.0.1.1-x6ULyNfuhLQlCr0f1ONjaI0Fdb71xJYuLGaAfd.JtPC2SnCFeMzLDMkYAUhIkzGVrlyR_HSspo6y16NDEmoC9UZDTqcylc_vN.JENilOtX8ZVhKo8y7czHyu2sFL9aYR
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      - arguments:
+          keywords: exchange rate currency usd eur forex
+        call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+        execution: client
+        id: tsc_0776f2bc26bc16870069e98eff60ac8193a117a74295c420f0
+        status: completed
+        type: tool_search_call
+      - call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+        execution: client
+        status: completed
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: false
+          type: function
+        type: tool_search_output
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_f1ak53o1XuudmPiM1ZaA2gox
+        id: fc_0776f2bc26bc16870069e98f01781081939dac02d73ce9e196
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        type: function_call
+      - call_id: call_f1ak53o1XuudmPiM1ZaA2gox
+        output: 1 USD = 0.92 EUR
+        type: function_call_output
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3220'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1036'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1776914178
+      created_at: 1776914178
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0776f2bc26bc16870069e98f0213fc81939a59966e977770d4
+      incomplete_details: null
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 'Current rate: **1 USD = 0.92 EUR**.'
+          type: output_text
+        id: msg_0776f2bc26bc16870069e98f02988c81939fae8304f13a21b6
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 505
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 18
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 523
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

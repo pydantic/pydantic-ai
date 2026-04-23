@@ -21,7 +21,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.builtin_tools import SUPPORTED_BUILTIN_TOOLS, ToolSearchTool
+from pydantic_ai.builtin_tools import ToolSearchTool
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -361,36 +361,16 @@ def _build_run_context(
     deps: T,
     run_step: int = 0,
     messages: list[ModelMessage] | None = None,
-    *,
-    native: bool = False,
 ) -> RunContext[T]:
-    """Build a ``RunContext`` for unit tests.
-
-    ``TestModel`` deliberately excludes ``ToolSearchTool`` from its supported builtins,
-    so it exercises the local tool search path. Pass ``native=True`` to exercise the
-    native path where the model profile advertises support for the builtin.
-    """
-    model = _NativeTestModel() if native else TestModel()
+    """Build a ``RunContext`` for unit tests using ``TestModel``."""
     return RunContext(
         deps=deps,
-        model=model,
+        model=TestModel(),
         usage=RunUsage(),
         prompt=None,
         messages=messages or [],
         run_step=run_step,
     )
-
-
-class _NativeTestModel(TestModel):
-    """``TestModel`` variant that advertises support for ``ToolSearchTool``.
-
-    Lets unit tests exercise the native-provider tool-search path without needing a
-    real provider client.
-    """
-
-    @classmethod
-    def supported_builtin_tools(cls):
-        return SUPPORTED_BUILTIN_TOOLS
 
 
 def _create_function_toolset() -> FunctionToolset[None]:
@@ -434,7 +414,16 @@ async def test_tool_search_toolset_filters_deferred_tools():
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(['get_weather', 'get_time', 'search_tools'])
+    assert tool_names == snapshot(
+        [
+            'get_weather',
+            'get_time',
+            'calculate_mortgage~managed:tool_search',
+            'stock_price~managed:tool_search',
+            'crypto_price~managed:tool_search',
+            'search_tools',
+        ]
+    )
 
 
 async def test_search_tool_def_description_and_schema():
@@ -720,7 +709,18 @@ async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(['get_weather', 'get_time', 'calculate_mortgage', 'stock_price', 'crypto_price'])
+    assert tool_names == snapshot(
+        [
+            'get_weather',
+            'get_time',
+            'calculate_mortgage~managed:tool_search',
+            'calculate_mortgage',
+            'stock_price~managed:tool_search',
+            'stock_price',
+            'crypto_price~managed:tool_search',
+            'crypto_price',
+        ]
+    )
 
 
 async def test_tool_search_toolset_reserved_name_collision():
@@ -817,33 +817,10 @@ def test_tool_search_in_capability_registry():
     assert CAPABILITY_TYPES['ToolSearch'] is ToolSearch
 
 
-async def test_tool_manager_with_tool_search_toolset_native_path():
-    """On the native path, deferred tools show up in ``tool_defs`` as managed-by-builtin
-    entries so the model adapter can forward them with ``defer_loading=True``.
-    The ``search_tools`` fallback is not exposed."""
-    toolset = _create_function_toolset()
-    searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None, native=True)
-
-    tool_manager = ToolManager[None](searchable)
-    run_step_toolset = await tool_manager.for_run_step(ctx)
-
-    local_tool_names = [t.name for t in run_step_toolset.tool_defs if not t.managed_by_builtin]
-    assert 'get_weather' in local_tool_names
-    assert 'search_tools' not in local_tool_names
-
-    managed_tool_names = {t.name for t in run_step_toolset.tool_defs if t.managed_by_builtin == 'tool_search'}
-    assert managed_tool_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
-
-    result = await run_step_toolset.handle_call(
-        ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
-    )
-    assert 'Mortgage calculated' in str(result)
-
-
-async def test_tool_manager_with_tool_search_toolset_local_path():
-    """On the local path, deferred tools are not exposed to the model until discovered;
-    the ``search_tools`` fallback is offered so the model can discover them."""
+async def test_tool_manager_with_tool_search_toolset_exposes_both_variants():
+    """The toolset emits both representations of every deferred tool — a managed variant
+    carrying ``managed_by_builtin='tool_search'`` and, for discovered tools, a regular
+    variant. ``Model.prepare_request`` filters to one based on model support."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -851,14 +828,23 @@ async def test_tool_manager_with_tool_search_toolset_local_path():
     tool_manager = ToolManager[None](searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
 
-    local_tool_names = [t.name for t in run_step_toolset.tool_defs if not t.managed_by_builtin]
-    assert 'search_tools' in local_tool_names
-    assert 'get_weather' in local_tool_names
-    assert 'calculate_mortgage' not in local_tool_names
+    managed_names = {t.name for t in run_step_toolset.tool_defs if t.managed_by_builtin == 'tool_search'}
+    assert managed_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
 
-    managed_tool_names = {t.name for t in run_step_toolset.tool_defs if t.managed_by_builtin == 'tool_search'}
-    assert managed_tool_names == set()
+    local_names = [t.name for t in run_step_toolset.tool_defs if not t.managed_by_builtin]
+    assert 'get_weather' in local_names
+    assert 'search_tools' in local_names
+    # Undiscovered deferred tools don't appear in regular form.
+    assert 'calculate_mortgage' not in local_names
 
+    # Dispatch works under the plain name regardless of whether the entry only
+    # exists under the suffixed `~managed:tool_search` key.
+    result = await run_step_toolset.handle_call(
+        ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
+    )
+    assert 'Mortgage calculated' in str(result)
+
+    # The local search_tools function is also dispatchable.
     result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'keywords': 'mortgage'}))
     assert 'calculate_mortgage' in str(result)
 
@@ -940,7 +926,9 @@ async def test_function_toolset_all_deferred():
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(['search_tools'])
+    assert tool_names == snapshot(
+        ['deferred_tool1~managed:tool_search', 'deferred_tool2~managed:tool_search', 'search_tools']
+    )
 
 
 async def test_tool_search_toolset_ignores_non_metadata_history():
@@ -1042,40 +1030,44 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert 'tool_b' not in tools
 
 
-async def test_tool_search_toolset_emits_managed_tools_for_native_path():
-    """On the native path, every deferred tool is exposed under its plain name with
-    ``managed_by_builtin='tool_search'`` so the model adapter forwards it with
-    ``defer_loading=True``. The local ``search_tools`` fallback is skipped."""
+async def test_tool_search_toolset_emits_managed_variant_under_suffixed_key():
+    """Every deferred tool has a managed variant under a ``~managed:tool_search``
+    suffixed key regardless of the current model — the adapter's ``prepare_request``
+    filters to it when the model supports native tool search, so the toolset can't
+    commit early (e.g. under ``FallbackModel``)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None, native=True)
+    ctx = _build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
 
     managed = {name: tool.tool_def for name, tool in tools.items() if tool.tool_def.managed_by_builtin}
-    assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
+    assert set(managed) == {
+        'calculate_mortgage~managed:tool_search',
+        'stock_price~managed:tool_search',
+        'crypto_price~managed:tool_search',
+    }
     for tool_def in managed.values():
         assert tool_def.managed_by_builtin == 'tool_search'
         assert tool_def.defer_loading
-    assert _SEARCH_TOOLS_NAME not in tools
+    # The local fallback is still present — dropped by the adapter via ``prefer_builtin``.
+    assert _SEARCH_TOOLS_NAME in tools
 
 
-async def test_tool_search_toolset_native_path_dispatches_by_plain_name():
-    """On the native path, the provider discovers tools server-side and the model calls
-    them by their plain name — dispatch must work through the same plain-name key."""
+async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
+    """The provider calls a deferred tool by its plain name. ``ToolManager`` dispatches
+    to the same underlying ``ToolsetTool`` even when only the ``~managed:`` variant is
+    present in the toolset output (undiscovered tool)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None, native=True)
+    ctx = _build_run_context(None)
 
-    tools = await searchable.get_tools(ctx)
-    managed_tool = tools['calculate_mortgage']
-    result = await searchable.call_tool(
-        'calculate_mortgage',
-        {'principal': 100.0, 'rate': 5.0, 'years': 30},
-        ctx,
-        managed_tool,
+    tool_manager = ToolManager[None](searchable)
+    run_step_toolset = await tool_manager.for_run_step(ctx)
+    result = await run_step_toolset.handle_call(
+        ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
     )
-    assert result == 'Mortgage calculated'
+    assert 'Mortgage calculated' in str(result)
 
 
 async def test_tool_search_toolset_custom_search_fn_is_used():
@@ -1098,22 +1090,25 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     assert calls == ['anything']
 
 
-async def test_tool_search_toolset_custom_search_fn_forces_local_path():
-    """A custom ``search_fn`` keeps the toolset on the local path even when the model
-    profile advertises support for ``ToolSearchTool`` — the capability deliberately
-    skips registering the native builtin in that case, so the toolset must not emit
-    managed-by-builtin entries either."""
+async def test_tool_search_toolset_custom_search_fn_still_emits_managed_variants():
+    """A custom ``search_fn`` handles local discovery, but the toolset still emits the
+    managed variants of deferred tools — when the model supports native tool search
+    (including provider-side custom callable modes like Anthropic's tool_reference
+    mechanism or OpenAI's ``execution='client'``), the adapter keeps them and applies
+    ``defer_loading`` on the wire. Commitment to native-vs-local happens in
+    ``Model.prepare_request``, not here."""
 
     def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
         return []
 
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset, search_fn=custom_search)
-    ctx = _build_run_context(None, native=True)
+    ctx = _build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
 
-    assert not any(t.tool_def.managed_by_builtin for t in tools.values())
+    managed = [t.tool_def.name for t in tools.values() if t.tool_def.managed_by_builtin == 'tool_search']
+    assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
     assert _SEARCH_TOOLS_NAME in tools
 
 
@@ -1199,6 +1194,114 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     ]
     assert len(returns) == 1
     assert returns[0].content == '1 USD = 0.92 EUR'
+
+
+@pytest.mark.vcr
+async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """End-to-end: a custom callable ``ToolSearch`` strategy runs locally but still
+    surfaces natively on Anthropic — deferred tools ship with ``defer_loading: true``,
+    the model invokes the regular ``search_tools`` function tool, and our
+    ``tool_result`` is formatted as ``tool_reference`` blocks so the discovered tool
+    gets unlocked for the next turn."""
+    pytest.importorskip('anthropic')
+    import yaml
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    def match_exchange_rate(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+        # Deterministic: always point the model at `get_exchange_rate` so the cassette
+        # replay doesn't depend on the exact keywords the model picks.
+        return ['get_exchange_rate']
+
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(
+        model=model,
+        capabilities=[ToolSearch(strategy=match_exchange_rate)],
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'Weather in {city} is sunny.'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    result = await agent.run('What is the USD to EUR exchange rate?')
+
+    # The full sequence: user prompt -> model asks `search_tools` -> our local callable
+    # returns discovered tool names -> model follows up with the discovered tool ->
+    # we run it -> model replies with final text.
+    part_shape = [
+        [(type(part).__name__, getattr(part, 'tool_name', None)) for part in msg.parts] for msg in result.all_messages()
+    ]
+    assert part_shape == snapshot(
+        [
+            [('UserPromptPart', None)],
+            [('TextPart', None), ('ToolCallPart', 'search_tools')],
+            [('ToolReturnPart', 'search_tools')],
+            [('TextPart', None), ('ToolCallPart', 'get_exchange_rate')],
+            [('ToolReturnPart', 'get_exchange_rate')],
+            [('TextPart', None)],
+        ]
+    )
+
+    # The deferred tool dispatched successfully end-to-end.
+    rate_returns = [
+        part
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+    # Wire-level checks against the cassette: the deferred corpus ships with
+    # `defer_loading: true`, the model's `search_tools` call appears in the response,
+    # and our tool result is formatted as `tool_reference` blocks (not plain text).
+    from pathlib import Path
+    from typing import cast
+
+    cassette_path = (
+        Path(__file__).parent / 'cassettes' / 'test_tool_search' / 'test_anthropic_custom_callable_round_trip.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+
+    first_request_tools = cast(list[dict[str, Any]], interactions[0]['request']['parsed_body']['tools'])
+    deferred_names = {t['name'] for t in first_request_tools if t.get('defer_loading') is True}
+    assert deferred_names == {'get_exchange_rate', 'stock_lookup'}
+
+    first_response_blocks = cast(list[dict[str, Any]], interactions[0]['response']['parsed_body']['content'])
+    assert any(b['type'] == 'tool_use' and b['name'] == 'search_tools' for b in first_response_blocks)
+
+    second_request_messages = cast(list[dict[str, Any]], interactions[1]['request']['parsed_body']['messages'])
+    tool_result_blocks: list[dict[str, Any]] = [
+        block
+        for msg in second_request_messages
+        if msg['role'] == 'user' and isinstance(msg.get('content'), list)
+        for block in cast(list[dict[str, Any]], msg['content'])
+        if isinstance(block, dict) and block.get('type') == 'tool_result'
+    ]
+    assert tool_result_blocks, 'expected at least one tool_result block in the follow-up turn'
+    tool_reference_names: set[str] = set()
+    for block in tool_result_blocks:
+        block_content = block.get('content')
+        if not isinstance(block_content, list):
+            continue
+        for inner in cast(list[dict[str, Any]], block_content):
+            if isinstance(inner, dict) and inner.get('type') == 'tool_reference':
+                tool_reference_names.add(cast(str, inner['tool_name']))
+    assert tool_reference_names == {'get_exchange_rate'}
 
 
 async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None):
@@ -1392,6 +1495,85 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
     second_input = kwargs[1]['input']
     second_types = [item.get('type') for item in second_input if isinstance(item, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
     assert 'tool_search_call' in second_types
+
+
+@pytest.mark.vcr
+async def test_openai_execution_client_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end: a custom callable ``ToolSearch`` strategy surfaces natively on OpenAI
+    Responses as ``ToolSearchToolParam(execution='client')`` — the provider emits a
+    ``tool_search_call`` with ``execution='client'`` whose arguments we dispatch to the
+    local ``search_tools`` function, and the resulting ``ToolReturnPart`` is replayed
+    as a ``tool_search_output`` (execution='client') carrying the discovered tool defs."""
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    def match_exchange_rate(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+        # Deterministic: always point the model at `get_exchange_rate` so the cassette
+        # replay doesn't depend on the exact keywords the model picks.
+        return ['get_exchange_rate']
+
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        model=model,
+        instructions=(
+            'When you need a capability not provided by your visible tools, call the built-in '
+            'tool search first to discover and activate the right one before answering.'
+        ),
+        capabilities=[ToolSearch(strategy=match_exchange_rate)],
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'Weather in {city} is sunny.'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    result = await agent.run('What is the current exchange rate from USD to EUR?')
+
+    tool_call_names = [
+        part.tool_name
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    # The model called `search_tools` (our local, client-executed search) and then the
+    # discovered `get_exchange_rate` — routed through the regular `ToolCallPart` /
+    # `ToolReturnPart` path on both sides of the wire.
+    assert 'search_tools' in tool_call_names
+    assert 'get_exchange_rate' in tool_call_names
+
+    # The local `search_tools` run recorded the discovered tool name in metadata — this
+    # is the same key read back by `ToolSearchToolset` on later turns to unlock the
+    # deferred tool on the local path (and round-tripped as `tool_search_output.tools`
+    # in the cassette's replay request body).
+    search_returns = [
+        part
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
+    ]
+    assert len(search_returns) == 1
+    assert search_returns[0].metadata == {'discovered_tools': ['get_exchange_rate']}
+
+    rate_returns = [
+        part
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
 
 async def test_anthropic_native_tool_search_streaming(allow_model_requests: None):
@@ -1644,14 +1826,22 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
     assert result.metadata == {'discovered_tools': []}
 
 
-async def test_tool_search_capability_strategy_callable_skips_builtin():
-    """A callable strategy runs locally — no ToolSearchTool builtin is registered."""
+async def test_tool_search_capability_strategy_callable_registers_custom_builtin():
+    """A callable strategy still registers a ``ToolSearchTool`` builtin with ``custom=True``
+    so provider adapters that support a custom-callable native surface (e.g. Anthropic's
+    ``tool_reference`` result blocks, OpenAI's ``execution='client'``) can use it; models
+    without support drop it as optional and fall back to the local ``search_tools`` tool."""
 
     def noop(query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
         return []
 
     cap = ToolSearch(strategy=noop)
-    assert list(cap.get_builtin_tools()) == []
+    builtins = list(cap.get_builtin_tools())
+    assert len(builtins) == 1
+    tool = builtins[0]
+    assert isinstance(tool, ToolSearchTool)
+    assert tool.strategy is None
+    assert tool.custom is True
 
 
 async def test_tool_search_capability_strategy_named_registers_builtin():

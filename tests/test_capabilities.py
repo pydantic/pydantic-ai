@@ -448,13 +448,17 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
                 'FileSearchTool': {
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
                     },
                     'required': ['file_store_ids'],
@@ -464,6 +468,7 @@ def test_model_json_schema_with_capabilities():
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'background': {
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
@@ -918,6 +923,7 @@ def test_model_json_schema_with_capabilities():
                 'MCPServerTool': {
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'id': {'title': 'Id', 'type': 'string'},
                         'url': {'title': 'Url', 'type': 'string'},
                         'authorization_token': {
@@ -946,7 +952,10 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'MemoryTool': {
-                    'properties': {'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                    },
                     'title': 'MemoryTool',
                     'type': 'object',
                 },
@@ -992,11 +1001,13 @@ though not all of these settings are supported by all models.\
                 'ToolSearchTool': {
                     'properties': {
                         'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': True, 'title': 'Optional', 'type': 'boolean'},
                         'strategy': {
                             'anyOf': [{'enum': ['bm25', 'regex'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Strategy',
                         },
+                        'custom': {'default': False, 'title': 'Custom', 'type': 'boolean'},
                     },
                     'title': 'ToolSearchTool',
                     'type': 'object',
@@ -1005,6 +1016,7 @@ though not all of these settings are supported by all models.\
                     'deprecated': True,
                     'properties': {
                         'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1033,6 +1045,7 @@ though not all of these settings are supported by all models.\
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1061,6 +1074,7 @@ though not all of these settings are supported by all models.\
                 'WebSearchTool': {
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],
@@ -1112,6 +1126,7 @@ Supported by:
                 'XSearchTool': {
                     'properties': {
                         'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'allowed_x_handles': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'default': None,
@@ -4274,9 +4289,14 @@ class TestImageGenerationCapability:
         import dataclasses
         import inspect
 
-        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        # partial_images is excluded — not useful for subagent fallback (no streaming).
+        # `optional` is an `AbstractBuiltinTool` field that caller code uses to soft-fail
+        # on unsupported models — the capability already decides support via its own
+        # builtin/local routing, so it doesn't need a passthrough init param.
         builtin_fields = {
-            f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
+            f.name
+            for f in dataclasses.fields(ImageGenerationTool)
+            if f.name not in ('kind', 'partial_images', 'optional')
         }
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',

@@ -766,7 +766,7 @@ class Model(ABC, Generic[InterfaceClient]):
         - ``prefer_builtin``: a local fallback that is removed when the builtin IS supported.
         - ``managed_by_builtin``: part of a corpus managed by the builtin — kept when
           supported (adapter applies wire-format tweaks), dropped when not supported.
-        - Optional unsupported builtins (``type(t).optional``) with no corpus are silently
+        - Optional unsupported builtins (``t.optional``) with no corpus are silently
           dropped instead of raising.
         """
         supported_types = self.profile.supported_builtin_tools
@@ -776,7 +776,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
         supported_ids = {t.unique_id for t in supported_builtins}
         unsupported_ids = {t.unique_id for t in unsupported_builtins}
-        optional_ids = {t.unique_id for t in unsupported_builtins if type(t).optional}
+        optional_ids = {t.unique_id for t in unsupported_builtins if t.optional}
         fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
 
         without_fallback = unsupported_ids - fallback_ids - optional_ids
@@ -799,12 +799,20 @@ class Model(ABC, Generic[InterfaceClient]):
                 continue
             function_tools.append(t)
 
+        # Dedup by `tool_def.name`: some capabilities (notably tool search) produce both
+        # a managed variant (carries ``managed_by_builtin``) and a regular variant for
+        # the same tool, so `prepare_request` can pick the right one per model. On the
+        # native path both would survive the filter above, sending duplicate tool names
+        # on the wire. The managed variant is the one the model adapter knows how to
+        # express on the wire with provider-specific tweaks (e.g. ``defer_loading``),
+        # so it wins over its regular counterpart.
+        managed_names = {t.name for t in function_tools if t.managed_by_builtin}
+        function_tools = [t for t in function_tools if t.managed_by_builtin or t.name not in managed_names]
+
         # Drop optional builtins whose managed corpus is empty after filtering —
         # they have nothing to do, so sending them would waste a tool slot.
         remaining_corpus_ids = {t.managed_by_builtin for t in function_tools if t.managed_by_builtin}
-        supported_builtins = [
-            t for t in supported_builtins if not type(t).optional or t.unique_id in remaining_corpus_ids
-        ]
+        supported_builtins = [t for t in supported_builtins if not t.optional or t.unique_id in remaining_corpus_ids]
         return replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
     @property

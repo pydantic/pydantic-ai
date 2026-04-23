@@ -142,6 +142,7 @@ try:
         BetaThinkingDelta,
         BetaToolChoiceParam,
         BetaToolParam,
+        BetaToolReferenceBlockParam,
         BetaToolSearchToolBm25_20251119Param,
         BetaToolSearchToolRegex20251119Param,
         BetaToolSearchToolResultBlock,
@@ -858,8 +859,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.add('context-management-2025-06-27')
             elif isinstance(tool, ToolSearchTool):  # pragma: no branch
+                # Custom-callable strategies go through the regular `search_tools` function tool
+                # (which is already in `function_tools`), so no server-side builtin is emitted.
+                if tool.custom:
+                    pass
                 # Default strategy is BM25; regex is the alternative named strategy.
-                if tool.strategy == 'regex':
+                elif tool.strategy == 'regex':
                     tools.append(
                         BetaToolSearchToolRegex20251119Param(
                             type='tool_search_tool_regex_20251119',
@@ -924,6 +929,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        # In custom-callable tool search mode, `search_tools` is a regular function tool and
+        # Anthropic expects its results as `tool_reference` blocks so discovered tools get
+        # unlocked on the provider side.
+        custom_tool_search_active = any(
+            isinstance(t, ToolSearchTool) and t.custom for t in model_request_parameters.builtin_tools
+        )
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -938,6 +949,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
+
+                        discovered_tools = _extract_discovered_tool_names(request_part, custom_tool_search_active)
+                        if discovered_tools is not None:
+                            tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
+                                tool_use_id=_guard_tool_call_id(t=request_part),
+                                type='tool_result',
+                                content=[
+                                    BetaToolReferenceBlockParam(tool_name=name, type='tool_reference')
+                                    for name in discovered_tools
+                                ],
+                                is_error=False,
+                            )
+                            user_content_params.append(tool_result_block_param)
+                            continue
 
                         for item in request_part.content_items(mode='str'):
                             if isinstance(item, UploadedFile):
@@ -1904,6 +1929,25 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_active: bool) -> list[str] | None:
+    """Return discovered tool names to render as Anthropic `tool_reference` blocks.
+
+    Returns the list when ``part`` is a custom-callable `search_tools` result and its
+    metadata carries a ``discovered_tools`` list of strings. Returns ``None`` when the
+    default text/document formatting should be used.
+    """
+    if not custom_tool_search_active or part.tool_name != 'search_tools':
+        return None
+    metadata = part.metadata
+    if not isinstance(metadata, dict):
+        return None
+    metadata_dict = cast(dict[str, Any], metadata)
+    discovered = metadata_dict.get('discovered_tools')
+    if not isinstance(discovered, list) or not all(isinstance(name, str) for name in cast(list[Any], discovered)):
+        return None
+    return cast(list[str], discovered)
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:

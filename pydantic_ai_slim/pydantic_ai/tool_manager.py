@@ -155,15 +155,36 @@ class ToolManager(Generic[AgentDepsT]):
 
         return mode
 
-    def get_tool_def(self, name: str) -> ToolDefinition | None:
-        """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
+    def _tool_by_name(self, name: str) -> ToolsetTool[AgentDepsT] | None:
+        """Look up a tool by the name the model calls it by (``tool_def.name``).
+
+        The raw ``self.tools`` dict may use internal-use keys alongside plain names —
+        e.g. the tool-search ``~managed:`` convention where two entries can point at
+        the same deferred tool (one carrying ``managed_by_builtin``, one without) so
+        that ``Model.prepare_request`` can filter to the variant the specific model
+        supports. Dispatch must hit the entry the model is actually calling, which is
+        the one whose ``tool_def.name`` matches. On collision (both variants of the
+        same name present), prefer the regular variant; both share dispatch semantics,
+        so either works if only the managed one is present.
+        """
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        tool = self.tools.get(name)
+        if tool is not None and tool.tool_def.name == name:
+            return tool
+        best: ToolsetTool[AgentDepsT] | None = None
+        for t in self.tools.values():
+            if t.tool_def.name != name:
+                continue
+            if not t.tool_def.managed_by_builtin:
+                return t
+            best = t
+        return best
 
-        try:
-            return self.tools[name].tool_def
-        except KeyError:
-            return None
+    def get_tool_def(self, name: str) -> ToolDefinition | None:
+        """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
+        tool = self._tool_by_name(name)
+        return tool.tool_def if tool is not None else None
 
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
@@ -367,13 +388,14 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         name = call.tool_name
-        tool = self.tools.get(name)
+        tool = self._tool_by_name(name)
         ctx = self.ctx
 
         try:
             if tool is None:
                 if self.tools:
-                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+                    available = sorted({t.tool_def.name for t in self.tools.values()})
+                    msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
                 else:
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import cast
 
 from .._run_context import AgentDepsT
-from ..builtin_tools import ToolSearchFunc, ToolSearchStrategy, ToolSearchTool
+from ..builtin_tools import ToolSearchFunc, ToolSearchNamedStrategy, ToolSearchStrategy, ToolSearchTool
 from ..tools import AgentBuiltinTool
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset
@@ -79,13 +80,17 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         return 'ToolSearch'
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        # Register ToolSearchTool as a builtin so model adapters can route to native search
-        # when supported. For callable strategies, we don't register the native variant —
-        # the capability stays local-only and `managed_by_builtin` filtering drops the
-        # deferred-tools-on-wire path.
-        if callable(self.strategy):
-            return []
-        return [ToolSearchTool(strategy=self.strategy)]
+        # Register `ToolSearchTool` for every strategy. Named strategies surface as the
+        # provider's server-side native search (bm25/regex on Anthropic, server-executed
+        # tool_search on OpenAI). A custom callable surfaces as the provider's
+        # "client-executed" native mode (Anthropic: regular function tool with
+        # tool_reference result formatting; OpenAI: `execution='client'`), with the
+        # model's search calls routed back to our local `search_tools` function. On
+        # models that don't support `ToolSearchTool`, the builtin is dropped as optional
+        # and the capability's local path takes over.
+        custom = callable(self.strategy)
+        named_strategy = self.strategy if not custom else None
+        return [ToolSearchTool(strategy=cast('ToolSearchNamedStrategy | None', named_strategy), custom=custom)]
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         return ToolSearchToolset(

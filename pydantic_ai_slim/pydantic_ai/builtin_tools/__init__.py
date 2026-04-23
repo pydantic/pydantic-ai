@@ -4,7 +4,7 @@ from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, ClassVar, Literal, TypeAlias, Union
+from typing import Annotated, Any, Literal, TypeAlias, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -53,14 +53,18 @@ class AbstractBuiltinTool(ABC):
     kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
 
-    optional: ClassVar[bool] = False
-    """Whether the builtin is a best-effort upgrade rather than a hard requirement.
+    optional: bool = False
+    """Whether this instance is a best-effort upgrade rather than a hard requirement.
 
-    When ``True``, an instance on a model that doesn't support it is silently dropped
-    from the request instead of raising when no local fallback is provided. Set by
-    infrastructure capabilities (e.g.
-    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]) whose builtin enables a native
-    optimization rather than a user-visible feature.
+    When ``True``, the instance is silently dropped from the request on a model that
+    doesn't support it, instead of raising when no local fallback is provided.
+
+    Defaults to ``False`` (the user explicitly asked for this tool; fail loudly if we
+    can't honor it). Subclasses backing infrastructure capabilities whose builtin enables
+    a native optimization rather than a user-visible feature (e.g.
+    [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]) default this to
+    ``True``; users can also pass ``optional=True`` themselves to opt into soft-fail
+    semantics for any builtin.
     """
 
     @property
@@ -605,19 +609,29 @@ itself (meaning "use the provider default") but isn't part of this alias.
 class ToolSearchTool(AbstractBuiltinTool):
     """A builtin tool that enables native provider tool search.
 
-    When supported, the provider handles tool discovery using its own search mechanism,
-    and tools marked as part of the search corpus (via ``managed_by_builtin='tool_search'``
-    on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent with
-    ``defer_loading`` on the wire. The provider manages their visibility and only exposes
-    them once they've been discovered.
+    Tools marked as part of the search corpus (via ``managed_by_builtin='tool_search'``
+    on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent to supporting
+    providers with ``defer_loading`` on the wire; the provider manages their visibility
+    and only exposes them once they've been discovered.
 
-    When not supported, the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability's
-    local implementation handles discovery via its own ``search_tools`` function tool.
+    The mode of discovery depends on ``strategy``:
+
+    * A named strategy (or ``None`` for the provider default): the provider runs the
+      search server-side using its own indexing (Anthropic ``bm25``/``regex``, OpenAI
+      server-executed ``tool_search``).
+    * A custom callable: the provider invokes our local search function to answer each
+      search request. On Anthropic this goes via a regular function tool whose return
+      value the adapter re-formats as ``tool_reference`` blocks; on OpenAI it goes via
+      ``ToolSearchToolParam(execution='client')`` with our callable's parameter schema.
+
+    When the model doesn't support native tool search at all, the
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability's local
+    implementation handles discovery via its own ``search_tools`` function tool.
 
     Supported by:
 
-    * Anthropic (bm25, regex) — Sonnet 4.0+, Opus 4.0+, Haiku 4.5+
-    * OpenAI Responses (server) — GPT-5.4+
+    * Anthropic (bm25, regex, custom callable) — Sonnet 4.0+, Opus 4.0+, Haiku 4.5+
+    * OpenAI Responses (server, custom callable via ``execution='client'``) — GPT-5.4+
     """
 
     strategy: ToolSearchNamedStrategy | None = None
@@ -628,16 +642,29 @@ class ToolSearchTool(AbstractBuiltinTool):
     * ``'bm25'`` / ``'regex'``: force a specific Anthropic native strategy. Raises on other
       providers.
 
-    Custom callable strategies aren't carried on this builtin — they run locally via the
-    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability.
+    Custom callable strategies aren't carried on this builtin — they live on the
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability, which sets ``custom=True``
+    on the builtin when it registers it.
+    """
+
+    custom: bool = False
+    """Whether discovery is performed by a custom callable on our side rather than by the
+    provider's server-side indexing.
+
+    When ``True``, adapters emit the provider-specific "client-executed" surface (Anthropic:
+    a regular function tool with tool-reference result formatting; OpenAI:
+    ``ToolSearchToolParam(execution='client')``) and route the model's search calls back to
+    our local ``search_tools`` function. Set by
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] when its ``strategy`` is a callable.
     """
 
     kind: str = 'tool_search'
     """The kind of tool."""
 
-    # Silently dropped on models that don't support native tool search — the capability's
-    # local `search_tools` function handles discovery instead.
-    optional: ClassVar[bool] = True
+    optional: bool = True
+    """Default ``True``: the builtin is silently dropped on models that don't support
+    native tool search — the capability's local ``search_tools`` function handles
+    discovery instead."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
