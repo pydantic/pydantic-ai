@@ -7767,8 +7767,15 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(test_model, toolsets=[foo_toolset], output_type=Foo, event_stream_handler=event_stream_handler)
+    agent = Agent(
+        test_model,
+        system_prompt='You are a wrapped agent',
+        toolsets=[foo_toolset],
+        output_type=Foo,
+        event_stream_handler=event_stream_handler,
+    )
     wrapper_agent = WrapperAgent(agent)
+    assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
     assert wrapper_agent.name == agent.name
