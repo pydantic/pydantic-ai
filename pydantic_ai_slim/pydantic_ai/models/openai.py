@@ -3891,10 +3891,11 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
     """
     call_id = item.call_id or item.id
     args_dict = cast('dict[str, Any]', item.arguments)
-    # OpenAI's `tool_search_call` uses `query`; our local tool uses `keywords`.
+    # OpenAI passes through the schema we registered with the builtin, so its
+    # ``tool_search_call.arguments`` uses our local tool's ``keywords`` key.
     return ToolCallPart(
         tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
-        args={'keywords': args_dict.get('query', '')},
+        args=args_dict,
         tool_call_id=call_id,
         id=item.id,
     )
