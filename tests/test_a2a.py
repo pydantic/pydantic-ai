@@ -28,7 +28,7 @@ from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
-    from fasta2a.schema import DataPart, FilePart, Message, TextPart
+    from fasta2a.schema import DataPart, FilePart, Message, TaskSendParams, TextPart
     from fasta2a.storage import InMemoryStorage
 
 
@@ -878,6 +878,180 @@ async def test_a2a_multiple_messages():
                     },
                 }
             )
+
+
+async def test_a2a_deps_factory_sync():
+    """Test that a synchronous deps_factory is called per request with the task params."""
+    from dataclasses import dataclass as dc
+
+    @dc
+    class MyDeps:
+        user_id: str
+
+    call_count = 0
+    captured_user_ids: list[str] = []
+
+    agent: Agent[MyDeps, tuple[str, str]] = Agent(model=model, deps_type=MyDeps, output_type=tuple[str, str])
+
+    def make_deps(params: TaskSendParams) -> MyDeps:
+        nonlocal call_count
+        call_count += 1
+        user_id = (params['message'].get('metadata') or {}).get('user_id', 'anonymous')
+        captured_user_ids.append(user_id)
+        return MyDeps(user_id=user_id)
+
+    app = agent.to_a2a(deps_factory=make_deps)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+                metadata={'user_id': 'alice'},
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] in ('completed', 'failed'):
+                    break
+                await anyio.sleep(0.1)
+
+            assert task['result']['status']['state'] == 'completed'
+            assert call_count == 1
+            assert captured_user_ids == ['alice']
+
+
+async def test_a2a_deps_factory_async():
+    """Test that an async deps_factory is awaited and its result is passed as deps."""
+    from dataclasses import dataclass as dc
+
+    @dc
+    class MyDeps:
+        user_id: str
+
+    captured_user_ids: list[str] = []
+
+    agent: Agent[MyDeps, tuple[str, str]] = Agent(model=model, deps_type=MyDeps, output_type=tuple[str, str])
+
+    async def make_deps_async(params: TaskSendParams) -> MyDeps:
+        await anyio.sleep(0)  # yield to event loop
+        user_id = (params['message'].get('metadata') or {}).get('user_id', 'anonymous')
+        captured_user_ids.append(user_id)
+        return MyDeps(user_id=user_id)
+
+    app = agent.to_a2a(deps_factory=make_deps_async)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+                metadata={'user_id': 'bob'},
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] in ('completed', 'failed'):
+                    break
+                await anyio.sleep(0.1)
+
+            assert task['result']['status']['state'] == 'completed'
+            assert captured_user_ids == ['bob']
+
+
+async def test_a2a_deps_factory_receives_task_send_params():
+    """Test that deps_factory receives the correct TaskSendParams object."""
+    received_params: list[TaskSendParams] = []
+
+    agent = Agent(model=model, output_type=tuple[str, str])
+
+    def make_deps(params: TaskSendParams) -> None:
+        received_params.append(params)
+        return None
+
+    app = agent.to_a2a(deps_factory=make_deps)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] in ('completed', 'failed'):
+                    break
+                await anyio.sleep(0.1)
+
+            assert task['result']['status']['state'] == 'completed'
+            assert len(received_params) == 1
+            assert received_params[0]['id'] == task_id
+
+
+async def test_a2a_deps_factory_raises_marks_task_failed():
+    """Test that if deps_factory raises, the task transitions to 'failed' state."""
+    agent = Agent(model=model, output_type=tuple[str, str])
+
+    def failing_deps(params: TaskSendParams) -> None:
+        raise ValueError('auth failed')
+
+    app = agent.to_a2a(deps_factory=failing_deps)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] in ('completed', 'failed'):
+                    break
+                await anyio.sleep(0.1)
+
+            assert task['result']['status']['state'] == 'failed'
 
 
 async def test_a2a_multiple_send_task_messages():
