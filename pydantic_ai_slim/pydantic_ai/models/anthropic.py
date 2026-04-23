@@ -96,7 +96,6 @@ try:
         BetaCompactionBlock,
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
-        BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -271,17 +270,20 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
     """
 
-    anthropic_container: BetaContainerParams | str | Literal[False]
+    anthropic_container: str | Literal[False]
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically (sent as the raw id string, which is what the
-    Anthropic API currently accepts for reuse).
+    it will be reused automatically.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
-    Set to a string (e.g. `'container_xxx'`) to explicitly reuse a container.
-    A dict form (e.g. `{'id': 'container_xxx'}`) is also accepted for completeness
-    with the SDK type, but the string form is preferred.
+    Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container.
+
+    Note: the Anthropic SDK types `container` as `BetaContainerParams | str`, but the
+    live API rejects the `BetaContainerParams` (object) form with
+    `container: Input should be a valid string`, so only the raw id string is accepted
+    here. See `test_anthropic_container_setting_explicit_dict_form_live` for the
+    cassette-backed proof.
     """
 
     anthropic_eager_input_streaming: bool
@@ -657,16 +659,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return betas, extra_headers
 
-    def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | str | None:
-        """Get container config for the API request.
+    def _get_container(self, messages: list[ModelMessage], model_settings: AnthropicModelSettings) -> str | None:
+        """Get container id for the API request.
 
-        The Anthropic SDK types accept both a `BetaContainerParams` dict and a raw `str`
-        for the `container` field, but the live API currently only accepts the string
-        form for reuse (the object form is rejected with
-        `container: Input should be a valid string`), so we default to the string form
-        when reusing a container from message history.
+        The Anthropic SDK types `container` as `BetaContainerParams | str`, but the
+        live API rejects the `BetaContainerParams` (object) form with
+        `container: Input should be a valid string`, so we always return the raw id.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             return None if container is False else container
