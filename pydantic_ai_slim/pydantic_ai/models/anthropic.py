@@ -15,6 +15,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     AbstractBuiltinTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -1938,7 +1939,7 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     metadata carries a ``discovered_tools`` list of strings. Returns ``None`` when the
     default text/document formatting should be used.
     """
-    if not custom_tool_search_active or part.tool_name != 'search_tools':
+    if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
         return None
     metadata = part.metadata
     if not isinstance(metadata, dict):

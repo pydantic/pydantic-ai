@@ -40,14 +40,14 @@ from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
-from ..builtin_tools import ToolSearchFunc
+from ..builtin_tools import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchFunc
 from ..exceptions import ModelRetry, UserError
 from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
-_SEARCH_TOOLS_NAME = 'search_tools'
+_SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = 'tool_search'
 _MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
 

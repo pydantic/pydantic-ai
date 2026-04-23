@@ -27,6 +27,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..builtin_tools import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     AbstractBuiltinTool,
     CodeExecutionTool,
     FileSearchTool,
@@ -2090,7 +2091,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return [
             self._map_tool_definition(r)
             for r in model_request_parameters.tool_defs.values()
-            if not (client_tool_search and r.name == _SEARCH_TOOLS_NAME)
+            if not (client_tool_search and r.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
 
     def _get_builtin_tools(  # noqa: C901
@@ -2310,7 +2311,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        if client_tool_search_active and part.tool_name == _SEARCH_TOOLS_NAME:
+                        if client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
                             # discovered-tool state tied to the `tool_search_call`.
@@ -2380,7 +2381,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id, id = _split_combined_tool_call_id(call_id)
                         id = id or item.id
 
-                        if client_tool_search_active and item.tool_name == _SEARCH_TOOLS_NAME:
+                        if client_tool_search_active and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
                             # Replay the local `search_tools` call as a `tool_search_call`
                             # with `execution='client'` so OpenAI re-attaches it to the
                             # builtin and resumes the client-side discovery flow.
@@ -3796,14 +3797,6 @@ def _map_code_interpreter_tool_call(
     )
 
 
-_SEARCH_TOOLS_NAME = 'search_tools'
-"""Name of the local search function tool emitted by ``ToolSearchToolset``.
-
-Mirrors ``pydantic_ai.toolsets._tool_search._SEARCH_TOOLS_NAME``; kept as a literal here
-to avoid importing private symbols across modules.
-"""
-
-
 def _has_custom_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
     """Whether the current run uses client-executed tool search (callable strategy)."""
     return any(isinstance(t, ToolSearchTool) and t.custom for t in model_request_parameters.builtin_tools)
@@ -3818,7 +3811,7 @@ def _find_search_tool_definition(
     function tool in ``function_tools`` (no ``prefer_builtin``), so we look it up by name.
     """
     for tool_def in model_request_parameters.function_tools:
-        if tool_def.name == _SEARCH_TOOLS_NAME:
+        if tool_def.name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
             return tool_def
     return None
 
@@ -3915,7 +3908,7 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
         raw = args_dict.get('keywords') or args_dict.get('query') or ''
         keywords = raw if isinstance(raw, str) else ''
     return ToolCallPart(
-        tool_name=_SEARCH_TOOLS_NAME,
+        tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
         args={'keywords': keywords},
         tool_call_id=call_id,
         id=item.id,
@@ -3931,12 +3924,13 @@ def _build_tool_search_return_part(
     """Build the builtin return part for an OpenAI tool search, with or without output."""
     tool_names: list[str] = []
     if output_item is not None:
-        # `output_item.tools` is `list[Tool]` — a union of OpenAI Responses tool variants.
-        # Function tools carry a `name` attribute, but not every variant does, so we
-        # duck-type the read.
+        # `output_item.tools` is a union of OpenAI Responses tool variants; only
+        # function tools carry the name we want. Other variants (file_search, image
+        # generation, etc.) can't appear here in practice but aren't statically
+        # excluded from the union, so we filter by type.
         for t in output_item.tools:
-            if isinstance(name := getattr(t, 'name', None), str):
-                tool_names.append(name)
+            if isinstance(t, responses.FunctionTool):
+                tool_names.append(t.name)
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,

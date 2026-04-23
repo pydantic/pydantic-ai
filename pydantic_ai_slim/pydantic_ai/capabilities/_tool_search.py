@@ -26,7 +26,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     on the wire and the provider exposes them once they've been discovered. Otherwise,
     discovery happens locally via a ``search_tools`` function that the model can call.
 
-    ```python {test="skip"}
+    ```python
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import ToolSearch
 

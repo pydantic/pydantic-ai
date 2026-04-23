@@ -26,6 +26,7 @@ __all__ = (
     'ToolSearchStrategy',
     'ToolSearchNamedStrategy',
     'ToolSearchFunc',
+    'TOOL_SEARCH_FUNCTION_TOOL_NAME',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -593,6 +594,12 @@ IDE support.
 ToolSearchNamedStrategy: TypeAlias = Literal['bm25', 'regex']
 """Named server-side tool search strategy supported by Anthropic."""
 
+TOOL_SEARCH_FUNCTION_TOOL_NAME = 'search_tools'
+"""Name of the local function tool that backs [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
+for keyword-based discovery when native tool search isn't available, and that model adapters
+route to for provider-side "client-executed" custom callable modes (Anthropic tool-reference
+blocks; OpenAI ``execution='client'``)."""
+
 ToolSearchStrategy: TypeAlias = Union[ToolSearchFunc, ToolSearchNamedStrategy]  # noqa: UP007
 """Tool search strategy value accepted by the
 [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability.
@@ -630,7 +637,7 @@ class ToolSearchTool(AbstractBuiltinTool):
 
     Supported by:
 
-    * Anthropic (bm25, regex, custom callable) — Sonnet 4.0+, Opus 4.0+, Haiku 4.5+
+    * Anthropic (bm25, regex, custom callable) — Sonnet 4.5+, Opus 4.5+, Haiku 4.5+
     * OpenAI Responses (server, custom callable via ``execution='client'``) — GPT-5.4+
     """
 
