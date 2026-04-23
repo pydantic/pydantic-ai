@@ -178,13 +178,6 @@ TUPLE_CASES = [
         expected_tools={'a', 'c'},
     ),
     dict(
-        id='list_partial_invalid',
-        tool_choice=['a', 'invalid'],
-        params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        expected_mode='required',
-        expected_tools={'a', 'invalid'},
-    ),
-    dict(
         id='tool_or_output_empty_with_output_tools_direct_output',
         tool_choice=ToolOrOutput(function_tools=[]),
         params_kwargs={'output_tools': [make_tool('final_result')], 'allow_text_output': True},
@@ -197,17 +190,6 @@ TUPLE_CASES = [
         params_kwargs={'output_tools': [make_tool('final_result')], 'allow_text_output': False},
         expected_mode='required',
         expected_tools={'final_result'},
-    ),
-    dict(
-        id='tool_or_output_partial_invalid',
-        tool_choice=ToolOrOutput(function_tools=['a', 'invalid']),
-        params_kwargs={
-            'function_tools': [make_tool('a'), make_tool('b')],
-            'output_tools': [make_tool('final_result')],
-            'allow_text_output': True,
-        },
-        expected_mode='auto',
-        expected_tools={'a', 'final_result', 'invalid'},
     ),
     dict(
         id='tool_or_output_subset_with_direct_output',
@@ -289,6 +271,41 @@ def test_resolve_tool_choice_raises(case: dict[str, Any]):
     params = ModelRequestParameters(**params_kwargs)
     with pytest.raises(UserError, match=match):
         resolve_tool_choice({'tool_choice': tool_choice}, params)
+
+
+WARNS_CASES = [
+    dict(
+        id='list_partial_invalid',
+        tool_choice=['a', 'typo'],
+        params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
+        match=r"Some tools.*'typo'.*Available tools: \['a', 'b'\]",
+        expected_mode='required',
+        expected_tools={'a', 'typo'},
+    ),
+    dict(
+        id='tool_or_output_partial_invalid',
+        tool_choice=ToolOrOutput(function_tools=['a', 'typo']),
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r"Some tools.*'typo'.*Available function tools: \['a', 'b'\]",
+        expected_mode='auto',
+        expected_tools={'a', 'final_result', 'typo'},
+    ),
+]
+
+
+@pytest.mark.parametrize('case', WARNS_CASES, ids=lambda c: c['id'])
+def test_resolve_tool_choice_partial_invalid_warns(case: dict[str, Any]):
+    """Partial-invalid tool names emit a warning (not an error) to support dynamic tool availability."""
+    params = ModelRequestParameters(**case['params_kwargs'])
+    with pytest.warns(UserWarning, match=case['match']):
+        result = resolve_tool_choice({'tool_choice': case['tool_choice']}, params)
+    assert isinstance(result, tuple)
+    assert result[0] == case['expected_mode']
+    assert set(result[1]) == case['expected_tools']
 
 
 # =============================================================================

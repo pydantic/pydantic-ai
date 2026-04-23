@@ -1,3 +1,4 @@
+import warnings
 from typing import Literal
 
 from typing_extensions import assert_never
@@ -52,12 +53,24 @@ def resolve_tool_choice(  # noqa: C901
 
     available_tools = set(model_request_parameters.tool_defs.keys())
 
-    def _invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
+    def _check_invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
         invalid = chosen_tool_names - available_tools
-        if invalid:  # pragma: no branch
+        if not invalid:
+            return
+        if invalid == chosen_tool_names:
             raise UserError(
                 f'Invalid tool names in `tool_choice`: {invalid}. {available_label}: {available_tools or "none"}'
             )
+        # Partial match: some chosen tools are valid, some aren't. This is allowed to support
+        # dynamic tool availability (e.g. toolsets that expose different tools per request),
+        # but we warn so typos don't pass silently.
+        # https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r2677602549
+        warnings.warn(
+            f'Some tools in `tool_choice` are not currently available and will be ignored: '
+            f'{sorted(invalid)}. {available_label}: {sorted(available_tools)}',
+            UserWarning,
+            stacklevel=3,
+        )
 
     # Default / auto
     if function_tool_choice in (None, 'auto'):
@@ -95,9 +108,7 @@ def resolve_tool_choice(  # noqa: C901
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
-        # we'll only raise here if none of the chosen tools are valid https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r2677602549
-        if chosen_set - available_tools == chosen_set:
-            _invalid_tools(chosen_set, available_tools, available_label='Available tools')
+        _check_invalid_tools(chosen_set, available_tools, available_label='Available tools')
 
         if chosen_set == available_tools:
             return 'required'
@@ -116,13 +127,11 @@ def resolve_tool_choice(  # noqa: C901
 
         chosen_function_set = set(function_tool_choice.function_tools)
         all_function_tool_names = {t.name for t in model_request_parameters.function_tools}
-        # same as above - only raise if none are valid
-        if chosen_function_set - all_function_tool_names == chosen_function_set:
-            _invalid_tools(
-                chosen_function_set,
-                all_function_tool_names,
-                available_label='Available function tools',
-            )
+        _check_invalid_tools(
+            chosen_function_set,
+            all_function_tool_names,
+            available_label='Available function tools',
+        )
 
         allowed_tools = chosen_function_set | output_tool_names
         mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'
