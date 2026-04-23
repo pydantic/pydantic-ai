@@ -6530,7 +6530,7 @@ async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
 
 async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_requests: None):
     """Test that unified `service_tier='auto'` works with Vertex (sets no headers)."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
     model_settings = GoogleModelSettings(service_tier='auto')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
