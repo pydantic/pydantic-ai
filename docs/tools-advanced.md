@@ -490,7 +490,7 @@ For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Too
 ```python {title="tool_search.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('anthropic:claude-sonnet-4-6')
 
 
 @agent.tool_plain(defer_loading=True)
@@ -509,7 +509,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
 mcp = MCPServerHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
 ```
 
 ### Configuring `ToolSearch`
@@ -534,7 +534,7 @@ def fuzzy_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
     ]
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ToolSearch(strategy=fuzzy_search)])
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=fuzzy_search)])
 ```
 
 On Anthropic models, the named strategies `'bm25'` (default) and `'regex'` select the provider's native search algorithm. On OpenAI Responses, the capability uses the server-executed `tool_search` endpoint. A custom callable `strategy` runs locally — and on models that expose a provider-side custom search mode (Anthropic tool-reference blocks; OpenAI `execution='client'`), the callable is invoked through that native path so deferred tools still ship with `defer_loading` on the wire.
