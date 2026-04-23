@@ -14,6 +14,7 @@ Pydantic AI supports the following built-in tools:
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
+- **[`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]**: Lets the provider discover tools marked with `defer_loading=True` (typically configured via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability rather than passed manually)
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -888,6 +889,29 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Tool Search Tool
+
+The [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] lets the provider discover tools marked with `defer_loading=True` — keeping them out of the initial prompt and only materializing the ones that match a search.
+
+You typically don't register `ToolSearchTool` yourself; the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability is auto-injected into every agent and selects `ToolSearchTool` on providers that support it, falling back to a local `search_tools` function tool otherwise. See [Tool Search in tools-advanced](tools-advanced.md#tool-search) for the agent-level overview.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | `strategy='bm25'` (default) or `'regex'`; custom callable surfaces via regular `search_tools` function tool with `tool_reference` result blocks. Claude Sonnet 4.5+, Opus 4.5+, Haiku 4.5+. |
+| OpenAI Responses | ✅ | Server-executed tool search by default; custom callable uses `execution='client'` with our local `search_tools` via Route A conversion. GPT-5.4+. |
+| OpenAI Chat Completions | ❌ | Not supported (Responses-API-only feature) |
+| Google | ❌ | Not supported |
+| xAI | ❌ | Not supported |
+| Groq | ❌ | Not supported |
+| Bedrock | ❌ | Not supported |
+| Mistral | ❌ | Not supported |
+| Cohere | ❌ | Not supported |
+| OpenRouter | ❌ | Not supported |
+| HuggingFace | ❌ | Not supported |
+| Outlines | ❌ | Not supported |
 
 ## API Reference
 
