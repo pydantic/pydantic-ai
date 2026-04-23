@@ -2641,10 +2641,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if chunk.model:
                     self._model_name = chunk.model
 
-                try:
-                    choice = chunk.choices[0]
-                except IndexError:
+                if not chunk.choices:
                     continue
+                choice = chunk.choices[0]
 
                 # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
                 if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]

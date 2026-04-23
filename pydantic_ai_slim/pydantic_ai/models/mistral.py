@@ -676,10 +676,9 @@ class MistralStreamedResponse(StreamedResponse):
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
 
-                try:
-                    choice = chunk.data.choices[0]
-                except IndexError:
+                if not chunk.data.choices:
                     continue
+                choice = chunk.data.choices[0]
 
                 if raw_finish_reason := choice.finish_reason:
                     self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}

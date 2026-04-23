@@ -598,10 +598,9 @@ class GroqStreamedResponse(StreamedResponse):
                     if chunk.id:  # pragma: no branch
                         self.provider_response_id = chunk.id
 
-                    try:
-                        choice = chunk.choices[0]
-                    except IndexError:
+                    if not chunk.choices:
                         continue
+                    choice = chunk.choices[0]
 
                     if raw_finish_reason := choice.finish_reason:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}

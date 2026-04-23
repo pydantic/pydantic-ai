@@ -414,6 +414,19 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         assert result.is_complete
 
 
+async def test_stream_text_ignores_null_choices_chunk(allow_model_requests: None):
+    malformed_chunk = chunk([])
+    malformed_chunk.data.choices = None  # type: ignore[assignment]
+    stream = [text_chunk('hello '), malformed_chunk, text_chunkk('world'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
+
+
 async def test_no_delta(allow_model_requests: None):
     stream = [
         chunk([], with_created=False),

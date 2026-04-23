@@ -484,6 +484,21 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         assert result.is_complete
 
 
+async def test_stream_text_ignores_null_choices_chunk(allow_model_requests: None):
+    malformed_chunk = chunk([])
+    malformed_chunk.choices = None  # type: ignore[assignment]
+    stream = (text_chunk('hello '), malformed_chunk, text_chunk('world'), chunk([]))
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
+        assert result.is_complete
+
+
 def struc_chunk(
     tool_name: str | None, tool_arguments: str | None, finish_reason: FinishReason | None = None
 ) -> chat.ChatCompletionChunk:
