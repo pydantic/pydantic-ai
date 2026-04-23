@@ -146,7 +146,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
 
-    async def system_prompts(
+    async def system_prompt_parts(
         self,
         *,
         deps: AgentDepsT = None,

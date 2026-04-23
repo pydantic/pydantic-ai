@@ -61,7 +61,7 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             return request_context
         if ctx.agent is None:
             return request_context  # pragma: no cover — ctx.agent is always set during an agent run
-        sys_parts = await ctx.agent.system_prompts(
+        sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
             model=ctx.model,
             message_history=messages,

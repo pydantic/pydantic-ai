@@ -1836,7 +1836,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._instructions.append(func)
             return func
 
-    async def system_prompts(
+    async def system_prompt_parts(
         self,
         *,
         deps: AgentDepsT = None,
@@ -1848,7 +1848,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
-        See [`AbstractAgent.system_prompts`][pydantic_ai.agent.AbstractAgent.system_prompts].
+        See [`AbstractAgent.system_prompt_parts`][pydantic_ai.agent.AbstractAgent.system_prompt_parts].
         """
         run_context = RunContext[AgentDepsT](
             deps=deps,

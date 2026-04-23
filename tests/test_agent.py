@@ -7442,7 +7442,7 @@ async def test_wrapper_agent():
         event_stream_handler=event_stream_handler,
     )
     wrapper_agent = WrapperAgent(agent)
-    assert [p.content for p in await wrapper_agent.system_prompts()] == ['You are a wrapped agent']
+    assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
     assert wrapper_agent.name == agent.name

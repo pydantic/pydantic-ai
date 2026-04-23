@@ -85,7 +85,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         return self.wrapped.output_json_schema(output_type=output_type)
 
-    async def system_prompts(
+    async def system_prompt_parts(
         self,
         *,
         deps: AgentDepsT = None,
@@ -95,7 +95,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
     ) -> list[_messages.SystemPromptPart]:
-        return await self.wrapped.system_prompts(
+        return await self.wrapped.system_prompt_parts(
             deps=deps,
             model=model,
             message_history=message_history,

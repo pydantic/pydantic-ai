@@ -810,6 +810,46 @@ async def test_reinject_system_prompt_capability_injects_when_history_missing():
     )
 
 
+async def test_reinject_system_prompt_capability_reaches_model_and_all_messages():
+    """Regression guard: the injected `SystemPromptPart` must appear in *both* the messages
+    actually sent to the model AND the stored `result.all_messages()` — they're the same
+    list after `_agent_graph.py:835` syncs the hook's mutations back to canonical state.
+    """
+    captured: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured.append([m for m in messages])
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    agent = Agent(FunctionModel(respond), system_prompt='Server prompt')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    result = await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    # What the model received on its one call
+    assert len(captured) == 1
+    model_first_request = captured[0][0]
+    assert isinstance(model_first_request, ModelRequest)
+    assert [type(p).__name__ for p in model_first_request.parts] == ['SystemPromptPart', 'UserPromptPart']
+    assert isinstance(model_first_request.parts[0], SystemPromptPart)
+    assert model_first_request.parts[0].content == 'Server prompt'
+
+    # What the caller sees via result.all_messages()
+    stored_first_request = result.all_messages()[0]
+    assert isinstance(stored_first_request, ModelRequest)
+    assert [type(p).__name__ for p in stored_first_request.parts] == ['SystemPromptPart', 'UserPromptPart']
+    assert isinstance(stored_first_request.parts[0], SystemPromptPart)
+    assert stored_first_request.parts[0].content == 'Server prompt'
+
+
 async def test_reinject_system_prompt_capability_does_not_mutate_input_history():
     """Regression guard: the capability must not mutate `ModelRequest` objects from the caller's
     `message_history` list. `request_context.messages` is a shallow copy, so mutating `.parts`
