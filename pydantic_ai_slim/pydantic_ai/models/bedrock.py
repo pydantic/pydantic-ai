@@ -105,10 +105,10 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
     try:
         yield
     except ClientError as e:
-        if ctx_exc := _check_context_window_exceeded(e, model_name):
-            raise ctx_exc from e
         status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
         if isinstance(status_code, int):
+            if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
+                raise ctx_exc from e
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
@@ -386,11 +386,8 @@ _CONTEXT_WINDOW_ERROR_PATTERNS = (
 )
 
 
-def _check_context_window_exceeded(e: ClientError, model_name: str) -> ContextWindowExceeded | None:
+def _check_context_window_exceeded(e: ClientError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
     """Check if the error is a context window exceeded error and return the appropriate exception."""
-    status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
-    if not isinstance(status_code, int):
-        return None
     message = e.response.get('Error', {}).get('Message', '')
     if (
         status_code == 400

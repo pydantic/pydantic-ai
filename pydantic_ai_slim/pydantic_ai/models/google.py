@@ -275,12 +275,14 @@ _CONTEXT_WINDOW_ERROR_PATTERNS = (
 )
 
 
-def _check_context_window_exceeded(e: errors.APIError, model_name: str) -> ContextWindowExceeded | None:
+def _check_context_window_exceeded(
+    e: errors.APIError, model_name: str, status_code: int
+) -> ContextWindowExceeded | None:
     """Check if the error is a context window exceeded error and return the appropriate exception."""
     message = str(e).lower()
-    if e.code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+    if status_code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
         return ContextWindowExceeded(
-            status_code=e.code,
+            status_code=status_code,
             model_name=model_name,
             body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
         )
@@ -580,9 +582,9 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
         except errors.APIError as e:
-            if ctx_exc := _check_context_window_exceeded(e, self._model_name):
-                raise ctx_exc from e
             if (status_code := e.code) >= 400:
+                if ctx_exc := _check_context_window_exceeded(e, self._model_name, status_code):
+                    raise ctx_exc from e
                 raise ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,
@@ -1180,9 +1182,9 @@ class GeminiStreamedResponse(StreamedResponse):
                 if file_search_part is not None:
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
         except errors.APIError as e:
-            if ctx_exc := _check_context_window_exceeded(e, self._model_name):
-                raise ctx_exc from e  # pragma: no cover
             if (status_code := e.code) >= 400:
+                if ctx_exc := _check_context_window_exceeded(e, self._model_name, status_code):
+                    raise ctx_exc from e  # pragma: no cover
                 raise ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,

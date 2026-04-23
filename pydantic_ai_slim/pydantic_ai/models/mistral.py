@@ -101,9 +101,9 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
     try:
         yield
     except SDKError as e:
-        if ctx_exc := _check_context_window_exceeded(e, model_name):
-            raise ctx_exc from e
         if (status_code := e.status_code) >= 400:
+            if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
+                raise ctx_exc from e
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
 
@@ -135,9 +135,9 @@ _CONTEXT_WINDOW_ERROR_PATTERNS = (
 )
 
 
-def _check_context_window_exceeded(e: SDKError, model_name: str) -> ContextWindowExceeded | None:
+def _check_context_window_exceeded(e: SDKError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
     """Check if the error is a context window exceeded error and return the appropriate exception."""
-    if e.status_code != 400:
+    if status_code != 400:
         return None
     body: dict[str, Any] | None = None
     try:
@@ -147,14 +147,14 @@ def _check_context_window_exceeded(e: SDKError, model_name: str) -> ContextWindo
     if body:
         if body.get('code') == '3051' or body.get('code') == 3051:
             return ContextWindowExceeded(
-                status_code=e.status_code,
+                status_code=status_code,
                 model_name=model_name,
                 body=e.body,
             )
         message = body.get('message', '')
         if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
             return ContextWindowExceeded(
-                status_code=e.status_code,
+                status_code=status_code,
                 model_name=model_name,
                 body=e.body,
             )
