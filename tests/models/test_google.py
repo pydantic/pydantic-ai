@@ -2718,9 +2718,23 @@ async def test_google_extra_headers_in_config(allow_model_requests: None):
     assert headers['Content-Type'] == 'application/json'
 
 
+async def test_google_unified_service_tier(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='flex')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'flex'
+
+
 async def test_google_service_tier_in_config(allow_model_requests: None):
     m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    model_settings = GoogleModelSettings(google_service_tier='PrIoRiTy')  # type: ignore
+    model_settings = GoogleModelSettings(service_tier='priority')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -2732,9 +2746,23 @@ async def test_google_service_tier_in_config(allow_model_requests: None):
     assert config_dict['service_tier'] == 'priority'
 
 
+async def test_google_service_tier_auto_maps_to_standard(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='auto')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'standard'
+
+
 async def test_google_service_tier_default_maps_to_standard(allow_model_requests: None):
     m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
-    model_settings = GoogleModelSettings(google_service_tier='default')
+    model_settings = GoogleModelSettings(service_tier='default')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -2762,10 +2790,10 @@ async def test_google_service_tier_not_in_config_when_unset(allow_model_requests
     assert 'service_tier' not in config_dict
 
 
-async def test_google_vertex_service_tier_gla_value_omitted_from_config(allow_model_requests: None):
-    """Test that GLA-specific service_tier values are not sent in config when using Vertex AI."""
+async def test_google_unified_service_tier_omitted_for_vertex(allow_model_requests: None):
+    """Test that unified `service_tier` is not sent in the GLA config dictionary when using Vertex AI."""
     m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project', location='us-central1'))
-    model_settings = GoogleModelSettings(google_service_tier='flex')
+    model_settings = GoogleModelSettings(service_tier='flex')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -6476,6 +6504,39 @@ async def test_google_service_tier_streamed_response_extraction(
                 'service_tier': 'flex',
             }
         )
+
+
+async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
+    """Test that the new `google_vertex_service_tier` field works."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    assert headers['X-Vertex-AI-LLM-Request-Type'] == 'dedicated'
+
+
+async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_requests: None):
+    """Test that unified `service_tier='auto'` works with Vertex (sets no headers)."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='auto')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    routing_header_names = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
+    assert not any(k in headers for k in routing_header_names)
 
 
 @pytest.mark.parametrize(

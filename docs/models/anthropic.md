@@ -83,6 +83,35 @@ agent = Agent(model)
 ...
 ```
 
+## Model settings
+
+You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-sonnet-4-5')
+settings = AnthropicModelSettings(
+    temperature=0.2,
+    service_tier='auto',
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+### Service tier
+
+Anthropic supports controlling the [service tier](https://docs.anthropic.com/en/docs/build-with-claude/latency-and-throughput) to manage latency and throughput.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`anthropic_service_tier`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_service_tier] field.
+
+The unified field maps as follows for Anthropic:
+
+- `'default'`: Maps to Anthropic's `'standard_only'` tier.
+- `'auto'`: Maps to Anthropic's `'auto'` tier.
+
+Other unified values like `'flex'` or `'priority'` are not currently supported by Anthropic and will be ignored.
+
 ## Cloud Platform Integrations
 
 You can use Anthropic models through cloud platforms by passing a custom client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider].

@@ -229,6 +229,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
+    anthropic_service_tier: Literal['auto', 'standard_only']
+    """The service tier to use for the model request.
+
+    See https://docs.anthropic.com/en/docs/build-with-claude/latency-and-throughput for more information.
+    """
+
     anthropic_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last system prompt block.
 
@@ -584,6 +590,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
+        service_tier = model_settings.get('anthropic_service_tier') or model_settings.get('service_tier')
+        if service_tier == 'default':
+            service_tier = 'standard_only'
+        elif service_tier not in ('auto', 'standard_only'):
+            service_tier = OMIT
+
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -605,6 +617,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
                 container=container or OMIT,
+                service_tier=service_tier,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )

@@ -20,6 +20,25 @@ it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
 that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
+ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
+"""The service tier to use for the model request.
+
+This is a unified field that maps to provider-specific service tiers where available.
+
+- `'auto'`: The provider's default behavior.
+- `'default'`: Default service tier (e.g. OpenAI's "default", Google GLA's "standard").
+- `'flex'`: Flexible / lower-priority service tier with lower costs.
+- `'priority'`: Higher-priority service tier with lower latency or higher limits.
+
+Supported by:
+
+* OpenAI
+* Gemini
+* Anthropic
+* Bedrock
+* Groq
+"""
+
 
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
@@ -208,9 +227,27 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Groq
     * Bedrock
-    * OpenRouter
-    * Cerebras
-    * xAI
+    """
+
+    service_tier: ServiceTier
+    """The service tier to use for the model request.
+
+    This is a unified field that maps to provider-specific service tiers where available.
+
+    - `'auto'`: The provider's default behavior.
+    - `'default'`: Default service tier (e.g. OpenAI's "default", Google GLA's "standard").
+    - `'flex'`: Flexible / lower-priority service tier with lower costs.
+    - `'priority'`: Higher-priority service tier with lower latency or higher limits.
+
+    Provider-specific service tier settings (e.g., `openai_service_tier`,
+    `google_vertex_service_tier`) take precedence over this unified field.
+
+    Supported by:
+
+    * OpenAI
+    * Gemini
+    * Anthropic
+    * Bedrock
     """
 
     extra_body: object

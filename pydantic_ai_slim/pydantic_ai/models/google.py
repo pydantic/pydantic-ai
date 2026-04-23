@@ -169,27 +169,14 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
-GoogleServiceTier = Literal[
-    'default',
-    'standard',
-    'flex',
-    'priority',
+GoogleVertexServiceTier = Literal[
     'pt_then_on_demand',
     'pt_only',
     'pt_then_flex',
     'on_demand',
     'flex_only',
 ]
-"""Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
-
-**Gemini API (GLA) values:**
-
-- `'default'`: The default service tier (maps to standard, for cross-compat).
-- `'standard'`: The standard service tier.
-- `'flex'`: The flexible service tier.
-- `'priority'`: The priority service tier.
-
-**Vertex AI values:**
+"""Values for the `google_vertex_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
 (PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo).
@@ -201,6 +188,19 @@ Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.googl
 - `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
+"""
+
+GoogleServiceTier = Literal[
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'on_demand',
+    'flex_only',
+]
+"""Deprecated alias for service tier values.
+
+Use [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] for Gemini API (GLA)
+or [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] for Vertex AI.
 """
 
 
@@ -259,35 +259,36 @@ class GoogleModelSettings(ModelSettings, total=False):
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
-    google_service_tier: GoogleServiceTier
-    """The service tier to use for the model request.
+    google_vertex_service_tier: GoogleVertexServiceTier
+    """The service tier to use for the model request when using Vertex AI.
 
-    - When using the Gemini API (GLA), this controls traffic priority (e.g., `'flex'`, `'priority'`).
-    - When using the Vertex AI API, this controls routing for Provisioned Throughput and Flex PayGo
-      (e.g., `'pt_only'`, `'flex_only'`).
+    Controls routing for Provisioned Throughput and Flex PayGo (e.g., `'pt_only'`, `'flex_only'`).
 
-    See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values,
+    See [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] for all values,
     headers sent, and links to Google docs.
     """
 
+    google_service_tier: GoogleServiceTier
+    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
 
-def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
+
+def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier | ServiceTier) -> dict[str, str]:
     """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
-    service_tier = cast(GoogleServiceTier, service_tier.lower())
-    if service_tier in ('default', 'standard', 'flex', 'priority', 'pt_then_on_demand'):
+    service_tier_str = service_tier.lower()
+    if service_tier_str in ('default', 'standard', 'flex', 'priority', 'pt_then_on_demand', 'auto'):
         return {}
-    if service_tier == 'pt_only':
+    if service_tier_str == 'pt_only':
         return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
-    if service_tier == 'on_demand':
+    if service_tier_str == 'on_demand':
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
-    if service_tier == 'pt_then_flex':
+    if service_tier_str == 'pt_then_flex':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
-    if service_tier == 'flex_only':
+    if service_tier_str == 'flex_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
         }
-    assert_never(service_tier)  # pragma: no cover
+    return {}
 
 
 @dataclass(init=False)
@@ -667,7 +668,9 @@ class GoogleModel(Model[Client]):
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
-        service_tier_vertex = model_settings.get('google_service_tier', 'pt_then_on_demand')
+        service_tier_vertex = model_settings.get('google_vertex_service_tier') or model_settings.get(
+            'google_service_tier', 'pt_then_on_demand'
+        )
         headers.update(_google_vertex_service_tier_headers(service_tier_vertex))
 
         http_options: HttpOptionsDict = {'headers': headers}
@@ -678,12 +681,13 @@ class GoogleModel(Model[Client]):
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
         service_tier_str: str | None = None
-        if self.system != 'google-vertex' and (raw_service_tier := model_settings.get('google_service_tier')):
-            service_tier_str = raw_service_tier.lower()
-            if service_tier_str == 'default':
-                service_tier_str = 'standard'
-            elif service_tier_str not in ('standard', 'flex', 'priority'):
-                service_tier_str = None
+        if self.system != 'google-vertex':
+            if raw_service_tier := model_settings.get('google_service_tier') or model_settings.get('service_tier'):
+                service_tier_str = raw_service_tier.lower()
+                if service_tier_str in ('default', 'auto'):
+                    service_tier_str = 'standard'
+                elif service_tier_str not in ('standard', 'flex', 'priority'):
+                    service_tier_str = None
 
         config = GenerateContentConfigDict(
             http_options=http_options,

@@ -687,8 +687,13 @@ class BedrockConverseModel(Model[BaseClient]):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
-            if service_tier := model_settings.get('bedrock_service_tier', None):
+            if service_tier := model_settings.get('bedrock_service_tier'):
                 params['serviceTier'] = service_tier
+            elif unified_tier := model_settings.get('service_tier'):
+                if unified_tier in ('default', 'auto'):
+                    params['serviceTier'] = {'type': 'default'}
+                elif unified_tier in ('flex', 'priority'):
+                    params['serviceTier'] = {'type': unified_tier}
 
         if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
             params['additionalModelRequestFields'] = additional_model_requests_fields

@@ -74,6 +74,17 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+## Service tier
+
+Bedrock supports controlling the [service tier](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) to manage throughput and cost.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] field.
+
+The unified field maps as follows for Bedrock:
+
+- `'default'` and `'auto'`: Maps to Bedrock's `'default'` tier.
+- `'flex'`: Maps to Bedrock's `'flex'` tier.
+- `'priority'`: Maps to Bedrock's `'priority'` tier.
+
 ## Prompt Caching
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:

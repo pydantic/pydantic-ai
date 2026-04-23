@@ -153,9 +153,23 @@ agent = Agent(model)
 ...
 ```
 
-#### Vertex AI service tier (`google_service_tier`)
+#### Service tier (`service_tier`, `google_vertex_service_tier`)
 
-On **Vertex AI**, optional HTTP headers control how each request uses [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) pricing. Set the [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] to one of the [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] values.
+You can control the service tier (priority and pricing) using the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field.
+
+- On **Gemini API (GLA)**, this controls traffic priority (e.g. `'flex'`, `'priority'`).
+- On **Vertex AI**, this sets the default routing behavior.
+
+**Vertex AI-specific tiers**
+
+For granular control over [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) pricing on Vertex AI, use the [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+
+This sets optional HTTP headers to control routing:
+
+- `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`).
+- `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`).
+- `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`).
 
 **Flex PayGo example**
 
@@ -170,9 +184,11 @@ agent = Agent(model)
 
 result = agent.run_sync(
     'Hello!',
-    model_settings=GoogleModelSettings(google_service_tier='pt_then_flex'),
+    model_settings=GoogleModelSettings(google_vertex_service_tier='pt_then_flex'),
 )
 ```
+
+The [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field is deprecated in favor of these more specific fields.
 
 After a Flex request, you can inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX` when Flex was used) if the API returns it.
 
