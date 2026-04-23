@@ -135,17 +135,46 @@ _APPROVAL_RESPONDED_TYPES = (
 )
 
 
+_TERMINAL_TOOL_OUTPUT_TYPES = (
+    ToolOutputAvailablePart,
+    ToolOutputErrorPart,
+    ToolOutputDeniedPart,
+    DynamicToolOutputAvailablePart,
+    DynamicToolOutputErrorPart,
+    DynamicToolOutputDeniedPart,
+)
+
+
 def iter_tool_approval_responses(
     messages: list[UIMessage],
 ) -> Iterator[tuple[str, ToolApprovalResponded]]:
-    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages.
+    """Yield `(tool_call_id, approval)` for each *pending* tool-approval response in assistant messages.
 
-    Only `approval-responded` parts are matched. `output-denied` parts have
-    already been materialized into the message history by `load_messages()` and
-    must not be re-processed as deferred results.
+    An `approval-responded` part is only yielded if its tool has not yet been
+    executed. A tool counts as already-executed if any assistant message in
+    the history carries a terminal output part for the same `tool_call_id` —
+    that is, `output-available`, `output-error`, or `output-denied` (or their
+    Dynamic variants). `load_messages()` has already materialized those
+    terminal parts as `ToolCallPart` + `ToolReturnPart` in the run history,
+    so re-yielding a sibling `approval-responded` would feed the approval-
+    resolution logic a stale entry that no longer matches any
+    `DeferredToolRequests` in the current round (see #5154).
     """
+    executed_tool_call_ids: set[str] = set()
     for msg in messages:
-        if msg.role == 'assistant':
-            for part in msg.parts:
-                if isinstance(part, _APPROVAL_RESPONDED_TYPES) and isinstance(part.approval, ToolApprovalResponded):
-                    yield part.tool_call_id, part.approval
+        if msg.role != 'assistant':
+            continue
+        for part in msg.parts:
+            if isinstance(part, _TERMINAL_TOOL_OUTPUT_TYPES):
+                executed_tool_call_ids.add(part.tool_call_id)
+
+    for msg in messages:
+        if msg.role != 'assistant':
+            continue
+        for part in msg.parts:
+            if (
+                isinstance(part, _APPROVAL_RESPONDED_TYPES)
+                and isinstance(part.approval, ToolApprovalResponded)
+                and part.tool_call_id not in executed_tool_call_ids
+            ):
+                yield part.tool_call_id, part.approval
