@@ -601,6 +601,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
+        self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
@@ -711,6 +712,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
+        self._validate_task_budget_vs_context_management(model_settings, context_management)
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -1557,23 +1559,31 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'
             )
 
+        return task_budget
+
+    @staticmethod
+    def _validate_task_budget_vs_context_management(
+        model_settings: AnthropicModelSettings,
+        context_management: BetaContextManagementConfigParam | None,
+    ) -> None:
         # Anthropic rejects requests that combine `task_budget.remaining` with a
         # `compact_20260112` context-management edit (server-side compaction tracks the budget
         # itself, so client-side `remaining` would conflict). Fail fast with a helpful message
-        # rather than letting the API return an opaque 400.
-        if 'remaining' in task_budget:
-            cm = model_settings.get('anthropic_context_management')
-            if isinstance(cm, dict):
-                edits = cast(list[dict[str, Any]], cm.get('edits', []))
-                if any(isinstance(e, dict) and e.get('type') == 'compact_20260112' for e in edits):
-                    raise UserError(
-                        '`anthropic_task_budget.remaining` cannot be combined with the '
-                        '`compact_20260112` context-management edit (used by `AnthropicCompaction`). '
-                        'Use `remaining` for client-side budget tracking, or `AnthropicCompaction` '
-                        'for server-side compaction — not both.'
-                    )
-
-        return task_budget
+        # rather than letting the API return an opaque 400. Runs after `_add_compaction_params`
+        # so it catches both explicit settings and auto-generated config from `CompactionPart`s.
+        task_budget = model_settings.get('anthropic_task_budget')
+        if task_budget is None or 'remaining' not in task_budget:
+            return
+        if not isinstance(context_management, dict):
+            return
+        edits = cast(list[dict[str, Any]], context_management.get('edits', []))
+        if any(isinstance(e, dict) and e.get('type') == 'compact_20260112' for e in edits):
+            raise UserError(
+                '`anthropic_task_budget.remaining` cannot be combined with the '
+                '`compact_20260112` context-management edit (used by `AnthropicCompaction`). '
+                'Use `remaining` for client-side budget tracking, or `AnthropicCompaction` '
+                'for server-side compaction — not both.'
+            )
 
 
 class AnthropicCompaction(AbstractCapability[AgentDepsT]):

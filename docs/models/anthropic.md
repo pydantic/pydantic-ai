@@ -173,7 +173,7 @@ agent = Agent(model, model_settings=settings)
 Task budgets compose with [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_effort]: effort tunes per-step reasoning depth, while task budgets cap total work across the loop. Both fields end up under the same `output_config` object.
 
 !!! note
-    Task budgets are advisory, not a hard cap; pair them with `max_tokens` for an enforced ceiling. Omit `remaining` when you resend the full, uncompacted history so the server tracks the countdown for you. Only set `remaining` explicitly when carrying a budget across compaction or other rewritten context.
+    Task budgets are advisory, not a hard cap; pair them with [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] for an enforced ceiling. Omit `remaining` when you resend the full, uncompacted history so the server tracks the countdown for you. Only set `remaining` explicitly when carrying a budget across compaction or other rewritten context.
 
 ### Carrying budgets across compaction
 

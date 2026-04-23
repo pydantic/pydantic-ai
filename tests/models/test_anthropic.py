@@ -50,6 +50,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    CompactionPart,
     InstructionPart,
     UploadedFile,
 )
@@ -1341,6 +1342,43 @@ async def test_anthropic_task_budget_remaining_allows_non_compact_context_manage
 
     result = await agent.run('Hello')
     assert result.output == 'Hello!'
+
+
+async def test_anthropic_task_budget_remaining_rejects_compaction_part_in_history(allow_model_requests: None):
+    """`task_budget.remaining` is rejected when history contains a `CompactionPart`.
+
+    `_add_compaction_params` auto-generates a `compact_20260112` config when messages contain
+    `CompactionPart`s even without explicit `anthropic_context_management`, so the validator
+    must run after that step to still surface a `UserError` instead of an opaque 400.
+
+    Regression test for PR #5140 review feedback (validation ordering).
+    https://github.com/pydantic/pydantic-ai/pull/5140
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel(
+        'claude-opus-4-7',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(
+            anthropic_task_budget={'type': 'tokens', 'total': 50_000, 'remaining': 10_000},
+        ),
+    )
+    agent = Agent(model)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn.')]),
+        ModelResponse(
+            parts=[CompactionPart(content='Summary of earlier turn.', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+    ]
+
+    with pytest.raises(UserError, match='cannot be combined with the `compact_20260112`'):
+        await agent.run('Hello', message_history=message_history)
 
 
 async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthropic_api_key: str):
