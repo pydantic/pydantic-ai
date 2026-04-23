@@ -93,12 +93,24 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         finally:
             self._toolset = new_toolset
         if self._toolset is not None:
-            await self._toolset.__aenter__()
+            try:
+                await self._toolset.__aenter__()
+            except BaseException:
+                # If __aenter__ fails, clear _toolset so that DynamicToolset.__aexit__
+                # does not attempt to call __aexit__ on a toolset that was never entered.
+                self._toolset = None
+                raise
         return self
 
     async def __aenter__(self) -> Self:
         if self._toolset is not None:
-            await self._toolset.__aenter__()
+            try:
+                await self._toolset.__aenter__()
+            except BaseException:
+                # If __aenter__ fails, clear _toolset so that DynamicToolset.__aexit__
+                # does not attempt to call __aexit__ on a toolset that was never entered.
+                self._toolset = None
+                raise
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
