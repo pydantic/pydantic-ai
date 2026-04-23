@@ -3,3 +3,5 @@
 ::: pydantic_ai.ext.langchain
 
 ::: pydantic_ai.ext.aci
+
+::: pydantic_ai.ext.stackone

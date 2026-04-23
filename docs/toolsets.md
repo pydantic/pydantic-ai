@@ -955,3 +955,20 @@ toolset = ACIToolset(
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
+
+### StackOne Tools {#stackone-tools}
+
+If you'd like to use tools from [StackOne](https://www.stackone.com)'s Integration Infrastructure (covering 200+ enterprise applications) with Pydantic AI, you can use the [`StackOneToolset`][pydantic_ai.ext.stackone.StackOneToolset].
+
+You will need to install the `stackone-ai` package, set `STACKONE_API_KEY` in your environment, and provide at least one connected account ID via `STACKONE_ACCOUNT_ID` or `account_ids=`.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.ext.stackone import StackOneToolset
+
+toolset = StackOneToolset()
+
+agent = Agent('openai:gpt-5.4', toolsets=[toolset])
+```
+
+See [StackOne Tools](third-party-tools.md#stackone-tools) for on-demand search, tool narrowing, and multi-account usage.
