@@ -324,7 +324,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=87, output_tokens=14),
+                usage=RequestUsage(input_tokens=89, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -394,12 +394,14 @@ def test_result_pydantic_model_validation_error():
     "loc": [
       "b"
     ],
-    "msg": "Value error, must not be foo"
+    "msg": "Value error, must not be foo",
+    "input": "foo"
   }
 ]
 ```
 
-Fix the errors and try again.""")
+Fix the errors and try again.\
+""")
 
 
 def test_output_validator():
