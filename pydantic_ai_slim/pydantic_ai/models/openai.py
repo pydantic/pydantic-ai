@@ -3038,9 +3038,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                             )
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        # The return part with `discovered_tools` metadata is emitted on
-                        # the matching Done event below, after OpenAI finalizes the item.
-                        pass
+                        pass  # Return part is emitted on the matching Done event below.
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
@@ -3832,7 +3830,7 @@ def _map_tool_search_call(
     call_part = BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,
-        args=cast('dict[str, Any]', item.arguments) or None,
+        args=cast('dict[str, Any]', item.arguments),
         tool_call_id=call_id,
         id=item.id,
     )
@@ -3892,13 +3890,11 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
     ``{"keywords": ...}`` shape the local toolset expects.
     """
     call_id = item.call_id or item.id
-    # OpenAI's `tool_search_call` historically uses `query`; our local tool uses
-    # `keywords`. Accept either to future-proof against schema evolution.
-    args_dict = cast('dict[str, Any]', item.arguments) or {}
-    keywords = args_dict.get('keywords') or args_dict.get('query') or ''
+    args_dict = cast('dict[str, Any]', item.arguments)
+    # OpenAI's `tool_search_call` uses `query`; our local tool uses `keywords`.
     return ToolCallPart(
         tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
-        args={'keywords': keywords},
+        args={'keywords': args_dict.get('query', '')},
         tool_call_id=call_id,
         id=item.id,
     )
