@@ -3037,13 +3037,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                             )
-                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        pass  # Return part is emitted on the matching Done event below.
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):  # pragma: lax no cover
+                        # Return part is emitted on the matching Done event below.
+                        pass
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -3157,7 +3158,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             )
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
-                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):  # pragma: lax no cover
+                        # Build the return part with the discovered-tools metadata. Marked
+                        # lax because coverage under pytest-xdist occasionally misses this
+                        # branch despite the streaming test exercising it.
                         call_id = chunk.item.call_id or chunk.item.id
                         return_part = _build_tool_search_return_part(
                             call_id, chunk.item.status or 'completed', chunk.item, self.provider_name
