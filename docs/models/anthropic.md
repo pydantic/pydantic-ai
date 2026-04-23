@@ -180,7 +180,7 @@ Task budgets compose with [`anthropic_effort`][pydantic_ai.models.anthropic.Anth
 The `remaining` field on `task_budget` is for *client-side* compaction patterns (you summarize earlier turns yourself between requests, so the server has no memory of how much budget was spent before the rewrite). Compute it from your own tracked usage and pass it on the next request so the countdown continues from where you left off rather than resetting to `total`.
 
 !!! warning
-    `task_budget.remaining` is mutually exclusive with [`AnthropicCompaction`](#message-compaction): Anthropic rejects requests that combine `remaining` with a `compact_20260112` context-management edit, because server-side compaction tracks the budget itself. Pydantic AI raises a `UserError` before sending the request when this combination is configured. Choose one: `remaining` for client-side budget tracking, or `AnthropicCompaction` for server-side compaction.
+    `task_budget.remaining` is mutually exclusive with [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]: Anthropic rejects requests that combine `remaining` with a `compact_20260112` context-management edit, because server-side compaction tracks the budget itself. Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request when this combination is configured. Choose one: `remaining` for client-side budget tracking, or [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] for server-side compaction.
 
 Setting `remaining` also invalidates any prompt-cache prefix that contains the budget. If you want to preserve caching, set `total` once and let the server self-regulate against the running countdown.
 
