@@ -668,13 +668,14 @@ class GoogleModel(Model[Client]):
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
-        service_tier_vertex = (
-            model_settings.get('google_vertex_service_tier')
-            or model_settings.get('google_service_tier')
-            or model_settings.get('service_tier')
-            or 'pt_then_on_demand'
-        )
-        headers.update(_google_vertex_service_tier_headers(service_tier_vertex))
+        if self.system == 'google-vertex':
+            service_tier_vertex = (
+                model_settings.get('google_vertex_service_tier')
+                or model_settings.get('google_service_tier')
+                or model_settings.get('service_tier')
+                or 'pt_then_on_demand'
+            )
+            headers.update(_google_vertex_service_tier_headers(service_tier_vertex))
 
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):

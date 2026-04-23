@@ -2730,6 +2730,10 @@ async def test_google_unified_service_tier(allow_model_requests: None):
 
     config_dict = cast(dict[str, Any], config)
     assert config_dict['service_tier'] == 'flex'
+    headers = config_dict['http_options']['headers']
+    vertex_headers = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
+    for h in vertex_headers:
+        assert h not in headers
 
 
 async def test_google_service_tier_in_config(allow_model_requests: None):
@@ -2803,6 +2807,8 @@ async def test_google_unified_service_tier_omitted_for_vertex(allow_model_reques
 
     config_dict = cast(dict[str, Any], config)
     assert 'service_tier' not in config_dict
+    headers = config_dict['http_options']['headers']
+    assert headers['X-Vertex-AI-LLM-Shared-Request-Type'] == 'flex'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -6508,7 +6514,7 @@ async def test_google_service_tier_streamed_response_extraction(
 
 async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
     """Test that the new `google_vertex_service_tier` field works."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
     model_settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -6578,7 +6584,7 @@ async def test_google_service_tier_vertex_headers(
     expected_headers: dict[str, str],
 ):
     """Test that Vertex `google_service_tier` values set the expected HTTP headers."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
     model_settings = GoogleModelSettings(google_service_tier=service_tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
