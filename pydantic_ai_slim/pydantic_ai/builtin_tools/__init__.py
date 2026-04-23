@@ -4,14 +4,11 @@ from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, Union
+from typing import Annotated, Any, Literal, TypeAlias, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, deprecated
-
-if TYPE_CHECKING:
-    from ..tools import ToolDefinition
 
 __all__ = (
     'AbstractBuiltinTool',
@@ -584,11 +581,15 @@ class FileSearchTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
-ToolSearchFunc: TypeAlias = Callable[[str, Sequence['ToolDefinition']], Sequence[str]]
+ToolSearchFunc: TypeAlias = Callable[[str, Sequence[Any]], Sequence[str]]
 """Custom search function for :class:`ToolSearchTool`.
 
 Takes the natural-language query and the deferred tool definitions to search through
-and returns the matching tool names ordered by relevance.
+(sequence of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) and returns the
+matching tool names ordered by relevance. Typed as ``Sequence[Any]`` to keep agent-spec
+serialization working for the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
+capability — annotate your own function with ``Sequence[ToolDefinition]`` for IDE
+support.
 """
 
 ToolSearchNamedStrategy: TypeAlias = Literal['bm25', 'regex']
