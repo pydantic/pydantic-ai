@@ -271,6 +271,67 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 
 **The default is `version=2`**, which provides a good balance between spec compliance and compatibility.
 
+#### Version comparison
+
+The following table summarizes the key differences between instrumentation versions:
+
+| Feature | Version 1 | Version 2 (Default) | Version 3 | Version 4 |
+|---|---|---|---|---|
+| **Message storage** | Individual events/logs | Span attributes | Span attributes | Span attributes |
+| **Agent run span name** | `agent run` | `agent run` | `invoke_agent {name}` | `invoke_agent {name}` |
+| **Tool span name** | `running tool` | `running tool` | `execute_tool {name}` | `execute_tool {name}` |
+| **Agent name attribute** | `agent_name` | `agent_name` | `gen_ai.agent.name` | `gen_ai.agent.name` |
+| **Tool arguments attribute** | `tool_arguments` | `tool_arguments` | `gen_ai.tool.call.arguments` | `gen_ai.tool.call.arguments` |
+| **Tool result attribute** | `tool_response` | `tool_response` | `gen_ai.tool.call.result` | `gen_ai.tool.call.result` |
+| **Thinking tokens** | No | No | Yes | Yes |
+| **Multimodal (OTel-compliant)** | No | No | No | Yes |
+| **OTel spec compliance** | Legacy (v1.36.0) | Partial | Full | Full |
+
+!!! tip "Which version should I use?"
+    - **Version 2** (default): Best for most users. Works well with existing dashboards and tooling.
+    - **Version 3**: Use if you want full [OTel GenAI semantic convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) compliance, or need thinking/reasoning token support.
+    - **Version 4**: Use if you work with multimodal content (images, audio, video) and want spec-compliant media representations.
+    - **Version 1**: Only use if you have existing integrations that depend on the legacy event-based format. This version is deprecated and will be removed.
+
+#### Why some attributes appear duplicated
+
+You may notice that certain attributes are emitted under two names — for example, both `agent_name` and `gen_ai.agent.name` are set on agent run spans, and both `gen_ai.system` and `gen_ai.provider.name` are set on model request spans.
+
+This is intentional for **backward compatibility**. The older attribute names (e.g., `agent_name`, `gen_ai.system`) were used in earlier versions of Pydantic AI and may be referenced in existing dashboards, alerts, or queries. The newer names (e.g., `gen_ai.agent.name`, `gen_ai.provider.name`) follow the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
+
+Both names are emitted simultaneously so that existing tooling continues to work while you migrate to the spec-compliant names. The older names are considered deprecated and may be removed in a future major release.
+
+#### Migrating between versions
+
+When upgrading your [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] version, you may need to update dashboards, alerts, or queries that reference span or attribute names. Here's a checklist:
+
+1. **Update span name filters.** If you filter or group by span names:
+    - `agent run` → `invoke_agent {agent_name}` (v3+)
+    - `running tool` → `execute_tool {tool_name}` (v3+)
+    - Note: v3+ span names include the agent/tool name dynamically, so you may need to use prefix or pattern matching (e.g., `invoke_agent*`).
+
+2. **Update attribute references.** If your queries reference these attributes:
+    - `agent_name` → `gen_ai.agent.name` (v3+)
+    - `tool_arguments` → `gen_ai.tool.call.arguments` (v3+)
+    - `tool_response` → `gen_ai.tool.call.result` (v3+)
+
+3. **Update multimodal content parsing** (v4). If you parse media content from span attributes:
+    - `{"type": "image-url", "url": "..."}` → `{"type": "uri", "modality": "image", "uri": "...", "mime_type": "..."}`
+    - `{"type": "binary", "media_type": "..."}` → `{"type": "blob", "modality": "image", "mime_type": "..."}`
+
+4. **Test in parallel.** Consider running the new version alongside the old one in a staging environment before switching in production. You can instrument different agents with different versions:
+
+    ```python {test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    # Existing agent keeps version 2
+    agent_v2 = Agent('openai:gpt-5.2', instrument=InstrumentationSettings(version=2))
+
+    # New agent uses version 3
+    agent_v3 = Agent('openai:gpt-5.2', instrument=InstrumentationSettings(version=3))
+    ```
+
 #### Version 1 (Legacy, deprecated)
 
 Based on [OpenTelemetry semantic conventions version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older. Messages are captured as individual events (logs) that are children of the request span. Use `event_mode='logs'` to emit events as OpenTelemetry log-based events:
