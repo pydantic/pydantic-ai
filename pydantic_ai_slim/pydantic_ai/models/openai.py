@@ -3043,8 +3043,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):  # pragma: lax no cover
-                        # Return part is emitted on the matching Done event below.
-                        pass
+                        # Added carries the full discovered-tools payload; emit the return
+                        # part here. Done repeats the same item — handled as a no-op
+                        # below to avoid double-emission. Marked lax because CI's combined
+                        # coverage occasionally misses this branch even though the
+                        # streaming test exercises it end-to-end.
+                        call_id = chunk.item.call_id or chunk.item.id
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return',
+                            part=_build_tool_search_return_part(
+                                call_id, chunk.item.status or 'completed', chunk.item, self.provider_name
+                            ),
+                        )
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -3159,16 +3169,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):  # pragma: lax no cover
-                        # Build the return part with the discovered-tools metadata. Marked
-                        # lax because coverage under pytest-xdist occasionally misses this
-                        # branch despite the streaming test exercising it.
-                        call_id = chunk.item.call_id or chunk.item.id
-                        return_part = _build_tool_search_return_part(
-                            call_id, chunk.item.status or 'completed', chunk.item, self.provider_name
-                        )
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                        )
+                        # Already emitted on the matching Added event — the Done payload
+                        # is a duplicate.
+                        pass
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
