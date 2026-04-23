@@ -1024,8 +1024,8 @@ async def test_dynamic_toolset_aenter_failure_does_not_exit_unentered_toolset():
         async def __aenter__(self) -> Self:
             raise RuntimeError('enter failed')
 
-        async def __aexit__(self, *args: Any) -> bool | None:
-            self.exit_count += 1  # pragma: no cover
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
+            self.exit_count += 1
             return None
 
         async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
@@ -1087,12 +1087,12 @@ async def test_dynamic_toolset_old_aexit_failure_does_not_store_new_toolset():
         def id(self) -> str | None:
             return None  # pragma: no cover
 
-        async def __aenter__(self) -> Self:
-            self.entered = True  # pragma: no cover
+        async def __aenter__(self) -> Self:  # pragma: no cover
+            self.entered = True
             return self
 
-        async def __aexit__(self, *args: Any) -> bool | None:
-            self.exited = True  # pragma: no cover
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
+            self.exited = True
             return None
 
         async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
