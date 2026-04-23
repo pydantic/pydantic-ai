@@ -40,6 +40,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
@@ -989,6 +990,9 @@ class StreamedResponse(ABC):
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
+    state: ModelResponseState = field(default='complete', init=False)
+    continuation_delay: float | None = field(default=None, init=False)
+    metadata: dict[str, Any] | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -1085,6 +1089,9 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
+            state=self.state,
+            continuation_delay=self.continuation_delay,
+            metadata=self.metadata,
         )
 
     # TODO (v2): Make this a property

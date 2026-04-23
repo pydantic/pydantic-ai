@@ -60,14 +60,14 @@ from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
-_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
     'end_turn': 'stop',
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': None,
     'refusal': 'content_filter',
 }
 
@@ -660,6 +660,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Get container config for the API request."""
         if (container := model_settings.get('anthropic_container')) is not None:
             return None if container is False else container
+        # On pause_turn continuation, pass just the container ID string to reconnect.
+        # Re-passing BetaContainerParams triggers a prefill rejection on some models
+        # (e.g. Sonnet 4-6) even though plain string ID works fine.
+        if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
+            if messages[-1].provider_details:
+                return messages[-1].provider_details.get('container_id')
+            return None  # pragma: lax no cover
+
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
@@ -768,6 +776,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
+            state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
 
@@ -1815,6 +1824,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                        self.state = 'suspended' if raw_finish_reason == 'pause_turn' else 'complete'
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if isinstance(current_block, BetaMCPToolUseBlock):
