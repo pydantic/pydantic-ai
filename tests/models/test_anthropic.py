@@ -9941,3 +9941,42 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
             requests=1,
         )
     )
+
+
+@pytest.mark.parametrize(
+    'settings,expected',
+    [
+        pytest.param(ModelSettings(service_tier='auto'), 'auto', id='top_level_auto'),
+        pytest.param(
+            ModelSettings(service_tier='default'), 'standard_only', id='top_level_default_maps_to_standard_only'
+        ),
+        pytest.param(ModelSettings(service_tier='flex'), None, id='top_level_flex_omitted'),
+        pytest.param(ModelSettings(service_tier='priority'), None, id='top_level_priority_omitted'),
+        pytest.param(
+            AnthropicModelSettings(anthropic_service_tier='standard_only'),
+            'standard_only',
+            id='per_provider_standard_only',
+        ),
+        pytest.param(
+            AnthropicModelSettings(service_tier='flex', anthropic_service_tier='auto'),
+            'auto',
+            id='per_provider_wins',
+        ),
+    ],
+)
+async def test_anthropic_service_tier_mapping(
+    allow_model_requests: None, settings: ModelSettings, expected: str | None
+):
+    """Top-level `service_tier` maps to Anthropic's request value; `anthropic_service_tier` overrides."""
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if expected is None:
+        assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
+    else:
+        assert kwargs['service_tier'] == expected
