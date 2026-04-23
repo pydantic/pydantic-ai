@@ -103,6 +103,7 @@ async def execute_traced_output_function(
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
+        'gen_ai.operation.name': 'execute_tool',
         'gen_ai.tool.name': tool_name,
         **get_agent_run_baggage_attributes(),
         'logfire.msg': f'running output function: {tool_name}',
