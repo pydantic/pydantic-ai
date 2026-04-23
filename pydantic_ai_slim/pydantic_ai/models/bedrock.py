@@ -694,8 +694,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if service_tier := model_settings.get('bedrock_service_tier'):
                 params['serviceTier'] = service_tier
             elif (unified_tier := model_settings.get('service_tier')) and unified_tier != 'auto':
-                if unified_tier in ('default', 'flex', 'priority'):
-                    params['serviceTier'] = {'type': unified_tier}
+                params['serviceTier'] = {'type': unified_tier}
 
         if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
             params['additionalModelRequestFields'] = additional_model_requests_fields

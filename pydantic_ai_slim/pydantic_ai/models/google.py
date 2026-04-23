@@ -51,7 +51,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingEffort
+from ..settings import ModelSettings, ServiceTier, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -96,7 +96,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
-        ServiceTier,
+        ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
         ToolCodeExecutionDict,
         ToolConfigDict,
@@ -279,30 +279,35 @@ class GoogleModelSettings(ModelSettings, total=False):
     """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
 
 
-def _google_vertex_service_tier_headers(service_tier: str) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
-    service_tier_str = service_tier.lower()
-    if service_tier_str in ('default', 'standard', 'priority', 'pt_then_on_demand', 'auto'):
+def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier | ServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing.
+
+    Accepts both the Vertex-specific values from [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier]
+    and the top-level [`ServiceTier`][pydantic_ai.settings.ServiceTier] values, which are mapped
+    to the safe PT-with-spillover equivalent where one exists (currently only `'flex'`).
+    """
+    # No routing headers: Vertex's default spillover (PT → on-demand) already matches these semantics.
+    if service_tier in ('auto', 'default', 'priority', 'pt_then_on_demand'):
         return {}
-    if service_tier_str == 'pt_only':
+    if service_tier == 'pt_only':
         return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
-    if service_tier_str == 'on_demand':
+    if service_tier == 'on_demand':
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
-    if service_tier_str in ('pt_then_flex', 'flex'):
+    if service_tier in ('flex', 'pt_then_flex'):
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
-    if service_tier_str == 'pt_then_priority':
+    if service_tier == 'pt_then_priority':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
-    if service_tier_str == 'flex_only':
+    if service_tier == 'flex_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
         }
-    if service_tier_str == 'priority_only':
+    if service_tier == 'priority_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
-    return {}
+    assert_never(service_tier)  # pragma: no cover
 
 
 @dataclass(init=False)
@@ -732,7 +737,7 @@ class GoogleModel(Model[Client]):
         )
 
         if service_tier_str is not None:
-            config['service_tier'] = cast(ServiceTier, service_tier_str)
+            config['service_tier'] = cast(_GoogleSDKServiceTier, service_tier_str)
 
         # Validate logprobs settings
         logprobs_requested = model_settings.get('google_logprobs')
