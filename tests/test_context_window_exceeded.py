@@ -152,10 +152,21 @@ with try_import() as bedrock_imports_successful:
                 id='bedrock_claude',
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 api_key_fixture='gateway_api_key',
-                # Recorded directly against AWS Bedrock (via AWS_PROFILE) because the Pydantic
-                # gateway was decommissioned; `key` is unused. Pin region so cassette replay
-                # matches the recorded host regardless of the local AWS default region.
+                # Recorded directly against AWS Bedrock because the Pydantic gateway was
+                # decommissioned; `key` is unused. Pin region so cassette replay matches the
+                # recorded host regardless of the local AWS default region. In CI there are
+                # no AWS creds, so pass fake static creds to keep botocore from trying an
+                # IMDS credential lookup that VCR can't match.
                 model_factory=lambda key: BedrockConverseModel(
+                    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                    provider=BedrockProvider(
+                        region_name='us-east-1',
+                        aws_access_key_id='AKIA6666666666666666',
+                        aws_secret_access_key='6666666666666666666666666666666666666666',
+                    ),
+                )
+                if os.getenv('CI')
+                else BedrockConverseModel(
                     'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                     provider=BedrockProvider(region_name='us-east-1'),
                 ),
