@@ -946,6 +946,188 @@ async def test_dynamic_toolset():
     assert tools == {}
 
 
+async def test_dynamic_toolset_enter_failure_does_not_exit_unentered_toolset():
+    """If the inner toolset's __aenter__ raises, DynamicToolset.__aexit__ must not
+    try to exit a toolset that was never entered.
+
+    Reproduces https://github.com/pydantic/pydantic-ai/issues/3542: a per-run-step
+    factory produces a fresh toolset each step; if __aenter__ on the new one fails,
+    the old logic still stored it and the outer context manager then called
+    __aexit__ on an unentered toolset (MCPServer raised "__aexit__ called more
+    times than __aenter__").
+    """
+
+    class FlakyToolset(AbstractToolset[None]):
+        enter_count = 0
+        exit_count = 0
+        fail_on_enter = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            if self.fail_on_enter:
+                raise RuntimeError('enter failed')
+            self.enter_count += 1
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exit_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    first = FlakyToolset()
+    second = FlakyToolset()
+    second.fail_on_enter = True
+    produced = iter([first, second])
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return next(produced)
+
+    dynamic = DynamicToolset[None](toolset_func=factory)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    assert isinstance(toolset, DynamicToolset)
+    async with toolset:
+        await toolset.for_run_step(run_context)
+        assert first.enter_count == 1
+        with pytest.raises(RuntimeError, match='enter failed'):
+            await toolset.for_run_step(run_context)
+        # After the failed transition, _toolset should be None so __aexit__ is a no-op.
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+    # Old toolset was exited exactly once during the transition; the failed one
+    # was never entered so must never be exited.
+    assert first.exit_count == 1
+    assert second.exit_count == 0
+
+
+async def test_dynamic_toolset_aenter_failure_does_not_exit_unentered_toolset():
+    """If the initial outer __aenter__ fails, __aexit__ must not try to exit it."""
+
+    class FailingEnterToolset(AbstractToolset[None]):
+        exit_count = 0
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            raise RuntimeError('enter failed')
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exit_count += 1  # pragma: no cover
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    inner = FailingEnterToolset()
+    dynamic = DynamicToolset[None](toolset_func=lambda ctx: inner, per_run_step=False)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    assert isinstance(toolset, DynamicToolset)
+    with pytest.raises(RuntimeError, match='enter failed'):
+        async with toolset:
+            pass  # pragma: no cover
+
+    assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+    assert inner.exit_count == 0
+
+
+async def test_dynamic_toolset_old_aexit_failure_does_not_store_new_toolset():
+    """If the old toolset's __aexit__ raises during a per-run-step transition,
+    the new toolset must not be stored (and thus not exited) since it was never entered.
+    """
+
+    class FailingExitToolset(AbstractToolset[None]):
+        entered = False
+        exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exited = True
+            raise RuntimeError('exit failed')
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    class TrackedToolset(AbstractToolset[None]):
+        entered = False
+        exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            self.entered = True  # pragma: no cover
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exited = True  # pragma: no cover
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    first = FailingExitToolset()
+    second = TrackedToolset()
+    produced = iter([first, second])
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return next(produced)
+
+    dynamic = DynamicToolset[None](toolset_func=factory)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    # Suppress the transition failure so we can inspect state afterwards; the
+    # outer __aexit__ must not then try to exit the never-entered second toolset.
+    with pytest.raises(RuntimeError, match='exit failed'):
+        async with toolset:
+            await toolset.for_run_step(run_context)
+            assert first.entered
+            await toolset.for_run_step(run_context)  # raises on old.__aexit__
+            pass  # pragma: no cover
+
+    assert first.exited
+    assert not second.entered
+    assert not second.exited
+
+
 async def test_dynamic_toolset_empty():
     def no_toolset_func(ctx: RunContext[None]) -> None:
         return None  # pragma: no cover
