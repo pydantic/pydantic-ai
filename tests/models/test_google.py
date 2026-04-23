@@ -2750,7 +2750,8 @@ async def test_google_service_tier_in_config(allow_model_requests: None):
     assert config_dict['service_tier'] == 'priority'
 
 
-async def test_google_service_tier_auto_maps_to_standard(allow_model_requests: None):
+async def test_google_service_tier_auto_omits_field(allow_model_requests: None):
+    """Top-level `service_tier='auto'` is omitted from the GLA request body."""
     m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
     model_settings = GoogleModelSettings(service_tier='auto')
 
@@ -2761,7 +2762,7 @@ async def test_google_service_tier_auto_maps_to_standard(allow_model_requests: N
     )
 
     config_dict = cast(dict[str, Any], config)
-    assert config_dict['service_tier'] == 'standard'
+    assert config_dict.get('service_tier') is None
 
 
 async def test_google_service_tier_default_maps_to_standard(allow_model_requests: None):

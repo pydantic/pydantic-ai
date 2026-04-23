@@ -702,9 +702,10 @@ class GoogleModel(Model[Client]):
         if self.system != 'google-vertex':
             if raw_service_tier := model_settings.get('google_service_tier') or model_settings.get('service_tier'):
                 service_tier_str = raw_service_tier.lower()
-                if service_tier_str in ('default', 'auto'):
+                if service_tier_str == 'default':
                     service_tier_str = 'standard'
                 elif service_tier_str not in ('standard', 'flex', 'priority'):
+                    # 'auto' (omit) and any Vertex-only values fall through here.
                     service_tier_str = None
 
         config = GenerateContentConfigDict(
