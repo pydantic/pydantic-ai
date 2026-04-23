@@ -1011,13 +1011,23 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # copy() instead of replace() because @dataclass(init=False) with a custom __init__
         # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
         # makes replace() pass unrecognized kwargs to __init__.
+        assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
         new = copy(self)
         new._output_retry_count = ctx.retry
-        new._output_max_retries = self.max_retries if self.max_retries is not None else 1
+        new._output_max_retries = self.max_retries
         return new
 
+    def _adjusted_ctx_for_get_tools(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        # Output-tool prepare functions (e.g. `prepare_output_tools`) expect `ctx.max_retries`
+        # to carry the output retry count, while the rest of the pipeline carries the tool
+        # retry count (the graph-level default).
+        if self.max_retries is None:
+            return ctx
+        return replace(ctx, max_retries=self.max_retries)
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries if self.max_retries is not None else 1
+        assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
+        max_retries = self.max_retries
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,

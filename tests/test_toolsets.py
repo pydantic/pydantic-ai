@@ -4,6 +4,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from datetime import timezone
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
@@ -27,17 +28,27 @@ from pydantic_ai import (
     ToolCallPart,
     ToolsetTool,
     WrapperToolset,
+    capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import InstructionPart, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    InstructionPart,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -757,11 +768,28 @@ async def test_toolset_max_retries_inherits_from_agent():
 
     agent = Agent('test', toolsets=[toolset], retries=0)
 
-    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
-        await agent.run('call always_fails', model=TestModel())
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
+            await agent.run('call always_fails', model=TestModel())
 
     # retries=0 means the tool is called once and then fails immediately.
     assert len(attempts) == 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call always_fails', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_toolset_explicit_max_retries_overrides_agent():
@@ -777,11 +805,17 @@ async def test_toolset_explicit_max_retries_overrides_agent():
 
     agent = Agent('test', toolsets=[toolset], retries=0)
 
-    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
-        await agent.run('call always_fails', model=TestModel())
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
+            await agent.run('call always_fails', model=TestModel())
 
     # Initial call + 2 retries = 3 attempts.
     assert len(attempts) == 3
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
 
 
 async def test_tool_explicit_retries_overrides_toolset_and_agent():
@@ -796,11 +830,14 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
     toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
     agent = Agent('test', toolsets=[toolset], retries=0)
 
-    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
-        await agent.run('call always_fails', model=TestModel())
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
+            await agent.run('call always_fails', model=TestModel())
 
     # Initial call + 3 retries = 4 attempts.
     assert len(attempts) == 4
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails', 'Always fails'])
 
 
 async def test_prepare_function_sees_agent_max_retries():
@@ -821,10 +858,45 @@ async def test_prepare_function_sees_agent_max_retries():
         return x
 
     agent = Agent('test', toolsets=[toolset], retries=3)
-    await agent.run('call my_tool', model=TestModel())
+    result = await agent.run('call my_tool', model=TestModel())
 
     assert captured_max_retries[0] == 3
     assert captured_last_attempt[0] is False
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call my_tool', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":0}')],
+                usage=RequestUsage(input_tokens=53, output_tokens=7),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retries():
@@ -842,11 +914,17 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
 
     agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
 
-    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
-        await agent.run('call always_fails', model=TestModel())
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
+            await agent.run('call always_fails', model=TestModel())
 
     # retries=1 means initial call + 1 retry = 2 attempts, not 6 (which would be output_retries).
     assert len(attempts) == 2
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails'])
 
 
 async def test_prepare_function_sees_tool_retries_not_output_retries():
@@ -867,9 +945,12 @@ async def test_prepare_function_sees_tool_retries_not_output_retries():
         return x
 
     agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
-    await agent.run('call my_tool', model=TestModel())
+    result = await agent.run('call my_tool', model=TestModel())
 
     assert captured[0] == 1
+    assert [type(m).__name__ for m in result.all_messages()] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
 
 
 async def test_tool_manager_multiple_failed_tools():

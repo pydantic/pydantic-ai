@@ -125,6 +125,15 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return self
 
+    def _adjusted_ctx_for_get_tools(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Return the run context to use when this toolset's `get_tools` is called from a parent toolset.
+
+        Default returns `ctx` unchanged. Override in subclasses that need their own `get_tools`
+        (and any `prepare` functions it runs) to see a customized `ctx` — e.g. an `OutputToolset`
+        whose prepare functions expect `ctx.max_retries` to carry the output retry count.
+        """
+        return ctx
+
     async def __aenter__(self) -> Self:
         """Enter the toolset context.
 

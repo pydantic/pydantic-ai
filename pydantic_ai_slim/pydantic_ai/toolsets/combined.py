@@ -7,13 +7,11 @@ from typing import Any
 
 from typing_extensions import Self
 
-from .._output import OutputToolset
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
-from .wrapper import WrapperToolset
 
 
 @dataclass(kw_only=True)
@@ -67,7 +65,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await gather(
-            *(toolset.get_tools(self._output_prep_ctx(ctx, toolset)) for toolset in self.toolsets)
+            *(toolset.get_tools(toolset._adjusted_ctx_for_get_tools(ctx)) for toolset in self.toolsets)
         )
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
@@ -116,15 +114,3 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 else:
                     parts.extend(r)
         return parts or None
-
-    @staticmethod
-    def _output_prep_ctx(ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]) -> RunContext[AgentDepsT]:
-        # Output-tool prepare functions expect `ctx.max_retries` to carry the output retry count,
-        # while the rest of the pipeline carries the tool retry count (the graph-level default).
-        # Override only for output toolsets; pass through for everything else.
-        unwrapped = toolset
-        while isinstance(unwrapped, WrapperToolset):
-            unwrapped = unwrapped.wrapped
-        if not isinstance(unwrapped, OutputToolset) or unwrapped.max_retries is None:
-            return ctx
-        return replace(ctx, max_retries=unwrapped.max_retries)

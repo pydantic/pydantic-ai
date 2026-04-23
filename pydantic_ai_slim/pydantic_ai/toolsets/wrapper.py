@@ -40,6 +40,9 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
             return self
         return replace(self, wrapped=new_wrapped)
 
+    def _adjusted_ctx_for_get_tools(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        return self.wrapped._adjusted_ctx_for_get_tools(ctx)
+
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
         return self
