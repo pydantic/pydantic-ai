@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Annotated, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
+
+if TYPE_CHECKING:
+    from vcr.cassette import Cassette
 
 import httpx
 import pytest
@@ -1230,8 +1233,15 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
+def _single_request_body(vcr: Cassette) -> dict[str, Any]:
+    """Return the decoded JSON body of the single recorded VCR request."""
+    requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert len(requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+
 async def test_anthropic_task_budget_adds_output_config_and_beta(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
     m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
@@ -1244,9 +1254,9 @@ async def test_anthropic_task_budget_adds_output_config_and_beta(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert len(vcr.requests) == 1
-    request_body = json.loads(vcr.requests[0].body)
-    assert request_body['output_config'] == {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
+    assert _single_request_body(vcr)['output_config'] == snapshot(
+        {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
+    )
 
 
 async def test_anthropic_task_budget_merges_with_other_beta_sources(allow_model_requests: None):
@@ -1270,10 +1280,11 @@ async def test_anthropic_task_budget_merges_with_other_beta_sources(allow_model_
     await agent.run('Hello')
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    betas = completion_kwargs['betas']
-    assert 'task-budgets-2026-03-13' in betas
-    assert 'interleaved-thinking-2025-05-14' in betas
-    assert 'custom-feature-1' in betas
+    assert set(completion_kwargs['betas']) >= {
+        'task-budgets-2026-03-13',
+        'interleaved-thinking-2025-05-14',
+        'custom-feature-1',
+    }
 
 
 async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_requests: None):
@@ -3626,7 +3637,7 @@ async def test_anthropic_opus_46_features(
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
     settings = AnthropicModelSettings(
         anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
         anthropic_effort='xhigh',
@@ -3638,11 +3649,14 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == 'claude-opus-4-7'
-    assert len(vcr.requests) == 1
-    request_body = json.loads(vcr.requests[0].body)
-    assert request_body['model'] == 'claude-opus-4-7'
-    assert request_body['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
-    assert request_body['output_config'] == {'effort': 'xhigh'}
+    request_body = _single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-4-7',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
@@ -3742,7 +3756,7 @@ async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: N
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
 
-    with pytest.raises(UserError, match='Claude Opus 4.7 does not support'):
+    with pytest.raises(UserError, match="'claude-opus-4-7' does not support"):
         await agent.run('What is 2+2?')
 
 
@@ -3764,7 +3778,9 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
-async def test_anthropic_task_budget_coexists_with_effort(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_task_budget_coexists_with_effort(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
     m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
         m,
@@ -3777,17 +3793,14 @@ async def test_anthropic_task_budget_coexists_with_effort(allow_model_requests: 
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert len(vcr.requests) == 1
-    request_body = json.loads(vcr.requests[0].body)
-    assert request_body['output_config'] == {
-        'effort': 'high',
-        'task_budget': {'type': 'tokens', 'total': 20_000},
-    }
+    assert _single_request_body(vcr)['output_config'] == snapshot(
+        {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 20_000}}
+    )
 
 
 @pytest.mark.vcr()
 async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
     """Explicit `anthropic_effort='xhigh'` is passed through so unsupported models fail at the API."""
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -3817,7 +3830,9 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
 
 
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])
-async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: None, settings_source: str):
+async def test_anthropic_opus_47_drops_sampling_settings(
+    allow_model_requests: None, settings_source: Literal['agent', 'model']
+):
     settings = AnthropicModelSettings(
         temperature=0.2,
         top_p=0.3,
@@ -3844,13 +3859,12 @@ async def test_anthropic_opus_47_drops_sampling_settings(allow_model_requests: N
     with pytest.warns(UserWarning, match='Sampling parameters'):
         await agent.run('What is 2+2?')
 
-    assert settings.get('temperature') == 0.2
-    assert settings.get('top_p') == 0.3
-    assert settings.get('extra_body') == {'top_k': 5, 'metadata': {'keep': True}}
+    # Original settings dict is preserved — filtering happens on a copy inside `prepare_request`.
+    assert settings == snapshot(
+        {'temperature': 0.2, 'top_p': 0.3, 'extra_body': {'top_k': 5, 'metadata': {'keep': True}}}
+    )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['temperature'] is OMIT
-    assert kwargs['top_p'] is OMIT
-    assert kwargs['extra_body'] == {'metadata': {'keep': True}}
+    assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
 
 
 async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
