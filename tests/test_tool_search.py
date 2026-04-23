@@ -1293,14 +1293,12 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
         if isinstance(block, dict) and block.get('type') == 'tool_result'
     ]
     assert tool_result_blocks, 'expected at least one tool_result block in the follow-up turn'
-    tool_reference_names: set[str] = set()
-    for block in tool_result_blocks:
-        block_content = block.get('content')
-        if not isinstance(block_content, list):
-            continue
-        for inner in cast(list[dict[str, Any]], block_content):
-            if isinstance(inner, dict) and inner.get('type') == 'tool_reference':
-                tool_reference_names.add(cast(str, inner['tool_name']))
+    tool_reference_names: set[str] = {
+        cast(str, inner['tool_name'])
+        for block in tool_result_blocks
+        for inner in cast(list[dict[str, Any]], block.get('content', []))
+        if isinstance(inner, dict) and inner.get('type') == 'tool_reference'
+    }
     assert tool_reference_names == {'get_exchange_rate'}
 
 

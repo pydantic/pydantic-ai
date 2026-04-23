@@ -1935,20 +1935,15 @@ class AnthropicStreamedResponse(StreamedResponse):
 def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_active: bool) -> list[str] | None:
     """Return discovered tool names to render as Anthropic `tool_reference` blocks.
 
-    Returns the list when ``part`` is a custom-callable `search_tools` result and its
-    metadata carries a ``discovered_tools`` list of strings. Returns ``None`` when the
-    default text/document formatting should be used.
+    Returns the list when ``part`` is a custom-callable `search_tools` result whose
+    metadata carries ``discovered_tools`` (the shape produced by
+    [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset]). Returns
+    ``None`` when the default text/document formatting should be used.
     """
     if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
         return None
-    metadata = part.metadata
-    if not isinstance(metadata, dict):
-        return None
-    metadata_dict = cast(dict[str, Any], metadata)
-    discovered = metadata_dict.get('discovered_tools')
-    if not isinstance(discovered, list) or not all(isinstance(name, str) for name in cast(list[Any], discovered)):
-        return None
-    return cast(list[str], discovered)
+    metadata: dict[str, Any] = part.metadata or {}
+    return cast('list[str] | None', metadata.get('discovered_tools'))
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:

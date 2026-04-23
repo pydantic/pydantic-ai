@@ -159,27 +159,17 @@ class ToolManager(Generic[AgentDepsT]):
         """Look up a tool by the name the model calls it by (``tool_def.name``).
 
         The raw ``self.tools`` dict may use internal-use keys alongside plain names —
-        e.g. the tool-search ``~managed:`` convention where two entries can point at
-        the same deferred tool (one carrying ``managed_by_builtin``, one without) so
-        that ``Model.prepare_request`` can filter to the variant the specific model
-        supports. Dispatch must hit the entry the model is actually calling, which is
-        the one whose ``tool_def.name`` matches. On collision (both variants of the
-        same name present), prefer the regular variant; both share dispatch semantics,
-        so either works if only the managed one is present.
+        e.g. the tool-search ``~managed:`` convention where an entry's dict key may be
+        ``{name}~managed:tool_search`` while the ``tool_def.name`` the model sees is
+        still ``{name}``. Dispatch must hit the entry the model is actually calling,
+        which is the one whose ``tool_def.name`` matches.
         """
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
         tool = self.tools.get(name)
         if tool is not None and tool.tool_def.name == name:
             return tool
-        best: ToolsetTool[AgentDepsT] | None = None
-        for t in self.tools.values():
-            if t.tool_def.name != name:
-                continue
-            if not t.tool_def.managed_by_builtin:
-                return t
-            best = t
-        return best
+        return next((t for t in self.tools.values() if t.tool_def.name == name), None)
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""

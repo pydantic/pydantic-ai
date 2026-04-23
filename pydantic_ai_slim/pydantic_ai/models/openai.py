@@ -3038,7 +3038,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                             )
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        # The final return part is emitted in ResponseOutputItemDoneEvent; skip here.
+                        # The return part with `discovered_tools` metadata is emitted on
+                        # the matching Done event below, after OpenAI finalizes the item.
                         pass
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
@@ -3828,12 +3829,10 @@ def _map_tool_search_call(
     key written by our local `search_tools`, enabling cross-provider history recovery.
     """
     call_id = item.call_id or item.id
-    raw_args: object = item.arguments
-    args: dict[str, Any] | None = cast('dict[str, Any]', raw_args) if isinstance(raw_args, dict) else None
     call_part = BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,
-        args=args,
+        args=cast('dict[str, Any]', item.arguments) or None,
         tool_call_id=call_id,
         id=item.id,
     )
@@ -3851,33 +3850,27 @@ def _build_client_tool_search_output_param(
     ``FunctionToolParam`` so OpenAI sees the same ``Tool`` definitions it originally
     loaded in the prior turn — the shape of :class:`ResponseToolSearchOutputItemParamParam`.
     """
-    discovered: list[str] = []
-    if isinstance(part.metadata, dict):
-        raw_names = part.metadata.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if isinstance(raw_names, list):
-            discovered = [n for n in raw_names if isinstance(n, str)]  # pyright: ignore[reportUnknownVariableType]
+    metadata: dict[str, Any] = part.metadata or {}
+    discovered = cast('list[str]', metadata.get('discovered_tools') or [])
 
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
-    tool_params: list[responses.tool_param.ToolParam] = []
-    for name in discovered:
-        tool_def = tool_defs_by_name.get(name)
-        if tool_def is None:  # pragma: no cover
-            continue
-        # `strict` is profile-dependent at initial send-time (`_map_tool_definition`
-        # consults the model profile). For replay, pass `False` so OpenAI doesn't
-        # attempt to re-validate the schema it already accepted in the prior turn.
-        tool_params.append(
-            cast(
-                'responses.tool_param.ToolParam',
-                {
-                    'name': tool_def.name,
-                    'parameters': tool_def.parameters_json_schema,
-                    'type': 'function',
-                    'description': tool_def.description,
-                    'strict': False,
-                },
-            )
+    # `strict` is profile-dependent at initial send-time (`_map_tool_definition`
+    # consults the model profile). For replay, pass `False` so OpenAI doesn't
+    # attempt to re-validate the schema it already accepted in the prior turn.
+    tool_params: list[responses.tool_param.ToolParam] = [
+        cast(
+            'responses.tool_param.ToolParam',
+            {
+                'name': tool_def.name,
+                'parameters': tool_def.parameters_json_schema,
+                'type': 'function',
+                'description': tool_def.description,
+                'strict': False,
+            },
         )
+        for name in discovered
+        if (tool_def := tool_defs_by_name.get(name)) is not None
+    ]
 
     output: ResponseToolSearchOutputItemParamParam = {
         'type': 'tool_search_output',
@@ -3899,14 +3892,10 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
     ``{"keywords": ...}`` shape the local toolset expects.
     """
     call_id = item.call_id or item.id
-    raw_args: object = item.arguments
-    keywords = ''
-    if isinstance(raw_args, dict):
-        args_dict = cast('dict[str, Any]', raw_args)
-        # OpenAI's `tool_search_call` historically uses `query`; our local tool uses
-        # `keywords`. Accept either to future-proof against schema evolution.
-        raw = args_dict.get('keywords') or args_dict.get('query') or ''
-        keywords = raw if isinstance(raw, str) else ''
+    # OpenAI's `tool_search_call` historically uses `query`; our local tool uses
+    # `keywords`. Accept either to future-proof against schema evolution.
+    args_dict = cast('dict[str, Any]', item.arguments) or {}
+    keywords = args_dict.get('keywords') or args_dict.get('query') or ''
     return ToolCallPart(
         tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
         args={'keywords': keywords},
