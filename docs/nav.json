@@ -1,0 +1,510 @@
+[
+  {
+    "label": "Overview",
+    "items": [
+      "index",
+      "install",
+      "help",
+      "troubleshooting",
+      {
+        "label": "Coding Agent Skills",
+        "slug": "coding-agent-skills"
+      },
+      {
+        "label": "Pydantic AI Gateway",
+        "slug": "gateway"
+      }
+    ]
+  },
+  {
+    "label": "Core Concepts",
+    "items": [
+      {
+        "label": "Agents",
+        "slug": "agent"
+      },
+      "dependencies",
+      "output",
+      "capabilities",
+      {
+        "label": "Hooks",
+        "slug": "hooks"
+      },
+      {
+        "label": "Agent Specs",
+        "slug": "agent-spec"
+      },
+      "message-history",
+      "direct"
+    ]
+  },
+  {
+    "label": "Models & Providers",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "models/overview"
+      },
+      "models/openai",
+      "models/anthropic",
+      "models/google",
+      "models/xai",
+      "models/bedrock",
+      "models/cerebras",
+      "models/cohere",
+      "models/groq",
+      "models/huggingface",
+      "models/mistral",
+      "models/ollama",
+      "models/openrouter",
+      "models/outlines"
+    ]
+  },
+  {
+    "label": "Tools & Toolsets",
+    "items": [
+      "tools",
+      "tools-advanced",
+      "toolsets",
+      "deferred-tools",
+      "builtin-tools",
+      "common-tools",
+      "third-party-tools"
+    ]
+  },
+  {
+    "label": "Advanced Features",
+    "items": [
+      "input",
+      "thinking",
+      "retries"
+    ]
+  },
+  {
+    "label": "Guides",
+    "items": [
+      {
+        "label": "Extensibility",
+        "slug": "extensibility"
+      },
+      {
+        "label": "Multi-Agent Patterns",
+        "slug": "multi-agent-applications"
+      },
+      {
+        "label": "Web Chat UI",
+        "slug": "web"
+      },
+      {
+        "label": "Embeddings",
+        "slug": "embeddings"
+      },
+      {
+        "label": "Testing",
+        "slug": "testing"
+      }
+    ]
+  },
+  {
+    "label": "MCP",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "mcp/overview"
+      },
+      "mcp/client",
+      "mcp/fastmcp-client",
+      "mcp/server"
+    ]
+  },
+  {
+    "label": "Pydantic AI Harness",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "harness/overview"
+      },
+      {
+        "label": "Code Mode",
+        "slug": "harness/code-mode"
+      }
+    ]
+  },
+  {
+    "label": "Pydantic Evals",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "evals"
+      },
+      {
+        "label": "Getting Started",
+        "items": [
+          {
+            "label": "Quick Start",
+            "slug": "evals/quick-start"
+          },
+          {
+            "label": "Core Concepts",
+            "slug": "evals/core-concepts"
+          }
+        ]
+      },
+      {
+        "label": "Evaluators",
+        "items": [
+          {
+            "label": "Overview",
+            "slug": "evals/evaluators/overview"
+          },
+          {
+            "label": "Built-in Evaluators",
+            "slug": "evals/evaluators/built-in"
+          },
+          {
+            "label": "LLM Judge",
+            "slug": "evals/evaluators/llm-judge"
+          },
+          {
+            "label": "Third-Party Integrations",
+            "slug": "evals/evaluators/framework-integrations"
+          },
+          {
+            "label": "Custom Evaluators",
+            "slug": "evals/evaluators/custom"
+          },
+          {
+            "label": "Report Evaluators",
+            "slug": "evals/evaluators/report-evaluators"
+          },
+          {
+            "label": "Span-Based",
+            "slug": "evals/evaluators/span-based"
+          }
+        ]
+      },
+      {
+        "label": "Online Evaluation",
+        "slug": "evals/online-evaluation"
+      },
+      {
+        "label": "How-To Guides",
+        "items": [
+          {
+            "label": "Logfire Integration",
+            "slug": "evals/how-to/logfire-integration"
+          },
+          {
+            "label": "Dataset Management",
+            "slug": "evals/how-to/dataset-management"
+          },
+          {
+            "label": "Dataset Serialization",
+            "slug": "evals/how-to/dataset-serialization"
+          },
+          {
+            "label": "Concurrency & Performance",
+            "slug": "evals/how-to/concurrency"
+          },
+          {
+            "label": "Multi-Run Evaluation",
+            "slug": "evals/how-to/multi-run"
+          },
+          {
+            "label": "Retry Strategies",
+            "slug": "evals/how-to/retry-strategies"
+          },
+          {
+            "label": "Metrics & Attributes",
+            "slug": "evals/how-to/metrics-attributes"
+          },
+          {
+            "label": "Case Lifecycle Hooks",
+            "slug": "evals/how-to/lifecycle"
+          }
+        ]
+      },
+      {
+        "label": "Examples",
+        "items": [
+          {
+            "label": "Simple Validation",
+            "slug": "evals/examples/simple-validation"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Pydantic Graph",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "graph"
+      },
+      {
+        "label": "Beta API",
+        "items": [
+          {
+            "label": "Getting Started",
+            "slug": "graph/beta/index"
+          },
+          {
+            "label": "Steps",
+            "slug": "graph/beta/steps"
+          },
+          {
+            "label": "Joins & Reducers",
+            "slug": "graph/beta/joins"
+          },
+          {
+            "label": "Decisions",
+            "slug": "graph/beta/decisions"
+          },
+          {
+            "label": "Parallel Execution",
+            "slug": "graph/beta/parallel"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Integrations",
+    "items": [
+      {
+        "label": "Debugging & Monitoring with Pydantic Logfire",
+        "slug": "logfire"
+      },
+      {
+        "label": "Durable Execution",
+        "items": [
+          {
+            "label": "Overview",
+            "slug": "durable_execution/overview"
+          },
+          {
+            "label": "Temporal",
+            "slug": "durable_execution/temporal"
+          },
+          {
+            "label": "DBOS",
+            "slug": "durable_execution/dbos"
+          },
+          {
+            "label": "Prefect",
+            "slug": "durable_execution/prefect"
+          },
+          {
+            "label": "Restate",
+            "slug": "durable_execution/restate"
+          }
+        ]
+      },
+      {
+        "label": "UI Event Streams",
+        "items": [
+          {
+            "label": "Overview",
+            "slug": "ui/overview"
+          },
+          {
+            "label": "AG-UI",
+            "slug": "ui/ag-ui"
+          },
+          {
+            "label": "Vercel AI",
+            "slug": "ui/vercel-ai"
+          }
+        ]
+      },
+      {
+        "label": "Agent2Agent (A2A)",
+        "slug": "a2a"
+      },
+      {
+        "label": "Command Line Interface (CLI)",
+        "slug": "cli"
+      }
+    ]
+  },
+  {
+    "label": "Examples",
+    "items": [
+      {
+        "label": "Setup",
+        "slug": "examples/setup"
+      },
+      {
+        "label": "Getting Started",
+        "items": [
+          "examples/pydantic-model",
+          "examples/weather-agent"
+        ]
+      },
+      {
+        "label": "Conversational Agents",
+        "items": [
+          "examples/chat-app",
+          "examples/bank-support"
+        ]
+      },
+      {
+        "label": "Data & Analytics",
+        "items": [
+          "examples/sql-gen",
+          "examples/data-analyst",
+          "examples/rag"
+        ]
+      },
+      {
+        "label": "Streaming",
+        "items": [
+          "examples/stream-markdown",
+          "examples/stream-whales"
+        ]
+      },
+      {
+        "label": "Complex Workflows",
+        "items": [
+          "examples/flight-booking",
+          "examples/question-graph"
+        ]
+      },
+      {
+        "label": "Business Applications",
+        "items": [
+          "examples/slack-lead-qualifier"
+        ]
+      },
+      {
+        "label": "UI Examples",
+        "items": [
+          "examples/ag-ui"
+        ]
+      }
+    ]
+  },
+  {
+    "label": "API Reference",
+    "items": [
+      {
+        "label": "pydantic_ai",
+        "items": [
+          "api/ag_ui",
+          "api/agent",
+          "api/builtin_tools",
+          "api/capabilities",
+          "api/common_tools",
+          "api/concurrency",
+          "api/direct",
+          "api/durable_exec",
+          "api/embeddings",
+          "api/exceptions",
+          "api/ext",
+          "api/format_prompt",
+          "api/function_signature",
+          "api/mcp",
+          "api/messages",
+          {
+            "label": "models",
+            "items": [
+              "api/models/anthropic",
+              "api/models/base",
+              "api/models/bedrock",
+              "api/models/cerebras",
+              "api/models/cohere",
+              "api/models/fallback",
+              "api/models/function",
+              "api/models/google",
+              "api/models/xai",
+              "api/models/groq",
+              "api/models/huggingface",
+              "api/models/instrumented",
+              "api/models/mcp-sampling",
+              "api/models/mistral",
+              "api/models/openai",
+              "api/models/openrouter",
+              "api/models/outlines",
+              "api/models/test",
+              "api/models/wrapper"
+            ]
+          },
+          "api/output",
+          "api/profiles",
+          "api/providers",
+          "api/result",
+          "api/retries",
+          "api/run",
+          "api/settings",
+          "api/tools",
+          "api/toolsets",
+          {
+            "label": "ui",
+            "items": [
+              "api/ui/ag_ui",
+              "api/ui/base",
+              "api/ui/vercel_ai"
+            ]
+          },
+          "api/usage"
+        ]
+      },
+      {
+        "label": "pydantic_evals",
+        "items": [
+          "api/pydantic_evals/dataset",
+          "api/pydantic_evals/evaluators",
+          "api/pydantic_evals/lifecycle",
+          "api/pydantic_evals/online",
+          "api/pydantic_evals/reporting",
+          "api/pydantic_evals/otel",
+          "api/pydantic_evals/generation"
+        ]
+      },
+      {
+        "label": "pydantic_graph",
+        "items": [
+          "api/pydantic_graph/graph",
+          "api/pydantic_graph/nodes",
+          "api/pydantic_graph/persistence",
+          "api/pydantic_graph/mermaid",
+          "api/pydantic_graph/exceptions",
+          {
+            "label": "Beta API",
+            "items": [
+              "api/pydantic_graph/beta",
+              "api/pydantic_graph/beta_graph",
+              "api/pydantic_graph/beta_graph_builder",
+              "api/pydantic_graph/beta_step",
+              "api/pydantic_graph/beta_join",
+              "api/pydantic_graph/beta_decision",
+              "api/pydantic_graph/beta_node"
+            ]
+          }
+        ]
+      },
+      {
+        "label": "fasta2a",
+        "items": [
+          "api/fasta2a"
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Project",
+    "items": [
+      "contributing",
+      "changelog",
+      {
+        "label": "Version Policy",
+        "slug": "version-policy"
+      }
+    ]
+  },
+  {
+    "label": "Blog",
+    "link": "https://blog.pydantic.dev/"
+  }
+]
