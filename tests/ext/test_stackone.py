@@ -298,6 +298,33 @@ def test_stackone_toolset_account_ids_and_execute_config_mutual_exclusion(mock_t
         )
 
 
+def test_stackone_toolset_tools_and_filter_pattern_mutual_exclusion():
+    with pytest.raises(ValueError, match="Cannot specify both 'tools' and 'filter_pattern'"):
+        StackOneToolset(
+            tools=['bamboohr_list_employees'],
+            filter_pattern='bamboohr_*',
+            api_key='test-key',
+            account_ids='test-account',
+        )
+
+
+def test_stackone_toolset_search_config_requires_mode():
+    with pytest.raises(ValueError, match="require mode='search_and_execute'"):
+        StackOneToolset(
+            tools=['bamboohr_list_employees'],
+            search_config={'method': 'semantic'},
+            api_key='test-key',
+            account_ids='test-account',
+        )
+
+    with pytest.raises(ValueError, match="require mode='search_and_execute'"):
+        StackOneToolset(
+            execute_config={'account_ids': ['acct-1']},
+            api_key='test-key',
+            account_ids='test-account',
+        )
+
+
 def test_import_error():
     with patch.dict('sys.modules', {'stackone_ai': None}):
         with pytest.raises(ImportError, match='Please install `stackone-ai`'):

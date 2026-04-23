@@ -131,7 +131,7 @@ For more control, discover tools on demand, narrow the toolset explicitly, or co
     - `semantic`: calls the StackOne semantic search API, which uses server-side model embeddings to rank tools by relevance
     - `local`: runs a BM25 + TF-IDF hybrid keyword search on-device, with no call to the StackOne API
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     # Default: the SDK picks the search strategy
     toolset = StackOneToolset(mode='search_and_execute')
 
@@ -148,7 +148,7 @@ For more control, discover tools on demand, narrow the toolset explicitly, or co
 
     Narrow the toolset with an explicit list of tool names or a glob pattern. You can also wrap a single tool directly with [`tool_from_stackone`][pydantic_ai.ext.stackone.tool_from_stackone], and a toolset can be combined with one or more standalone tools on the same agent. Examples use Workday tool names; any connected vendor works identically.
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     from pydantic_ai.ext.stackone import tool_from_stackone
 
     # An explicit list of tools
@@ -170,7 +170,7 @@ For more control, discover tools on demand, narrow the toolset explicitly, or co
 
     Pass `account_ids` as a list to fetch tools from several connected accounts. The SDK fans out in parallel and merges the results.
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     toolset = StackOneToolset(
         filter_pattern='workday_list_worker*',
         account_ids=['workday-acct-1', 'bamboohr-acct-2'],

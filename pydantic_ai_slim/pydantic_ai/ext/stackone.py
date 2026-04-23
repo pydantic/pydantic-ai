@@ -109,6 +109,9 @@ class StackOneToolset(FunctionToolset):
         execute_config: ExecuteToolsConfig | None = None,
         id: str | None = None,
     ):
+        if mode != 'search_and_execute' and (search_config is not None or execute_config is not None):
+            raise ValueError("'search_config' and 'execute_config' require mode='search_and_execute'")
+
         if mode == 'search_and_execute':
             if tools is not None or filter_pattern is not None:
                 raise ValueError("Cannot combine mode='search_and_execute' with 'tools' or 'filter_pattern'")
@@ -133,6 +136,9 @@ class StackOneToolset(FunctionToolset):
             pydantic_tools = [_tool_from_stackone_tool(t) for t in meta_tools]
             super().__init__(pydantic_tools, id=id)
             return
+
+        if tools is not None and filter_pattern is not None:
+            raise ValueError("Cannot specify both 'tools' and 'filter_pattern'")
 
         resolved = _resolve_account_ids(account_ids)
         stackone_toolset = StackOneToolSet(api_key=api_key, base_url=base_url)
