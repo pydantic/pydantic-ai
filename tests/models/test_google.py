@@ -6224,6 +6224,7 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
                         ]
                     },
                 ],
+                'log_probability_sum': None,
             },
             'avg_logprobs': -1.0858495576041085,
         }
@@ -6257,6 +6258,7 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
                     {'log_probability': -4.529893e-06, 'token': '4', 'token_id': 236812},
                 ],
                 'top_candidates': None,
+                'log_probability_sum': None,
             },
             'avg_logprobs': -0.7161864553179059,
         }
@@ -6293,6 +6295,7 @@ async def test_google_vertex_logprobs_structure(
                         ]
                     }
                 ],
+                'log_probability_sum': None,
             },
             'avg_logprobs': -11.512689590454102,
         }

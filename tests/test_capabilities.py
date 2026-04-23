@@ -981,6 +981,11 @@ though not all of these settings are supported by all models.\
                             ],
                             'title': 'Thinking',
                         },
+                        'service_tier': {
+                            'enum': ['auto', 'default', 'flex', 'priority'],
+                            'title': 'Service Tier',
+                            'type': 'string',
+                        },
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
