@@ -6569,12 +6569,25 @@ async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_reque
             id='pt_then_flex',
         ),
         pytest.param(
+            'pt_then_priority',
+            {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'},
+            id='pt_then_priority',
+        ),
+        pytest.param(
             'flex_only',
             {
                 'X-Vertex-AI-LLM-Request-Type': 'shared',
                 'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
             },
             id='flex_only',
+        ),
+        pytest.param(
+            'priority_only',
+            {
+                'X-Vertex-AI-LLM-Request-Type': 'shared',
+                'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
+            },
+            id='priority_only',
         ),
     ],
 )

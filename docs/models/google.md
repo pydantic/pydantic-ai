@@ -162,16 +162,18 @@ You can control the service tier (priority and pricing) using the unified [`serv
 
 **Vertex AI-specific tiers**
 
-For granular control over [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) pricing on Vertex AI, use the [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+For granular control over [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) pricing on Vertex AI, use the [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 This sets optional HTTP headers to control routing:
 
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`).
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'pt_then_priority'`: PT when quota allows, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: priority`).
 - `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`).
 - `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`).
 
-**Flex PayGo example**
+**Example**
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -188,9 +190,11 @@ result = agent.run_sync(
 )
 ```
 
+Swap `'pt_then_flex'` for any [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] value — e.g. `'pt_then_priority'` for [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover, or `'flex_only'` / `'priority_only'` to bypass PT entirely.
+
 The [`google_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_service_tier] field is deprecated in favor of these more specific fields.
 
-After a Flex request, you can inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX` when Flex was used) if the API returns it.
+After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse] `provider_details.get('traffic_type')` (e.g. `ON_DEMAND_FLEX`, `ON_DEMAND_PRIORITY`) to see which tier served it, when the API returns it.
 
 #### Model Garden
 

@@ -173,19 +173,23 @@ GoogleVertexServiceTier = Literal[
     'pt_then_on_demand',
     'pt_only',
     'pt_then_flex',
+    'pt_then_priority',
     'on_demand',
     'flex_only',
+    'priority_only',
 ]
 """Values for the `google_vertex_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
-(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo).
+(PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo).
 
 - `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'pt_then_priority'`: PT when quota allows, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: priority`).
 - `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
 - `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+- `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
 """
@@ -194,8 +198,10 @@ GoogleServiceTier = Literal[
     'pt_then_on_demand',
     'pt_only',
     'pt_then_flex',
+    'pt_then_priority',
     'on_demand',
     'flex_only',
+    'priority_only',
 ]
 """Deprecated alias for service tier values.
 
@@ -262,7 +268,8 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_vertex_service_tier: GoogleVertexServiceTier
     """The service tier to use for the model request when using Vertex AI.
 
-    Controls routing for Provisioned Throughput and Flex PayGo (e.g., `'pt_only'`, `'flex_only'`).
+    Controls routing for Provisioned Throughput, Flex PayGo, and Priority PayGo
+    (e.g., `'pt_only'`, `'flex_only'`, `'priority_only'`).
 
     See [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] for all values,
     headers sent, and links to Google docs.
@@ -273,7 +280,7 @@ class GoogleModelSettings(ModelSettings, total=False):
 
 
 def _google_vertex_service_tier_headers(service_tier: str) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     service_tier_str = service_tier.lower()
     if service_tier_str in ('default', 'standard', 'priority', 'pt_then_on_demand', 'auto'):
         return {}
@@ -283,10 +290,17 @@ def _google_vertex_service_tier_headers(service_tier: str) -> dict[str, str]:
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
     if service_tier_str in ('pt_then_flex', 'flex'):
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier_str == 'pt_then_priority':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
     if service_tier_str == 'flex_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    if service_tier_str == 'priority_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     return {}
 
