@@ -136,16 +136,32 @@ with try_import() as bedrock_imports_successful:
         BedrockConverseModel,
         _check_context_window_exceeded as bedrock_check,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.bedrock import BedrockProvider
 
-    _vcr_cases.append(
-        Case(
-            id='bedrock',
-            model_name='us.amazon.nova-micro-v1:0',
-            api_key_fixture='gateway_api_key',
-            model_factory=lambda key: BedrockConverseModel(
-                'us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key=key)
+    _vcr_cases.extend(
+        [
+            Case(
+                id='bedrock_nova',
+                model_name='us.amazon.nova-micro-v1:0',
+                api_key_fixture='gateway_api_key',
+                model_factory=lambda key: BedrockConverseModel(
+                    'us.amazon.nova-micro-v1:0', provider=gateway_provider('bedrock', api_key=key)
+                ),
             ),
-        ),
+            Case(
+                id='bedrock_claude',
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                api_key_fixture='gateway_api_key',
+                # Recorded directly against AWS Bedrock (via AWS_PROFILE) because the Pydantic
+                # gateway was decommissioned; `key` is unused. Pin region so cassette replay
+                # matches the recorded host regardless of the local AWS default region.
+                model_factory=lambda key: BedrockConverseModel(
+                    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                    provider=BedrockProvider(region_name='us-east-1'),
+                ),
+                prompt=ANTHROPIC_HUGE_PROMPT,
+            ),
+        ]
     )
 
 with try_import() as mistral_imports_successful:
