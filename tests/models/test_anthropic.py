@@ -9329,7 +9329,9 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     await agent.run('follow up', message_history=history)
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['container'] == BetaContainerParams(id='container_from_history')
+    # The Anthropic SDK accepts both `BetaContainerParams` and `str`, but the live API
+    # only accepts the string form for reuse, so history reuse is sent as a raw id.
+    assert completion_kwargs['container'] == 'container_from_history'
 
 
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
@@ -9416,6 +9418,47 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
+
+
+async def test_anthropic_code_execution_tool_container_reuse(allow_model_requests: None, anthropic_api_key: str):
+    """Reusing a `container_id` from message history must be sent as a raw string.
+
+    The Anthropic SDK types `container` as `BetaContainerParams | str`, but the live
+    API rejects the object form with `container: Input should be a valid string`.
+    This test records a two-turn conversation using the code execution tool and
+    asserts that the second request sends `container` on the wire as the raw id —
+    using an httpx event hook so the assertion runs against what the client
+    actually sent, not what the VCR cassette happens to hold.
+    """
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    m = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+    )
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions='Always use the code execution tool for math.',
+    )
+
+    first = await agent.run('How much is 3 * 12390?')
+    first_response = first.all_messages()[-1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.provider_details is not None
+    container_id = first_response.provider_details.get('container_id')
+    assert isinstance(container_id, str) and container_id.startswith('container_')
+
+    second = await agent.run('And what about 4 * 12390?', message_history=first.new_messages())
+    assert second.output
+
+    assert len(sent_bodies) == 2
+    assert 'container' not in sent_bodies[0]
+    assert sent_bodies[1]['container'] == container_id
 
 
 async def test_anthropic_system_prompts_and_instructions_ordering():
