@@ -35,7 +35,7 @@ async def summarize(text: str) -> str:
     return f'Summary of: {text}'
 ```
 
-Wire up OTel export (e.g. [`logfire.configure()`](../logfire.md#using-logfire)) elsewhere in your application startup so that the emitted `gen_ai.evaluation.result` events reach your backend.
+Wire up OTel export (e.g. [`logfire.configure()`](../logfire.md#using-logfire)) elsewhere in your application startup so that the emitted `gen_ai.evaluation.result` events reach your backend. When using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/live-evals/), these events surface in the **Live Evaluations** view, where you can browse results by target, drill into the originating trace, and watch scores over a time window.
 
 Each decorated call emits one `gen_ai.evaluation.result` OTel event per evaluator result, following the [OTel GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). This mirrors how offline evaluation emits OTel spans via `logfire.span`: if any OTel SDK is configured in the process (via [`logfire.configure()`](../logfire.md#using-logfire), the OTel SDK directly, or a vendor instrumentation), events flow to your backend; if not, emission is a cheap no-op.
 
@@ -958,5 +958,6 @@ The complete API for the `pydantic_evals.online` module is documented in the [AP
 
 - **[Custom Evaluators](evaluators/custom.md)** — Write evaluators for your domain
 - **[Built-in Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
+- **[Live Evaluations in Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/live-evals/)** — Browse, filter, and trend online evaluation results in the Logfire web UI
 - **[Logfire Integration](how-to/logfire-integration.md)** — Visualize evaluation results in Logfire
 - **[Quick Start](quick-start.md)** — Offline evaluation with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate]
