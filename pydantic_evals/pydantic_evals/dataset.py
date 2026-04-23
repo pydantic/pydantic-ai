@@ -10,14 +10,12 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import inspect
 import sys
 import time
 import traceback
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
 from pathlib import Path
@@ -27,16 +25,18 @@ import anyio
 import logfire_api
 import yaml
 from anyio import to_thread
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
-from pydantic._internal import _typing_extra
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from rich.progress import Progress
-from typing_extensions import NotRequired, Self, TypedDict, TypeVar
+from typing_extensions import Self, TypeVar
 
+from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_evals._utils import get_event_loop
 
+from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
+from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -46,6 +46,7 @@ from .evaluators.evaluator import EvaluatorFailure
 from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
 from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
+from .lifecycle import CaseLifecycle
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure
@@ -196,6 +197,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return ctx.output == ctx.expected_output
 
     dataset = Dataset(
+        name='uppercase_tests',
         cases=[
             Case(name='test1', inputs={'text': 'Hello'}, expected_output='HELLO'),
             Case(name='test2', inputs={'text': 'World'}, expected_output='WORLD'),
@@ -226,7 +228,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     """
 
     name: str | None = None
-    """Optional name of the dataset."""
+    """Name of the dataset. Required in future versions."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -245,11 +247,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
-            name: Optional name for the dataset.
+            name: Name for the dataset. Omitting this is deprecated and will raise an error in a future version.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
+        if name is None:
+            warnings.warn(
+                'Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`.',
+                PydanticEvalsDeprecationWarning,
+                stacklevel=2,
+            )
+
         case_names = set[str]()
         for case in cases:
             if case.name is None:
@@ -290,6 +299,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
+        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -311,6 +321,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: Optional dict of experiment metadata.
             repeat: Number of times to run each case. When > 1, each case is run multiple times and
                 results are grouped by the original case name for aggregation. Defaults to 1.
+            lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
+                A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
         Returns:
             A report containing the results of the evaluation.
@@ -359,12 +371,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         retry_task,
                         retry_evaluators,
                         source_case_name=source_case_name,
+                        lifecycle=lifecycle,
                     )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
                     return result
 
-            if (context := eval_span.context) is None:  # pragma: no cover
+            if (context := eval_span.context) is None:
                 trace_id = None
                 span_id = None
             else:
@@ -416,6 +429,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
+        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -436,6 +450,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata: Optional dict of experiment metadata.
             repeat: Number of times to run each case. When > 1, each case is run multiple times and
                 results are grouped by the original case name for aggregation. Defaults to 1.
+            lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
+                A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
 
         Returns:
             A report containing the results of the evaluation.
@@ -451,6 +467,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 task_name=task_name,
                 metadata=metadata,
                 repeat=repeat,
+                lifecycle=lifecycle,
             )
         )
 
@@ -719,9 +736,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(name=dataset_model.name, cases=cases, report_evaluators=report_evaluators)
-        if result.name is None:
-            result.name = default_name
+        # Use default_name if no name was provided in the serialized data
+        name = dataset_model.name if dataset_model.name is not None else default_name
+        result = cls(name=name, cases=cases, report_evaluators=report_evaluators)
         result.evaluators = dataset_evaluators
         return result
 
@@ -924,48 +941,6 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 
-@dataclass
-class _TaskRun:
-    """Internal class to track metrics and attributes for a task run."""
-
-    attributes: dict[str, Any] = field(init=False, default_factory=dict[str, Any])
-    metrics: dict[str, int | float] = field(init=False, default_factory=dict[str, int | float])
-
-    def record_metric(self, name: str, value: int | float) -> None:
-        """Record a metric value.
-
-        Args:
-            name: The name of the metric.
-            value: The value of the metric.
-        """
-        self.metrics[name] = value
-
-    def increment_metric(self, name: str, amount: int | float) -> None:
-        """Increment a metric value.
-
-        Args:
-            name: The name of the metric.
-            amount: The amount to increment by.
-
-        Note:
-            If the current value is 0 and the increment amount is 0, no metric will be recorded.
-        """
-        current_value = self.metrics.get(name, 0)
-        incremented_value = current_value + amount
-        if current_value == 0 and incremented_value == 0:
-            return  # Avoid recording a metric that is always zero
-        self.record_metric(name, incremented_value)
-
-    def record_attribute(self, name: str, value: Any) -> None:
-        """Record an attribute value.
-
-        Args:
-            name: The name of the attribute.
-            value: The value of the attribute.
-        """
-        self.attributes[name] = value
-
-
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -986,11 +961,11 @@ async def _run_task(
     """
 
     async def _run_once():
-        task_run_ = _TaskRun()
-        if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
+        task_run_ = _task_run.TaskRun()
+        if _task_run.CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
             raise RuntimeError('A task run has already been entered. Task runs should not be nested')
 
-        token = _CURRENT_TASK_RUN.set(task_run_)
+        token = _task_run.CURRENT_TASK_RUN.set(task_run_)
         try:
             with (
                 logfire_span('execute {task}', task=get_unwrapped_function_name(task)) as task_span,
@@ -1005,7 +980,7 @@ async def _run_task(
             duration_ = _get_span_duration(task_span, fallback_duration)
             return task_run_, task_output_, duration_, span_tree_
         finally:
-            _CURRENT_TASK_RUN.reset(token)
+            _task_run.CURRENT_TASK_RUN.reset(token)
 
     if retry:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
@@ -1016,24 +991,7 @@ async def _run_task(
     task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
-        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
-        #   That way users can customize this logic. We'd default to a function that does the current thing but also
-        #   allow `None` to disable it entirely.
-        for node in span_tree:
-            if 'gen_ai.request.model' not in node.attributes:
-                continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
-            for k, v in node.attributes.items():
-                if k == 'gen_ai.operation.name' and v == 'chat':
-                    task_run.increment_metric('requests', 1)
-                elif not isinstance(v, int | float):
-                    continue
-                elif k == 'operation.cost':
-                    task_run.increment_metric('cost', v)
-                elif k.startswith('gen_ai.usage.details.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
-                elif k.startswith('gen_ai.usage.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
+        _task_run.extract_span_tree_metrics(task_run, span_tree)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,
@@ -1069,6 +1027,7 @@ async def _run_report_evaluators(
                         error_message=f'{type(e).__name__}: {e}',
                         error_stacktrace=traceback.format_exc(),
                         source=report_eval.as_spec(),
+                        error_type=type(e).__name__,
                     )
                 )
             else:
@@ -1126,6 +1085,7 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
+    lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1137,31 +1097,44 @@ async def _run_task_and_evaluators(
         retry_task: The retry config to use for running the task.
         retry_evaluators: The retry config to use for running the evaluators.
         source_case_name: The original case name before run-indexing (for multi-run experiments).
+        lifecycle: Optional lifecycle class to instantiate for this case.
 
     Returns:
         A ReportCase containing the evaluation results.
     """
+    lc: CaseLifecycle[Any, Any, Any] | None = None
+    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
     trace_id: str | None = None
     span_id: str | None = None
-    try:
-        with logfire_span(
-            'case: {case_name}',
-            task_name=get_unwrapped_function_name(task),
-            case_name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-        ) as case_span:
-            context = case_span.context
-            if context is not None:  # pragma: no branch
-                trace_id = f'{context.trace_id:032x}'
-                span_id = f'{context.span_id:016x}'
+    with logfire_span(
+        'case: {case_name}',
+        task_name=get_unwrapped_function_name(task),
+        case_name=report_case_name,
+        inputs=case.inputs,
+        metadata=case.metadata,
+        expected_output=case.expected_output,
+    ) as case_span:
+        t0 = time.time()
 
-            if source_case_name is not None:
-                case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
+        context = case_span.context
+        if context is not None:  # pragma: no branch
+            trace_id = f'{context.trace_id:032x}'
+            span_id = f'{context.span_id:016x}'
 
-            t0 = time.time()
+        if source_case_name is not None:
+            case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
+
+        try:
+            if lifecycle is not None:
+                lc = lifecycle(case)
+
+            if lc is not None:
+                await lc.setup()
+
             scoring_context = await _run_task(task, case, retry_task)
+
+            if lc is not None:
+                scoring_context = await lc.prepare_context(scoring_context)
 
             case_span.set_attribute('output', scoring_context.output)
             case_span.set_attribute('task_duration', scoring_context.duration)
@@ -1185,38 +1158,56 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('assertions', _evaluation_results_adapter.dump_python(assertions))
             case_span.set_attribute('scores', _evaluation_results_adapter.dump_python(scores))
             case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
-        fallback_duration = time.time() - t0
 
-        return ReportCase[InputsT, OutputT, MetadataT](
-            name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-            output=scoring_context.output,
-            metrics=scoring_context.metrics,
-            attributes=scoring_context.attributes,
-            scores=scores,
-            labels=labels,
-            assertions=assertions,
-            task_duration=scoring_context.duration,
-            total_duration=_get_span_duration(case_span, fallback_duration),
-            source_case_name=source_case_name,
-            trace_id=trace_id,
-            span_id=span_id,
-            evaluator_failures=evaluator_failures,
-        )
-    except Exception as exc:
-        return ReportCaseFailure[InputsT, OutputT, MetadataT](
-            name=report_case_name,
-            inputs=case.inputs,
-            metadata=case.metadata,
-            expected_output=case.expected_output,
-            error_message=f'{type(exc).__name__}: {exc}',
-            error_stacktrace=traceback.format_exc(),
-            source_case_name=source_case_name,
-            trace_id=trace_id,
-            span_id=span_id,
-        )
+            result = ReportCase[InputsT, OutputT, MetadataT](
+                name=report_case_name,
+                inputs=case.inputs,
+                metadata=case.metadata,
+                expected_output=case.expected_output,
+                output=scoring_context.output,
+                metrics=scoring_context.metrics,
+                attributes=scoring_context.attributes,
+                scores=scores,
+                labels=labels,
+                assertions=assertions,
+                task_duration=scoring_context.duration,
+                total_duration=time.time() - t0,  # this gets updated below, but is close enough for teardown
+                source_case_name=source_case_name,
+                trace_id=trace_id,
+                span_id=span_id,
+                evaluator_failures=evaluator_failures,
+            )
+        except Exception as exc:
+            # Note: This error is not _actually_ escaping the span, so `escaped=True` on the following line is a lie.
+            # However, I've added this because it affects the details of the otel span, and passing `escaped=True`
+            # better matches the behavior from prior to this change.
+            # We could consider changing this in the future.
+            case_span.record_exception(exc, escaped=True)
+            result = ReportCaseFailure[InputsT, OutputT, MetadataT](
+                name=report_case_name,
+                inputs=case.inputs,
+                metadata=case.metadata,
+                expected_output=case.expected_output,
+                error_message=f'{type(exc).__name__}: {exc}',
+                error_stacktrace=traceback.format_exc(),
+                source_case_name=source_case_name,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+
+        # Teardown exceptions are intentionally not caught here — they propagate
+        # to the caller. If your teardown may raise and you don't want it to crash
+        # the evaluation, handle exceptions within your teardown() implementation.
+        # If you don't like this behavior, let us know and we can change it.
+        if lc is not None:
+            await lc.teardown(result)
+
+    if isinstance(result, ReportCase):
+        # Update the total duration to reflect the teardown time.
+        # Note this means that modifications to this field inside the teardown will not be reflected.
+        result.total_duration = _get_span_duration(case_span, time.time() - t0)
+
+    return result
 
 
 _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
@@ -1260,9 +1251,6 @@ def _group_evaluator_outputs_by_type(
     return assertions, scores, labels
 
 
-_CURRENT_TASK_RUN = ContextVar['_TaskRun | None']('_CURRENT_TASK_RUN', default=None)
-
-
 def set_eval_attribute(name: str, value: Any) -> None:
     """Set an attribute on the current task run.
 
@@ -1270,7 +1258,7 @@ def set_eval_attribute(name: str, value: Any) -> None:
         name: The name of the attribute.
         value: The value of the attribute.
     """
-    current_case = _CURRENT_TASK_RUN.get()
+    current_case = _task_run.CURRENT_TASK_RUN.get()
     if current_case is not None:  # pragma: no branch
         current_case.record_attribute(name, value)
 
@@ -1282,7 +1270,7 @@ def increment_eval_metric(name: str, amount: int | float) -> None:
         name: The name of the metric.
         amount: The amount to increment by.
     """
-    current_case = _CURRENT_TASK_RUN.get()
+    current_case = _task_run.CURRENT_TASK_RUN.get()
     if current_case is not None:  # pragma: no branch
         current_case.increment_metric(name, amount)
 
@@ -1316,38 +1304,23 @@ def _get_evaluator_registry(
     defaults: Sequence[type[BaseEvalT]],
     label: str,
 ) -> Mapping[str, type[BaseEvalT]]:
-    """Create a registry of evaluator types from default and custom types.
+    """Create a registry of evaluator types from default and custom types."""
 
-    Args:
-        custom_types: Additional evaluator classes to include in the registry.
-        base_class: The base class that all custom types must subclass.
-        defaults: Default evaluator classes to include (can be overridden by custom types).
-        label: Human-readable label for error messages (e.g. 'evaluator', 'report evaluator').
-
-    Returns:
-        A mapping from evaluator names to evaluator classes.
-    """
-    registry: dict[str, type[BaseEvalT]] = {}
-
-    for evaluator_class in custom_types:
-        if not issubclass(evaluator_class, base_class):
+    def _validate_evaluator(cls: type[BaseEvalT]) -> None:
+        if not issubclass(cls, base_class):
             raise ValueError(
-                f'All custom {label} classes must be subclasses of {base_class.__name__}, but {evaluator_class} is not'
+                f'All custom {label} classes must be subclasses of {base_class.__name__}, but {cls} is not'
             )
-        if '__dataclass_fields__' not in evaluator_class.__dict__:
-            raise ValueError(
-                f'All custom {label} classes must be decorated with `@dataclass`, but {evaluator_class} is not'
-            )
-        name = evaluator_class.get_serialization_name()
-        if name in registry:
-            raise ValueError(f'Duplicate {label} class name: {name!r}')
-        registry[name] = evaluator_class
+        if '__dataclass_fields__' not in cls.__dict__:
+            raise ValueError(f'All custom {label} classes must be decorated with `@dataclass`, but {cls} is not')
 
-    for evaluator_class in defaults:
-        # Allow overriding the default evaluators with custom evaluators without raising an error
-        registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
-
-    return registry
+    return build_registry(
+        custom_types=custom_types,
+        defaults=defaults,
+        get_name=lambda cls: cls.get_serialization_name(),
+        label=label,
+        validate=_validate_evaluator,
+    )
 
 
 def _load_evaluator_from_registry(
@@ -1357,80 +1330,16 @@ def _load_evaluator_from_registry(
     custom_types_param: str,
     context: str | None = None,
 ) -> BaseEvalT:
-    """Load an evaluator from the registry based on a specification.
-
-    Args:
-        registry: Mapping from evaluator names to evaluator classes.
-        spec: Specification of the evaluator to load.
-        label: Human-readable label for error messages (e.g. 'evaluator', 'report evaluator').
-        custom_types_param: Name of the parameter for custom types, used in error messages.
-        context: Optional context for error messages (e.g. "case 'foo'", "dataset").
-
-    Returns:
-        An initialized evaluator instance.
-
-    Raises:
-        ValueError: If the evaluator name is not found in the registry.
-    """
-    evaluator_class = registry.get(spec.name)
-    if evaluator_class is None:
-        raise ValueError(
-            f'{label.capitalize()} {spec.name!r} is not in the provided `{custom_types_param}`. Valid choices: {list(registry.keys())}.'
-            f' If you are trying to use a custom {label}, you must include its type in the `{custom_types_param}` argument.'
-        )
-    try:
-        return evaluator_class(*spec.args, **spec.kwargs)
-    except Exception as e:
-        detail = f' for {context}' if context else ''
-        raise ValueError(f'Failed to instantiate {label} {spec.name!r}{detail}: {e}') from e
+    """Load an evaluator from the registry based on a specification."""
+    return load_from_registry(
+        registry,
+        spec,
+        label=label,
+        custom_types_param=custom_types_param,
+        context=context,
+    )
 
 
 def _build_evaluator_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
-    """Build a list of schema types for evaluators from a registry.
-
-    This is used to generate the JSON schema for both case-level and report-level evaluators.
-
-    Args:
-        registry: Mapping from evaluator names to evaluator classes.
-
-    Returns:
-        A list of types suitable for use in a Union for JSON schema generation.
-    """
-    schema_types: list[Any] = []
-    for name, evaluator_class in registry.items():
-        type_hints = _typing_extra.get_function_type_hints(evaluator_class)
-        type_hints.pop('return', None)
-        required_type_hints: dict[str, Any] = {}
-
-        for p in inspect.signature(evaluator_class).parameters.values():
-            type_hints.setdefault(p.name, Any)
-            if p.default is not p.empty:
-                type_hints[p.name] = NotRequired[type_hints[p.name]]
-            else:
-                required_type_hints[p.name] = type_hints[p.name]
-
-        def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
-            td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-            # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
-            td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
-            return td
-
-        # Shortest form: just the call name
-        if len(type_hints) == 0 or not required_type_hints:
-            schema_types.append(Literal[name])
-
-        # Short form: can be called with only one parameter
-        if len(type_hints) == 1:
-            [type_hint_type] = type_hints.values()
-            schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-        elif len(required_type_hints) == 1:  # pragma: no branch
-            [type_hint_type] = required_type_hints.values()
-            schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-
-        # Long form: multiple parameters, possibly required
-        if len(type_hints) > 1:
-            params_td = _make_typed_dict('evaluator_params', type_hints)
-            schema_types.append(_make_typed_dict('evaluator', {name: params_td}))
-
-    return schema_types
+    """Build a list of schema types for evaluators from a registry."""
+    return build_schema_types(registry)

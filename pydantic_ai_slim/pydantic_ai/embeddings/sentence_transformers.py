@@ -74,10 +74,10 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
     )
 
     # Using a model name (downloads from Hugging Face)
-    model = SentenceTransformerEmbeddingModel('all-MiniLM-L6-v2')
+    model = SentenceTransformerEmbeddingModel('sentence-transformers/all-MiniLM-L6-v2')
 
     # Using an existing SentenceTransformer instance
-    st_model = SentenceTransformer('all-MiniLM-L6-v2')
+    st_model = SentenceTransformer('Qwen/Qwen3-Embedding-0.6B')
     model = SentenceTransformerEmbeddingModel(st_model)
     ```
     """
@@ -91,7 +91,7 @@ class SentenceTransformerEmbeddingModel(EmbeddingModel):
         Args:
             model: The model to use. Can be:
 
-                - A model name from Hugging Face (e.g., `'all-MiniLM-L6-v2'`)
+                - A model name from Hugging Face (e.g., `'sentence-transformers/all-MiniLM-L6-v2'`)
                 - A local path to a saved model
                 - An existing `SentenceTransformer` instance
             settings: Model-specific

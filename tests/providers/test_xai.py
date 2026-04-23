@@ -28,7 +28,7 @@ def test_xai_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
-            'to use the xAI provider.'
+            ' to use the xAI provider.'
         ),
     ):
         XaiProvider()

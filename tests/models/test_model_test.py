@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import re
 from datetime import timezone
 from typing import Annotated, Any, Literal
 
@@ -288,7 +287,7 @@ def test_output_tool_retry_error_handled():
         call_count += 1
         raise ModelRetry('Fail')
 
-    with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (2) for output validation')):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
         agent.run_sync('Hello', model=TestModel())
 
     assert call_count == 3

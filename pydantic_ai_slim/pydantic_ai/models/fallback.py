@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
+from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 from opentelemetry.trace import get_current_span
@@ -100,6 +102,8 @@ class FallbackModel(Model):
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
+        self._entered_count = 0
+        self._enter_lock = Lock()
 
         # Parse fallback_on into exception handlers and response handlers
         self._exception_handlers = []
@@ -154,6 +158,33 @@ class FallbackModel(Model):
             if result:
                 return True
         return False
+
+    async def __aenter__(self) -> FallbackModel:
+        """Enter all sub-models so their providers can manage HTTP client lifecycle."""
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                async with AsyncExitStack() as exit_stack:
+                    for model in self.models:
+                        await exit_stack.enter_async_context(model)
+                    self._exit_stack = exit_stack.pop_all()
+            self._entered_count += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit all sub-models, closing their providers' HTTP clients."""
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0:
+                await self._exit_stack.aclose()
+
+    @property
+    def provider(self) -> None:
+        return None  # pragma: no cover
 
     @property
     def model_name(self) -> str:

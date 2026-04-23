@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from mistralai import Mistral
+    from mistralai.client import Mistral
 
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -32,7 +32,7 @@ def test_mistral_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-            'to use the Mistral provider.'
+            ' to use the Mistral provider.'
         ),
     ):
         MistralProvider()

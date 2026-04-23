@@ -184,6 +184,7 @@ def to_title_case(text: str) -> str:
 
 # Create dataset
 dataset: Dataset[str, str, Any] = Dataset(
+    name='title_case_tests',
     cases=[Case(inputs='test', expected_output='Test')],
     evaluators=[EqualsExpected()],
 )

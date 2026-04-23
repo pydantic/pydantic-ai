@@ -40,6 +40,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_example',
     cases=[Case(inputs='What is 2+2?', expected_output='4')],
     evaluators=[
         LLMJudge(
@@ -213,6 +214,7 @@ from pydantic_evals.evaluators import (
 )
 
 dataset = Dataset(
+    name='layered_evaluation',
     cases=[Case(inputs='test', expected_output='result')],
     evaluators=[
         # Fast deterministic checks first
@@ -237,6 +239,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance, LLMJudge
 
 dataset = Dataset(
+    name='case_specific_evaluators',
     cases=[
         Case(
             name='greeting_response',
@@ -287,6 +290,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='golden_dataset',
     cases=[
         Case(
             name='handle_refund_request',
@@ -447,6 +451,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import ConfusionMatrixEvaluator
 
 dataset = Dataset(
+    name='report_evaluator_example',
     cases=[
         Case(inputs='meow', expected_output='cat'),
         Case(inputs='woof', expected_output='dog'),
@@ -466,6 +471,7 @@ dataset = Dataset(
 
 - **[Built-in Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
+- **[Third-Party Integrations](framework-integrations.md)** - Wrap Ragas, DeepEval, and other metrics libraries
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans

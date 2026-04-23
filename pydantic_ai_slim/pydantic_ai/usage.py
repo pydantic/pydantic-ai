@@ -83,8 +83,12 @@ class UsageBase:
 
         details = self.details.copy()
         if self.cache_write_tokens:
+            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # For backwards compat
             details['cache_write_tokens'] = self.cache_write_tokens
         if self.cache_read_tokens:
+            result['gen_ai.usage.cache_read.input_tokens'] = self.cache_read_tokens
+            # For backwards compat
             details['cache_read_tokens'] = self.cache_read_tokens
         if self.input_audio_tokens:
             details['input_audio_tokens'] = self.input_audio_tokens

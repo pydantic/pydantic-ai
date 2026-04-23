@@ -28,8 +28,10 @@ node_modules/
 !.agents/skills/address-feedback/
 !.agents/skills/pre-push-review/
 .claude/*
+!.claude/plans/
 !.claude/settings.json
 !.claude/skills
 .github/.review-context/
 /.cursor/
 /.devcontainer/
+.claude/plans/

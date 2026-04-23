@@ -25,6 +25,12 @@ class ModelProfile:
 
     supports_tools: bool = True
     """Whether the model supports tools."""
+    supports_tool_return_schema: bool = False
+    """Whether the model natively supports tool return schemas.
+
+    When True, the model's API accepts a structured return schema alongside each tool definition.
+    When False, return schemas are injected as JSON text into tool descriptions as a fallback.
+    """
     supports_json_schema_output: bool = False
     """Whether the model supports JSON schema output.
 
@@ -55,6 +61,19 @@ class ModelProfile:
     """Whether to add prompted output template in native structured output mode"""
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
+
+    supports_thinking: bool = False
+    """Whether the model supports thinking/reasoning configuration.
+
+    When False, the unified `thinking` setting in `ModelSettings` is silently ignored.
+    """
+
+    thinking_always_enabled: bool = False
+    """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1).
+
+    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    Implies `supports_thinking=True`.
+    """
 
     thinking_tags: tuple[str, str] = ('<think>', '</think>')
     """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""

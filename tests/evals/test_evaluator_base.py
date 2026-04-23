@@ -283,6 +283,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'SimpleEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )
@@ -297,6 +298,7 @@ async def test_run_evaluator():
                 'reason': 'Failed',
                 'source': {'arguments': {'reason': 'Failed', 'value': False}, 'name': 'SimpleEvaluator'},
                 'value': False,
+                'evaluator_version': None,
             }
         ]
     )
@@ -306,8 +308,20 @@ async def test_run_evaluator():
     results = await run_evaluator(evaluator, ctx)
     assert adapter.dump_python(results) == snapshot(
         [
-            {'name': 'test1', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': True},
-            {'name': 'test2', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': False},
+            {
+                'name': 'test1',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': True,
+                'evaluator_version': None,
+            },
+            {
+                'name': 'test2',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': False,
+                'evaluator_version': None,
+            },
         ]
     )
 
@@ -321,6 +335,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'AsyncEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )
