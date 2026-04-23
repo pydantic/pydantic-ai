@@ -3,23 +3,26 @@ on:
   schedule:
     - cron: '0 14 * * *'
 
-permissions:
-  issues: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   stale:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
         with:
-          days-before-stale: 7
-          days-before-close: 3
 
           any-of-issue-labels: 'question,more info'
+          days-before-issue-stale: 7
+          days-before-issue-close: 3
           stale-issue-message: 'This issue is stale, and will be closed in 3 days if no reply is received.'
           close-issue-message: 'Closing this issue as it has been inactive for 10 days.'
 
           any-of-pr-labels: 'awaiting author revision'
-          stale-pr-message: 'This PR is stale, and will be closed in 3 days if no reply is received.'
-          close-pr-message: 'Closing this PR as it has been inactive for 10 days.'
+          days-before-pr-stale: 14
+          days-before-pr-close: 7
+          stale-pr-message: 'This PR is stale, and will be closed in 7 days if no reply is received.'
+          close-pr-message: 'Closing this PR as it has been inactive for 21 days.'

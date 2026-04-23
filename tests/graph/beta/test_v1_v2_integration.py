@@ -6,18 +6,19 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
 from pydantic_graph.beta.join import JoinNode, reduce_list_append
+
+from ..._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
 
 @dataclass
 class IntegrationState:
-    log: list[str] = field(default_factory=list)
+    log: list[str] = field(default_factory=list[str])
 
 
 async def test_v1_nodes_in_v2_graph():

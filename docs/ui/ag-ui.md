@@ -33,9 +33,9 @@ pip/uv-add uvicorn
 
 There are three ways to run a Pydantic AI agent based on AG-UI run input with streamed AG-UI events as output, from most to least flexible. If you're using a Starlette-based web framework like FastAPI, you'll typically want to use the second method.
 
-1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
-2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
-3. [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] represents an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
+1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
+2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
+3. [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] represents an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
 
 ### Handle run input and output directly
 
@@ -55,7 +55,7 @@ from pydantic_ai import Agent
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -80,7 +80,7 @@ async def run_agent(request: Request) -> Response:
 ```
 
 1. [`AGUIAdapter.build_run_input()`][pydantic_ai.ui.ag_ui.AGUIAdapter.build_run_input] takes the request body as bytes and returns an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object. You can also use the [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request] class method to build an adapter directly from a request.
-2. [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] runs the agent and returns a stream of AG-UI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agents.md#running-agents), including `deps`. You can also use [`AGUIAdapter.run_stream_native()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into AG-UI events using [`AGUIAdapter.transform_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.transform_stream].
+2. [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] runs the agent and returns a stream of AG-UI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), including `deps`. You can also use [`AGUIAdapter.run_stream_native()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into AG-UI events using [`AGUIAdapter.transform_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.transform_stream].
 3. [`AGUIAdapter.encode_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.encode_stream] encodes the stream of AG-UI events as strings according to the accept header value. You can also use [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response] to generate a streaming response directly from the AG-UI event stream returned by `run_stream()`.
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
@@ -103,7 +103,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -130,7 +130,7 @@ This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agen
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui.app import AGUIApp
 
-agent = Agent('openai:gpt-5', instructions='Be fun!')
+agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 app = AGUIApp(agent)
 ```
 
@@ -196,7 +196,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -237,7 +237,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -280,6 +280,37 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 
 ```bash
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
+```
+
+### System prompts and instructions
+
+Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.
+
+The rest of this section only matters if you use `system_prompt`. If you only use `instructions`, there's nothing to configure — they're always applied regardless of the AG-UI message history.
+
+For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] (and [`handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] / [`run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui]):
+
+- `'server'` (default): the agent's configured `system_prompt` is authoritative. Any `SystemMessage` sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is reinjected at the head of the first request via the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+- `'client'`: the frontend owns the system prompt. Frontend `SystemMessage`s are preserved as-is, and the agent's configured `system_prompt` is not injected — the caller is fully responsible for sending it on every turn if desired. To opt into fallback-to-configured behavior, add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to your agent.
+
+```python {title="ag_ui_client_managed_system_prompt.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2')
+
+app = FastAPI()
+
+
+@app.post('/')
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(
+        request, agent=agent, manage_system_prompt='client'
+    )
 ```
 
 ## Examples

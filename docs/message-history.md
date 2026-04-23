@@ -30,7 +30,7 @@ Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult
 ```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
 print(result.output)
@@ -42,15 +42,13 @@ print(result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -59,8 +57,8 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
-        model_name='gpt-5',
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -75,7 +73,7 @@ Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.Strea
 ```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 
 async def main():
@@ -86,15 +84,13 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                    ),
+                    )
                 ],
+                timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
                 run_id='...',
             )
         ]
@@ -113,15 +109,13 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                    ),
+                    )
                 ],
+                timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
                 run_id='...',
             ),
             ModelResponse(
@@ -131,7 +125,7 @@ async def main():
                     )
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=12),
-                model_name='gpt-5',
+                model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
             ),
@@ -149,12 +143,12 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
-If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
+If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -169,15 +163,13 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -186,8 +178,8 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
-        model_name='gpt-5',
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -198,6 +190,8 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -206,8 +200,8 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=61, output_tokens=26),
-        model_name='gpt-5',
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -235,7 +229,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,  # (1)!
 )
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
@@ -270,12 +264,12 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5` model, in a second agent run using the `google-gla:gemini-2.5-pro` model.
+In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google-gla:gemini-3-pro-preview` model.
 
 ```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
@@ -283,7 +277,7 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    model='google-gla:gemini-2.5-pro',
+    model='google-gla:gemini-3-pro-preview',
     message_history=result1.new_messages(),
 )
 print(result2.output)
@@ -294,15 +288,13 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-            ),
+            )
         ],
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -311,8 +303,8 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=RequestUsage(input_tokens=60, output_tokens=12),
-        model_name='gpt-5',
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -323,6 +315,8 @@ print(result2.all_messages())
                 timestamp=datetime.datetime(...),
             )
         ],
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
         run_id='...',
     ),
     ModelResponse(
@@ -331,8 +325,8 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=RequestUsage(input_tokens=61, output_tokens=26),
-        model_name='gemini-2.5-pro',
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        model_name='gemini-3-pro-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
     ),
@@ -347,11 +341,24 @@ reasons (filtering out sensitive information), to save costs on tokens, to give 
 custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request.
+the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
+
+!!! warning "History processors can affect `new_messages()` results"
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
+    produced during the current run. Messages provided via `message_history` are excluded —
+    including the trailing `ModelRequest` when resuming without a user prompt, even though
+    the framework may stamp it with the current run's `run_id` for observability.
+
+    To keep this working when your processor mutates or adds messages:
+
+    - If you rebuild the trailing `ModelRequest`, preserve its `parts`, `timestamp`,
+      `instructions`, and `metadata` so it can still be identified as prior context.
+    - If you insert a new message that should appear in `new_messages()`, use a
+      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on it.
 
 ### Usage
 
@@ -376,7 +383,7 @@ def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
     return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
 # Create agent with history processor
-agent = Agent('openai:gpt-5', history_processors=[filter_responses])
+agent = Agent('openai:gpt-5.2', history_processors=[filter_responses])
 
 # Example: Create some conversation history
 message_history = [
@@ -400,7 +407,7 @@ async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessag
     """Keep only the last 5 messages to manage token usage."""
     return messages[-5:] if len(messages) > 5 else messages
 
-agent = Agent('openai:gpt-5', history_processors=[keep_recent_messages])
+agent = Agent('openai:gpt-5.2', history_processors=[keep_recent_messages])
 
 # Example: Even with a long conversation history, only the last 5 messages are sent to the model
 long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
@@ -431,7 +438,7 @@ def context_aware_processor(
         return messages[-3:]  # Keep only recent messages when token usage is high
     return messages
 
-agent = Agent('openai:gpt-5', history_processors=[context_aware_processor])
+agent = Agent('openai:gpt-5.2', history_processors=[context_aware_processor])
 ```
 
 This allows for more sophisticated message processing based on the current state of the agent run.
@@ -464,7 +471,7 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
     return messages
 
 
-agent = Agent('openai:gpt-5', history_processors=[summarize_old_messages])
+agent = Agent('openai:gpt-5.2', history_processors=[summarize_old_messages])
 ```
 
 !!! warning "Be careful when summarizing the message history"
@@ -539,7 +546,7 @@ def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-5:]
 
 
-agent = Agent('openai:gpt-5', history_processors=[filter_responses, summarize_old_messages])
+agent = Agent('openai:gpt-5.2', history_processors=[filter_responses, summarize_old_messages])
 ```
 
 In this case, the `filter_responses` processor will be applied first, and the

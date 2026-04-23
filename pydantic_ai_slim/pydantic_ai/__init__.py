@@ -1,7 +1,9 @@
 from importlib.metadata import version as _metadata_version
 
+from ._template import TemplateStr
 from .agent import (
     Agent,
+    AgentModelSettings,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -9,8 +11,10 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
+from .agent.spec import AgentSpec
 from .builtin_tools import (
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -18,16 +22,33 @@ from .builtin_tools import (
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
+)
+from .concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
+    ConcurrencyLimit,
+    ConcurrencyLimiter,
+)
+from .embeddings import (
+    Embedder,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
 )
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    SkipModelRequest,
+    SkipToolExecution,
+    SkipToolValidation,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -45,6 +66,7 @@ from .messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
@@ -58,6 +80,7 @@ from .messages import (
     ImageFormat,
     ImageMediaType,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -72,6 +95,7 @@ from .messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -80,12 +104,15 @@ from .messages import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoFormat,
     VideoMediaType,
     VideoUrl,
 )
+from .models import ModelRequestContext
+from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -96,17 +123,30 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    AgentBuiltinTool,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
+    AgentToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
+    DeferredLoadingToolset,
     ExternalToolset,
     FilteredToolset,
     FunctionToolset,
+    IncludeReturnSchemasToolset,
     PrefixedToolset,
     PreparedToolset,
     RenamedToolset,
+    SetMetadataToolset,
     ToolsetFunc,
     ToolsetTool,
     WrapperToolset,
@@ -117,21 +157,39 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'AgentModelSettings',
+    'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
+    # embeddings
+    'Embedder',
+    'EmbeddingModel',
+    'EmbeddingSettings',
+    'EmbeddingResult',
+    # concurrency
+    'AbstractConcurrencyLimiter',
+    'AnyConcurrencyLimit',
+    'ConcurrencyLimit',
+    'ConcurrencyLimitedModel',
+    'ConcurrencyLimiter',
+    'limit_model_concurrency',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
+    'ConcurrencyLimitExceeded',
     'ModelRetry',
     'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'SkipModelRequest',
+    'SkipToolExecution',
+    'SkipToolValidation',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -146,6 +204,7 @@ __all__ = (
     'BuiltinToolCallPart',
     'BuiltinToolReturnPart',
     'CachePoint',
+    'CompactionPart',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
@@ -160,6 +219,7 @@ __all__ = (
     'ImageMediaType',
     'ImageUrl',
     'BinaryImage',
+    'InstructionPart',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -174,6 +234,7 @@ __all__ = (
     'PartStartEvent',
     'RetryPromptPart',
     'SystemPromptPart',
+    'TextContent',
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
@@ -182,6 +243,7 @@ __all__ = (
     'ToolCallPartDelta',
     'ToolReturn',
     'ToolReturnPart',
+    'UploadedFile',
     'UserContent',
     'UserPromptPart',
     'VideoFormat',
@@ -194,6 +256,7 @@ __all__ = (
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     # tools
+    'AgentBuiltinTool',
     'Tool',
     'ToolDefinition',
     'RunContext',
@@ -203,34 +266,44 @@ __all__ = (
     'ToolDenied',
     # toolsets
     'AbstractToolset',
+    'AgentToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
+    'DeferredLoadingToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',
+    'IncludeReturnSchemasToolset',
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
+    'SetMetadataToolset',
     'ToolsetFunc',
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionTool',
+    'FileSearchTool',
+    'ImageGenerationTool',
+    'MCPServerTool',
+    'MemoryTool',
+    'UrlContextTool',
+    'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
-    'WebFetchTool',
-    'UrlContextTool',
-    'CodeExecutionTool',
-    'ImageGenerationTool',
-    'MemoryTool',
-    'MCPServerTool',
+    'XSearchTool',
     # output
     'ToolOutput',
     'NativeOutput',
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    # template
+    'TemplateStr',
     # format_prompt
     'format_as_xml',
+    # models
+    'ModelRequestContext',
     # settings
     'ModelSettings',
     # usage

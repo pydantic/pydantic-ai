@@ -1,16 +1,16 @@
 
 # Toolsets
 
-A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called.
+A toolset represents a collection of [tools](tools.md) that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service to provide them, or implement custom logic to list available tools and handle them being called. Toolsets can also be provided via [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings.
 
 Toolsets are used (among many other things) to define [MCP servers](mcp/client.md) available to an agent. Pydantic AI includes many kinds of toolsets which are described below, and you can define a [custom toolset](#building-a-custom-toolset) by inheriting from the [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] class.
 
 The toolsets that will be available during an agent run can be specified in four different ways:
 
-* at agent construction time, via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`, which takes toolset instances as well as functions that generate toolsets [dynamically](#dynamically-building-a-toolset) based on the agent [run context][pydantic_ai.tools.RunContext]
-* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. These toolsets will be additional to those registered on the `Agent`
-* [dynamically](#dynamically-building-a-toolset), via the [`@agent.toolset`][pydantic_ai.Agent.toolset] decorator which lets you build a toolset based on the agent [run context][pydantic_ai.tools.RunContext]
-* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
+* at agent construction time, via the [`toolsets`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent`, which takes toolset instances as well as functions that generate toolsets [dynamically](#dynamically-building-a-toolset) based on the agent [run context][pydantic_ai.tools.RunContext]
+* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. These toolsets will be additional to those registered on the `Agent`
+* [dynamically](#dynamically-building-a-toolset), via the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator which lets you build a toolset based on the agent [run context][pydantic_ai.tools.RunContext]
+* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.agent.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
 
 ```python {title="toolsets.py"}
 from pydantic_ai import Agent, FunctionToolset
@@ -60,13 +60,14 @@ _(This example is complete, it can be run "as is")_
 
 As the name suggests, a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] makes locally defined functions available as tools.
 
-Functions can be added as tools in three different ways:
+Functions can be added as tools in four different ways:
 
-* via the [`@toolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator
+* via the [`@toolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+* via the [`@toolset.tool_plain`][pydantic_ai.toolsets.FunctionToolset.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
 * via the [`tools`][pydantic_ai.toolsets.FunctionToolset.__init__] keyword argument to the constructor which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 * via the [`toolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] and [`toolset.add_tool()`][pydantic_ai.toolsets.FunctionToolset.add_tool] methods which can take a plain function or an instance of [`Tool`][pydantic_ai.tools.Tool] respectively
 
-Functions registered in any of these ways can define an initial `ctx: RunContext` argument in order to receive the agent [run context][pydantic_ai.tools.RunContext]. The `add_function()` and `add_tool()` methods can also be used from a tool function to dynamically register new tools during a run to be available in future run steps.
+The `add_function()` and `add_tool()` methods can also be used from a tool function to dynamically register new tools during a run to be available in future run steps.
 
 ```python {title="function_toolset.py"}
 from datetime import datetime
@@ -110,6 +111,134 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
+
+_(This example is complete, it can be run "as is")_
+
+### Toolset Instructions
+
+A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
+
+Instructions can be provided as strings, functions (sync or async, with or without [`RunContext`][pydantic_ai.tools.RunContext]), or a mix of both:
+
+```python {title="toolset_instructions.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+search_toolset = FunctionToolset(
+    instructions='Always use the search tool before answering factual questions.',
+)
+
+
+@search_toolset.tool_plain
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[search_toolset])
+result = agent.run_sync('What is the capital of France?')
+print(result.all_messages()[0].instructions)
+#> Always use the search tool before answering factual questions.
+```
+
+_(This example is complete, it can be run "as is")_
+
+You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
+
+```python {title="toolset_instructions_decorator.py"}
+from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai.models.test import TestModel
+
+math_toolset = FunctionToolset[str]()
+
+
+@math_toolset.instructions
+def math_instructions(ctx: RunContext[str]) -> str:
+    return f'You are helping: {ctx.deps}. Always show your work when using the calculator.'
+
+
+@math_toolset.tool_plain
+def calculator(expression: str) -> str:
+    """Evaluate a math expression."""
+    return '4'
+
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[math_toolset], deps_type=str)
+result = agent.run_sync('What is 2+2?', deps='Alice')
+print(result.all_messages()[0].instructions)
+#> You are helping: Alice. Always show your work when using the calculator.
+```
+
+_(This example is complete, it can be run "as is")_
+
+When a toolset with instructions is used alongside agent-level [`instructions`][pydantic_ai.agent.Agent.__init__], the toolset instructions are appended after the agent instructions:
+
+```python {title="toolset_instructions_combined.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+toolset = FunctionToolset(instructions='Use the greeting tool for all greetings.')
+
+
+@toolset.tool_plain
+def greeting(name: str) -> str:
+    """Greet someone."""
+    return f'Hello, {name}!'
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    instructions='You are a friendly assistant.',
+    toolsets=[toolset],
+)
+result = agent.run_sync('Hi there!')
+print(result.all_messages()[0].instructions)
+"""
+You are a friendly assistant.
+
+Use the greeting tool for all greetings.
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+When multiple toolsets with instructions are registered on an agent, all their instructions are combined:
+
+```python {title="toolset_instructions_multiple.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+weather_toolset = FunctionToolset(instructions='Use weather tools for forecasts.')
+
+
+@weather_toolset.tool_plain
+def forecast(city: str) -> str:
+    """Get weather forecast."""
+    return 'Sunny'
+
+
+calendar_toolset = FunctionToolset(instructions='Use calendar tools for scheduling.')
+
+
+@calendar_toolset.tool_plain
+def schedule(event: str) -> str:
+    """Schedule an event."""
+    return 'Scheduled'
+
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[weather_toolset, calendar_toolset])
+result = agent.run_sync('Plan my day')
+print(result.all_messages()[0].instructions)
+"""
+Use weather tools for forecasts.
+
+Use calendar tools for scheduling.
+"""
+```
 
 _(This example is complete, it can be run "as is")_
 
@@ -383,11 +512,86 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+### Deferred Loading
+
+[`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
+
+[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+
+```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+mcp = MCPServerHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+```
+
+### Including Return Schemas
+
+[`IncludeReturnSchemasToolset`][pydantic_ai.toolsets.IncludeReturnSchemasToolset] wraps a toolset and sets `include_return_schema=True` on all its tools, causing the model to receive return type information. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured API field. For other models, it is injected into the tool description as JSON text.
+
+To easily chain different modifications, you can also call [`.include_return_schemas()`][pydantic_ai.toolsets.AbstractToolset.include_return_schemas] on any toolset instead of directly constructing an `IncludeReturnSchemasToolset`.
+
+```python {title="include_return_schemas_toolset.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+def get_temperature(city: str) -> float:
+    """Get the temperature for a city."""
+    return 21.0
+
+
+toolset = FunctionToolset(tools=[get_temperature])
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[toolset.include_return_schemas()])
+result = agent.run_sync('What is the temperature?')
+params = test_model.last_model_request_parameters
+assert params is not None
+assert params.function_tools[0].include_return_schema is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+This is the toolset-level equivalent of the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability, which applies across all toolsets or a selected subset.
+
+### Setting Tool Metadata
+
+[`SetMetadataToolset`][pydantic_ai.toolsets.SetMetadataToolset] wraps a toolset and merges metadata key-value pairs onto all its tools. This is useful for tagging tools with configuration that other capabilities or custom logic can inspect.
+
+To easily chain different modifications, you can also call [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] on any toolset instead of directly constructing a `SetMetadataToolset`.
+
+```python {title="set_metadata_toolset.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+toolset = FunctionToolset(tools=[search])
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[toolset.with_metadata(sensitive=True)])
+result = agent.run_sync('Search for something')
+params = test_model.last_model_request_parameters
+assert params is not None
+assert params.function_tools[0].metadata is not None
+assert params.function_tools[0].metadata['sensitive'] is True
+```
+
+_(This example is complete, it can be run "as is")_
+
+This is the toolset-level equivalent of the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability, which applies across all toolsets or a selected subset.
+
 ### Changing Tool Execution
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.
 
-It is is a no-op by default, but you can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] method.
+It is a no-op by default, but you can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] method.
 
 ```python {title="logging_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
 import asyncio
@@ -460,12 +664,12 @@ from pydantic_ai import Agent, FunctionToolset
 toolset = FunctionToolset()
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_default_language():
     return 'en-US'
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_user_name():
     return 'David'
 
@@ -475,7 +679,7 @@ class PersonalizedGreeting(BaseModel):
     language_code: str
 
 
-agent = Agent('openai:gpt-5', toolsets=[toolset], output_type=PersonalizedGreeting)
+agent = Agent('openai:gpt-5.2', toolsets=[toolset], output_type=PersonalizedGreeting)
 
 result = agent.run_sync('Greet the user in a personalized way')
 print(repr(result.output))
@@ -594,7 +798,7 @@ _(This example is complete, it can be run "as is")_
 
 Toolsets can be built dynamically ahead of each agent run or run step using a function that takes the agent [run context][pydantic_ai.tools.RunContext] and returns a toolset or `None`. This is useful when a toolset (like an MCP server) depends on information specific to an agent run, like its [dependencies](./dependencies.md).
 
-To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.Agent.toolset] decorator.
+To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
 By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
 
@@ -656,9 +860,27 @@ _(This example is complete, it can be run "as is")_
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
 
-If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
+You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide a description of how to use the toolset's tools. This will be injected into the agent's instructions and is useful for helping the model understand how to effectively use your toolset's tools.
+
+!!! tip
+    If your toolset also needs to provide model settings or hooks, consider building a [custom capability](capabilities.md#building-custom-capabilities) instead.
+
+The toolset lifecycle provides hooks for managing state at different scopes:
+
+- [`for_run()`][pydantic_ai.toolsets.AbstractToolset.for_run]: Called once before each agent run. Return a fresh instance for per-run state isolation (e.g. resetting counters, creating a new session). The framework enters and exits the returned instance.
+- [`for_run_step()`][pydantic_ai.toolsets.AbstractToolset.for_run_step]: Called at the start of each run step. Return a modified instance for per-step state transitions. If managing inner toolset transitions (e.g. swapping one toolset for another), you are responsible for the inner lifecycle (exiting the old, entering the new).
+- [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__]: Set up and tear down resources (e.g. network connections) that should live for the duration of the agent run.
+
+### Per-run and per-step lifecycle
+
+Toolsets support lifecycle hooks for per-run isolation and per-step state management:
+
+- [`for_run(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run] -- called once per agent run, before `__aenter__`. Return a fresh instance to isolate state between runs. Default: returns `self`.
+- [`for_run_step(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run_step] -- called at the start of each run step. Manage internal transitions (e.g. refreshing tool availability) in-place. Default: returns `self`.
 
 ## Third-Party Toolsets
+
+Third-party toolsets can also be wrapped as [capabilities](capabilities.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
 
 ### MCP Servers
 
@@ -666,6 +888,31 @@ Pydantic AI provides two toolsets that allow an agent to connect to and call too
 
 1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
 2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+
+### Agent Skills
+
+Toolsets that implement [Agent Skills](https://agentskills.io) support so agents can efficiently discover and perform specific tasks:
+
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsToolset` implements Agent Skills support with progressive disclosure (load skills on-demand to reduce tokens). Supports filesystem and programmatic skills; compatible with [agentskills.io](https://agentskills.io).
+
+### Task Management
+
+Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
+
+* [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+
+### File Operations
+
+Toolsets for file operations help agents read, write, and edit files:
+
+* [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
+* [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
+
+### Code Execution
+
+Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
+
+* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
 
 ### LangChain Tools {#langchain-tools}
 
@@ -682,7 +929,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 # ...
 ```
 
@@ -706,5 +953,5 @@ toolset = ACIToolset(
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```

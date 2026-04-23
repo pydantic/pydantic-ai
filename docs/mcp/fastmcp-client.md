@@ -20,12 +20,12 @@ A `FastMCPToolset` can then be created from:
 
 - A FastMCP Server: `#!python FastMCPToolset(fastmcp.FastMCP('my_server'))`
 - A FastMCP Client: `#!python FastMCPToolset(fastmcp.Client(...))`
-- A FastMCP Transport: `#!python FastMCPToolset(fastmcp.StdioTransport(command='uvx', args=['mcp-run-python', 'stdio']))`
+- A FastMCP Transport: `#!python FastMCPToolset(fastmcp.StdioTransport(command='python', args=['mcp_server.py']))`
 - A Streamable HTTP URL: `#!python FastMCPToolset('http://localhost:8000/mcp')`
 - An HTTP SSE URL: `#!python FastMCPToolset('http://localhost:8000/sse')`
 - A Python Script: `#!python FastMCPToolset('my_server.py')`
 - A Node.js Script: `#!python FastMCPToolset('my_server.js')`
-- A JSON MCP Configuration: `#!python FastMCPToolset({'mcpServers': {'my_server': {'command': 'uvx', 'args': ['mcp-run-python', 'stdio']}}})`
+- A JSON MCP Configuration: `#!python FastMCPToolset({'mcpServers': {'my_server': {'command': 'python', 'args': ['mcp_server.py']}}})`
 
 If you already have a [FastMCP Server](https://gofastmcp.com/servers) in the same codebase as your Pydantic AI agent, you can create a `FastMCPToolset` directly from it and save agent a network round trip:
 
@@ -42,7 +42,7 @@ async def add(a: int, b: int) -> int:
 
 toolset = FastMCPToolset(fastmcp_server)
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 async def main():
     result = await agent.run('What is 7 plus 5?')
@@ -60,7 +60,7 @@ from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
 toolset = FastMCPToolset('http://localhost:8000/mcp')
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -76,13 +76,17 @@ mcp_config = {
         'time_mcp_server': {
             'command': 'uvx',
             'args': ['mcp-run-python', 'stdio']
+        },
+        'weather_server': {
+            'command': 'python',
+            'args': ['mcp_server.py']
         }
     }
 }
 
 toolset = FastMCPToolset(mcp_config)
 
-agent = Agent('openai:gpt-5', toolsets=[toolset])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_

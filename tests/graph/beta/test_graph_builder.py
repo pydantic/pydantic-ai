@@ -442,3 +442,46 @@ async def test_validation_can_be_disabled():
 
     # Should not raise an error when validation is disabled
     g.build(validate_graph_structure=False)
+
+
+async def test_multiple_stream_decorators_without_node_id():
+    """Test that multiple @g.stream decorators without explicit node_id get unique IDs.
+
+    When using @g.stream without node_id, the node ID should be derived from the
+    decorated function's name, not from the internal 'wrapper' function.
+    """
+    from collections.abc import AsyncIterator
+
+    g = GraphBuilder(state_type=SimpleState, output_type=list[int])
+
+    @g.stream
+    async def generate_stream(ctx: StepContext[SimpleState, None, None]) -> AsyncIterator[int]:
+        """Stream numbers from 1 to 3."""
+        for i in range(1, 4):
+            yield i
+
+    @g.stream
+    async def square(ctx: StepContext[SimpleState, None, int]) -> AsyncIterator[int]:
+        """Square the input."""
+        yield ctx.inputs * ctx.inputs
+
+    @g.step
+    async def plus_one(ctx: StepContext[SimpleState, None, int]) -> int:
+        return ctx.inputs + 1
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    # This should NOT raise GraphBuildingError about duplicate 'wrapper' node IDs
+    g.add(
+        g.edge_from(g.start_node).to(generate_stream),
+        g.edge_from(generate_stream).map().to(square),
+        g.edge_from(square).map().to(plus_one),
+        g.edge_from(plus_one).to(collect),
+        g.edge_from(collect).to(g.end_node),
+    )
+
+    graph = g.build()
+
+    state = SimpleState()
+    result = await graph.run(state=state)
+    assert sorted(result) == [2, 5, 10]

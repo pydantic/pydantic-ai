@@ -13,10 +13,12 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from .._run_context import RunContext
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -95,6 +97,7 @@ class TestModel(Model):
         custom_output_text: str | None = None,
         custom_output_args: Any | None = None,
         seed: int = 0,
+        model_name: str = 'test',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -104,7 +107,7 @@ class TestModel(Model):
         self.custom_output_args = custom_output_args
         self.seed = seed
         self.last_model_request_parameters = None
-        self._model_name = 'test'
+        self._model_name = model_name
         self._system = 'test'
         super().__init__(settings=settings, profile=profile)
 
@@ -147,6 +150,10 @@ class TestModel(Model):
         )
 
     @property
+    def provider(self) -> None:
+        return None
+
+    @property
     def model_name(self) -> str:
         """The model name."""
         return self._model_name
@@ -155,6 +162,11 @@ class TestModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._system
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """TestModel supports all builtin tools for testing flexibility."""
+        return SUPPORTED_BUILTIN_TOOLS
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -297,6 +309,7 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
+    _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -332,6 +345,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, FilePart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, CompactionPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
+                assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
             else:
                 assert_never(part)
 
@@ -344,6 +360,11 @@ class TestStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

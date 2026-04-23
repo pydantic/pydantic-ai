@@ -4,34 +4,41 @@ import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
-from typing_extensions import Self, TypeIs, TypeVar
+from pydantic import TypeAdapter
+from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
 from .. import (
     _agent_graph,
-    _system_prompt,
+    _instructions,
     _utils,
     exceptions,
     messages as _messages,
     models,
     result,
+    tool_manager,
     usage as _usage,
 )
-from .._tool_manager import ToolManager
+from .._json_schema import JsonSchema
+from .._output import types_from_output_spec
+from .._template import TemplateStr
 from ..builtin_tools import AbstractBuiltinTool
+from ..capabilities import AbstractCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
+from ..tool_manager import ToolManager
 from ..tools import (
+    AgentBuiltinTool,
     AgentDepsT,
-    BuiltinToolFunc,
     DeferredToolResults,
     RunContext,
     Tool,
@@ -49,6 +56,7 @@ if TYPE_CHECKING:
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
+    from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
@@ -63,13 +71,16 @@ EventStreamHandler: TypeAlias = Callable[
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
 
+AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
-Instructions = (
-    str
-    | _system_prompt.SystemPromptFunc[AgentDepsT]
-    | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
-    | None
-)
+AgentInstructions = _instructions.AgentInstructions
+"""Type alias for agent instructions — a string, `TemplateStr`, callable, or sequence thereof."""
+
+Instructions = AgentInstructions
+"""Deprecated: use `AgentInstructions` instead."""
+
+AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
+"""Type alias for agent model settings — a static `ModelSettings` dict, or a callable receiving `RunContext` that returns one dynamically per request."""
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -94,6 +105,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @abstractmethod
     def name(self, value: str | None) -> None:
         """Set the name of the agent, used for logging."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def description(self) -> str | None:
+        """A human-readable description of the agent."""
+        raise NotImplementedError
+
+    @description.setter
+    @abstractmethod
+    def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
+        """Set the description of the agent."""
         raise NotImplementedError
 
     @property
@@ -123,6 +146,60 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
 
+    async def system_prompt_parts(
+        self,
+        *,
+        deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        prompt: str | Sequence[_messages.UserContent] | None = None,
+        usage: _usage.RunUsage | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> list[_messages.SystemPromptPart]:
+        """Resolve the agent's configured system prompts into `SystemPromptPart`s.
+
+        Returns a list suitable for prepending to a `ModelRequest`. Static strings and
+        runners decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt]
+        are evaluated using a minimal `RunContext` built from the provided kwargs — useful
+        when reconstructing a `message_history` that should carry the agent's configured
+        system prompt (e.g. in UI adapters or after history compaction).
+
+        Dynamic runners produce parts with `dynamic_ref` set so they can continue to be
+        re-evaluated by the standard agent graph path on subsequent turns.
+
+        Args:
+            deps: Optional dependencies for dynamic system prompt functions.
+            model: Optional model to use for `RunContext.model`. Falls back to the
+                agent's configured model; required only if the agent has no model set.
+            message_history: Optional message history to expose as `RunContext.messages`.
+            prompt: Optional user prompt to expose as `RunContext.prompt`.
+            usage: Optional usage to expose as `RunContext.usage`.
+            model_settings: Optional settings to expose as `RunContext.model_settings`.
+        """
+        return []  # pragma: no cover — concrete subclasses override this
+
+    def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
+        """The output return JSON schema."""
+        if output_type is None:
+            output_type = self.output_type
+
+        return_types = types_from_output_spec(output_spec=output_type)
+
+        json_schemas: list[JsonSchema] = []
+        for return_type in return_types:
+            json_schema = TypeAdapter(return_type).json_schema(mode='serialization')
+            if json_schema not in json_schemas:
+                json_schemas.append(json_schema)
+
+        if len(json_schemas) == 1:
+            return json_schemas[0]
+        else:
+            json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
+            json_schema: JsonSchema = {'anyOf': json_schemas}
+            if all_defs:
+                json_schema['$defs'] = all_defs
+            return json_schema
+
     @overload
     async def run(
         self,
@@ -132,15 +209,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -152,15 +232,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -171,15 +254,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -190,7 +276,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             agent_run = await agent.run('What is the capital of France?')
@@ -207,13 +293,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
@@ -234,15 +326,55 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            metadata=metadata,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
+            spec=spec,
         ) as agent_run:
-            async for node in agent_run:
-                if event_stream_handler is not None and (
-                    self.is_model_request_node(node) or self.is_call_tools_node(node)
-                ):
-                    async with node.stream(agent_run.ctx) as stream:
-                        await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
+            # Drive via next() so capability hooks fire for each node.
+            # When event_stream_handler is set or a capability overrides wrap_run_event_stream,
+            # streaming must happen AFTER before_node_run (which may replace the node) and
+            # INSIDE wrap_node_run. We achieve this by passing a custom step function that
+            # streams before advancing the graph.
+            _stream_step: (
+                Callable[
+                    [_agent_graph.AgentNode[AgentDepsT, Any]],
+                    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+                ]
+                | None
+            ) = None
+            _needs_streaming = (
+                event_stream_handler is not None or agent_run.ctx.deps.root_capability.has_wrap_run_event_stream
+            )
+            if _needs_streaming:
+                _handler = event_stream_handler
+
+                async def _stream_and_advance(
+                    n: _agent_graph.AgentNode[AgentDepsT, Any],
+                ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                    if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                        async with n.stream(agent_run.ctx) as stream:
+                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                            if _handler is not None:
+                                await _handler(run_ctx, wrapped)
+                            else:
+                                async for _ in wrapped:
+                                    pass
+                    return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
+
+                _stream_step = _stream_and_advance
+
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                # Handle wrap_run short-circuit: result is already available, skip the graph.
+                if agent_run.result is not None:
+                    break
+                if _stream_step is not None:
+                    node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                else:
+                    node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
@@ -256,15 +388,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -276,15 +411,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -295,15 +433,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
 
@@ -314,7 +455,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         result_sync = agent.run_sync('What is the capital of Italy?')
         print(result_sync.output)
@@ -330,13 +471,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
@@ -356,10 +503,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,
+                metadata=metadata,
                 infer_name=False,
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
+                capabilities=capabilities,
+                spec=spec,
             )
         )
 
@@ -372,15 +522,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -392,15 +545,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -412,15 +568,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
@@ -438,7 +597,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             async with agent.run_stream('What is the capital of the UK?') as response:
@@ -455,15 +614,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
@@ -487,15 +652,34 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            metadata=metadata,
             infer_name=False,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
+            spec=spec,
         ) as agent_run:
+            # Handle wrap_run short-circuit: result is already available
+            if agent_run.result is not None:
+                graph_ctx = agent_run.ctx
+                yield StreamedRunResult(
+                    graph_ctx.state.message_history,
+                    graph_ctx.deps.new_message_index,
+                    run_result=agent_run.result,
+                )
+                yielded = True
+
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
-            node = first_node
-            while True:
+            node: _agent_graph.AgentNode[Any, Any] = first_node
+            while not yielded:
                 graph_ctx = agent_run.ctx
+                # Fire before_node_run BEFORE streaming so that node replacement
+                # happens before any model call, avoiding double execution.
+                run_ctx = _agent_graph.build_run_context(graph_ctx)
+                cap = graph_ctx.deps.root_capability
+                node = await cap.before_node_run(run_ctx, node=node)
+
                 if self.is_model_request_node(node):
                     async with node.stream(graph_ctx) as stream:
                         final_result_event = None
@@ -510,12 +694,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     final_result_event = event
                                     break
 
+                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
                         if event_stream_handler is not None:
-                            await event_stream_handler(
-                                _agent_graph.build_run_context(graph_ctx), stream_to_final(stream)
-                            )
+                            await event_stream_handler(run_ctx, wrapped)
                         else:
-                            async for _ in stream_to_final(stream):
+                            async for _ in wrapped:
                                 pass
 
                         if final_result_event is not None:
@@ -542,8 +725,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # When we get here, the `ModelRequestNode` has completed streaming after the final result was found.
                                 # When running an agent with `agent.run`, we'd then move to `CallToolsNode` to execute the tool calls and
                                 # find the final result.
-                                # We also want to execute tool calls (in case `agent.end_strategy == 'exhaustive'`) here, but
-                                # we don't want to use run the `CallToolsNode` logic to determine the final output, as it would be
+                                # We also want to execute tool calls (in case `agent.end_strategy` is not `'early'`) here, but
+                                # we don't want to run the `CallToolsNode` logic to determine the final output, as it would be
                                 # wasteful and could produce a different result (e.g. when text output is followed by tool calls).
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
@@ -552,15 +735,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     tool_manager=graph_ctx.deps.tool_manager,
                                     tool_calls=stream.response.tool_calls,
                                     tool_call_results=None,
+                                    tool_call_metadata=None,
                                     final_result=final_result,
                                     ctx=graph_ctx,
                                     output_parts=parts,
                                 ):
                                     pass
 
-                                # For backwards compatibility, append a new ModelRequest using the tool returns and retries
+                                # To allow this message history to be used in a future run without dangling tool calls,
+                                # append a new ModelRequest using the tool returns and retries
                                 if parts:
-                                    messages.append(_messages.ModelRequest(parts, run_id=graph_ctx.state.run_id))
+                                    messages.append(
+                                        _messages.ModelRequest(
+                                            parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
+                                        )
+                                    )
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
@@ -570,12 +759,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 stream,
                                 on_complete,
                             )
+                            # Note: wrap_node_run/after_node_run are intentionally skipped here.
+                            # before_node_run fired above; on_complete() later calls
+                            # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
+                            # for SetFinalResult, but not for this ModelRequestNode.
                             break
-                elif self.is_call_tools_node(node) and event_stream_handler is not None:
+                elif self.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as stream:
-                        await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
+                        wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
+                        if event_stream_handler is not None:
+                            await event_stream_handler(run_ctx, wrapped)
+                        else:
+                            async for _ in wrapped:
+                                pass
 
-                next_node = await agent_run.next(node)
+                # Advance graph with remaining hooks (before_node_run already fired above).
+                # Rebuild run_ctx after streaming so hooks see post-streaming state (e.g. run_step).
+                run_ctx = _agent_graph.build_run_context(graph_ctx)
+                next_node = await agent_run._wrap_and_advance(run_ctx, node, agent_run._advance_graph)  # pyright: ignore[reportPrivateUsage]
                 if isinstance(next_node, End) and agent_run.result is not None:
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
                     # if a tool function raised CallDeferred or ApprovalRequired.
@@ -606,13 +807,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
     @overload
@@ -625,13 +829,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
     def run_stream_sync(
@@ -643,13 +850,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
@@ -670,7 +880,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         def main():
             response = agent.run_stream_sync('What is the capital of the UK?')
@@ -686,15 +896,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
@@ -713,10 +929,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,
+                metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
+                capabilities=capabilities,
+                spec=spec,
             ) as stream_result:
                 yield stream_result
 
@@ -732,14 +951,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
     @overload
@@ -751,14 +973,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
     def run_stream_events(
@@ -769,14 +994,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
@@ -787,7 +1015,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             events: list[AgentStreamEvent | AgentRunResultEvent] = []
@@ -821,12 +1049,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
@@ -849,8 +1083,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            metadata=metadata,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
+            spec=spec,
         )
 
     async def _run_stream_events(
@@ -861,13 +1098,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
@@ -892,19 +1132,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     model_settings=model_settings,
                     usage_limits=usage_limits,
                     usage=usage,
+                    metadata=metadata,
                     infer_name=False,
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
+                    capabilities=capabilities,
+                    spec=spec,
                 )
 
         task = asyncio.create_task(run_agent())
 
-        async with receive_stream:
-            async for message in receive_stream:
-                yield message
+        try:
+            async with receive_stream:
+                async for message in receive_stream:
+                    yield message
 
-        result = await task
+            result = await task
+
+        except asyncio.CancelledError as e:
+            task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            raise
+
         yield AgentRunResultEvent(result)
 
     @overload
@@ -916,14 +1165,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -935,14 +1187,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -955,14 +1210,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -980,7 +1238,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             nodes = []
@@ -1005,6 +1263,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 timestamp=datetime.datetime(...),
                             )
                         ],
+                        timestamp=datetime.datetime(...),
                         run_id='...',
                     )
                 ),
@@ -1012,7 +1271,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
-                        model_name='gpt-4o',
+                        model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
                     )
@@ -1033,12 +1292,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
             The result of the run.
@@ -1056,7 +1321,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -1070,6 +1337,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            model_settings: The model settings to use instead of the model settings passed to the agent constructor.
+                When set, any per-run `model_settings` argument is ignored.
+            spec: Optional agent spec providing defaults for override.
         """
         raise NotImplementedError
         yield
@@ -1095,9 +1365,60 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
+    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        with ToolManager.parallel_execution_mode(mode):
+            yield
+
+    @staticmethod
+    @contextmanager
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
     def sequential_tool_calls() -> Iterator[None]:
         """Run tool calls sequentially during the context."""
-        with ToolManager.sequential_tool_calls():
+        with ToolManager.parallel_execution_mode('sequential'):
+            yield
+
+    @staticmethod
+    @contextmanager
+    def using_thread_executor(executor: Executor) -> Iterator[None]:
+        """Use a custom executor for running sync functions in threads during the context.
+
+        By default, sync tool functions and other sync callbacks are run in threads using
+        [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync], which creates ephemeral threads.
+        In long-running servers (e.g. FastAPI), this can lead to thread accumulation under sustained load.
+
+        This context manager lets you provide a bounded
+        [`ThreadPoolExecutor`][concurrent.futures.ThreadPoolExecutor] (or any
+        [`Executor`][concurrent.futures.Executor]) to control thread lifecycle:
+
+        ```python {test="skip" lint="skip"}
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import asynccontextmanager
+
+        from pydantic_ai import Agent
+
+        @asynccontextmanager
+        async def lifespan(app):
+            executor = ThreadPoolExecutor(max_workers=16)
+            with Agent.using_thread_executor(executor):
+                yield
+            executor.shutdown(wait=True)
+        ```
+
+        For per-agent configuration, use the
+        [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability instead.
+
+        Args:
+            executor: The executor to use for running sync functions.
+        """
+        with _utils.using_thread_executor(executor):
             yield
 
     @staticmethod
@@ -1184,7 +1505,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
         app = agent.to_ag_ui()
         ```
 
@@ -1283,7 +1604,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
         app = agent.to_a2a()
         ```
 
@@ -1319,6 +1640,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface.
 
@@ -1326,12 +1649,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+        agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
 
         async def main():
             await agent.to_cli()
@@ -1349,6 +1674,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             code_theme='monokai',
             prog_name=prog_name,
             message_history=message_history,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
         )
 
     def to_cli_sync(
@@ -1356,6 +1683,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deps: AgentDepsT = None,
         prog_name: str = 'pydantic-ai',
         message_history: Sequence[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
     ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
@@ -1363,15 +1692,23 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
             message_history: History of the conversation so far.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+        agent = Agent('openai:gpt-5.2', instructions='You always respond in Italian.')
         agent.to_cli_sync()
         agent.to_cli_sync(prog_name='assistant')
         ```
         """
         return _utils.get_event_loop().run_until_complete(
-            self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
+            self.to_cli(
+                deps=deps,
+                prog_name=prog_name,
+                message_history=message_history,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+            )
         )

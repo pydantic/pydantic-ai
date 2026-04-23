@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import KW_ONLY, dataclass
+from typing import Any, Literal
 
 from pydantic_core import to_json
 
@@ -13,6 +13,7 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
+    FinishReason as PydanticFinishReason,
     FunctionToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -21,10 +22,14 @@ from ...messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...run import AgentRunResultEvent
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._event_stream import describe_file
+from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -32,6 +37,7 @@ from .response_types import (
     ErrorChunk,
     FileChunk,
     FinishChunk,
+    FinishReason,
     FinishStepChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
@@ -41,12 +47,23 @@ from .response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
+    ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
+    ToolOutputDeniedChunk,
     ToolOutputErrorChunk,
 )
+
+# Map Pydantic AI finish reasons to Vercel AI format
+_FINISH_REASON_MAP: dict[PydanticFinishReason, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'content_filter': 'content-filter',
+    'tool_call': 'tool-calls',
+    'error': 'error',
+}
 
 __all__ = ['VercelAIEventStream']
 
@@ -59,21 +76,35 @@ def _json_dumps(obj: Any) -> str:
     return to_json(obj).decode('utf-8')
 
 
+def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
+    """Wrap tool_return_output with file descriptions for multimodal tool returns."""
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        return [part.model_response_object(), *file_descriptions]
+    return tool_return_output(part)
+
+
 @dataclass
 class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Vercel AI protocol."""
 
+    _: KW_ONLY
+    sdk_version: Literal[5, 6] = 5
+    """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
+    server_message_id: str | None = None
+    """Optional server-generated message ID to include in the `StartChunk`."""
+
     _step_started: bool = False
+    _finish_reason: FinishReason = None
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
         return VERCEL_AI_DSP_HEADERS
 
     def encode_event(self, event: BaseChunk) -> str:
-        return f'data: {event.encode()}\n\n'
+        return f'data: {event.encode(self.sdk_version)}\n\n'
 
     async def before_stream(self) -> AsyncIterator[BaseChunk]:
-        yield StartChunk()
+        yield StartChunk(message_id=self.server_message_id)
 
     async def before_response(self) -> AsyncIterator[BaseChunk]:
         if self._step_started:
@@ -85,46 +116,92 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         yield FinishStepChunk()
 
-        yield FinishChunk()
+        yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
 
+    async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
+        pydantic_reason = event.result.response.finish_reason
+        if pydantic_reason:
+            self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
+
+        # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
+        output = event.result.output
+        if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
+            for tool_call in output.approvals:
+                yield ToolApprovalRequestChunk(
+                    approval_id=tool_call.tool_call_id,
+                    tool_call_id=tool_call.tool_call_id,
+                )
+            return
+        return
+        yield
+
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
+        provider_metadata = dump_provider_metadata(
+            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+        )
         if follows_text:
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
-            yield TextStartChunk(id=message_id)
+            yield TextStartChunk(id=message_id, provider_metadata=provider_metadata)
 
         if part.content:
-            yield TextDeltaChunk(id=message_id, delta=part.content)
+            yield TextDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta)
+            provider_metadata = dump_provider_metadata(
+                provider_name=delta.provider_name, provider_details=delta.provider_details
+            )
+            yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
         if not followed_by_text:
-            yield TextEndChunk(id=self.message_id)
+            provider_metadata = dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            )
+            yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
         message_id = self.new_message_id()
-        yield ReasoningStartChunk(id=message_id)
+        provider_metadata = dump_provider_metadata(
+            id=part.id,
+            signature=part.signature,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+        )
+        yield ReasoningStartChunk(id=message_id, provider_metadata=provider_metadata)
         if part.content:
-            yield ReasoningDeltaChunk(id=message_id, delta=part.content)
+            yield ReasoningDeltaChunk(id=message_id, delta=part.content, provider_metadata=provider_metadata)
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseChunk]:
         if delta.content_delta:  # pragma: no branch
-            yield ReasoningDeltaChunk(id=self.message_id, delta=delta.content_delta)
+            provider_metadata = dump_provider_metadata(
+                provider_name=delta.provider_name,
+                signature=delta.signature_delta,
+                provider_details=delta.provider_details,
+            )
+            yield ReasoningDeltaChunk(
+                id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata
+            )
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseChunk]:
-        yield ReasoningEndChunk(id=self.message_id)
+        provider_metadata = dump_provider_metadata(
+            id=part.id,
+            signature=part.signature,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+        )
+        yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         return self._handle_tool_call_start(part)
@@ -143,6 +220,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_call_id=tool_call_id,
             tool_name=part.tool_name,
             provider_executed=provider_executed,
+            provider_metadata=dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            ),
         )
         if part.args:
             yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
@@ -157,7 +237,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
-            tool_call_id=part.tool_call_id, tool_name=part.tool_name, input=part.args_as_dict()
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args_as_dict(),
+            provider_metadata=dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            ),
         )
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
@@ -166,15 +251,22 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_name=part.tool_name,
             input=part.args_as_dict(),
             provider_executed=True,
-            provider_metadata={'pydantic_ai': {'provider_name': part.provider_name}},
+            provider_metadata=dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            ),
         )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
-        yield ToolOutputAvailableChunk(
-            tool_call_id=part.tool_call_id,
-            output=self._tool_return_output(part),
-            provider_executed=True,
-        )
+        if self.sdk_version >= 6 and part.outcome == 'denied':
+            yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
+        elif part.outcome == 'failed':
+            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response_str())
+        else:
+            yield ToolOutputAvailableChunk(
+                tool_call_id=part.tool_call_id,
+                output=_tool_return_with_files(part),
+                provider_executed=True,
+            )
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
         file = part.content
@@ -182,14 +274,23 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         part = event.result
-        if isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response())
+        tool_call_id = part.tool_call_id
+
+        if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
+            yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
+        elif isinstance(part, RetryPromptPart):
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
+        elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=_tool_return_with_files(part))
 
-        # ToolCallResultEvent.content may hold user parts (e.g. text, images) that Vercel AI does not currently have events for
+        # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
+        # (e.g. text, images) that Vercel AI does not currently have chunk types for.
 
-    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
-        output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)
+        # Check for data-carrying Vercel AI chunks returned by tool calls via metadata.
+        # Only data-carrying chunks (DataChunk, SourceUrlChunk, etc.) are yielded;
+        # protocol-control chunks are filtered out by iter_metadata_chunks.
+        if isinstance(part, ToolReturnPart):
+            for chunk in iter_metadata_chunks(part):
+                yield chunk

@@ -1,0 +1,65 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '104'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      dimensions: 128
+      encoding_format: base64
+      input:
+      - Hello, world!
+      model: text-embedding-3-small
+    uri: https://api.openai.com/v1/embeddings
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '906'
+      content-type:
+      - application/json
+      openai-model:
+      - text-embedding-3-small
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '196'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      data:
+      - embedding: agdavRrGj71IFpq7dQ5WPS41wL2Dh1+9yKduvSaGEj7lbba9naasvX9Kv7vsAqW9vdXfuyrDsr3Sruo8uWNSPacXA75kcus94TCWOkDr6T0IaBg+xNSoO+GRTjytbuI8oMAHPg1nxTt9J96836PaPSWPGDu7+RO+ICYRPpq4uL22Wx+9UWQPva1CFz1LJ1M9q4mQO9rZGrsgJhG9p62ovUMOS7zALS69sumRPadDzjwLedG9LstlPVFS573BR+27WtXJPYypCT5iI7+9FUvgu158RD3S41c+MhEoO72g8r1cw708tbxXPgtNBr7RlCs9pfQhPSd9jD1ueec8abgtux44HT1iueS8tYdqvfDejLt22QS9mWkMPvpGQTvpqtY9cGdbvT87hTyNoAO+kHxPvCnvfb02Tsg85eCWvYNkGr4ACPu9jo5bPeO0r73RlCu+QSBXvY7DSDy954e9FV0IveHGO73IEck7ApW2vGm4LT3KNCq9aCsOPbG0JD0BEZ29D/SAvfYJIT4uai0+7S4MvtU7Jj3AYpu9x7kWPV4Sar1WmKk9pOt/PYPxuTw0K+e9c/SWvTgHTzwHPLG+I/nWPKW/tD11eLC9GQSDPMaNrz3rQBg+T5ngvSIUhT1f3Ri+R7XFPKcXA71gAF49Gb3tvVXE9L3DAPS96MWEPI4tIz4=
+        index: 0
+        object: embedding
+      model: text-embedding-3-small
+      object: list
+      usage:
+        prompt_tokens: 4
+        total_tokens: 4
+    status:
+      code: 200
+      message: OK
+version: 1

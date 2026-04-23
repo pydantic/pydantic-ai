@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast, overload
@@ -11,14 +11,14 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
-from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
-from ..exceptions import UserError
+from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -35,6 +35,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -50,7 +51,6 @@ from . import (
 )
 
 try:
-    import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -70,6 +70,19 @@ except ImportError as _import_error:
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Iterator[None]:
+    try:
+        yield
+    except HfHubHTTPError as e:
+        raise ModelHTTPError(
+            status_code=e.response.status_code,
+            model_name=model_name,
+            body=e.response.content,
+        ) from e
+
 
 __all__ = (
     'HuggingFaceModel',
@@ -98,10 +111,14 @@ HuggingFaceModelName = str | LatestHuggingFaceModelNames
 You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
 """
 
-_FINISH_REASON_MAP: dict[TextGenerationOutputFinishReason, FinishReason] = {
+HuggingFaceFinishReason = Literal['stop', 'tool_calls'] | TextGenerationOutputFinishReason
+
+_FINISH_REASON_MAP: dict[HuggingFaceFinishReason, FinishReason] = {
     'length': 'length',
     'eos_token': 'stop',
     'stop_sequence': 'stop',
+    'stop': 'stop',
+    'tool_calls': 'tool_call',
 }
 
 
@@ -113,7 +130,7 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class HuggingFaceModel(Model):
+class HuggingFaceModel(Model[AsyncInferenceClient]):
     """A model that uses Hugging Face Inference Providers.
 
     Internally, this uses the [HF Python client](https://github.com/huggingface/huggingface_hub) to interact with the API.
@@ -150,6 +167,11 @@ class HuggingFaceModel(Model):
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def base_url(self) -> str:
+        """The base URL of the provider."""
+        return self._provider.base_url
 
     @property
     def model_name(self) -> HuggingFaceModelName:
@@ -230,18 +252,16 @@ class HuggingFaceModel(Model):
         else:
             tool_choice = 'auto'
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('HuggingFace does not support built-in tools')
-
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
-        try:
+        with _map_api_errors(self.model_name):
             return await self.client.chat.completions.create(  # type: ignore
                 model=self._model_name,
                 messages=hf_messages,  # type: ignore
                 tools=tools,
                 tool_choice=tool_choice or None,
                 stream=stream,
+                max_tokens=model_settings.get('max_tokens', None),
                 stop=model_settings.get('stop_sequences', None),
                 temperature=model_settings.get('temperature', None),
                 top_p=model_settings.get('top_p', None),
@@ -253,26 +273,9 @@ class HuggingFaceModel(Model):
                 top_logprobs=model_settings.get('top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # type: ignore
             )
-        except aiohttp.ClientResponseError as e:
-            raise ModelHTTPError(
-                status_code=e.status,
-                model_name=self.model_name,
-                body=e.message,
-            ) from e
-        except HfHubHTTPError as e:
-            raise ModelHTTPError(
-                status_code=e.response.status_code,
-                model_name=self.model_name,
-                body=e.response.content,
-            ) from e
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        if response.created:
-            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
-        else:
-            timestamp = _now_utc()
-
         choice = response.choices[0]
         content = choice.message.content
         tool_calls = choice.message.tool_calls
@@ -286,16 +289,18 @@ class HuggingFaceModel(Model):
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
 
         raw_finish_reason = choice.finish_reason
-        provider_details = {'finish_reason': raw_finish_reason}
-        finish_reason = _FINISH_REASON_MAP.get(cast(TextGenerationOutputFinishReason, raw_finish_reason), None)
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -305,7 +310,8 @@ class HuggingFaceModel(Model):
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Streamed response ended without content or tool calls'
@@ -316,8 +322,9 @@ class HuggingFaceModel(Model):
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -349,9 +356,12 @@ class HuggingFaceModel(Model):
                     elif isinstance(item, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
+                    elif isinstance(item, CompactionPart):  # pragma: no cover
+                        # Compaction parts are not sent back to models that don't support compaction.
+                        pass
                     else:
                         assert_never(item)
-                message_param = ChatCompletionInputMessage(role='assistant')  # type: ignore
+                message_param = ChatCompletionInputMessage(role='assistant')
                 if texts:
                     # Note: model responses from this model should only have one text item, so the following
                     # shouldn't merge multiple texts into one unless you switch models between runs:
@@ -361,8 +371,13 @@ class HuggingFaceModel(Model):
                 hf_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            hf_messages.insert(0, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            system_prompt_count = next(
+                (i for i, m in enumerate(hf_messages) if getattr(m, 'role', None) != 'system'), len(hf_messages)
+            )
+            hf_messages[system_prompt_count:system_prompt_count] = [
+                ChatCompletionInputMessage(content=part.content, role='system') for part in instruction_parts
+            ]
         return hf_messages
 
     @staticmethod
@@ -432,16 +447,15 @@ class HuggingFaceModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
-                elif isinstance(item, TextContent):
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=item.content))  # type: ignore
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(ChatCompletionInputMessageChunk(type='text', text=text))  # type: ignore
                 elif isinstance(item, ImageUrl):
-                    url = ChatCompletionInputURL(url=item.url)  # type: ignore
+                    url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
-                        url = ChatCompletionInputURL(url=item.data_uri)  # type: ignore
+                        url = ChatCompletionInputURL(url=item.data_uri)
                         content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
@@ -451,6 +465,8 @@ class HuggingFaceModel(Model):
                     raise NotImplementedError('DocumentUrl is not supported for Hugging Face')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for Hugging Face')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('UploadedFile is not supported for Hugging Face')
                 elif isinstance(item, CachePoint):
                     # Hugging Face doesn't support prompt caching via CachePoint
                     pass
@@ -466,47 +482,50 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
-    _timestamp: datetime
     _provider_name: str
+    _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for chunk in self._response:
-            self._usage += _map_usage(chunk)
+        with _map_api_errors(self._model_name):
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
+            async for chunk in self._response:
+                self._usage += _map_usage(chunk)
 
-            if chunk.id:  # pragma: no branch
-                self.provider_response_id = chunk.id
+                if chunk.id:  # pragma: no branch
+                    self.provider_response_id = chunk.id
 
-            try:
-                choice = chunk.choices[0]
-            except IndexError:
-                continue
+                try:
+                    choice = chunk.choices[0]
+                except IndexError:
+                    continue
 
-            if raw_finish_reason := choice.finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason}
-                self.finish_reason = _FINISH_REASON_MAP.get(
-                    cast(TextGenerationOutputFinishReason, raw_finish_reason), None
-                )
+                if raw_finish_reason := choice.finish_reason:
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
-            # Handle the text part of the response
-            content = choice.delta.content
-            if content:
-                for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=content,
-                    thinking_tags=self._model_profile.thinking_tags,
-                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                ):
-                    yield event
+                # Handle the text part of the response
+                content = choice.delta.content
+                if content:
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='content',
+                        content=content,
+                        thinking_tags=self._model_profile.thinking_tags,
+                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                    ):
+                        yield event
 
-            for dtc in choice.delta.tool_calls or []:
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=dtc.index,
-                    tool_name=dtc.function and dtc.function.name,  # type: ignore
-                    args=dtc.function and dtc.function.arguments,
-                    tool_call_id=dtc.id,
-                )
-                if maybe_event is not None:
-                    yield maybe_event
+                for dtc in choice.delta.tool_calls or []:
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=dtc.index,
+                        tool_name=dtc.function and dtc.function.name,  # type: ignore
+                        args=dtc.function and dtc.function.arguments,
+                        tool_call_id=dtc.id,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
 
     @property
     def model_name(self) -> str:
@@ -517,6 +536,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
     BuiltinToolCallPart,
@@ -22,15 +23,18 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -46,14 +50,16 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime
+
+pytest.importorskip('starlette')
+
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
+
 from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
-
-from .conftest import try_import
-
-with try_import() as starlette_import_successful:
-    from starlette.requests import Request
-    from starlette.responses import StreamingResponse
-
 
 pytestmark = [
     pytest.mark.anyio,
@@ -68,9 +74,9 @@ pytestmark = [
 
 
 class DummyUIRunInput(BaseModel):
-    messages: list[ModelMessage] = field(default_factory=list)
-    tool_defs: list[ToolDefinition] = field(default_factory=list)
-    state: dict[str, Any] = field(default_factory=dict)
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    tool_defs: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    state: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 class DummyUIState(BaseModel):
@@ -531,8 +537,12 @@ async def test_run_stream_response_error():
             '<response>',
             "<tool-call name='unknown_tool'>None",
             "</tool-call name='unknown_tool'>",
-            "<error type='UnexpectedModelBehavior'>Exceeded maximum retries (1) for output validation</error>",
             '</response>',
+            '<request>',
+            "<function-tool-call name='unknown_tool'>None</function-tool-call>",
+            "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1</error>",
+            '</request>',
             '</stream>',
         ]
     )
@@ -558,7 +568,48 @@ async def test_run_stream_request_error():
             '</response>',
             '<request>',
             "<function-tool-call name='tool'>{'query': 'a'}</function-tool-call>",
+            "<function-tool-result name='tool'>Tool execution was interrupted by an error.</function-tool-result>",
             "<error type='ValueError'>Unknown tool</error>",
+            '</request>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_output_tool_error():
+    """Output tool errors should close the pending tool call via _final_result_event drain."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"value": "bad"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def bad_output(value: str) -> str:
+        raise ValueError('Output validation failed')
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"value": "bad"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            "<function-tool-result name='final_result'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<error type='ValueError'>Output validation failed</error>",
             '</request>',
             '</stream>',
         ]
@@ -624,7 +675,32 @@ async def test_run_stream_on_complete():
     )
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_run_stream_metadata_forwarded():
+    agent = Agent(model=TestModel(custom_output_text='meta'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream(metadata={'ui': 'adapter'}, on_complete=on_complete)]
+
+    assert captured_metadata == [{'ui': 'adapter'}]
+    assert events[-2:] == ['<run-result>meta</run-result>', '</stream>']
+
+
+async def test_run_stream_native_metadata_forwarded():
+    agent = Agent(model=TestModel(custom_output_text='native meta'))
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in adapter.run_stream_native(metadata={'ui': 'native'})]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert run_result_event.result.metadata == {'ui': 'native'}
+
+
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
@@ -643,7 +719,14 @@ async def test_adapter_dispatch_request():
         receive=receive,
     )
 
-    response = await DummyUIAdapter.dispatch_request(starlette_request, agent=agent)
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+
+    response = await DummyUIAdapter.dispatch_request(
+        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+    )
 
     assert isinstance(response, StreamingResponse)
 
@@ -680,12 +763,201 @@ async def test_adapter_dispatch_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+    assert captured_metadata == [{'ui': 'dispatch'}]
+
+
+def test_manage_system_prompt_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
+    assert 'manage_system_prompt' in dispatch_request_parameters
+    assert dispatch_request_parameters['manage_system_prompt'].default == 'server'
 
 
 def test_dummy_adapter_dump_messages():
     """Test that DummyUIAdapter.dump_messages returns messages as-is."""
-    from pydantic_ai.messages import UserPromptPart
-
     messages = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
     result = DummyUIAdapter.dump_messages(messages)
     assert result == messages
+
+
+async def test_reinject_system_prompt_capability_injects_when_history_missing():
+    """The `ReinjectSystemPrompt` capability prepends the agent's configured system prompt
+    to the first `ModelRequest` when no `SystemPromptPart` is present in the history.
+    """
+    agent = Agent(model=TestModel(), system_prompt='You are a helpful assistant')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First message')]),
+        ModelResponse(parts=[TextPart(content='First response')]),
+    ]
+
+    result = await agent.run(
+        'Second message',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    first_request = result.all_messages()[0]
+    assert isinstance(first_request, ModelRequest)
+    assert first_request.parts == snapshot(
+        [
+            SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+            UserPromptPart(content='First message', timestamp=IsDatetime()),
+        ]
+    )
+
+
+async def test_reinject_system_prompt_capability_reaches_model_and_all_messages():
+    """Regression guard: the injected `SystemPromptPart` must appear in *both* the messages
+    actually sent to the model AND the stored `result.all_messages()` — they're the same
+    list after `_agent_graph.py:835` syncs the hook's mutations back to canonical state.
+    """
+    captured: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured.append([m for m in messages])
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    agent = Agent(FunctionModel(respond), system_prompt='Server prompt')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    result = await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    # What the model received on its one call
+    assert len(captured) == 1
+    model_first_request = captured[0][0]
+    assert isinstance(model_first_request, ModelRequest)
+    assert [type(p).__name__ for p in model_first_request.parts] == ['SystemPromptPart', 'UserPromptPart']
+    assert isinstance(model_first_request.parts[0], SystemPromptPart)
+    assert model_first_request.parts[0].content == 'Server prompt'
+
+    # What the caller sees via result.all_messages()
+    stored_first_request = result.all_messages()[0]
+    assert isinstance(stored_first_request, ModelRequest)
+    assert [type(p).__name__ for p in stored_first_request.parts] == ['SystemPromptPart', 'UserPromptPart']
+    assert isinstance(stored_first_request.parts[0], SystemPromptPart)
+    assert stored_first_request.parts[0].content == 'Server prompt'
+
+
+async def test_reinject_system_prompt_capability_does_not_mutate_input_history():
+    """Regression guard: the capability must not mutate `ModelRequest` objects from the caller's
+    `message_history` list. `request_context.messages` is a shallow copy, so mutating `.parts`
+    on shared `ModelRequest` instances would leak back into the user's input.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Server prompt')
+
+    history_request = ModelRequest(parts=[SystemPromptPart(content='Client prompt'), UserPromptPart(content='Hi')])
+    history_response = ModelResponse(parts=[TextPart(content='Hello')])
+    original_parts = list(history_request.parts)
+    history: list[ModelMessage] = [history_request, history_response]
+
+    await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    assert history_request.parts == original_parts, 'capability mutated caller-owned ModelRequest'
+
+
+async def test_reinject_system_prompt_capability_agent_without_model():
+    """Regression guard: agent constructed without a model gets its model passed via `run(model=...)`.
+
+    `ReinjectSystemPrompt.before_model_request` must resolve the system prompt using the
+    run-time model from `RunContext`, not re-fetch from the agent (which would raise `UserError`).
+    This is the default UIAdapter path for agents that delegate model choice to the server.
+    """
+    agent = Agent(system_prompt='You are a helpful assistant')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First message')]),
+        ModelResponse(parts=[TextPart(content='First response')]),
+    ]
+
+    result = await agent.run(
+        'Second message',
+        model=TestModel(),
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    first_request = result.all_messages()[0]
+    assert isinstance(first_request, ModelRequest)
+    assert first_request.parts == snapshot(
+        [
+            SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+            UserPromptPart(content='First message', timestamp=IsDatetime()),
+        ]
+    )
+
+
+async def test_reinject_system_prompt_capability_preserves_existing():
+    """The `ReinjectSystemPrompt` capability is a no-op if any `SystemPromptPart` is already
+    in the history (e.g. from a prior agent). Multi-agent handoff keeps the original system
+    prompt authoritative.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Second agent')
+
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='First agent'),
+                UserPromptPart(content='Hi'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hello')]),
+    ]
+
+    result = await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    first_request = result.all_messages()[0]
+    assert isinstance(first_request, ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['First agent']
+
+
+async def test_reinject_system_prompt_capability_with_pending_tool_calls():
+    """History ending with pending tool calls early-returns in `UserPromptNode`, but the
+    capability's `before_model_request` hook still runs on the subsequent model request (after
+    tool results are collected), so the system prompt ends up in the first request.
+    """
+
+    def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(respond), system_prompt='You are a helpful assistant')
+
+    @agent.tool_plain
+    def do_something(x: int) -> int:
+        return x + 1
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call the tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='do_something', args={'x': 1}, tool_call_id='call_1')]),
+    ]
+
+    result = await agent.run(message_history=history, capabilities=[ReinjectSystemPrompt()])
+
+    first_request = result.all_messages()[0]
+    assert isinstance(first_request, ModelRequest)
+    assert first_request.parts == snapshot(
+        [
+            SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+            UserPromptPart(content='Call the tool', timestamp=IsDatetime()),
+        ]
+    )

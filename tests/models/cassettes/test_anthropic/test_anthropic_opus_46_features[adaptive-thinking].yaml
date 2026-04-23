@@ -1,0 +1,74 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '186'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is 2+2?
+          type: text
+        role: user
+      model: claude-opus-4-6
+      stream: false
+      thinking:
+        type: adaptive
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '789'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |2+
+
+
+        type: text
+      - signature: EqkBCkYICxgCKkDo5w3BcOFDM2J7MsIKxgUfuba9NpwDavusotnNesPeZa7anZZRQjr0ND/Y4T9kgQgbRz4ipY8/DiooFD5PtwvCEgxNN6+9O9pGl9EfUSAaDCKTYxiUUqAq1kDwwSIwp8/wfXUdNjWtQradlsIeOfjZAEEvr71UKUsr9cfgBCyZmdKggM7HAkP2EtUGQsXAKhEpQ3w0Dkyme+85ZkepQqtuHBgB
+        thinking: '4'
+        type: thinking
+      - text: 2 + 2 = **4**
+        type: text
+      id: msg_01UwaEfFWx4eWMCsjmVZsjaY
+      model: claude-opus-4-6
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 31
+        output_tokens: 30
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
+...

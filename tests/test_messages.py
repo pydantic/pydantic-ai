@@ -1,9 +1,9 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
@@ -15,19 +15,28 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
+    InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    MultiModalContent,
     RequestUsage,
+    RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 
@@ -95,6 +104,12 @@ def test_document_url():
     assert document_url.format == 'pdf'
 
 
+def test_text_content():
+    text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
+    assert text_content.content == 'Pydantic AI!'
+    assert text_content.metadata == {'foo': 'bar'}
+
+
 @pytest.mark.parametrize(
     'media_type, format',
     [
@@ -121,6 +136,16 @@ def test_binary_content_image(media_type: str, format: str):
     binary_content = BinaryContent(data=b'Hello, world!', media_type=media_type)
     assert binary_content.is_image
     assert binary_content.format == format
+
+
+def test_binary_image_requires_image_media_type():
+    # Valid image media type should work
+    img = BinaryImage(data=b'test', media_type='image/png')
+    assert img.is_image
+
+    # Non-image media type should raise
+    with pytest.raises(ValueError, match='`BinaryImage` must have a media type that starts with "image/"'):
+        BinaryImage(data=b'test', media_type='text/plain')
 
 
 @pytest.mark.parametrize(
@@ -309,6 +334,13 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+def test_binary_content_base64():
+    bc = BinaryContent(data=b'Hello, world!', media_type='image/png')
+    assert bc.base64 == 'SGVsbG8sIHdvcmxkIQ=='
+    assert not bc.base64.startswith('data:')
+    assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -331,6 +363,16 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 def test_video_url_invalid():
     with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+)
+def test_url_with_query_parameters() -> None:
+    """Test that Url types correctly infer media type from URLs with query parameters"""
+    video_url = VideoUrl('https://example.com/video.mp4?query=param')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
@@ -449,7 +491,7 @@ def test_pre_usage_refactor_messages_deserializable():
                         content='What is the capital of Mexico?',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City.')],
@@ -473,6 +515,62 @@ def test_file_part_has_content():
 
     filepart.content.data = b'not empty'
     assert filepart.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {'key': 'value'},
+        {'key': 0},
+        {'key': False},
+        {'key': ''},
+        {'key': []},
+        {'key': {}},
+        '{"key": "value"}',
+        '0',
+    ],
+)
+def test_tool_call_part_has_content(args: dict[str, object] | str):
+    part = ToolCallPart(tool_name='test_tool', args=args)
+    assert part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {},
+        '',
+        None,
+    ],
+)
+def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
+    part = ToolCallPart(tool_name='test_tool', args=args)
+    assert not part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {'key': 'value'},
+        {'key': 0},
+        {'key': False},
+    ],
+)
+def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
+    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    assert part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {},
+        None,
+    ],
+)
+def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
+    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    assert not part.has_content()
 
 
 def test_file_part_serialization_roundtrip():
@@ -514,6 +612,7 @@ def test_file_part_serialization_roundtrip():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
+                'provider_url': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -540,6 +639,26 @@ def test_model_messages_type_adapter_preserves_run_id():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
+
+
+def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+            ],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
 
 
 def test_model_response_convenience_methods():
@@ -695,3 +814,754 @@ def test_binary_content_from_path(tmp_path: Path):
     assert binary_content == snapshot(
         BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
     )
+
+    # test yaml file
+    test_yaml_file = tmp_path / 'config.yaml'
+    test_yaml_file.write_text('key: value', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_yaml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'key: value', media_type='application/yaml'))
+
+    # test yml file (alternative extension)
+    test_yml_file = tmp_path / 'docker-compose.yml'
+    test_yml_file.write_text('version: "3"', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_yml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'version: "3"', media_type='application/yaml'))
+
+    # test toml file
+    test_toml_file = tmp_path / 'pyproject.toml'
+    test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
+    binary_content = BinaryContent.from_path(test_toml_file)
+    assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
+
+
+def test_uploaded_file_identifier_property():
+    """Test that UploadedFile.identifier hashes the file_id."""
+    # Test basic identifier (should be hashed)
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.identifier == snapshot('3a1a6c')
+
+    # Test with custom identifier
+    uploaded_file_with_id = UploadedFile(file_id='file-xyz789', provider_name='anthropic', identifier='my-custom-id')
+    assert uploaded_file_with_id.identifier == 'my-custom-id'
+
+    # Test with URL file_id (should still be hashed)
+    uploaded_file_url = UploadedFile(
+        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        provider_name='google-gla',
+    )
+    assert uploaded_file_url.identifier == snapshot('d8d637')
+
+
+def test_uploaded_file_format():
+    """Test UploadedFile.format property for different media types."""
+    # Test with no media_type - defaults to 'application/octet-stream' which has no format
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.media_type == 'application/octet-stream'
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
+
+    # Test with image media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='image/png')
+    assert uploaded_file.format == 'png'
+
+    # Test with video media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='video/mp4')
+    assert uploaded_file.format == 'mp4'
+
+    # Test with audio media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/wav')
+    assert uploaded_file.format == 'wav'
+
+    # Test with document media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf')
+    assert uploaded_file.format == 'pdf'
+
+    # Test with unknown media_type - should raise ValueError
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/custom')
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
+
+
+def test_uploaded_file_in_otel_message_parts():
+    """Test that UploadedFile is handled correctly in otel message parts conversion.
+
+    Per OTel GenAI spec, UploadedFile maps to FilePart with type='file', modality, and file_id.
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-input-messages.json
+    """
+    # Test with file ID (OTel FilePart format) - no media_type defaults to 'application/octet-stream'
+    part = UserPromptPart(
+        content=['text before', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'text after']
+    )
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+    assert otel_parts == snapshot(
+        [
+            {'type': 'text', 'content': 'text before'},
+            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123', 'mime_type': 'application/octet-stream'},
+            {'type': 'text', 'content': 'text after'},
+        ]
+    )
+
+    # Test with URL file_id (still uses file_id field per spec) - no extension defaults to 'application/octet-stream'
+    part_url = UserPromptPart(
+        content=[
+            'analyze this',
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                provider_name='google-gla',
+            ),
+        ]
+    )
+    otel_parts_url = part_url.otel_message_parts(settings)
+    assert otel_parts_url == snapshot(
+        [
+            {'type': 'text', 'content': 'analyze this'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                'mime_type': 'application/octet-stream',
+            },
+        ]
+    )
+
+    # Test with S3 URL and media_type - should include modality and mime_type
+    part_s3 = UserPromptPart(
+        content=[
+            'process this',
+            UploadedFile(file_id='s3://my-bucket/my-file.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+    otel_parts_s3 = part_s3.otel_message_parts(settings)
+    assert otel_parts_s3 == snapshot(
+        [
+            {'type': 'text', 'content': 'process this'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 's3://my-bucket/my-file.pdf',
+                'mime_type': 'application/pdf',
+            },
+        ]
+    )
+
+    # Test with image media_type - should have image modality
+    part_image = UserPromptPart(
+        content=[UploadedFile(file_id='img-123', provider_name='openai', media_type='image/png')]
+    )
+    otel_parts_image = part_image.otel_message_parts(settings)
+    assert otel_parts_image == snapshot(
+        [{'type': 'file', 'modality': 'image', 'file_id': 'img-123', 'mime_type': 'image/png'}]
+    )
+
+    # Test with audio media_type - should have audio modality
+    part_audio = UserPromptPart(
+        content=[UploadedFile(file_id='audio-123', provider_name='openai', media_type='audio/mp3')]
+    )
+    otel_parts_audio = part_audio.otel_message_parts(settings)
+    assert otel_parts_audio == snapshot(
+        [{'type': 'file', 'modality': 'audio', 'file_id': 'audio-123', 'mime_type': 'audio/mp3'}]
+    )
+
+    # Test with video media_type - should have video modality
+    part_video = UserPromptPart(
+        content=[UploadedFile(file_id='video-123', provider_name='openai', media_type='video/mp4')]
+    )
+    otel_parts_video = part_video.otel_message_parts(settings)
+    assert otel_parts_video == snapshot(
+        [{'type': 'file', 'modality': 'video', 'file_id': 'video-123', 'mime_type': 'video/mp4'}]
+    )
+
+    # Test without include_content (should have type, modality, and mime_type but not file_id)
+    settings_no_content = InstrumentationSettings(include_content=False)
+    otel_parts_no_content = part.otel_message_parts(settings_no_content)
+    assert otel_parts_no_content == snapshot(
+        [
+            {'type': 'text'},
+            {'type': 'file', 'modality': 'document', 'mime_type': 'application/octet-stream'},
+            {'type': 'text'},
+        ]
+    )
+
+
+def test_uploaded_file_serialization_roundtrip():
+    """Verify that UploadedFile survives a ModelMessagesTypeAdapter serialization roundtrip.
+
+    UploadedFile uses `exclude=True` on private fields (`_media_type`, `_identifier`) and exposes
+    them via computed fields — this test ensures those computed values are preserved through
+    serialization and deserialization.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'analyze this file',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
+def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
+    """Verify that custom `identifier` and `media_type` survive serialization roundtrip."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-abc123',
+                            provider_name='anthropic',
+                            media_type='image/png',
+                            identifier='my-id',
+                        ),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    part = deserialized[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    uploaded = part.content[0]
+    assert isinstance(uploaded, UploadedFile)
+    assert uploaded.identifier == 'my-id'
+    assert uploaded.media_type == 'image/png'
+    assert deserialized == messages
+
+
+def test_tool_return_content_with_url_field_not_coerced_to_image_url():
+    """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
+
+    Regression test for: https://github.com/pydantic/pydantic-ai/issues/4190
+
+    Without a discriminator on MultiModalContent union, Pydantic would incorrectly
+    match any dict containing a 'url' key against ImageUrl (first union member),
+    causing data loss.
+    """
+
+    serialized_history = r"""[
+      {
+        "parts": [{"content": "Hello", "timestamp": "2026-02-03T22:25:50Z", "part_kind": "user-prompt"}],
+        "kind": "request"
+      },
+      {
+        "parts": [{"tool_name": "my_tool", "args": "{}", "tool_call_id": "call_1", "part_kind": "tool-call"}],
+        "model_name": "test",
+        "timestamp": "2026-02-03T22:26:39Z",
+        "kind": "response"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "my_tool",
+            "content": {
+              "items": [{"name": "Example", "url": "/some/path/12345"}]
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    # Deserialize - the dict with 'url' should remain as a dict, not become ImageUrl
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+
+    tool_return_part = deserialized[2].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    # The content should be preserved as a dict, not coerced to ImageUrl
+    expected_content = {'items': [{'name': 'Example', 'url': '/some/path/12345'}]}
+    assert tool_return_part.content == expected_content
+
+    # Round-trip should work without errors
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+
+    reloaded_tool_return = reloaded[2].parts[0]
+    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    assert reloaded_tool_return.content == expected_content
+
+
+def test_tool_return_content_with_explicit_image_url():
+    """Test that ImageUrl with explicit 'kind' discriminator is correctly deserialized."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    serialized_history = r"""[
+      {
+        "parts": [{"content": "Hello", "timestamp": "2026-02-03T22:25:50Z", "part_kind": "user-prompt"}],
+        "kind": "request"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "image_tool",
+            "content": {
+              "url": "https://example.com/image.png",
+              "kind": "image-url"
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+
+    tool_return_part = deserialized[1].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    # Content with explicit kind: "image-url" should become ImageUrl
+    assert isinstance(tool_return_part.content, ImageUrl)
+    assert tool_return_part.content.url == 'https://example.com/image.png'
+
+
+def test_tool_return_content_nested_multimodal():
+    """Test that nested MultiModalContent types with explicit discriminators work."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    serialized_history = r"""[
+      {
+        "parts": [
+          {
+            "tool_name": "mixed_tool",
+            "content": {
+              "images": [
+                {"url": "https://example.com/img1.jpg", "kind": "image-url"},
+                {"url": "https://example.com/img2.png", "kind": "image-url"}
+              ],
+              "documents": [
+                {"url": "https://example.com/doc.pdf", "kind": "document-url"}
+              ],
+              "regular_data": [
+                {"url": "/api/path", "id": 123, "name": "test"}
+              ]
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+    tool_return_part = deserialized[0].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    content = tool_return_part.content
+    assert isinstance(content, dict)
+
+    # Items with kind: "image-url" should be ImageUrl
+    assert isinstance(content['images'][0], ImageUrl)
+    assert isinstance(content['images'][1], ImageUrl)
+
+    # Items with kind: "document-url" should be DocumentUrl
+    assert isinstance(content['documents'][0], DocumentUrl)
+
+    # Items without kind should remain as dicts
+    assert content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+    # Round-trip should preserve types
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+    reloaded_tool_return = reloaded[0].parts[0]
+    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_content = reloaded_tool_return.content
+    assert isinstance(reloaded_content, dict)
+
+    assert isinstance(reloaded_content['images'][0], ImageUrl)
+    assert isinstance(reloaded_content['documents'][0], DocumentUrl)
+    assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_multi_modal_content_types_matches_union():
+    """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
+    and that is_multi_modal_content correctly narrows types."""
+    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
+
+    # Positive cases: each multimodal type is recognized
+    assert is_multi_modal_content(ImageUrl(url='https://example.com/image.png'))
+    assert is_multi_modal_content(AudioUrl(url='https://example.com/audio.mp3'))
+    assert is_multi_modal_content(DocumentUrl(url='https://example.com/doc.pdf'))
+    assert is_multi_modal_content(VideoUrl(url='https://example.com/video.mp4'))
+    assert is_multi_modal_content(BinaryContent(data=b'\x89PNG', media_type='image/png'))
+
+    # Negative cases: non-multimodal types
+    assert not is_multi_modal_content('a string')
+    assert not is_multi_modal_content({'key': 'value'})
+    assert not is_multi_modal_content(42)
+
+
+def test_tool_return_part_binary_content_serialization():
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+    binary_content = BinaryContent(png_data, media_type='image/png')
+    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
+    assert tool_return.model_response_object() == snapshot({})
+
+
+def test_tool_return_part_list_structure_preserved():
+    single_dict = {'result': 'found'}
+    single_item_list = [{'result': 'found'}]
+    multi_item_list = [{'a': 1}, {'b': 2}]
+
+    tool_return_dict = ToolReturnPart(tool_name='test', content=single_dict, tool_call_id='tc1')
+    assert tool_return_dict.model_response_object() == snapshot({'result': 'found'})
+    assert tool_return_dict.model_response_str() == snapshot('{"result":"found"}')
+
+    tool_return_single_list = ToolReturnPart(tool_name='test', content=single_item_list, tool_call_id='tc2')
+    assert tool_return_single_list.model_response_object() == snapshot({'return_value': [{'result': 'found'}]})
+    assert tool_return_single_list.model_response_str() == snapshot('[{"result":"found"}]')
+
+    tool_return_multi_list = ToolReturnPart(tool_name='test', content=multi_item_list, tool_call_id='tc3')
+    assert tool_return_multi_list.model_response_object() == snapshot({'return_value': [{'a': 1}, {'b': 2}]})
+    assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
+
+
+def test_tool_return_part_content_items():
+    img = ImageUrl(url='https://example.com/img.png')
+    binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
+
+    p_str = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    assert p_str.content_items() == snapshot(['hello'])
+    assert p_str.content_items(mode='raw') == snapshot(['hello'])
+    assert p_str.content_items(mode='str') == snapshot(['hello'])
+    assert p_str.content_items(mode='jsonable') == snapshot(['hello'])
+
+    p_dict = ToolReturnPart(tool_name='t', content={'key': 'val'}, tool_call_id='c2')
+    assert p_dict.content_items() == snapshot([{'key': 'val'}])
+    assert p_dict.content_items(mode='str') == snapshot(['{"key":"val"}'])
+    assert p_dict.content_items(mode='jsonable') == snapshot([{'key': 'val'}])
+
+    p_int = ToolReturnPart(tool_name='t', content=42, tool_call_id='c3')
+    assert p_int.content_items() == snapshot([42])
+    assert p_int.content_items(mode='str') == snapshot(['42'])
+    assert p_int.content_items(mode='jsonable') == snapshot([42])
+
+    p_file = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
+    assert p_file.content_items(mode='str') == snapshot([ImageUrl(url='https://example.com/img.png')])
+    assert p_file.content_items(mode='jsonable') == snapshot([ImageUrl(url='https://example.com/img.png')])
+
+    p_mixed = ToolReturnPart(tool_name='t', content=['text result', img, binary], tool_call_id='c5')
+    assert p_mixed.content_items() == snapshot(
+        [
+            'text result',
+            ImageUrl(url='https://example.com/img.png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+    assert p_mixed.content_items(mode='str') == snapshot(
+        [
+            'text result',
+            ImageUrl(url='https://example.com/img.png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+    assert p_mixed.content_items(mode='jsonable') == snapshot(
+        [
+            'text result',
+            ImageUrl(url='https://example.com/img.png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+
+    p_list = ToolReturnPart(tool_name='t', content=[{'a': 1}, {'b': 2}], tool_call_id='c6')
+    assert p_list.content_items(mode='str') == snapshot(['{"a":1}', '{"b":2}'])
+    assert p_list.content_items(mode='jsonable') == snapshot([{'a': 1}, {'b': 2}])
+
+
+def test_tool_return_part_files_property():
+    img = ImageUrl(url='https://example.com/img.png')
+    audio = AudioUrl(url='https://example.com/audio.mp3')
+    binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
+
+    p_str = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    assert p_str.files == snapshot([])
+
+    p_dict = ToolReturnPart(tool_name='t', content={'key': 'val'}, tool_call_id='c2')
+    assert p_dict.files == snapshot([])
+
+    p_file = ToolReturnPart(tool_name='t', content=img, tool_call_id='c3')
+    assert p_file.files == snapshot([ImageUrl(url='https://example.com/img.png')])
+
+    p_mixed = ToolReturnPart(tool_name='t', content=['text', img, {'data': 1}, audio, binary], tool_call_id='c4')
+    assert p_mixed.files == snapshot(
+        [
+            ImageUrl(url='https://example.com/img.png'),
+            AudioUrl(url='https://example.com/audio.mp3'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+
+    p_no_files = ToolReturnPart(tool_name='t', content=['a', 'b'], tool_call_id='c5')
+    assert p_no_files.files == snapshot([])
+
+
+def test_tool_return_part_response_methods_with_files():
+    img = ImageUrl(url='https://example.com/img.png')
+
+    p_text_file = ToolReturnPart(tool_name='t', content=['hello', img], tool_call_id='c1')
+    assert p_text_file.model_response_str() == snapshot('hello')
+    assert p_text_file.model_response_object() == snapshot({'return_value': 'hello'})
+
+    p_dict_file = ToolReturnPart(tool_name='t', content=[{'key': 'val'}, img], tool_call_id='c2')
+    assert p_dict_file.model_response_str() == snapshot('{"key":"val"}')
+    assert p_dict_file.model_response_object() == snapshot({'key': 'val'})
+
+    p_single_list = ToolReturnPart(tool_name='t', content=['hello'], tool_call_id='c3')
+    assert p_single_list.model_response_str() == snapshot('["hello"]')
+    assert p_single_list.model_response_object() == snapshot({'return_value': ['hello']})
+
+    p_file_only = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
+    assert p_file_only.model_response_str() == snapshot('')
+    assert p_file_only.model_response_object() == snapshot({})
+
+    p_multi = ToolReturnPart(tool_name='t', content=['a', 'b', img], tool_call_id='c5')
+    assert p_multi.model_response_str() == snapshot('["a","b"]')
+    assert p_multi.model_response_object() == snapshot({'return_value': ['a', 'b']})
+
+
+def test_tool_return_part_model_response_str_and_user_content():
+    img = ImageUrl(url='https://example.com/img.png')
+
+    # Scalar string, no files → fast path returns model_response_str
+    p_no_files = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    text, user_content = p_no_files.model_response_str_and_user_content()
+    assert text == snapshot('hello')
+    assert user_content == snapshot([])
+
+    # Single-element list, no files → list structure preserved
+    p_single_list = ToolReturnPart(tool_name='t', content=['hello'], tool_call_id='c1b')
+    text, user_content = p_single_list.model_response_str_and_user_content()
+    assert text == snapshot('["hello"]')
+    assert user_content == snapshot([])
+
+    # Single text + file → scalar text, not JSON array
+    p_text_file = ToolReturnPart(tool_name='t', content=['hello', img], tool_call_id='c2')
+    text, user_content = p_text_file.model_response_str_and_user_content()
+    assert text == snapshot('["hello","See file d5a901."]')
+    assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # Multiple text items + file → JSON array preserves list structure
+    p_multi = ToolReturnPart(tool_name='t', content=['text1', img, 'text2'], tool_call_id='c3')
+    text, user_content = p_multi.model_response_str_and_user_content()
+    assert text == snapshot('["text1","See file d5a901.","text2"]')
+    assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # File-only content
+    p_file_only = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
+    text, user_content = p_file_only.model_response_str_and_user_content()
+    assert text == snapshot('See file d5a901.')
+    assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+
+def test_args_as_dict_valid_json():
+    """args_as_dict should return parsed dict for valid JSON args."""
+    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_dict_args():
+    """args_as_dict should return the dict directly when args is already a dict."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for malformed JSON by default."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    result = part.args_as_dict()
+    assert result == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_dict_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert part.args_as_dict() == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_dict_empty_args():
+    """args_as_dict should return {} when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_dict() == {}
+
+
+def test_args_as_dict_raise_if_invalid_malformed_json():
+    """args_as_dict(raise_if_invalid=True) should raise ValueError on malformed JSON."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    with pytest.raises(ValueError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
+def test_args_as_dict_raise_if_invalid_non_dict_json():
+    """args_as_dict(raise_if_invalid=True) should raise AssertionError on non-dict JSON."""
+    part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
+    with pytest.raises(AssertionError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
+def test_user_prompt_part_with_text_content():
+    part = UserPromptPart(
+        content=[
+            'Hi there',
+            TextContent(content='This is text content', metadata={'key': 'value'}),
+        ]
+    )
+    assert part.content[0] == 'Hi there'
+    assert part.content[1].metadata == snapshot({'key': 'value'})  # type: ignore[reportUnknownMemberType]
+
+
+class TestInstructionParts:
+    def test_join_helper(self):
+        """InstructionPart.join produces the correct joined string."""
+        parts = [
+            InstructionPart(content='First'),
+            InstructionPart(content='Second'),
+        ]
+        assert InstructionPart.join(parts) == 'First\n\nSecond'
+        assert InstructionPart.join([]) is None
+
+    def test_join_strips_whitespace(self):
+        """InstructionPart.join strips leading/trailing whitespace."""
+        parts = [InstructionPart(content='  Hello  ')]
+        assert InstructionPart.join(parts) == 'Hello'
+
+    def test_model_request_instructions_is_plain_string(self):
+        """ModelRequest.instructions is a plain str | None field."""
+        request = ModelRequest(parts=[], instructions='Hello world')
+        assert request.instructions == 'Hello world'
+
+    def test_model_request_instructions_default_none(self):
+        request = ModelRequest(parts=[])
+        assert request.instructions is None
+
+    def test_serialization_round_trip(self):
+        """Instructions string survives serialization and deserialization."""
+        original = ModelRequest(parts=[UserPromptPart('test')], instructions='static part\n\ndynamic part')
+
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert msg.instructions == 'static part\n\ndynamic part'
+
+    def test_repr(self):
+        """InstructionPart repr omits default values."""
+        part = InstructionPart(content='hello')
+        assert repr(part) == "InstructionPart(content='hello')"
+        dynamic_part = InstructionPart(content='world', dynamic=True)
+        assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
+
+
+def test_retry_prompt_strips_input_from_top_level_errors():
+    """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"required_field"' in response
+
+
+def test_retry_prompt_keeps_input_for_nested_errors():
+    """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' in response
+    assert '"sub_field"' in response
+
+
+def test_retry_prompt_mixed_top_level_and_nested_errors():
+    """When both top-level and nested errors exist, only top-level input should be stripped."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
+            {
+                'type': 'missing',
+                'loc': ('items', 0, 'nested_field'),
+                'msg': 'Field required',
+                'input': {'nested_key': 'nested_val'},
+            },
+        ],
+    )
+    response = part.model_response()
+    # Nested error's input should be present
+    assert '"nested_key"' in response
+    # But root-level input should not
+    assert '"root_key"' not in response
+
+
+def test_retry_prompt_strips_input_from_top_level_type_errors():
+    """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
+    part = RetryPromptPart(
+        content=[
+            {
+                'type': 'int_parsing',
+                'loc': ('age',),
+                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                'input': 'not_a_number',
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"age"' in response
+
+
+def test_retry_prompt_tool_call_keeps_input_at_top_level():
+    """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
+    part = RetryPromptPart(
+        tool_name='evaluate_content',
+        content=[
+            {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input": {}' in response
+    assert '"content"' in response
+
+
+def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
+    """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
+    part = RetryPromptPart(
+        tool_name='evaluate_content',
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 42,
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input": 42' in response
+    assert '"name"' in response

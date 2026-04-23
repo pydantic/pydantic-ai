@@ -6,11 +6,17 @@ The providers are in charge of providing an authenticated client to the API.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from asyncio import Lock
+from collections.abc import Callable
+from types import TracebackType
+from typing import Any, Generic
+
+import httpx
+from typing_extensions import Self, TypeVar
 
 from ..profiles import ModelProfile
 
-InterfaceClient = TypeVar('InterfaceClient')
+InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -18,12 +24,19 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     The provider is in charge of providing an authenticated client to the API.
 
-    Each provider only supports a specific interface. A interface can be supported by multiple providers.
+    Each provider only supports a specific interface. An interface can be supported by multiple providers.
 
     For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
+
+    When used as an async context manager, providers that create their own HTTP client will close it on exit.
+    This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
     """
 
     _client: InterfaceClient
+    _own_http_client: httpx.AsyncClient | None = None
+    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
+    _entered_count: int = 0
+    _enter_lock: Lock | None = None
 
     @property
     @abstractmethod
@@ -43,9 +56,42 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The client for the provider."""
         raise NotImplementedError()
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        """Update the SDK client's internal HTTP client reference.
+
+        Subclasses that manage their own HTTP client should override this to inject
+        the new client into their SDK client after re-creation.
+        """
+
+    async def __aenter__(self) -> Self:
+        if self._enter_lock is None:
+            self._enter_lock = Lock()
+        async with self._enter_lock:
+            if self._entered_count == 0 and self._own_http_client is not None:
+                if self._own_http_client.is_closed and self._http_client_factory is not None:
+                    new_client = self._http_client_factory()
+                    self._own_http_client = new_client
+                    self._set_http_client(new_client)
+            self._entered_count += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        if self._enter_lock is None:
+            return
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._own_http_client is not None:
+                await self._own_http_client.aclose()
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover
@@ -53,6 +99,18 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
+    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai')
+    if provider.startswith('gateway/'):
+        from .gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
+
+    # Normalize deprecated/alias provider names
+    if provider == 'vertexai':
+        provider = 'google-vertex'
+    elif provider == 'google':
+        provider = 'google-gla'
+
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
@@ -102,9 +160,13 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return CohereProvider
     elif provider == 'grok':
-        from .grok import GrokProvider
+        from .grok import GrokProvider  # pyright: ignore[reportDeprecated]
 
-        return GrokProvider
+        return GrokProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'xai':
+        from .xai import XaiProvider
+
+        return XaiProvider
     elif provider == 'moonshotai':
         from .moonshotai import MoonshotAIProvider
 
@@ -145,11 +207,27 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .ovhcloud import OVHcloudProvider
 
         return OVHcloudProvider
+    elif provider == 'alibaba':
+        from .alibaba import AlibabaProvider
+
+        return AlibabaProvider
+    elif provider == 'sambanova':
+        from .sambanova import SambaNovaProvider
+
+        return SambaNovaProvider
     elif provider == 'outlines':
         from .outlines import OutlinesProvider
 
         return OutlinesProvider
-    else:  # pragma: no cover
+    elif provider == 'sentence-transformers':
+        from .sentence_transformers import SentenceTransformersProvider
+
+        return SentenceTransformersProvider
+    elif provider == 'voyageai':
+        from .voyageai import VoyageAIProvider
+
+        return VoyageAIProvider
+    else:
         raise ValueError(f'Unknown provider: {provider}')
 
 
@@ -160,10 +238,10 @@ def infer_provider(provider: str) -> Provider[Any]:
 
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
-    elif provider in ('google-vertex', 'google-gla'):
+    elif provider in ('google-vertex', 'google-gla', 'vertexai'):
         from .google import GoogleProvider
 
-        return GoogleProvider(vertexai=provider == 'google-vertex')
+        return GoogleProvider(vertexai=provider in ('google-vertex', 'vertexai'))
     else:
         provider_class = infer_provider_class(provider)
         return provider_class()

@@ -16,7 +16,6 @@ def test_cli_help(capfd: pytest.CaptureFixture[str]):
         cli(['--help'], prog_name='clai')
 
     help_output = capfd.readouterr().out.strip()
-    # TODO change when we reach v1
     help_output = re.sub(r'(Pydantic AI CLI v).+', r'\1...', help_output)
 
     this_dir = Path(__file__).parent

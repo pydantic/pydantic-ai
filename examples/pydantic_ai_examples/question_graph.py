@@ -26,14 +26,16 @@ from pydantic_graph.persistence.file import FileStatePersistence
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-ask_agent = Agent('openai:gpt-5', output_type=str)
+ask_agent = Agent('openai:gpt-5.2', output_type=str)
 
 
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    evaluate_agent_messages: list[ModelMessage] = field(
+        default_factory=list[ModelMessage]
+    )
 
 
 @dataclass
@@ -65,7 +67,7 @@ class EvaluationOutput(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=EvaluationOutput,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )

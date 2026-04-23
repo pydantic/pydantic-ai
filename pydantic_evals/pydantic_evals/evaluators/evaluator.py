@@ -1,22 +1,15 @@
 from __future__ import annotations
 
 import inspect
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import dataclass
 from typing import Any, Generic, cast
 
-from pydantic import (
-    ConfigDict,
-    model_serializer,
-)
-from pydantic_core import to_jsonable_python
-from pydantic_core.core_schema import SerializationInfo
 from typing_extensions import TypeVar, deprecated
 
-from pydantic_ai import _utils
-
 from .._utils import get_event_loop
+from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
 
@@ -63,6 +56,10 @@ EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covar
 T = TypeVar('T')
 
 
+# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
+# without shifting positional-argument bindings, and consider reordering the existing
+# fields into a more logical grouping (e.g. identity → value → source metadata) while
+# we're free to rearrange.
 @dataclass
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
@@ -74,12 +71,17 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         value: The scalar result of the evaluation.
         reason: An optional explanation of the evaluation result.
         source: The spec of the evaluator that produced this result.
+        evaluator_version: Optional version tag for the evaluator that produced this result
+            (e.g. `'v2'`). Sourced automatically from the `evaluator_version` class attribute
+            on the `Evaluator` subclass. Lets online-evaluation dashboards filter out results
+            from retired versions without deleting historical rows.
     """
 
     name: str
     value: EvaluationScalarT
     reason: str | None
     source: EvaluatorSpec
+    evaluator_version: str | None = None
 
     def downcast(self, *value_types: type[T]) -> EvaluationResult[T] | None:
         """Attempt to downcast this result to a more specific type.
@@ -101,6 +103,10 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
+# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
+# without shifting positional-argument bindings, and consider reordering the existing
+# fields into a more logical grouping (e.g. identity → error detail → source metadata)
+# while we're free to rearrange.
 @dataclass
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
@@ -109,6 +115,13 @@ class EvaluatorFailure:
     error_message: str
     error_stacktrace: str
     source: EvaluatorSpec
+    evaluator_version: str | None = None
+    """Optional version tag for the evaluator that raised (e.g. `'v2'`). Sourced automatically
+    from the `evaluator_version` class attribute on the `Evaluator` subclass."""
+    error_type: str | None = None
+    """Class name of the exception that caused the failure (e.g. `'ValueError'`). Populated
+    automatically when `EvaluatorFailure` is constructed from a caught exception; surfaced
+    as the `error.type` attribute on emitted OTel events."""
 
 
 # Evaluators are contravariant in all of its parameters.
@@ -122,21 +135,8 @@ MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)
 """Type variable for the metadata type of the task being evaluated."""
 
 
-class _StrictABCMeta(ABCMeta):
-    """An ABC-like metaclass that goes further and disallows even defining abstract subclasses."""
-
-    def __new__(mcls, name: str, bases: tuple[type, ...], namespace: dict[str, Any], /, **kwargs: Any):
-        result = super().__new__(mcls, name, bases, namespace, **kwargs)
-        # Check if this class is a proper subclass of a _StrictABC instance
-        is_proper_subclass = any(isinstance(c, _StrictABCMeta) for c in result.__mro__[1:])
-        if is_proper_subclass and result.__abstractmethods__:
-            abstractmethods = ', '.join([f'{m!r}' for m in result.__abstractmethods__])
-            raise TypeError(f'{name} must implement all abstract methods: {abstractmethods}')
-        return result
-
-
 @dataclass(repr=False)
-class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
+class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
     """Base class for all evaluators.
 
     Evaluators can assess the performance of a task in a variety of ways, as a function of the EvaluatorContext.
@@ -155,18 +155,31 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return ctx.output == ctx.expected_output
     ```
+
+    Optional class-level attributes:
+
+    - `evaluation_name`: override the default name used in reports for this evaluator's output
+      (only applies when `evaluate` returns a scalar or `EvaluationReason` — mapping outputs
+      always use their own keys).
+    - `evaluator_version`: an optional version tag (e.g. `'v2'`) describing the evaluator's
+      behavior. Propagated to online-evaluation sinks so dashboards can filter out results
+      produced by retired versions without deleting rows. Applies to every result the
+      evaluator emits. Bump whenever behavior changes in a way that invalidates prior scores.
+
+    Example:
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+    @dataclass
+    class LLMJudge(Evaluator):
+        evaluator_version = 'v2'  # bumped after prompt rewrite
+
+        def evaluate(self, ctx: EvaluatorContext) -> bool: ...
+    ```
     """
-
-    __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
-
-    @classmethod
-    def get_serialization_name(cls) -> str:
-        """Return the 'name' of this Evaluator to use during serialization.
-
-        Returns:
-            The name of the Evaluator, which is typically the class name.
-        """
-        return cls.__name__
 
     @classmethod
     @deprecated('`name` has been renamed, use `get_serialization_name` instead.')
@@ -185,6 +198,8 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
+        # TODO(v2): declare `evaluation_name: ClassVar[str | None] = None` on the
+        # base (alongside `evaluator_version`) and read it directly.
         evaluation_name = getattr(self, 'evaluation_name', None)
         if isinstance(evaluation_name, str):
             # If the evaluator has an attribute `name` of type string, use that
@@ -250,53 +265,3 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
             return await output
         else:
             return cast(EvaluatorOutput, output)
-
-    @model_serializer(mode='plain')
-    def serialize(self, info: SerializationInfo) -> Any:
-        """Serialize this Evaluator to a JSON-serializable form.
-
-        Returns:
-            A JSON-serializable representation of this evaluator as an EvaluatorSpec.
-        """
-        return to_jsonable_python(
-            self.as_spec(),
-            context=info.context,
-            serialize_unknown=True,
-        )
-
-    def as_spec(self) -> EvaluatorSpec:
-        raw_arguments = self.build_serialization_arguments()
-
-        arguments: None | tuple[Any,] | dict[str, Any]
-        if len(raw_arguments) == 0:
-            arguments = None
-        elif len(raw_arguments) == 1:
-            arguments = (next(iter(raw_arguments.values())),)
-        else:
-            arguments = raw_arguments
-
-        return EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments)
-
-    def build_serialization_arguments(self) -> dict[str, Any]:
-        """Build the arguments for serialization.
-
-        Evaluators are serialized for inclusion as the "source" in an `EvaluationResult`.
-        If you want to modify how the evaluator is serialized for that or other purposes, you can override this method.
-
-        Returns:
-            A dictionary of arguments to be used during serialization.
-        """
-        raw_arguments: dict[str, Any] = {}
-        for field in fields(self):
-            value = getattr(self, field.name)
-            # always exclude defaults:
-            if field.default is not MISSING:
-                if value == field.default:
-                    continue
-            if field.default_factory is not MISSING:
-                if value == field.default_factory():  # pragma: no branch
-                    continue
-            raw_arguments[field.name] = value
-        return raw_arguments
-
-    __repr__ = _utils.dataclasses_no_defaults_repr

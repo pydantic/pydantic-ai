@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     BinaryContent,
+    BinaryImage,
+    InstructionPart,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -30,21 +32,13 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.mcp import (
-    MCPError,
-    MCPServerStreamableHTTP,
-    Resource,
-    ResourceAnnotations,
-    ResourceTemplate,
-    ServerCapabilities,
-    load_mcp_servers,
-)
-from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models import Model, create_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, try_import
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
@@ -55,11 +49,25 @@ with try_import() as imports_successful:
         ElicitRequestParams,
         ElicitResult,
         ImageContent,
+        Implementation,
         TextContent,
+        ToolUseContent,
     )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
-    from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
+    from pydantic_ai.mcp import (
+        CallToolFunc,
+        MCPError,
+        MCPServerSSE,
+        MCPServerStdio,
+        MCPServerStreamableHTTP,
+        Resource,
+        ResourceAnnotations,
+        ResourceTemplate,
+        ServerCapabilities,
+        ToolResult,
+        load_mcp_servers,
+    )
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -96,7 +104,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(19)
+        assert len(tools) == snapshot(20)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -155,6 +163,49 @@ async def test_aexit_called_more_times_than_aenter():
         await server.__aexit__(None, None, None)
 
 
+async def test_aexit_concurrent_does_not_corrupt_running_count():
+    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
+
+    Injects a yield point before real lock acquisition so both tasks pass the
+    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
+
+    Old code (guard outside lock):
+      Task A reads _running_count == 1, passes guard, yields.
+      Task B reads _running_count == 1, passes guard, yields.
+      Task A acquires lock, decrements to 0.
+      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
+
+    New code (guard inside lock):
+      Task A acquires lock, reads 1, decrements to 0, releases.
+      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # One active entry — the race only matters when both tasks see count > 0.
+    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
+
+    # Replace the real lock with one that yields before acquiring,
+    # opening the interleaving window the old code left unprotected.
+    class InterleavingLock(asyncio.Lock):
+        async def acquire(self) -> Literal[True]:
+            await asyncio.sleep(0)  # yield — lets the other task reach the same point
+            return await super().acquire()
+
+    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+
+    results = await asyncio.gather(
+        server.__aexit__(None, None, None),
+        server.__aexit__(None, None, None),
+        return_exceptions=True,
+    )
+
+    # Exactly one exit must succeed and one must raise ValueError (not silently
+    # corrupt the count). With the old code both would succeed and count == -1.
+    errors = [r for r in results if isinstance(r, ValueError)]
+    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
+    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
@@ -172,7 +223,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(19)
+        assert len(tools) == snapshot(20)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -197,10 +248,74 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         assert called, 'process_tool_call should have been called'
 
 
+async def test_server_instructions_disabled_by_default(run_context: RunContext[int]):
+    """Test that server instructions are not returned by default."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        instructions = await server.get_instructions(run_context)
+        assert instructions is None
+
+
+async def test_server_instructions_enabled(run_context: RunContext[int]):
+    """Test that server instructions are returned when include_instructions=True."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+    async with server:
+        instructions = await server.get_instructions(run_context)
+        assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
+
+
+async def test_server_instructions_included_in_agent_request() -> None:
+    """Test that MCP server instructions are injected into agent model requests."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+    agent = Agent(TestModel(call_tools=[]), toolsets=[server])
+
+    async with agent:
+        result = await agent.run('Hello')
+
+    first_message = result.all_messages()[0]
+    assert isinstance(first_message, ModelRequest)
+    assert first_message.instructions == 'Be a helpful assistant.'
+
+
+async def test_server_instructions_not_initialized():
+    """Test that get_instructions returns None when include_instructions=True but server not initialized."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+
+    # Don't enter the context manager to avoid initialization
+    ctx = build_run_context(0)
+
+    result = await server.get_instructions(ctx)
+    assert result is None
+
+
+def build_run_context(deps: int) -> RunContext[int]:
+    """Helper function to build a run context for MCP tests."""
+    return RunContext(
+        deps=deps,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
 def test_sse_server():
     sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.log_level is None
+
+
+def test_sse_server_with_include_instructions():
+    """Test that SSE server can be configured with include_instructions=True."""
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse', include_instructions=True)
+    assert sse_server.include_instructions is True
+
+
+def test_streamable_http_server_with_include_instructions():
+    """Test that StreamableHTTP server can be configured with include_instructions=True."""
+    http_server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp', include_instructions=True)
+    assert http_server.include_instructions is True
 
 
 def test_sse_server_with_header_and_timeout():
@@ -241,6 +356,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -264,7 +380,11 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -278,6 +398,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -295,7 +416,11 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -358,7 +483,7 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         resources = await server.list_resources()
         assert resources == snapshot(
             [
-                Resource(name='kiwi_resource', description='', mime_type='image/png', uri='resource://kiwi.png'),
+                Resource(name='kiwi_resource', description='', mime_type='image/jpeg', uri='resource://kiwi.jpg'),
                 Resource(name='marcelo_resource', description='', mime_type='audio/mpeg', uri='resource://marcelo.mp3'),
                 Resource(
                     name='product_name_resource',
@@ -410,6 +535,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -433,7 +559,11 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -447,6 +577,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -468,7 +599,11 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -490,6 +625,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -513,7 +649,11 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -527,6 +667,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -544,7 +685,11 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -566,6 +711,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -589,7 +735,11 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -603,6 +753,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -620,7 +771,11 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -644,6 +799,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -667,7 +823,11 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -676,12 +836,12 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource',
-                            content='See file 1c8566',
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -703,7 +863,11 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -729,6 +893,7 @@ async def test_tool_returning_image_resource_link(
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -752,7 +917,11 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -761,12 +930,12 @@ async def test_tool_returning_image_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
-                            content='See file 1c8566',
+                            content=IsInstance(BinaryImage),
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -788,7 +957,11 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -808,6 +981,7 @@ async def test_tool_returning_audio_resource(
             [
                 ModelRequest(
                     parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -818,6 +992,7 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -827,12 +1002,12 @@ async def test_tool_returning_audio_resource(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource',
-                            content='See file 2d36ae',
+                            content=IsInstance(BinaryContent),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -846,6 +1021,7 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -871,6 +1047,7 @@ async def test_tool_returning_audio_resource_link(
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -879,6 +1056,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
+                            provider_name='google-gla',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],
@@ -888,6 +1066,7 @@ async def test_tool_returning_audio_resource_link(
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
@@ -897,18 +1076,12 @@ async def test_tool_returning_audio_resource_link(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_audio_resource_link',
-                            content='See file 2d36ae',
+                            content=IsInstance(BinaryContent),
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 2d36ae:',
-                                audio_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -922,6 +1095,7 @@ async def test_tool_returning_audio_resource_link(
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
+                    provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
@@ -934,7 +1108,9 @@ async def test_tool_returning_audio_resource_link(
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me an image')
-        assert result.output == snapshot('Here is an image of a sliced kiwi on a white background.')
+        assert result.output == snapshot(
+            "Here's an image of a kiwi fruit cut in half. The vibrant green flesh contrasts with the tiny black seeds, making it visually appealing. If you need more images or a different kind, just let me know!"
+        )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -944,18 +1120,19 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_image',
+                            tool_name='get_image_resource',
                             args='{}',
-                            tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
+                            tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=190,
+                        input_tokens=393,
                         output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
@@ -967,34 +1144,36 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
-                    provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
+                    provider_response_id='chatcmpl-CpxEaVAApbQvDQSTnqrFd0mxu7Cs3',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_image',
-                            content='See file 1c8566',
-                            tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
+                            tool_name='get_image_resource',
+                            content=IsInstance(BinaryImage),
+                            tool_call_id='call_KL2BXptkWmKifse91X727M7y',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 1c8566:',
-                                image_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='Here is an image of a sliced kiwi on a white background.')],
+                    parts=[
+                        TextPart(
+                            content="Here's an image of a kiwi fruit cut in half. The vibrant green flesh contrasts with the tiny black seeds, making it visually appealing. If you need more images or a different kind, just let me know!"
+                        )
+                    ],
                     usage=RequestUsage(
-                        input_tokens=1329,
-                        output_tokens=15,
+                        input_tokens=1196,
+                        output_tokens=43,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1005,8 +1184,12 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
-                    provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
+                    provider_response_id='chatcmpl-CpxEdNdePHwVHTJLjmaHWzNUfpoNo',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1027,6 +1210,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1044,7 +1228,11 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1058,6 +1246,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1075,7 +1264,11 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1097,6 +1290,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1118,7 +1312,11 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1132,6 +1330,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1149,7 +1348,11 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1173,6 +1376,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1196,7 +1400,11 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1210,6 +1418,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1233,7 +1442,11 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1247,6 +1460,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1268,7 +1482,11 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1290,6 +1508,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1307,7 +1526,11 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -1321,6 +1544,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1338,7 +1562,11 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -1351,7 +1579,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
     async with agent:
         result = await agent.run('Get me multiple items and summarize in one sentence')
         assert result.output == snapshot(
-            'The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
+            'The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
         )
         assert result.all_messages() == snapshot(
             [
@@ -1362,6 +1590,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             timestamp=IsDatetime(),
                         )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
@@ -1369,12 +1598,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         ToolCallPart(
                             tool_name='get_multiple_items',
                             args='{}',
-                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
+                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=12,
+                        input_tokens=398,
+                        output_tokens=11,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1385,8 +1614,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'tool_calls'},
-                    provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'timestamp': IsDatetime(),
+                    },
+                    provider_response_id='chatcmpl-CpzU5Mhbq7bf8kaSOksp2KUTqG4u0',
                     finish_reason='tool_call',
                     run_id=IsStr(),
                 ),
@@ -1398,30 +1631,24 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                                 'This is a string',
                                 'Another string',
                                 {'foo': 'bar', 'baz': 123},
-                                'See file 1c8566',
+                                IsInstance(BinaryImage),
                             ],
-                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
+                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
                             timestamp=IsDatetime(),
-                        ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 1c8566:',
-                                image_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        )
                     ],
+                    timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
+                            content='The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=1355,
-                        output_tokens=24,
+                        input_tokens=1220,
+                        output_tokens=26,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1432,8 +1659,12 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_details={'finish_reason': 'stop'},
-                    provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'timestamp': IsDatetime(),
+                    },
+                    provider_response_id='chatcmpl-CpzU6VAYJTRYnthvYDAolptinBLkS',
                     finish_reason='stop',
                     run_id=IsStr(),
                 ),
@@ -1514,7 +1745,7 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
+                        content=[BinaryContent(data=b'img', media_type='image/png')],
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]
@@ -1541,6 +1772,20 @@ def test_map_from_mcp_params_model_response():
     )
 
 
+def test_map_from_mcp_params_unsupported_user_content():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(
+                role='user',
+                content=ToolUseContent(type='tool_use', id='123', name='tool', input={}),
+            ),
+        ],
+        maxTokens=8,
+    )
+    with pytest.raises(NotImplementedError, match='ToolUseContent cannot be used as user content'):
+        map_from_mcp_params(params)
+
+
 def test_map_from_pai_messages_with_binary_content():
     """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
 
@@ -1560,7 +1805,11 @@ def test_map_from_pai_messages_with_binary_content():
     assert system_prompt == ''
     assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
         [
-            {'role': 'user', 'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None}},
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None},
+                '_meta': None,
+            },
             {
                 'role': 'user',
                 'content': {
@@ -1570,6 +1819,7 @@ def test_map_from_pai_messages_with_binary_content():
                     'annotations': None,
                     '_meta': None,
                 },
+                '_meta': None,
             },
         ]
     )
@@ -1584,9 +1834,25 @@ def test_map_from_pai_messages_with_binary_content():
         map_from_pai_messages([message_with_video])
 
 
-def test_map_from_model_response():
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
-        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+def test_map_from_model_response_unexpected_part_raises_error():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ToolCallPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
+
+
+def test_map_from_model_response_mixed_parts():
+    result = map_from_model_response(
+        ModelResponse(
+            parts=[
+                TextPart(content='Hello '),
+                ThinkingPart(content='Should I say world?'),
+                TextPart(content='world!'),
+                ThinkingPart(content='That sounded good.'),
+            ]
+        )
+    )
+    assert result.model_dump(by_alias=True) == snapshot(
+        {'type': 'text', 'text': 'Hello world!', 'annotations': None, '_meta': None}
+    )
 
 
 async def test_elicitation_callback_functionality(run_context: RunContext[int]):
@@ -1646,11 +1912,11 @@ async def test_read_blob_resource(run_context: RunContext[int]):
     """Test reading a binary resource (converted to BinaryContent)."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        content = await server.read_resource('resource://kiwi.png')
+        content = await server.read_resource('resource://kiwi.jpg')
         assert isinstance(content, BinaryContent)
-        assert content.media_type == snapshot('image/png')
-        # Verify it's PNG data (starts with PNG magic bytes)
-        assert content.data[:8] == b'\x89PNG\r\n\x1a\n'  # PNG magic bytes
+        assert content.media_type == snapshot('image/jpeg')
+        # Verify it's JPEG data (starts with JPEG magic bytes)
+        assert content.data.startswith(bytes.fromhex('ffd8ffe0'))  # JPEG magic bytes
 
 
 async def test_read_resource_template(run_context: RunContext[int]):
@@ -2040,6 +2306,38 @@ async def test_instructions(mcp_server: MCPServerStdio) -> None:
         assert mcp_server.instructions == 'Be a helpful assistant.'
 
 
+async def test_client_info_passed_to_session() -> None:
+    """Test that provided client_info is passed unchanged to ClientSession."""
+    implementation = Implementation(
+        name='MyCustomClient',
+        version='2.5.3',
+        title='Custom MCP client',
+        websiteUrl='https://example.com/client',
+    )
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], client_info=implementation)
+
+    async with server:
+        result = await server.direct_call_tool('get_client_info', {})
+        assert result == {
+            'name': 'MyCustomClient',
+            'version': '2.5.3',
+            'title': 'Custom MCP client',
+            'websiteUrl': 'https://example.com/client',
+        }
+
+
+async def test_client_info_not_set() -> None:
+    """Test that when client_info is not set, the default MCP client info is used."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    async with server:
+        result = await server.direct_call_tool('get_client_info', {})
+        # When client_info is not set, the MCP library provides default client info
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result['name'] == 'mcp'
+
+
 async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
     server = MCPServerStreamableHTTP(url='https://mcp.deepwiki.com/mcp', timeout=30)
     agent = Agent(model, toolsets=[server], instructions='Be concise.')
@@ -2054,7 +2352,7 @@ async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None,
 
 
 async def test_custom_http_client_not_closed():
-    custom_http_client = cached_async_http_client()
+    custom_http_client = create_async_http_client()
 
     assert not custom_http_client.is_closed
 
@@ -2066,6 +2364,17 @@ async def test_custom_http_client_not_closed():
     assert len(tools) > 0
 
     assert not custom_http_client.is_closed
+
+
+async def test_http_client_mutually_exclusive_with_headers():
+    server = MCPServerStreamableHTTP(
+        url='https://example.com/mcp',
+        http_client=create_async_http_client(),
+        headers={'Authorization': 'Bearer token'},
+    )
+    with pytest.raises(ValueError, match='`http_client` is mutually exclusive with `headers`'):
+        async with server:
+            pass
 
 
 # ============================================================================

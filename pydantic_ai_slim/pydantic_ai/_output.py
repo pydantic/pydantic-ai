@@ -2,17 +2,19 @@ from __future__ import annotations as _annotations
 
 import inspect
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from copy import copy
+from dataclasses import dataclass, field, replace
+from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames
+from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
+from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
@@ -70,7 +72,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9-_]')
 
 
 async def execute_traced_output_function(
@@ -103,6 +104,7 @@ async def execute_traced_output_function(
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
         'gen_ai.tool.name': tool_name,
+        **get_agent_run_baggage_attributes(),
         'logfire.msg': f'running output function: {tool_name}',
     }
     if run_context.tool_call_id:
@@ -212,6 +214,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 @dataclass(kw_only=True)
 class OutputSchema(ABC, Generic[OutputDataT]):
+    allows_none: bool
     text_processor: BaseOutputProcessor[OutputDataT] | None = None
     toolset: OutputToolset[Any] | None = None
     object_def: OutputObjectDefinition | None = None
@@ -238,6 +241,13 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
+        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself
+        allows_none = NoneType in outputs or None in outputs
+        if allows_none:
+            outputs = [output for output in outputs if output is not NoneType and output is not None]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `None`.')
+
         allows_deferred_tools = DeferredToolRequests in outputs
         if allows_deferred_tools:
             outputs = [output for output in outputs if output is not DeferredToolRequests]
@@ -248,11 +258,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         if allows_image:
             outputs = [output for output in outputs if output is not _messages.BinaryImage]
 
-        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
+        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
 
-            flattened_outputs = _flatten_output_spec(output.outputs)
+            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(  # pragma: no cover
@@ -264,6 +274,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 )
 
             return NativeOutputSchema(
+                template=output.template,
                 processor=cls._build_processor(
                     flattened_outputs,
                     name=output.name,
@@ -272,12 +283,13 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 ),
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
+                allows_none=allows_none,
             )
-        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
+        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
             if len(outputs) > 1:
                 raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
 
-            flattened_outputs = _flatten_output_spec(output.outputs)
+            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(  # pragma: no cover
@@ -297,6 +309,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 ),
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
+                allows_none=allows_none,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -306,9 +319,9 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if output is str:
                 text_outputs.append(cast(type[str], output))
             elif isinstance(output, TextOutput):
-                text_outputs.append(output)
+                text_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
             elif isinstance(output, ToolOutput):
-                tool_outputs.append(output)
+                tool_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
             elif isinstance(output, NativeOutput):
                 # We can never get here because this is checked for above.
                 raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
@@ -317,6 +330,12 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
             else:
                 other_outputs.append(output)
+
+        # If `None` is allowed and we're building output tools, expose `NoneType` as its own
+        # output tool so the model can commit to `None` through the structured schema alongside
+        # any other output types, matching how the model would pick between them.
+        if allows_none and (tool_outputs or other_outputs):
+            other_outputs.append(cast(OutputTypeOrFunction[OutputDataT], NoneType))
 
         toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
@@ -338,17 +357,22 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                     text_processor=text_processor,
                     allows_deferred_tools=allows_deferred_tools,
                     allows_image=allows_image,
+                    allows_none=allows_none,
                 )
             else:
                 return TextOutputSchema(
                     text_processor=text_processor,
                     allows_deferred_tools=allows_deferred_tools,
                     allows_image=allows_image,
+                    allows_none=allows_none,
                 )
 
         if len(tool_outputs) > 0:
             return ToolOutputSchema(
-                toolset=toolset, allows_deferred_tools=allows_deferred_tools, allows_image=allows_image
+                toolset=toolset,
+                allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
+                allows_none=allows_none,
             )
 
         if len(other_outputs) > 0:
@@ -357,10 +381,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
                 allows_image=allows_image,
+                allows_none=allows_none,
             )
 
         if allows_image:
-            return ImageOutputSchema(allows_deferred_tools=allows_deferred_tools)
+            return ImageOutputSchema(allows_deferred_tools=allows_deferred_tools, allows_none=allows_none)
 
         raise UserError('At least one output type must be provided.')
 
@@ -388,6 +413,7 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
         toolset: OutputToolset[Any] | None,
         allows_deferred_tools: bool,
         allows_image: bool,
+        allows_none: bool,
     ):
         # We set a toolset here as they're checked for name conflicts with other toolsets in the Agent constructor.
         # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
@@ -398,6 +424,7 @@ class AutoOutputSchema(OutputSchema[OutputDataT]):
             text_processor=processor,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
+            allows_none=allows_none,
         )
         self.processor = processor
 
@@ -414,11 +441,13 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
         text_processor: TextOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
         allows_image: bool,
+        allows_none: bool,
     ):
         super().__init__(
             text_processor=text_processor,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
+            allows_none=allows_none,
         )
 
     @property
@@ -427,8 +456,8 @@ class TextOutputSchema(OutputSchema[OutputDataT]):
 
 
 class ImageOutputSchema(OutputSchema[OutputDataT]):
-    def __init__(self, *, allows_deferred_tools: bool):
-        super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True)
+    def __init__(self, *, allows_deferred_tools: bool, allows_none: bool):
+        super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True, allows_none=allows_none)
 
     @property
     def mode(self) -> OutputMode:
@@ -438,47 +467,26 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
+    template: str | Literal[False] | None
 
     def __init__(
-        self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
+        self,
+        *,
+        template: str | Literal[False] | None = None,
+        processor: BaseObjectOutputProcessor[OutputDataT],
+        allows_deferred_tools: bool,
+        allows_image: bool,
+        allows_none: bool,
     ):
         super().__init__(
             text_processor=processor,
             object_def=processor.object_def,
             allows_deferred_tools=allows_deferred_tools,
             allows_image=allows_image,
+            allows_none=allows_none,
         )
         self.processor = processor
-
-
-class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
-    @property
-    def mode(self) -> OutputMode:
-        return 'native'
-
-
-@dataclass(init=False)
-class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
-    template: str | None
-
-    def __init__(
-        self,
-        *,
-        template: str | None = None,
-        processor: BaseObjectOutputProcessor[OutputDataT],
-        allows_deferred_tools: bool,
-        allows_image: bool,
-    ):
-        super().__init__(
-            processor=processor,
-            allows_deferred_tools=allows_deferred_tools,
-            allows_image=allows_image,
-        )
         self.template = template
-
-    @property
-    def mode(self) -> OutputMode:
-        return 'prompted'
 
     @classmethod
     def build_instructions(cls, template: str, object_def: OutputObjectDefinition) -> str:
@@ -495,6 +503,19 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         return template.format(schema=json.dumps(schema))
 
 
+class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'native'
+
+
+@dataclass(init=False)
+class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+    @property
+    def mode(self) -> OutputMode:
+        return 'prompted'
+
+
 @dataclass(init=False)
 class ToolOutputSchema(OutputSchema[OutputDataT]):
     def __init__(
@@ -504,12 +525,14 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         text_processor: BaseOutputProcessor[OutputDataT] | None = None,
         allows_deferred_tools: bool,
         allows_image: bool,
+        allows_none: bool,
     ):
         super().__init__(
             toolset=toolset,
             allows_deferred_tools=allows_deferred_tools,
             text_processor=text_processor,
             allows_image=allows_image,
+            allows_none=allows_none,
         )
 
     @property
@@ -867,14 +890,21 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
 @dataclass(init=False)
 class OutputToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that contains contains output tools for agent output types."""
+    """A toolset that contains output tools for agent output types."""
 
     _tool_defs: list[ToolDefinition]
     """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
-    max_retries: int
+    max_retries: int | None
+    """Default max retries for output tools, set by the Agent. Per-tool overrides from `ToolOutput.max_retries` take priority."""
+    _max_retries_overrides: dict[str, int]
+    """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
+    _output_retry_count: int
+    """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
+    _output_max_retries: int
+    """Global output max retries, snapshotted from `ctx.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -894,6 +924,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_description = description
         default_strict = strict
 
+        max_retries_overrides: dict[str, int] = {}
+        tool_output_max_retries: int | None = None
+
         multiple = len(outputs) > 1
         for output in outputs:
             name = None
@@ -904,21 +937,22 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
+                tool_output_max_retries = output.max_retries
 
-                output = output.output
+                output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
             description = description or default_description
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
             object_def = processor.object_def
 
             if name is None:
                 name = default_name
                 if multiple:
                     # strip unsupported characters like "[" and "]" from generic class names
-                    safe_name = OUTPUT_TOOL_NAME_SANITIZER.sub('', object_def.name or '')
+                    safe_name = _utils.TOOL_NAME_SANITIZER.sub('', object_def.name or '')
                     name += f'_{safe_name}'
 
             i = 1
@@ -943,20 +977,27 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
             processors[name] = processor
             tool_defs.append(tool_def)
+            if tool_output_max_retries is not None:
+                max_retries_overrides[name] = tool_output_max_retries
+            tool_output_max_retries = None
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
 
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
-        max_retries: int = 1,
+        max_retries: int | None = None,
+        max_retries_overrides: dict[str, int] | None = None,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
+        self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
+        self._output_retry_count = 0
+        self._output_max_retries = 0
 
     @property
     def id(self) -> str | None:
@@ -966,12 +1007,22 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return "the agent's output tools"
 
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # copy() instead of replace() because @dataclass(init=False) with a custom __init__
+        # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
+        # makes replace() pass unrecognized kwargs to __init__.
+        new = copy(self)
+        new._output_retry_count = ctx.retry
+        new._output_max_retries = ctx.max_retries
+        return new
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        max_retries = self.max_retries if self.max_retries is not None else 1
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self.max_retries,
+                max_retries=self._max_retries_overrides.get(tool_def.name, max_retries),
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs
@@ -981,8 +1032,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
-        for validator in self.output_validators:
-            output = await validator.validate(output, ctx, wrap_validation_errors=False)
+        if self.output_validators:
+            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self._output_max_retries)
+            for validator in self.output_validators:
+                output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
         return output
 
 
@@ -999,7 +1052,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
     outputs: Sequence[OutputSpec[T]]
     if isinstance(output_spec, Sequence):
-        outputs = output_spec
+        outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
@@ -1011,4 +1064,35 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
             outputs_flat.extend(union_types)
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))
+    return outputs_flat
+
+
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+    outputs: Sequence[OutputSpec[T]]
+    if isinstance(output_spec, Sequence):
+        outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
+    else:
+        outputs = (output_spec,)
+
+    outputs_flat: list[T | type[str]] = []
+    for output in outputs:
+        if isinstance(output, NativeOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        elif isinstance(output, PromptedOutput):
+            outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        elif isinstance(output, TextOutput):
+            outputs_flat.append(str)
+        elif isinstance(output, ToolOutput):
+            outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        elif union_types := _utils.get_union_args(output):
+            outputs_flat.extend(union_types)
+        elif inspect.isfunction(output) or inspect.ismethod(output):
+            type_hints = get_function_type_hints(output)
+            if return_annotation := type_hints.get('return', None):
+                outputs_flat.extend(types_from_output_spec(return_annotation))
+            else:
+                outputs_flat.append(str)
+        else:
+            outputs_flat.append(cast(T, output))
+
     return outputs_flat

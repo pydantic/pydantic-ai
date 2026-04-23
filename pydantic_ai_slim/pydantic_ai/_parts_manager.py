@@ -57,9 +57,9 @@ class ModelResponsePartsManager:
     Parts are generally added and/or updated by providing deltas, which are tracked by vendor-specific IDs.
     """
 
-    _parts: list[ManagedPart] = field(default_factory=list, init=False)
+    _parts: list[ManagedPart] = field(default_factory=list[ManagedPart], init=False)
     """A list of parts (text or tool calls) that make up the current state of the model's response."""
-    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict, init=False)
+    _vendor_id_to_part_index: dict[VendorId, int] = field(default_factory=dict[VendorId, int], init=False)
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
     def get_parts(self) -> list[ModelResponsePart]:
@@ -70,12 +70,27 @@ class ModelResponsePartsManager:
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
+    def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
+        """Return a part by its vendor ID.
+
+        Args:
+            vendor_id: The vendor-specific ID of the part.
+
+        Returns:
+            The part corresponding to the vendor ID, or None if not found.
+        """
+        part_index = self._vendor_id_to_part_index.get(vendor_id)
+        if part_index is not None:
+            return self._parts[part_index]
+        return None
+
     def handle_text_delta(
         self,
         *,
         vendor_part_id: VendorId | None,
         content: str,
         id: str | None = None,
+        provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
@@ -92,6 +107,7 @@ class ModelResponsePartsManager:
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
             id: An optional id for the text part.
+            provider_name: An optional provider name for the text part.
             provider_details: An optional dictionary of provider-specific details for the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
@@ -121,7 +137,7 @@ class ModelResponsePartsManager:
                         self._handle_embedded_thinking_end(vendor_part_id)
                         return
                     yield from self._handle_embedded_thinking_content(
-                        existing_part, part_index, content, provider_details
+                        existing_part, part_index, content, provider_name, provider_details
                     )
                     return
                 elif isinstance(existing_part, TextPart):
@@ -131,7 +147,7 @@ class ModelResponsePartsManager:
 
         if thinking_tags and content == thinking_tags[0]:
             # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
-            yield from self._handle_embedded_thinking_start(vendor_part_id, provider_details)
+            yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
             return
 
         if existing_text_part_and_index is None:
@@ -141,13 +157,18 @@ class ModelResponsePartsManager:
                 return
 
             # There is no existing text part that should be updated, so create a new one
-            part = TextPart(content=content, id=id, provider_details=provider_details)
+            part = TextPart(content=content, id=id, provider_name=provider_name, provider_details=provider_details)
             new_part_index = self._append_part(part, vendor_part_id)
             yield PartStartEvent(index=new_part_index, part=part)
         else:
             # Update the existing TextPart with the new content delta
             existing_text_part, part_index = existing_text_part_and_index
-            part_delta = TextPartDelta(content_delta=content, provider_details=provider_details)
+
+            part_delta = TextPartDelta(
+                content_delta=content,
+                provider_name=self._resolve_provider_name(existing_text_part, provider_name),
+                provider_details=provider_details,
+            )
             self._parts[part_index] = part_delta.apply(existing_text_part)
             yield PartDeltaEvent(index=part_index, delta=part_delta)
 
@@ -228,7 +249,7 @@ class ModelResponsePartsManager:
             part_delta = ThinkingPartDelta(
                 content_delta=content,
                 signature_delta=signature,
-                provider_name=provider_name,
+                provider_name=self._resolve_provider_name(existing_thinking_part, provider_name),
                 provider_details=provider_details,
             )
             self._parts[part_index] = part_delta.apply(existing_thinking_part)
@@ -241,6 +262,7 @@ class ModelResponsePartsManager:
         tool_name: str | None = None,
         args: str | dict[str, Any] | None = None,
         tool_call_id: str | None = None,
+        provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent | None:
         """Handle or update a tool call, creating or updating a `ToolCallPart`, `BuiltinToolCallPart`, or `ToolCallPartDelta`.
@@ -258,6 +280,7 @@ class ModelResponsePartsManager:
                 a name match when `vendor_part_id` is None.
             args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
             tool_call_id: An optional string representing an identifier for this tool call.
+            provider_name: An optional provider name for the tool call part.
             provider_details: An optional dictionary of provider-specific details for the tool call part.
 
         Returns:
@@ -293,7 +316,11 @@ class ModelResponsePartsManager:
         if existing_matching_part_and_index is None:
             # No matching part/delta was found, so create a new ToolCallPartDelta (or ToolCallPart if fully formed)
             delta = ToolCallPartDelta(
-                tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id, provider_details=provider_details
+                tool_name_delta=tool_name,
+                args_delta=args,
+                tool_call_id=tool_call_id,
+                provider_name=provider_name,
+                provider_details=provider_details,
             )
             part = delta.as_part() or delta
             new_part_index = self._append_part(part, vendor_part_id)
@@ -304,7 +331,11 @@ class ModelResponsePartsManager:
             # Update the existing part or delta with the new information
             existing_part, part_index = existing_matching_part_and_index
             delta = ToolCallPartDelta(
-                tool_name_delta=tool_name, args_delta=args, tool_call_id=tool_call_id, provider_details=provider_details
+                tool_name_delta=tool_name,
+                args_delta=args,
+                tool_call_id=tool_call_id,
+                provider_name=self._resolve_provider_name(existing_part, provider_name),
+                provider_details=provider_details,
             )
             updated_part = delta.apply(existing_part)
             self._parts[part_index] = updated_part
@@ -326,6 +357,7 @@ class ModelResponsePartsManager:
         args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
         id: str | None = None,
+        provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
@@ -339,6 +371,7 @@ class ModelResponsePartsManager:
             args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
             id: An optional identifier for this tool call part.
+            provider_name: An optional provider name for the tool call part.
             provider_details: An optional dictionary of provider-specific details for the tool call part.
 
         Returns:
@@ -350,6 +383,7 @@ class ModelResponsePartsManager:
             args=args,
             tool_call_id=tool_call_id or _generate_tool_call_id(),
             id=id,
+            provider_name=provider_name,
             provider_details=provider_details,
         )
         if vendor_part_id is None:
@@ -420,22 +454,39 @@ class ModelResponsePartsManager:
         return None
 
     def _handle_embedded_thinking_start(
-        self, vendor_part_id: VendorId, provider_details: dict[str, Any] | None
+        self, vendor_part_id: VendorId, provider_name: str | None, provider_details: dict[str, Any] | None
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle <think> tag - create new ThinkingPart."""
         self._stop_tracking_vendor_id(vendor_part_id)
-        part = ThinkingPart(content='', provider_details=provider_details)
+        part = ThinkingPart(content='', provider_name=provider_name, provider_details=provider_details)
         new_index = self._append_part(part, vendor_part_id)
         yield PartStartEvent(index=new_index, part=part)
 
     def _handle_embedded_thinking_content(
-        self, existing_part: ThinkingPart, part_index: int, content: str, provider_details: dict[str, Any] | None
+        self,
+        existing_part: ThinkingPart,
+        part_index: int,
+        content: str,
+        provider_name: str | None,
+        provider_details: dict[str, Any] | None,
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle content inside <think>...</think>."""
-        part_delta = ThinkingPartDelta(content_delta=content, provider_details=provider_details)
+        part_delta = ThinkingPartDelta(
+            content_delta=content,
+            provider_name=self._resolve_provider_name(existing_part, provider_name),
+            provider_details=provider_details,
+        )
         self._parts[part_index] = part_delta.apply(existing_part)
         yield PartDeltaEvent(index=part_index, delta=part_delta)
 
     def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:
         """Handle </think> tag - stop tracking so next delta creates new part."""
         self._stop_tracking_vendor_id(vendor_part_id)
+
+    def _resolve_provider_name(
+        self, existing_part: ModelResponsePart | ToolCallPartDelta, provider_name: str | None
+    ) -> str | None:
+        """Return the provider name if it has not been set on previous parts."""
+        if existing_part.provider_name is None or provider_name != existing_part.provider_name:
+            return provider_name
+        return None

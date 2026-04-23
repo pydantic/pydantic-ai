@@ -39,7 +39,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
 2. **Model-agnostic**:
-Supports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).
+Supports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).
 
 3. **Seamless Observability**:
 Tightly [integrates](https://ai.pydantic.dev/logfire) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](https://ai.pydantic.dev/logfire#alternative-observability-backends).
@@ -50,19 +50,22 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](https://ai.pydantic.dev/evals) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. **MCP, A2A, and UI**:
+6. **Extensible by Design**:
+Build agents from composable [capabilities](https://ai.pydantic.dev/capabilities) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools), [thinking](https://ai.pydantic.dev/capabilities#thinking), and [MCP](https://ai.pydantic.dev/capabilities#provider-adaptive-tools), pick from the [Pydantic AI Harness](https://ai.pydantic.dev/harness/overview) capability library, build your own, or install [third-party capability packages](https://ai.pydantic.dev/extensibility). Define agents entirely in [YAML/JSON](https://ai.pydantic.dev/agent-spec) — no code required.
+
+7. **MCP, A2A, and UI**:
 Integrates the [Model Context Protocol](https://ai.pydantic.dev/mcp/overview), [Agent2Agent](https://ai.pydantic.dev/a2a), and various [UI event stream](https://ai.pydantic.dev/ui/overview) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
-7. **Human-in-the-Loop Tool Approval**:
+8. **Human-in-the-Loop Tool Approval**:
 Easily lets you flag that certain tool calls [require approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
 
-8. **Durable Execution**:
+9. **Durable Execution**:
 Enables you to build [durable agents](https://ai.pydantic.dev/durable_execution/overview/) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
-9. **Streamed Outputs**:
+10. **Streamed Outputs**:
 Provides the ability to [stream](https://ai.pydantic.dev/output#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
 
-10. **Graph Support**:
+11. **Graph Support**:
 Provides a powerful way to define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
@@ -76,7 +79,7 @@ from pydantic_ai import Agent
 
 # Define a very simple agent including the model to use, you can also set the model when running the agent.
 agent = Agent(
-    'anthropic:claude-sonnet-4-0',
+    'anthropic:claude-sonnet-4-6',
     # Register static instructions using a keyword argument to the agent.
     # For more complex dynamically-generated instructions, see the example below.
     instructions='Be concise, reply with one sentence.',
@@ -94,7 +97,23 @@ _(This example is complete, it can be run "as is", assuming you've [installed th
 
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
 
-Not very interesting yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions), and [structured outputs](https://ai.pydantic.dev/output) to build more powerful agents.
+Not very interesting yet, but we can easily add [tools](https://ai.pydantic.dev/tools), [dynamic instructions](https://ai.pydantic.dev/agents#instructions), [structured outputs](https://ai.pydantic.dev/output), or composable [capabilities](https://ai.pydantic.dev/capabilities) to build more powerful agents.
+
+Here's the same agent with [thinking](https://ai.pydantic.dev/capabilities#thinking) and [web search](https://ai.pydantic.dev/capabilities#provider-adaptive-tools) capabilities:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking, WebSearch
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Be concise, reply with one sentence.',
+    capabilities=[Thinking(), WebSearch()],
+)
+
+result = agent.run_sync('What was the mass of the largest meteorite found this year?')
+print(result.output)
+```
 
 ## Tools & Dependency Injection Example
 
@@ -130,9 +149,9 @@ class SupportOutput(BaseModel):
 # Agents are generic in the type of dependencies they accept and the type of output they return.
 # In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
 support_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=SupportDependencies,
-    # The response from the agent will, be guaranteed to be a SupportOutput,
+    # The response from the agent will be guaranteed to be a SupportOutput,
     # if validation fails the agent is prompted to try again.
     output_type=SupportOutput,
     instructions=(

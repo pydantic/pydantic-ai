@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
@@ -18,13 +19,13 @@ from ._output import (
     TextOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
@@ -52,15 +53,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
+    _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
+    _cached_output: OutputDataT | None = field(default=None, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
+        if self._cached_output is not None:
+            yield deepcopy(self._cached_output)
+            return
+
         last_response: _messages.ModelResponse | None = None
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._raw_stream_response.final_result_event is None or (
@@ -71,16 +78,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             try:
                 yield await self.validate_response_output(response, allow_partial=True)
-            except ValidationError:
+            except (ValidationError, exceptions.ModelRetry):
                 pass
 
-        response = self.response
-        if self._raw_stream_response.final_result_event is None or (
-            last_response and response.parts == last_response.parts
-        ):
-            return
-
-        yield await self.validate_response_output(response)
+        if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
+            response = self.response
+            # Final validation with allow_partial=False (the default).
+            # We always yield the final result even if the content matches the last partial yield, because:
+            # 1. Output validators/functions receive partial_output=False only on this final call,
+            #    and may behave differently based on that flag
+            # 2. Users can rely on the last yielded item being the fully validated output
+            self._cached_output = await self.validate_response_output(response)
+            yield deepcopy(self._cached_output)
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
@@ -111,6 +120,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         if not isinstance(self._output_schema, TextOutputSchema):
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
+        # Yield cached output for both delta and non-delta modes
+        # This is expected that the subsequent calls to `stream_text()`
+        # yield full not delta output even for `delta=True`
+        if isinstance(self._cached_output, str):
+            yield self._cached_output
+            return
+
         if delta:
             async for text in self._stream_response_text(delta=True, debounce_by=debounce_by):
                 yield text
@@ -125,6 +141,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """The unique identifier for the agent run."""
         assert self._run_ctx.run_id is not None
         return self._run_ctx.run_id
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        if self._metadata_getter is not None:
+            return self._metadata_getter()
+        return self._run_ctx.metadata
 
     # TODO (v2): Drop in favor of `response` property
     def get(self) -> _messages.ModelResponse:
@@ -152,10 +175,16 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
+        if self._cached_output is not None:
+            return deepcopy(self._cached_output)
+
+        # Iterate through any stream events
         async for _ in self:
             pass
 
-        return await self.validate_response_output(self.response)
+        # Final validation with `allow_partial=False` (default)
+        self._cached_output = await self.validate_response_output(self.response)
+        return deepcopy(self._cached_output)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -167,51 +196,63 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         output_tool_name = final_result_event.tool_name
 
-        if self._output_schema.toolset and output_tool_name is not None:
-            tool_call = next(
-                (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                None,
-            )
-            if tool_call is None:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+        try:
+            if self._output_schema.toolset and output_tool_name is not None:
+                tool_call = next(
+                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
+                    None,
                 )
-            return await self._tool_manager.handle_call(
-                tool_call, allow_partial=allow_partial, wrap_validation_errors=False
-            )
-        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
-            if not self._output_schema.allows_deferred_tools:
-                raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                if tool_call is None:
+                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                    )
+                return await self._tool_manager.handle_call(
+                    tool_call, allow_partial=allow_partial, wrap_validation_errors=False
                 )
-            return cast(OutputDataT, deferred_tool_requests)
-        elif self._output_schema.allows_image and message.images:
-            return cast(OutputDataT, message.images[0])
-        elif text_processor := self._output_schema.text_processor:
-            text = ''
-            for part in message.parts:
-                if isinstance(part, _messages.TextPart):
-                    text += part.content
-                elif isinstance(part, _messages.BuiltinToolCallPart):
-                    # Text parts before a built-in tool call are essentially thoughts,
-                    # not part of the final result output, so we reset the accumulated text
-                    text = ''
+            elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
+                if not self._output_schema.allows_deferred_tools:
+                    raise exceptions.UserError(
+                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                    )
+                return cast(OutputDataT, deferred_tool_requests)
+            elif self._output_schema.allows_image and message.images:
+                result_data = cast(OutputDataT, message.images[0])
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
+                    )
+                return result_data
+            elif text_processor := self._output_schema.text_processor:
+                text = ''
+                for part in message.parts:
+                    if isinstance(part, _messages.TextPart):
+                        text += part.content
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
 
-            result_data = await text_processor.process(
-                text,
-                run_context=self._run_ctx,
-                allow_partial=allow_partial,
-                wrap_validation_errors=False,
-            )
-            for validator in self._output_validators:
-                result_data = await validator.validate(
-                    result_data, replace(self._run_ctx, partial_output=allow_partial)
+                result_data = await text_processor.process(
+                    text,
+                    run_context=replace(self._run_ctx, partial_output=allow_partial),
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
                 )
-            return result_data
-        else:
-            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                'Invalid response, unable to process text output'
-            )
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial)
+                    )
+                return result_data
+            else:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    'Invalid response, unable to process text output'
+                )
+        except (ValidationError, exceptions.ModelRetry) as e:
+            if not allow_partial:
+                raise exceptions.UnexpectedModelBehavior(
+                    'Output validation failed during streaming, and retries are not supported in `run_stream()`'
+                ) from e
+            raise
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
@@ -255,22 +296,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield '\n\n', event.index
                     last_text_index = None
 
-        async def _stream_text_deltas() -> AsyncIterator[str]:
+        async def _stream_text_deltas() -> AsyncGenerator[str, None]:
             async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
                     yield ''.join([content for content, _ in items])
 
-        if delta:
-            async for text in _stream_text_deltas():
-                yield text
-        else:
-            # a quick benchmark shows it's faster to build up a string with concat when we're
-            # yielding at each step
-            deltas: list[str] = []
-            async for text in _stream_text_deltas():
-                deltas.append(text)
-                yield ''.join(deltas)
+        async with aclosing(_stream_text_deltas()) as deltas_iter:
+            if delta:
+                async for text in deltas_iter:
+                    yield text
+            else:
+                # a quick benchmark shows it's faster to build up a string with concat when we're
+                # yielding at each step
+                deltas: list[str] = []
+                async for text in deltas_iter:
+                    deltas.append(text)
+                    yield ''.join(deltas)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
@@ -371,9 +413,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -518,6 +560,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        if self._run_result is not None:
+            return self._run_result.metadata
+        elif self._stream_response is not None:
+            return self._stream_response.metadata
+        else:
+            return None
+
     # TODO (v2): Make this a property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
@@ -570,6 +622,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+        if self.is_complete:
+            return
         self.is_complete = True
         if message is not None:
             if self._stream_response:  # pragma: no branch
@@ -617,9 +671,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.all_messages_json(output_tool_return_content=output_tool_return_content)
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -716,6 +770,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._streamed_run_result.run_id
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._streamed_run_result.metadata
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""

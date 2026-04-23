@@ -122,30 +122,46 @@ def sub_cf_video(m: re.Match[str]) -> str:
 
 def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
     """Transform Python code blocks with Agent() calls to show both Pydantic AI and Gateway versions."""
-    # Pattern matches Python code blocks with or without attributes, and optional annotation definitions after
-    # Annotation definitions are numbered list items like "1. Some text" that follow the code block
+    # Pattern matches Python code blocks with or without attributes, and optional annotation definitions after.
+    # Captures leading indentation (group 1) to support code blocks nested inside admonitions or other contexts.
+    # The closing fence must match the same indentation via backreference \1.
+    # Annotation definitions are numbered list items like "1. Some text" that follow the code block.
     return re.sub(
-        r'```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n```(\n\n(?:\d+\..+?\n)+?\n)?',
+        r'^( *)```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n\1```(\n\n(?:[ \t]*\d+\.[^\n]+\n)+\n)?',
         lambda m: transform_gateway_code_block(m, relative_path),
         markdown,
         flags=re.MULTILINE | re.DOTALL,
     )
 
 
+# Mapping of provider names to their canonical gateway form
+GATEWAY_MODEL_MAP = {
+    'anthropic': 'anthropic',
+    'openai': 'openai',
+    'openai-responses': 'openai-responses',
+    'openai-chat': 'openai',
+    'bedrock': 'bedrock',
+    'google-gla': 'gemini',
+    'google-vertex': 'google-vertex',
+    'groq': 'groq',
+}
 # Models that should get gateway transformation
-GATEWAY_MODELS = ('anthropic', 'openai', 'openai-responses', 'openai-chat', 'bedrock', 'google-vertex', 'groq')
+GATEWAY_MODELS = tuple(GATEWAY_MODEL_MAP.keys())
 
 
 def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
     """Transform a single code block to show both versions if it contains Agent() calls."""
-    attrs = m.group(1) or ''
-    code = m.group(2)
-    annotations = m.group(3) or ''  # Capture annotation definitions if present
+    indent = m.group(1)  # Leading whitespace (e.g. 4 spaces when inside an admonition)
+    attrs = m.group(2) or ''
+    code = m.group(3)
+    annotations = m.group(4) or ''  # Capture annotation definitions if present
+
+    tab_indent = indent + '    '  # Tab content needs 4 more spaces than the surrounding context
 
     # Simple check: does the code contain both "Agent(" and a quoted string?
     if 'Agent(' not in code:
         attrs_str = f' {{{attrs}}}' if attrs else ''
-        return f'```python{attrs_str}\n{code}\n```{annotations}'
+        return f'{indent}```python{attrs_str}\n{code}\n{indent}```{annotations}'
 
     # Check if code contains Agent() with a model that should be transformed
     # Look for Agent(...'model:...' or Agent(..."model:..."
@@ -155,7 +171,7 @@ def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
     if not agent_match:
         # No Agent() with string literal found
         attrs_str = f' {{{attrs}}}' if attrs else ''
-        return f'```python{attrs_str}\n{code}\n```{annotations}'
+        return f'{indent}```python{attrs_str}\n{code}\n{indent}```{annotations}'
 
     model_string = agent_match.group(2)
     # Check if model starts with one of the gateway-supported models
@@ -164,17 +180,21 @@ def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
     if not should_transform:
         # Model doesn't match gateway models, return original
         attrs_str = f' {{{attrs}}}' if attrs else ''
-        return f'```python{attrs_str}\n{code}\n```{annotations}'
+        return f'{indent}```python{attrs_str}\n{code}\n{indent}```{annotations}'
 
     # Transform the code for gateway version
     def replace_agent_model(match: re.Match[str]) -> str:
-        """Replace model string with gateway/ prefix."""
+        """Replace model string with gateway/ prefix if it's a supported provider."""
         full_match = match.group(0)
         quote = match.group(1)
         model = match.group(2)
 
-        # Replace the model string while preserving the rest
-        return full_match.replace(f'{quote}{model}{quote}', f'{quote}gateway/{model}{quote}', 1)
+        for provider, gateway_provider in GATEWAY_MODEL_MAP.items():
+            if model.startswith(f'{provider}:'):
+                new_model = model.replace(f'{provider}:', f'gateway/{gateway_provider}:', 1)
+                return full_match.replace(f'{quote}{model}{quote}', f'{quote}{new_model}{quote}', 1)
+
+        return full_match
 
     # This pattern finds: "Agent(" followed by anything (lazy), then the first quoted string
     gateway_code = re.sub(
@@ -197,30 +217,31 @@ def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
         gateway_attrs = attrs + f' title="{link}"'
     gateway_attrs_str = f' {{{gateway_attrs}}}'
 
-    # Indent code lines for proper markdown formatting within tabs
-    # Always add 4 spaces to every line (even empty ones) to preserve annotations
+    # Indent code lines for the tab content (add 4 spaces on top of any existing indent).
+    # Code lines already carry the outer `indent` prefix from the source, so adding 4 more
+    # spaces brings them to the correct `tab_indent` level inside the generated tab block.
     code_lines = code.split('\n')
     indented_code = '\n'.join('    ' + line for line in code_lines)
 
     gateway_code_lines = gateway_code.split('\n')
     indented_gateway_code = '\n'.join('    ' + line for line in gateway_code_lines)
 
-    # Indent annotation definitions if present (need to be inside tabs for Material to work)
+    # Indent annotation definitions if present (need to be inside tabs for Material to work).
+    # Annotation lines already carry the outer `indent` prefix, so adding 4 more spaces is correct.
     indented_annotations = ''
     if annotations:
-        # Remove surrounding newlines and indent each line with 4 spaces
         annotation_lines = annotations.strip().split('\n')
         indented_annotations = '\n\n' + '\n'.join('    ' + line for line in annotation_lines) + '\n\n'
 
     return f"""\
-=== "With Pydantic AI Gateway"
+{indent}=== "With Pydantic AI Gateway"
 
-    ```python{gateway_attrs_str}
+{tab_indent}```python{gateway_attrs_str}
 {indented_gateway_code}
-    ```{indented_annotations}
+{tab_indent}```{indented_annotations}
 
-=== "Directly to Provider API"
+{indent}=== "Directly to Provider API"
 
-    ```python{attrs_str}
+{tab_indent}```python{attrs_str}
 {indented_code}
-    ```{indented_annotations}"""
+{tab_indent}```{indented_annotations}"""

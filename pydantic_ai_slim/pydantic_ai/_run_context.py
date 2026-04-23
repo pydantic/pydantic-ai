@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Generic
 
@@ -13,8 +15,11 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
+    from .agent.abstract import AbstractAgent
     from .models import Model
     from .result import RunUsage
+    from .settings import ModelSettings
+    from .tool_manager import ToolManager
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -34,9 +39,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    agent: AbstractAgent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
+    """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
-    messages: list[_messages.ModelMessage] = field(default_factory=list)
+    messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
     """Messages exchanged in the conversation so far."""
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
@@ -46,24 +53,56 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether to include the content of the messages in the trace."""
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
-    retries: dict[str, int] = field(default_factory=dict)
+    retries: dict[str, int] = field(default_factory=dict[str, int])
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
-    """Number of retries of this tool so far."""
+    """Number of retries so far.
+
+    For tool calls, this is the number of retries of the specific tool.
+    For output validation, this is the number of output validation retries.
+    """
     max_retries: int = 0
-    """The maximum number of retries of this tool."""
+    """The maximum number of retries allowed.
+
+    For tool calls, this is the maximum retries for the specific tool.
+    For output validation, this is the maximum output validation retries.
+    """
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+    tool_call_metadata: Any = None
+    """Metadata from `DeferredToolResults.metadata[tool_call_id]`, available when `tool_call_approved=True`."""
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    metadata: dict[str, Any] | None = None
+    """Metadata associated with this agent run, if configured."""
+    model_settings: ModelSettings | None = None
+    """The resolved model settings for the current run step.
+
+    Populated before each model request, after all model settings layers
+    (model defaults, agent-level, capability, and run-level) have been merged.
+    Available in model request hooks (`before_model_request`, `wrap_model_request`,
+    `after_model_request`). Currently `None` in tool hooks, output validators,
+    and during agent construction.
+    """
+
+    tool_manager: ToolManager[RunContextAgentDepsT] | None = None
+    """The tool manager for the current run step.
+
+    Provides access to tool validation and execution, including tracing and
+    capability hooks. Useful for toolsets that need to dispatch tool calls
+    programmatically (e.g. code execution sandboxes).
+
+    Not available in `TemporalRunContext` — it is not serializable across
+    Temporal activity boundaries.
+    """
 
     @property
     def last_attempt(self) -> bool:
@@ -71,3 +110,36 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return self.retry == self.max_retries
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(
+    'pydantic_ai.current_run_context',
+    default=None,
+)
+"""Context variable storing the current [`RunContext`][pydantic_ai.tools.RunContext]."""
+
+
+def get_current_run_context() -> RunContext[Any] | None:
+    """Get the current run context, if one is set.
+
+    Returns:
+        The current [`RunContext`][pydantic_ai.tools.RunContext], or `None` if not in an agent run.
+    """
+    return _CURRENT_RUN_CONTEXT.get()
+
+
+@contextmanager
+def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
+    """Context manager to set the current run context.
+
+    Args:
+        run_context: The run context to set as current.
+
+    Yields:
+        None
+    """
+    token = _CURRENT_RUN_CONTEXT.set(run_context)
+    try:
+        yield
+    finally:
+        _CURRENT_RUN_CONTEXT.reset(token)

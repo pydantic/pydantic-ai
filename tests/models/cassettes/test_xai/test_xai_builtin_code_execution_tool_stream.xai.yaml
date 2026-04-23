@@ -1,0 +1,130 @@
+version: 1
+interactions:
+- request_stream:
+    json:
+      messages:
+      - content:
+        - text: Use the builtin tool `code_execution` to compute 2 + 2. Return just
+            the numeric result and nothing else.
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - code_execution: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT
+    raw: !!binary |
+      Cm4KagpoVXNlIHRoZSBidWlsdGluIHRvb2wgYGNvZGVfZXhlY3V0aW9uYCB0byBjb21wdXRlIDIg
+      KyAyLiBSZXR1cm4ganVzdCB0aGUgbnVtZXJpYyByZXN1bHQgYW5kIG5vdGhpbmcgZWxzZS4QARIZ
+      Z3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZ4oBAioAkgECCAHSAQED
+  response_stream:
+    chunks_json:
+    - chunk:
+        id: eaf49755-15fc-a6fa-3c32-30a8c4df5bb7
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+            tool_calls:
+            - id: call_02414781
+              type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+              function:
+                name: code_execution
+                arguments: '{"code":"print(2 + 2)"}'
+        created: '2026-01-16T17:05:02.153248979Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 30
+          prompt_tokens: 826
+          total_tokens: 856
+          prompt_text_tokens: 826
+          cached_prompt_text_tokens: 181
+    - chunk:
+        id: eaf49755-15fc-a6fa-3c32-30a8c4df5bb7
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_TOOL_CALLS
+        created: '2026-01-16T17:05:02.153284536Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 30
+          prompt_tokens: 826
+          total_tokens: 856
+          prompt_text_tokens: 826
+          cached_prompt_text_tokens: 181
+    - chunk:
+        id: eaf49755-15fc-a6fa-3c32-30a8c4df5bb7
+        outputs:
+        - delta:
+            content: '{"stdout": "4\n", "stderr": "", "output_files": {}, "error":
+              "", "ret": ""}'
+            role: ROLE_TOOL
+            tool_calls:
+            - id: call_02414781
+              type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+              status: TOOL_CALL_STATUS_COMPLETED
+              function:
+                name: code_execution
+                arguments: '{"code":"print(2 + 2)"}'
+          index: 1
+        usage: {}
+    - chunk:
+        id: eaf49755-15fc-a6fa-3c32-30a8c4df5bb7
+        outputs:
+        - delta:
+            content: '4'
+            role: ROLE_ASSISTANT
+          index: 2
+        created: '2026-01-16T17:05:03.078040075Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 31
+          prompt_tokens: 1718
+          total_tokens: 1749
+          prompt_text_tokens: 1718
+          cached_prompt_text_tokens: 1037
+    - chunk:
+        id: eaf49755-15fc-a6fa-3c32-30a8c4df5bb7
+        outputs:
+        - delta:
+            role: ROLE_ASSISTANT
+          finish_reason: REASON_STOP
+          index: 2
+        created: '2026-01-16T17:05:03.108028656Z'
+        model: grok-4-fast-non-reasoning
+        system_fingerprint: fp_4616e76413
+        usage:
+          completion_tokens: 31
+          prompt_tokens: 1718
+          total_tokens: 1749
+          prompt_text_tokens: 1718
+          cached_prompt_text_tokens: 1037
+          server_side_tools_used:
+          - SERVER_SIDE_TOOL_CODE_EXECUTION
+    chunks_raw:
+    - !!binary |
+      CiRlYWY0OTc1NS0xNWZjLWE2ZmEtM2MzMi0zMGE4YzRkZjViYjcSQgpAEAIaPAoNY2FsbF8wMjQx
+      NDc4MRAEUikKDmNvZGVfZXhlY3V0aW9uEhd7ImNvZGUiOiJwcmludCgyICsgMikifRoLCL7fqcsG
+      ENPJiUkiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEggeELoGGNgG
+      ILoGOLUBWIS1XQ==
+    - !!binary |
+      CiRlYWY0OTc1NS0xNWZjLWE2ZmEtM2MzMi0zMGE4YzRkZjViYjcSBgoCEAIYBBoLCL7fqcsGELjf
+      i0kiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEggeELoGGNgGILoG
+      OLUBWIS1XQ==
+    - !!binary |
+      CiRlYWY0OTc1NS0xNWZjLWE2ZmEtM2MzMi0zMGE4YzRkZjViYjcSlAEKjwEKS3sic3Rkb3V0Ijog
+      IjRcbiIsICJzdGRlcnIiOiAiIiwgIm91dHB1dF9maWxlcyI6IHt9LCAiZXJyb3IiOiAiIiwgInJl
+      dCI6ICIifRAFGj4KDWNhbGxfMDI0MTQ3ODEQBBgBUikKDmNvZGVfZXhlY3V0aW9uEhd7ImNvZGUi
+      OiJwcmludCgyICsgMikifSABMgRYhLVd
+    - !!binary |
+      CiRlYWY0OTc1NS0xNWZjLWE2ZmEtM2MzMi0zMGE4YzRkZjViYjcSCQoFCgE0EAIgAhoLCL/fqcsG
+      EIuYmyUiGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmcqDWZwXzQ2MTZlNzY0MTMyEggfELYNGNUN
+      ILYNOI0IWKyefA==
+    - !!binary |
+      CiRlYWY0OTc1NS0xNWZjLWE2ZmEtM2MzMi0zMGE4YzRkZjViYjcSCAoCEAIYAyACGgsIv9+pywYQ
+      8MXBMyIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZyoNZnBfNDYxNmU3NjQxMzIWCB8Qtg0Y1Q0g
+      tg04jQhKAQNYrP/nGA==

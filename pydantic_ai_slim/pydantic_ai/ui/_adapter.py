@@ -11,18 +11,21 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Protocol,
-    TypeVar,
+    cast,
     runtime_checkable,
 )
 
 from pydantic import BaseModel, ValidationError
+from typing_extensions import Self, TypeVar
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.agent.abstract import Instructions
+from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
+from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -43,7 +46,6 @@ __all__ = [
     'StateDeps',
 ]
 
-
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
@@ -53,9 +55,14 @@ MessageT = TypeVar('MessageT')
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
-
 StateT = TypeVar('StateT', bound=BaseModel)
 """Type variable for the state type, which must be a subclass of `BaseModel`."""
+
+DispatchDepsT = TypeVar('DispatchDepsT')
+"""TypeVar for deps to avoid awkwardness with unbound classvar deps."""
+
+DispatchOutputDataT = TypeVar('DispatchOutputDataT')
+"""TypeVar for output data to avoid awkwardness with unbound classvar output data."""
 
 
 @runtime_checkable
@@ -104,7 +111,7 @@ class StateDeps(Generic[StateT]):
 class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]):
     """Base class for UI adapters.
 
-    This class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`][pydantic_ai.Agent.run_stream_events], running the agent, and then transforming Pydantic AI events into protocol-specific events.
+    This class is responsible for transforming agent run input received from the frontend into arguments for [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], running the agent, and then transforming Pydantic AI events into protocol-specific events.
 
     The event stream transformation is handled by a protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass.
     """
@@ -120,15 +127,47 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
+    manage_system_prompt: Literal['server', 'client'] = 'server'
+    """Who owns the system prompt.
+
+    Only affects `system_prompt` — [`instructions`][pydantic_ai.Agent.instructions]
+    are always injected by the agent on every request regardless of this setting.
+
+    `'server'` (default): the agent's configured `system_prompt` is authoritative.
+    Any `SystemPromptPart` sent by the frontend is stripped with a warning (since a
+    malicious client could otherwise inject arbitrary instructions via crafted API
+    requests), and the agent's own system prompt is reinjected at the head of the
+    first request via the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+
+    `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
+    are preserved as-is, and the agent's configured `system_prompt` is not injected
+    — the caller is fully responsible for sending it on every turn if desired. To
+    opt into the same fallback-to-configured behavior as server mode, add the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability
+    to your agent.
+    """
+
     @classmethod
     async def from_request(
-        cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT]
-    ) -> UIAdapter[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]:
-        """Create an adapter from a request."""
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        **kwargs: Any,
+    ) -> Self:
+        """Create an adapter from a request.
+
+        Extra keyword arguments are forwarded to the adapter constructor, allowing subclasses
+        to accept additional adapter-specific parameters.
+        """
         return cls(
             agent=agent,
             run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
+            manage_system_prompt=manage_system_prompt,
+            **kwargs,
         )
 
     @classmethod
@@ -169,6 +208,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Frontend state from the protocol-specific run input."""
         return None
 
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Deferred tool results extracted from the request, used for tool approval workflows."""
+        return None
+
     def transform_stream(
         self,
         stream: AsyncIterator[NativeEvent],
@@ -206,11 +250,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
@@ -228,16 +273,36 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
         """
-        message_history = [*(message_history or []), *self.messages]
+        frontend_messages = self.messages
+        if self.manage_system_prompt == 'server' and any(
+            isinstance(part, SystemPromptPart)
+            for msg in frontend_messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        ):
+            warnings.warn(
+                "Frontend system prompts were provided but `manage_system_prompt` is `'server'` "
+                '(the default), so they will be stripped. '
+                "Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
             toolsets = [*(toolsets or []), toolset]
+
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
 
         if isinstance(deps, StateHandler):
             raw_state = self.state or {}
@@ -254,6 +319,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
+        capabilities: list[AbstractCapability[AgentDepsT]] = []
+        if self.manage_system_prompt == 'server':
+            capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+
         return self.agent.run_stream_events(
             output_type=output_type,
             message_history=message_history,
@@ -264,9 +333,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             instructions=instructions,
             usage_limits=usage_limits,
             usage=usage,
+            metadata=metadata,
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
         )
 
     def run_stream(
@@ -276,11 +347,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
@@ -299,6 +371,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
@@ -316,6 +390,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,
+                metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
@@ -328,22 +403,28 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         cls,
         request: Request,
         *,
-        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
+        instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
+        deps: DispatchDepsT = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
+        metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
+
+        Extra keyword arguments are forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request],
+        allowing subclasses to accept additional adapter-specific parameters.
 
         Args:
             request: The incoming Starlette/FastAPI request.
@@ -358,11 +439,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            manage_system_prompt: Who owns the system prompt. See
+                [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+            **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
@@ -376,7 +462,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             ) from e
 
         try:
-            adapter = await cls.from_request(request, agent=agent)
+            # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
+            adapter = cast(
+                UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, DispatchOutputDataT],
+                await cls.from_request(
+                    request,
+                    agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
+                    manage_system_prompt=manage_system_prompt,
+                    **kwargs,
+                ),
+            )
         except ValidationError as e:  # pragma: no cover
             return Response(
                 content=e.json(),
@@ -395,6 +490,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,
+                metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,

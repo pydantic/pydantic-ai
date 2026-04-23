@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '561'
+      - '535'
       content-type:
       - application/json
       host:
@@ -35,7 +35,6 @@ interactions:
                 required:
                 - city
                 - country
-                title: CurrentLocation
                 type: object
             additionalProperties: false
             properties:
@@ -52,11 +51,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1227'
+      - '1351'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=965
+      - gfet4t7; dur=1712
       transfer-encoding:
       - chunked
       vary:
@@ -72,21 +71,21 @@ interactions:
                 location:
                   city: Tokyo
               name: get_temperature
-            thoughtSignature: CqsCAdHtim8g6Mb+p/TOM/hcAQMuHORfvoYEEpINyxRabZ/ZiiBArydE5DaexwckI0MaKPd18/tx5SlEuLBURrOtQr3Fy3i00cItVVR+H6+K+WyxVUe8AmsYWTGntnwflq81uC6P79FHQhc2cOMsKbRNu3mtNF7mncsBJKQ3NZ4ioi1YffVc4V6PNGbw9rjZtVx1iViqNZ6il7LZ/WvwrZR1HCmFd03X0koCTpBt/jMx3fSIJt79YGjEGvb3huk1wGcuWH54Uj7WhU+E7MTrUAz/Oa5lmWwf8NNrbLPepuLVFTPVKukErjwlZlX4oCaXiz3M5OewJwQR14L5Jub7GIdsx/++p9XJgROw9v1vifauXo35zVDUqqosfWvz/iD0Iv4hhlOBipdTtLzYK/k=
+            thoughtSignature: CokDAXLI2nx7y1r688uMKE5qfXDwpeSqIF7VYiV69kdLpcaEXwTzpcqRlmp8qXcv0Xh3wPQtv5F+MAe0t1r+bJPXCVMD1R+EGookjtXA+zR9IAB9MTgVPWMEypfCIV8anOOS/BolaY1MJnfdJc33bf5mB+p2QibFDWlduTyxD8DmSHzhY/Wvmd78V2bDNpLYfa8iS3rwnhgsTJ96D7/MiY//9wP3p36Mv0g5LwkYoGWYIPVyxEc8mfKBLUlnipcDfgAF733fZ584YB+hL/3gTDFo5GosAcXveyPLX8QLu5UdmcJFoMwyXfP6YUMiE3CG7a1Kh6zysy3hl2bHKbwlxyNoz7Aedy4Cp8djSna35lVwJ6ppGinRR7s0mEZEwWDo2jkEZ1eP+o2CxhZyR8jBILM1gcDPMoqklrZis5WAw4EhQcbG+Xp1yPJcupT4K8fChXZSHTOgxvHoInoq+Wp+V6n6yjOtemR+Mwu8NOiwdqbUzuTSty8tO1iViA4L/TO76RuQxGIMA61BZ+mb
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 7PggabeLH--tz7IPmu30uQo
+      responseId: tf5XaaanA_WfqtsPi5uF-Ao
       usageMetadata:
         candidatesTokenCount: 19
         promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 40
-        thoughtsTokenCount: 65
-        totalTokenCount: 124
+        thoughtsTokenCount: 84
+        totalTokenCount: 143
     status:
       code: 200
       message: OK
@@ -95,11 +94,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1115'
+      - '1085'
       content-type:
       - application/json
       host:
@@ -116,7 +115,7 @@ interactions:
               location:
                 city: Tokyo
             name: get_temperature
-          thoughtSignature: context_engineering_is_the_way_to_go
+          thoughtSignature: skip_thought_signature_validator
         role: model
       - parts:
         - functionResponse:
@@ -156,7 +155,6 @@ interactions:
                 required:
                 - city
                 - country
-                title: CurrentLocation
                 type: object
             additionalProperties: false
             properties:
@@ -173,11 +171,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '4298'
+      - '2500'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3078
+      - gfet4t7; dur=3009
       transfer-encoding:
       - chunked
       vary:
@@ -188,22 +186,21 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I was not able to get the temperature in Tokyo. There seems to be an issue with the way the location is
-              being processed by the tool.
-            thoughtSignature: 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
+          - text: I'm sorry, I'm having trouble getting the temperature for Tokyo. Can you please try again?
+            thoughtSignature: CtADAXLI2nxXvfZSaYnRNDWDRyt10lZC+al8WmAuvxaL0hQvW6TUxelXNjrh3LloNAKmpfluEE+h0Y6JDCfiMr2idtNbNWlDOj5wKkThgJ7wN3hF92BDDCQc5V5ImqY4FOLVPMJZJybg1Pl4HuqIFSayLw+9ufxfFXrjDX2LgOEN1R4wo2yLetSMbd4inEi0dWoOnAaLMOaS1RPe1RJ/OFbSeNu6pwiINR1+D2Pmw2ESyyq8d0Fp2LD9YEcdUFqFNb+dcdt2zcuQX3gjEI1qfmNAzrdF0LTYTwMHY7daavMZq4d0S4Q8+ds4OnTKfjJDM0elNkFTawcVzN1zkOZoHWXZLGAKAil2vJdCVzapVKW9ATQAIkCFnUP5lvv7Xv65lJtJAaP5Rz2e9wGasXw9Uu3/QDLO8NQ/cj+UQa5V+1V1knnZL7DIApX55L7xCzA6v6z7nKlwJa0SYuTl47qICS8NEk4DWywUDUVz6f/pbv/l7IY2Q7Vt9CpjjQW31GgrDfBnUh4AJdJxgj+BOn+kuJvhFpSoiUUKxy36nuWk21L0aR7PRg277Dg4C5Xb3+efcy4Tiu9p1YaLPOUcAcdb5urDTbhP1m2cQT3bnS/1Ei64u4kKYgFyyNp8MOrsW1WuJ9P91+KjhNjnvXfz1HTme1xE1CJuiWS0y9CBzLu4wjUF1o0rSa5f9n8lK1x4P0AKX37m72Skvw3dOv6Hem1BAcxf2NsiuVKvrWbt9cVQGLQ0/PfWnfjeCo4FAXLI2nxtDMYVHLW5l3r5uhWf2K2fo3FNbW+9LYhWI4RElxe7w4mIcUwom5eG7ZM5biCEkjKLIRdKrvb/Zpb2ia2nNXwaCMdGX6m5NJQVd9OKju8Ta9EcHMQpwunGrDup8TLJx+CxmemEOSnv7HeO9+pWVSW8qpv3cK1Cg5pV2qXyZ3voO8wZNHIC3xWLus1kuMiLp/C80ohiXYWVOZ4qmTqaXSpT8HC3CqAkNuwbzUNAcoz+YPxS+TTcUIRCgNYIzE5aBlELEYDMpNxWAuGgimrZYUI+F2vy2SFDT8qHrTm5/Psj3BxPWChkU2b4WcMgd+S0pizA1DBehiPrf7P6rFbXTNl17zIC851wr4UDkyrMBwGzMnDNT7tDH2UU0zMeVSSZg44f9jelTxYvZAVrLQnFYt44dTlOQt8013SN5bBJ2iSzGlYXTZ+ABCgH2CsVk0GI+3xxoLAE9OjvoXqJuSPyT6ApptGB5OLqKJYnB+GyR7NPzpAN5SvXKxHiVaBahzHxeCz5BhkIdZcSaoPolzvUkBDgi2qYv/whlnwBZBkcgRsk9oAY54FuHSovWL8cDWuyMRFIYyl60H1A6IPRqUqQXQnsikRtm6XrZEYd4Jsf3lH8vk6xqYDPYCuYb/WF5Q6RfZLYMdDvyzZ3utgm9afuq1A25CuuDXwP84iw906od+dwEm5AHrIdm3kVWfutx6NZnZUWeYjx43k11YMrU4u/fnuCzxjWtJlmwudzP+Uta2rbOL+2AaReUWBRfd5ApZEqUJJKNpWjmlKu/Og2DdytlE5ntWo+RpQLx6OMYt50JmhOtVeMQ+pgOn+npY8lDOLogJ2Dm0tMRXIiu8CFH8v8exr0VSP6s1+6gckcCmkBcsjafAqXfbyaqkjX3tlZROUFDNYQwrZtmfzixM95MsgBWyHRqCW2SFrYPRJ4NqsrRk1k/eePoESut/Qdi/BEK77t1uDpCKOyowmjgtvovsjcujYVyUoCou1mPGr7BTqK/0dp2dzOIPEKJAFyyNp8SW1OYufa4UA4sG0muCM/EaMT/nE0rLU0VYyO0+rhGg==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: 7_ggadDZJfaEz7IPvafbuAg
+      responseId: uP5XaY-bGPmnqtsPg9fXgQs
       usageMetadata:
-        candidatesTokenCount: 29
+        candidatesTokenCount: 22
         promptTokenCount: 164
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 164
-        thoughtsTokenCount: 563
-        totalTokenCount: 756
+        thoughtsTokenCount: 289
+        totalTokenCount: 475
     status:
       code: 200
       message: OK

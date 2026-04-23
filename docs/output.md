@@ -1,10 +1,10 @@
-"Output" refers to the final value returned from [running an agent](agents.md#running-agents). This can be either plain text, [structured data](#structured-output), an [image](#image-output), or the result of a [function](#output-functions) called with arguments provided by the model.
+"Output" refers to the final value returned from [running an agent](agent.md#running-agents). This can be either plain text, [structured data](#structured-output), an [image](#image-output), or the result of a [function](#output-functions) called with arguments provided by the model.
 
 The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so that you can access other data, like [usage][pydantic_ai.usage.RunUsage] of the run and [message history](message-history.md#accessing-messages-from-results).
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits).
+A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits).
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -19,7 +19,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-2.5-flash', output_type=CityLocation)
+agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
@@ -33,7 +33,7 @@ _(This example is complete, it can be run "as is")_
 
 The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports simple scalar types, list and dict types (including `TypedDict`s and [`StructuredDict`s](#structured-dict)), dataclasses and Pydantic models, as well as type unions -- generally everything supported as type hints in a Pydantic model. You can also pass a list of multiple choices.
 
-By default, Pydantic AI leverages the model's tool calling capability to make it return structured data. When multiple output types are specified (in a union or list), each member is registered with the model as a separate output tool in order to reduce the complexity of the schema and maximise the chances a model will respond correctly. This has been shown to work well across a wide range of models. If you'd like to change the names of the output tools, use a model's native structured output feature, or pass the output schema to the model in its [instructions](agents.md#instructions), you can use an [output mode](#output-modes) marker class.
+By default, Pydantic AI leverages the model's tool calling capability to make it return structured data. When multiple output types are specified (in a union or list), each member is registered with the model as a separate output tool in order to reduce the complexity of the schema and maximise the chances a model will respond correctly. This has been shown to work well across a wide range of models. If you'd like to change the names of the output tools, use a model's native structured output feature, or pass the output schema to the model in its [instructions](agent.md#instructions), you can use an [output mode](#output-modes) marker class.
 
 When no output type is specified, or when `str` is among the output types, any plain text response from the model will be used as the output data.
 If `str` is not among the output types, the model is forced to return structured data or call an output function.
@@ -72,7 +72,7 @@ class Box(BaseModel):
 agent = Agent(
     'openai:gpt-5-mini',
     output_type=[Box, str], # (1)!
-    system_prompt=(
+    instructions=(
         "Extract me the dimensions of a box, "
         "if you can't extract all data, ask the user to try again."
     ),
@@ -99,7 +99,7 @@ from pydantic_ai import Agent
 agent = Agent[None, list[str] | list[int]](
     'openai:gpt-5-mini',
     output_type=list[str] | list[int],  # type: ignore # (1)!
-    system_prompt='Extract either colors or sizes from the shapes provided.',
+    instructions='Extract either colors or sizes from the shapes provided.',
 )
 
 result = agent.run_sync('red square, blue circle, green triangle')
@@ -176,7 +176,7 @@ def run_sql_query(query: str) -> list[Row]:
 
 
 sql_agent = Agent[None, list[Row] | SQLFailure](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
 )
@@ -208,7 +208,7 @@ class RouterFailure(BaseModel):
 
 
 router_agent = Agent[None, list[Row] | RouterFailure](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
 )
@@ -237,7 +237,11 @@ RouterFailure(explanation='I am not equipped to provide travel information, such
 
 #### Text output
 
-If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class. If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
+If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class.
+
+If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
+
+Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
 ```python {title="text_output_function.py"}
 from pydantic_ai import Agent, TextOutput
@@ -248,7 +252,7 @@ def split_into_words(text: str) -> list[str]:
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=TextOutput(split_into_words),
 )
 result = agent.run_sync('Who was Albert Einstein?')
@@ -257,6 +261,51 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+#### Handling partial output in output functions
+
+When streaming with `run_stream()` or `run_stream_sync()`, output functions are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when your output function has **side effects** (e.g., sending notifications, logging, database updates) that should only execute on the final output.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agent.md#running-agents), `partial_output` is always `False` as the function is only called once with the complete output.
+
+```python {title="output_function_with_side_effects.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class DatabaseRecord(BaseModel):
+    name: str
+    value: int | None = None  # Make optional to allow partial output
+
+
+def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
+    """Output function with side effect - only save final output to database."""
+    if ctx.partial_output:
+        # Skip side effects for partial outputs
+        return record
+
+    # Only execute side effect for the final output
+    print(f'Saving to database: {record.name} = {record.value}')
+    #> Saving to database: test = 42
+    return record
+
+
+agent = Agent('openai:gpt-5.2', output_type=save_to_database)
+
+
+async def main():
+    async with agent.run_stream('Create a record with name "test" and value 42') as result:
+        async for output in result.stream_output(debounce_by=None):
+            print(output)
+            #> name='test' value=None
+            #> name='test' value=42
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Output modes
 
@@ -291,7 +340,7 @@ class Vehicle(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=[ # (1)!
         ToolOutput(Fruit, name='return_fruit'),
         ToolOutput(Vehicle, name='return_vehicle'),
@@ -306,6 +355,28 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+##### Parallel Output Tool Calls
+
+When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
+
+- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+- `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
+- `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+
+| Strategy | Function tools | Output tools |
+|---|---|---|
+| `'early'` (default) | Skip remaining | Skip remaining |
+| `'graceful'` | Execute all | Skip remaining |
+| `'exhaustive'` | Execute all | Execute all (first valid result wins) |
+
+The `'graceful'` and `'exhaustive'` strategies are useful when function tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute. Use `'graceful'` over `'exhaustive'` when you want to avoid executing additional output tools unnecessarily — for example, when output tools have side effects that should only fire once.
+
+!!! warning "Priority of output and deferred tools in streaming methods"
+    The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
+
+    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output.
+
+
 #### Native Output
 
 Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
@@ -318,7 +389,7 @@ from pydantic_ai import Agent, NativeOutput
 from tool_output import Fruit, Vehicle
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=NativeOutput(
         [Fruit, Vehicle], # (1)!
         name='Fruit_or_vehicle',
@@ -336,13 +407,13 @@ _(This example is complete, it can be run "as is")_
 
 #### Prompted Output
 
-In this mode, the model is prompted to output text matching the provided JSON schema through its [instructions](agents.md#instructions) and it's up to the model to interpret those instructions correctly. This is usable with all models, but is often the least reliable approach as the model is not forced to match the schema.
+In this mode, the model is prompted to output text matching the provided JSON schema through its [instructions](agent.md#instructions) and it's up to the model to interpret those instructions correctly. This is usable with all models, but is often the least reliable approach as the model is not forced to match the schema.
 
 While we would generally suggest starting with tool or native output, in some cases this mode may result in higher quality outputs, and for models without native tool calling or structured output support it is the only option for producing structured outputs.
 
 If the model API supports the "JSON Mode" feature (aka "JSON Object response format") to force the model to output valid JSON, this is enabled, but it's still up to the model to abide by the schema. Pydantic AI will validate the returned structured data and tell the model to try again if validation fails, but if the model is not intelligent enough this may not be sufficient.
 
-To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pydantic_ai.output.PromptedOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient. Additionally, it supports an `template` argument lets you specify a custom instructions template to be used instead of the [default][pydantic_ai.profiles.ModelProfile.prompted_output_template].
+To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pydantic_ai.output.PromptedOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient. Additionally, `template` lets you specify a custom instructions template to be used instead of the [default][pydantic_ai.profiles.ModelProfile.prompted_output_template], or `template=False` to disable the schema prompt entirely.
 
 ```python {title="prompted_output.py" requires="tool_output.py"}
 from pydantic import BaseModel
@@ -358,7 +429,7 @@ class Device(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=PromptedOutput(
         [Vehicle, Device], # (1)!
         name='Vehicle or device',
@@ -370,7 +441,7 @@ print(repr(result.output))
 #> Device(name='MacBook', kind='laptop')
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=PromptedOutput(
         [Vehicle, Device],
         template='Gimme some JSON: {schema}'
@@ -411,14 +482,14 @@ HumanDict = StructuredDict(
     description='A human with a name and age',
 )
 
-agent = Agent('openai:gpt-5', output_type=HumanDict)
+agent = Agent('openai:gpt-5.2', output_type=HumanDict)
 result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
 
 ### Validation context {#validation-context}
 
-Some validation relies on an extra Pydantic [context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) object. You can pass such an object to an `Agent` at definition-time via its [`validation_context`][pydantic_ai.Agent.__init__] parameter. It will be used in the validation of both structured outputs and [tool arguments](tools-advanced.md#tool-retries).
+Some validation relies on an extra Pydantic [context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) object. You can pass such an object to an `Agent` at definition-time via its [`validation_context`][pydantic_ai.agent.Agent.__init__] parameter. It will be used in the validation of both structured outputs and [tool arguments](tools-advanced.md#tool-retries).
 
 This validation context can be either:
 
@@ -445,7 +516,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     output_type=Value,
     validation_context=10,
 )
@@ -460,7 +531,7 @@ class Deps:
 
 
 agent = Agent(
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -474,7 +545,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Output validators {#output-validator-functions}
 
-Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. Pydantic AI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
+Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. Pydantic AI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.agent.Agent.output_validator] decorator.
 
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
 If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the [`TextOutput` marker class](#text-output).
@@ -498,10 +569,10 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google-gla:gemini-2.5-flash',
+    'google-gla:gemini-3-flash-preview',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
-    system_prompt='Generate PostgreSQL flavored SQL queries based on user input.',
+    instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )
 
 
@@ -526,23 +597,29 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-#### Handling partial output in output validators {#partial-output}
+#### Handling partial output in output validators
 
-You can use the `partial_output` field on `RunContext` to handle validation differently for partial outputs during streaming (e.g. skip validation altogether).
+When streaming with `run_stream()` or `run_stream_sync()`, output validators are called **multiple times** — once for each partial output received from the model, and once for the final complete output.
+
+You should check the [`RunContext.partial_output`][pydantic_ai.tools.RunContext.partial_output] flag when you want to **validate only the complete result**, not intermediate partial values.
+
+When streaming, `partial_output` is `True` for each partial output and `False` for the final complete output.
+For all [other run methods](agent.md#running-agents), `partial_output` is always `False` as the validator is only called once with the complete output.
 
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
+
 
 @agent.output_validator
 def validate_output(ctx: RunContext, output: str) -> str:
     if ctx.partial_output:
         return output
-    else:
-        if len(output) < 50:
-            raise ModelRetry('Output is too short.')
-        return output
+
+    if len(output) < 50:
+        raise ModelRetry('Output is too short.')
+    return output
 
 
 async def main():
@@ -569,7 +646,7 @@ To use the generated image as the output of the agent run, you can set `output_t
 ```py {title="image_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5', output_type=BinaryImage)
+agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -582,7 +659,7 @@ If an agent does not need to always generate an image, you can use a union of `B
 ```py {title="image_output_union.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5', output_type=BinaryImage | str)
+agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage | str)
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl, no image please.')
 print(result.output)
@@ -598,6 +675,44 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 """
 ```
 
+## Optional output (allowing `None`) {#optional-output}
+
+Some agents perform their work entirely through tool calls and don't need to produce a final output — for example, an agent that updates a record via a tool and then stops. Certain models (notably [Anthropic](models/anthropic.md)) will return an empty response in this case, which by default causes Pydantic AI to retry until the model produces content.
+
+To instead treat an empty response as a successful run, include `None` in the `output_type`:
+
+```python {title="optional_output.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-6', output_type=str | None)
+
+
+@agent.tool_plain
+def mark_task_done(task_id: int) -> str:
+    """Mark the task as done."""
+    return f'Task {task_id} marked done.'
+
+
+result = agent.run_sync('Mark task 1 as done, then stop without saying anything.')
+print(result.output)
+#> None
+```
+
+When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validator functions](#output-validator-functions) still run with `None` as the argument, so you can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject it if needed.
+
+`output_type=str | None` is the canonical case: it's handled as regular text output, and the **only** way the model signals `None` is by returning an empty response — there's no output tool or structured schema involved. This mirrors how plain `str` is already treated specially as free-form text output rather than a structured tool call.
+
+`None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
+
+- **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_NoneType` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty model response is still also treated as `None`, as with `str | None`.
+- **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `NoneType` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
+
+!!! note
+    `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
+
+!!! note
+    When using [`agent.run_stream()`][pydantic_ai.Agent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
+
 ## Streamed Results
 
 There two main challenges with streamed results:
@@ -610,7 +725,7 @@ There two main challenges with streamed results:
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
-    use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agents.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agents.md#streaming-all-events-and-output)) instead.
+    use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agent.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agent.md#streaming-all-events-and-output)) instead.
 
 ### Streaming Text
 
@@ -619,7 +734,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-2.5-flash')  # (1)!
+agent = Agent('google-gla:gemini-3-flash-preview')  # (1)!
 
 
 async def main():
@@ -645,7 +760,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-2.5-flash')
+agent = Agent('google-gla:gemini-3-flash-preview')
 
 
 async def main():
@@ -687,9 +802,9 @@ class UserProfile(TypedDict):
 
 
 agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=UserProfile,
-    system_prompt='Extract a user profile from the input',
+    instructions='Extract a user profile from the input',
 )
 
 
@@ -703,6 +818,7 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the '}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyr'}
+            #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
@@ -729,7 +845,7 @@ class UserProfile(TypedDict, total=False):
     bio: str
 
 
-agent = Agent('openai:gpt-5', output_type=UserProfile)
+agent = Agent('openai:gpt-5.2', output_type=UserProfile)
 
 
 async def main():

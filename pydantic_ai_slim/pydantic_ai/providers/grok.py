@@ -5,10 +5,11 @@ from typing import Literal, overload
 
 import httpx
 from openai import AsyncOpenAI
+from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
@@ -25,6 +26,7 @@ except ImportError as _import_error:  # pragma: no cover
 GrokModelName = Literal[
     'grok-4',
     'grok-4-0709',
+    'grok-4-latest',
     'grok-4-1-fast',
     'grok-4-1-fast-reasoning',
     'grok-4-1-fast-non-reasoning',
@@ -41,8 +43,12 @@ GrokModelName = Literal[
 ]
 
 
+@deprecated(
+    '`GrokProvider` is deprecated, use `XaiProvider` with `XaiModel` instead for the native xAI SDK. '
+    'See <https://ai.pydantic.dev/models/xai/> for more details.'
+)
 class GrokProvider(Provider[AsyncOpenAI]):
-    """Provider for Grok API."""
+    """Provider for Grok API (OpenAI-compatible interface)."""
 
     @property
     def name(self) -> str:
@@ -56,7 +62,8 @@ class GrokProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         profile = grok_model_profile(model_name)
 
         # As the Grok API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
@@ -89,7 +96,7 @@ class GrokProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `GROK_API_KEY` environment variable or pass it via `GrokProvider(api_key=...)`'
-                'to use the Grok provider.'
+                ' to use the Grok provider.'
             )
 
         if openai_client is not None:
@@ -97,5 +104,10 @@ class GrokProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='grok')
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

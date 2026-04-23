@@ -8,14 +8,14 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -33,13 +33,16 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsBytes, IsDatetime, IsStr, try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     import outlines
@@ -57,7 +60,7 @@ with try_import() as vllm_imports_successful:
     import vllm  # pyright: ignore[reportMissingImports]
 
     # We try to load the vllm model to ensure it is available
-    try:  # pragma: no lax cover
+    try:  # pragma: lax no cover
         vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # pyright: ignore[reportUnknownMemberType]
     except RuntimeError as e:  # pragma: lax no cover
         if 'Found no NVIDIA driver' in str(e) or 'Device string must not be empty' in str(e):
@@ -81,11 +84,12 @@ skip_if_transformers_imports_unsuccessful = pytest.mark.skipif(
     not transformer_imports_successful(), reason='transformers not available'
 )
 
-# We only run this on the latest Python as the llama_cpp tests have been regularly failing in CI with `Fatal Python error: Illegal instruction`:
-# https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
+# llama_cpp tests are skipped in CI because GitHub Actions runners randomly get CPUs
+# that lack SIMD extensions required by llama_cpp wheels, causing unrecoverable SIGILL crashes.
+# See: https://github.com/pydantic/pydantic-ai/actions/runs/19547773220/job/55970947389
 skip_if_llama_cpp_imports_unsuccessful = pytest.mark.skipif(
-    not llama_cpp_imports_successful() or os.getenv('RUN_LLAMA_CPP_TESTS', 'true').lower() == 'false',
-    reason='llama_cpp not available',
+    not llama_cpp_imports_successful() or os.getenv('CI') == 'true',
+    reason='llama_cpp not available or skipped in CI due to SIGILL risk',
 )
 
 skip_if_vllm_imports_unsuccessful = pytest.mark.skipif(not vllm_imports_successful(), reason='vllm not available')
@@ -126,13 +130,13 @@ def mock_async_model() -> OutlinesModel:
     return OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def transformers_model() -> OutlinesModel:
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        'erwanf/gpt2-mini',
+        'hf-internal-testing/tiny-random-gpt2',
         device_map='cpu',
     )
-    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
     outlines_model = outlines.models.transformers.from_transformers(
@@ -142,7 +146,7 @@ def transformers_model() -> OutlinesModel:
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def transformers_multimodal_model() -> OutlinesModel:
     hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
         'trl-internal-testing/tiny-LlavaForConditionalGeneration',
@@ -158,8 +162,8 @@ def transformers_multimodal_model() -> OutlinesModel:
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
-@pytest.fixture
-def llamacpp_model() -> OutlinesModel:
+@pytest.fixture(scope='module')
+def llamacpp_model() -> OutlinesModel:  # pragma: lax no cover
     outlines_model_llamacpp = outlines.models.llamacpp.from_llamacpp(
         llama_cpp.Llama.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
             repo_id='M4-ai/TinyMistral-248M-v2-Instruct-GGUF',
@@ -191,7 +195,7 @@ def vllm_model_offline() -> OutlinesModel:  # pragma: no cover
 
 @pytest.fixture
 def binary_image() -> BinaryImage:
-    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.png'
+    image_path = Path(__file__).parent.parent / 'assets' / 'kiwi.jpg'
     image_bytes = image_path.read_bytes()
     return BinaryImage(data=image_bytes, media_type='image/png')
 
@@ -201,10 +205,10 @@ outlines_parameters = [
         'from_transformers',
         lambda: (  # pyright: ignore[reportUnknownLambdaType]
             transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-                'erwanf/gpt2-mini',
+                'hf-internal-testing/tiny-random-gpt2',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # pyright: ignore[reportUnknownMemberType]
+            transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),  # pyright: ignore[reportUnknownMemberType]
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
@@ -250,8 +254,10 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
         supports_json_schema_output=True,
         supports_json_object_output=True,
         default_structured_output_mode='native',
+        native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
+        supported_builtin_tools=frozenset(),
     )
 
 
@@ -260,10 +266,10 @@ pydantic_ai_parameters = [
         'from_transformers',
         lambda: (  # pyright: ignore[reportUnknownLambdaType]
             transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-                'erwanf/gpt2-mini',
+                'hf-internal-testing/tiny-random-gpt2',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # pyright: ignore[reportUnknownMemberType]
+            transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),  # pyright: ignore[reportUnknownMemberType]
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
@@ -308,13 +314,15 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
         supports_json_schema_output=True,
         supports_json_object_output=True,
         default_structured_output_mode='native',
+        native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
+        supported_builtin_tools=frozenset(),
     )
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-async def test_request_async(llamacpp_model: OutlinesModel) -> None:
+async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     agent = Agent(llamacpp_model, instructions='Answer in one word.')
     result = await agent.run('What is the capital of France?', model_settings=ModelSettings(max_tokens=100))
     assert result.all_messages() == snapshot(
@@ -326,6 +334,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -342,6 +351,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -353,6 +363,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
             ),
@@ -362,7 +373,7 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_request_sync(llamacpp_model: OutlinesModel) -> None:
+def test_request_sync(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     agent = Agent(llamacpp_model)
     result = agent.run_sync('What is the capital of France?', model_settings=ModelSettings(max_tokens=100))
     assert result.all_messages() == snapshot(
@@ -374,6 +385,7 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -382,7 +394,7 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-async def test_request_streaming(llamacpp_model: OutlinesModel) -> None:
+async def test_request_streaming(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     agent = Agent(llamacpp_model)
     async with agent.run_stream(
         'What is the capital of the UK?', model_settings=ModelSettings(max_tokens=100)
@@ -404,6 +416,7 @@ async def test_request_async_model(mock_async_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -421,6 +434,81 @@ async def test_request_streaming_async_model(mock_async_model: OutlinesModel) ->
             assert len(text) > 0
 
 
+async def test_tool_definition_error_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test that function tools raise UserError with async model."""
+    agent = Agent(mock_async_model)
+
+    @agent.tool_plain
+    def dummy_tool() -> str:  # pragma: no cover
+        return 'dummy'
+
+    with pytest.raises(UserError, match='Outlines does not support function tools yet.'):
+        await agent.run('Hello')
+
+
+async def test_output_type_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test output_type with async model exercises JsonSchema path."""
+
+    class Box(BaseModel):
+        width: int
+
+    agent = Agent(mock_async_model, output_type=Box)
+    # Mock returns 'test' which isn't valid JSON, so validation fails
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries .* for output validation'):
+        await agent.run('dimensions')
+
+
+async def test_instructions_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test that instructions are passed to the model."""
+    agent = Agent(mock_async_model, instructions='Be brief.')
+    result = await agent.run('Hello')
+    assert result.output == 'test'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                instructions='Be brief.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr()),
+        ]
+    )
+
+
+async def test_multi_turn_async_model(mock_async_model: OutlinesModel) -> None:
+    """Test multi-turn conversation with message_history."""
+    agent = Agent(mock_async_model)
+    result1 = await agent.run('First message')
+    result2 = await agent.run('Second message', message_history=result1.all_messages())
+    assert result2.output == 'test'
+
+
+@skip_if_transformers_imports_unsuccessful
+async def test_text_content_input(transformers_multimodal_model: OutlinesModel):
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant'),
+                UserPromptPart(
+                    content=['Hello', TextContent(content='This is additional text content', metadata={'key': 'value'})]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+    ]
+    m = await transformers_multimodal_model._format_prompt(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert asdict(m) == snapshot(
+        {
+            'messages': [
+                {'role': 'system', 'content': 'You are a helpful assistant'},
+                {'role': 'user', 'content': ['Hello', 'This is additional text content']},
+                {'role': 'assistant', 'content': 'Hi'},
+            ]
+        }
+    )
+
+
 @skip_if_transformers_imports_unsuccessful
 def test_request_image_binary(transformers_multimodal_model: OutlinesModel, binary_image: BinaryImage) -> None:
     agent = Agent(transformers_multimodal_model)
@@ -434,11 +522,12 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                     UserPromptPart(
                         content=[
                             "What's on the image?",
-                            BinaryImage(data=IsBytes(), media_type='image/png'),
+                            IsInstance(BinaryImage),
                         ],
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -447,7 +536,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
 
 
 @skip_if_transformers_imports_unsuccessful
-def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None:
+def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable_ssrf_protection_for_vcr: None) -> None:
     agent = Agent(transformers_multimodal_model)
     result = agent.run_sync(
         [
@@ -470,6 +559,7 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -478,13 +568,13 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
-    # function tools
+def test_tool_definition(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
+    # builtin tools
     agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match='Outlines does not support function tools and builtin tools yet.'):
+    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 
-    # built-in tools
+    # function tools
     agent = Agent(llamacpp_model)
 
     @agent.tool_plain
@@ -494,7 +584,7 @@ def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
         else:
             raise ModelRetry('Wrong location, please try again')
 
-    with pytest.raises(UserError, match='Outlines does not support function tools and builtin tools yet.'):
+    with pytest.raises(UserError, match='Outlines does not support function tools yet.'):
         agent.run_sync('Hello')
 
     # output tools
@@ -507,7 +597,7 @@ def test_tool_definition(llamacpp_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_output_type(llamacpp_model: OutlinesModel) -> None:
+def test_output_type(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     class Box(BaseModel):
         width: int
         height: int
@@ -526,6 +616,7 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
             ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
@@ -544,7 +635,8 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
                 SystemPromptPart(content='You are a helpful assistance'),
                 UserPromptPart(content='Hello'),
                 RetryPromptPart(content='Failure'),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
         ModelResponse(
             parts=[
@@ -566,7 +658,8 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
                         AudioUrl('https://example.com/audio.mp3'),
                     ]
                 )
-            ]
+            ],
+            timestamp=IsDatetime(),
         )
     ]
     with pytest.raises(
@@ -574,17 +667,38 @@ def test_input_format(transformers_multimodal_model: OutlinesModel, binary_image
     ):
         agent.run_sync('How are you doing?', message_history=multi_modal_message_history)
 
+    # unsupported: uploaded files
+    uploaded_file_message_history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello there!',
+                        UploadedFile(file_id='file-123', provider_name='anthropic'),
+                    ]
+                )
+            ],
+            timestamp=IsDatetime(),
+        )
+    ]
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported by Outlines.'):
+        agent.run_sync('How are you doing?', message_history=uploaded_file_message_history)
+
     # unsupported: tool calls
     tool_call_message_history: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart(tool_call_id='1', tool_name='get_location')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')], timestamp=IsDatetime()
+        ),
     ]
     with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
         agent.run_sync('How are you doing?', message_history=tool_call_message_history)
 
     # unsupported: tool returns
     tool_return_message_history: list[ModelMessage] = [
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')])
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_location', content='London', tool_call_id='1')], timestamp=IsDatetime()
+        )
     ]
     with pytest.raises(UserError, match='Tool calls are not supported for Outlines models yet.'):
         agent.run_sync('How are you doing?', message_history=tool_return_message_history)
@@ -634,7 +748,7 @@ def test_model_settings_transformers(transformers_model: OutlinesModel) -> None:
 
 
 @skip_if_llama_cpp_imports_unsuccessful
-def test_model_settings_llamacpp(llamacpp_model: OutlinesModel) -> None:
+def test_model_settings_llamacpp(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     # unsupported arguments removed
     kwargs = llamacpp_model.format_inference_kwargs(
         ModelSettings(

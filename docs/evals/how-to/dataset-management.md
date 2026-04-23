@@ -43,7 +43,7 @@ from typing import Any
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import IsInstance
 
-dataset = Dataset[str, str, Any](cases=[], evaluators=[])
+dataset = Dataset[str, str, Any](name='dynamic_dataset', cases=[], evaluators=[])
 
 # Add cases one at a time
 dataset.add_case(
@@ -68,7 +68,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
+dataset = Dataset[str, str, Any](name='my_eval_suite', cases=[Case(name='test', inputs='example')])
 dataset.to_file('my_dataset.yaml')
 
 # Also saves schema file: my_dataset_schema.json
@@ -101,7 +101,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
+dataset = Dataset[str, str, Any](name='my_eval_suite', cases=[Case(name='test', inputs='example')])
 dataset.to_file('my_dataset.json')
 
 # Also saves schema file: my_dataset_schema.json
@@ -115,7 +115,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
+dataset = Dataset[str, str, Any](name='my_eval_suite', cases=[Case(name='test', inputs='example')])
 
 # Custom schema location
 Path('data').mkdir(exist_ok=True)
@@ -154,6 +154,7 @@ from typing import Any
 from pydantic_evals import Dataset
 
 yaml_content = """
+name: my_tests
 cases:
 - name: test
   inputs: hello
@@ -173,6 +174,7 @@ from typing import Any
 from pydantic_evals import Dataset
 
 data = {
+    'name': 'my_tests',
     'cases': [
         {
             'name': 'test',
@@ -273,7 +275,7 @@ async def main():
     print(output_file.read_text(encoding='utf-8'))
     """
     # yaml-language-server: $schema=questions_cases_schema.json
-    name: null
+    name: generated
     cases:
     - name: Easy Capital Question
       inputs:
@@ -300,13 +302,14 @@ async def main():
       evaluators:
       - EqualsExpected
     evaluators: []
+    report_evaluators: []
     """
 ```
 
 1. Define the schema for the inputs to the task.
 2. Define the schema for the expected outputs of the task.
 3. Define the schema for the metadata of the test cases.
-4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.Dataset] with 2 cases confirming to the schema.
+4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.dataset.Dataset] with 2 cases confirming to the schema.
 5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
@@ -337,7 +340,7 @@ async def main():
     """
     {
       "$schema": "questions_cases_schema.json",
-      "name": null,
+      "name": "generated",
       "cases": [
         {
           "name": "Easy Capital Question",
@@ -376,12 +379,13 @@ async def main():
           ]
         }
       ],
-      "evaluators": []
+      "evaluators": [],
+      "report_evaluators": []
     }
     """
 ```
 
-1. Generate the [`Dataset`][pydantic_evals.Dataset] exactly as above.
+1. Generate the [`Dataset`][pydantic_evals.dataset.Dataset] exactly as above.
 2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
@@ -411,6 +415,7 @@ class MyMetadata(TypedDict):
 
 # Type-safe dataset
 dataset: Dataset[MyInput, MyOutput, MyMetadata] = Dataset(
+    name='typed_dataset',
     cases=[
         Case(
             name='test',
@@ -431,7 +436,7 @@ from typing import Any
 
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset[str, str, Any](cases=[Case(name='test', inputs='example')])
+dataset = Dataset[str, str, Any](name='my_eval_suite', cases=[Case(name='test', inputs='example')])
 
 # Save with schema
 dataset.to_file('my_dataset.yaml')  # Creates my_dataset_schema.json
@@ -498,6 +503,7 @@ Case(name='test3', inputs='foo')
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='organized_by_difficulty',
     cases=[
         Case(name='easy_1', inputs='test', metadata={'difficulty': 'easy'}),
         Case(name='easy_2', inputs='test2', metadata={'difficulty': 'easy'}),
@@ -514,6 +520,7 @@ from pydantic_evals import Case, Dataset
 
 # Start with representative cases
 dataset = Dataset(
+    name='starting_small',
     cases=[
         Case(name='happy_path', inputs='test'),
         Case(name='edge_case', inputs=''),
@@ -538,7 +545,7 @@ from pydantic_evals import Case, Dataset
 
 # First create some test datasets
 for name in ['smoke_tests', 'comprehensive_tests', 'regression_tests']:
-    test_dataset = Dataset[str, Any, Any](cases=[Case(name='test', inputs='example')])
+    test_dataset = Dataset[str, Any, Any](name=name, cases=[Case(name='test', inputs='example')])
     test_dataset.to_file(f'{name}.yaml')
 
 # Smoke tests (fast, critical paths)

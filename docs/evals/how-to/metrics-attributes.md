@@ -62,7 +62,7 @@ def process(inputs: str) -> str:
 
 def my_task(inputs: str) -> str:
     # Record which model was used
-    set_eval_attribute('model', 'gpt-5')
+    set_eval_attribute('model', 'gpt-5.2')
 
     # Record feature flags
     set_eval_attribute('used_cache', True)
@@ -118,7 +118,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='report_viewing', cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(task)
 
 for case in report.cases:
@@ -140,7 +140,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test')], evaluators=[])
+dataset = Dataset(name='report_printing', cases=[Case(inputs='test')], evaluators=[])
 report = dataset.evaluate_sync(task)
 
 # Metrics and attributes are available but not shown by default
@@ -168,7 +168,7 @@ from pydantic_ai import Agent
 
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 async def ai_task(inputs: str) -> str:
@@ -279,7 +279,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_evals import increment_eval_metric, set_eval_attribute
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 
 def search(query: str) -> str:
@@ -420,12 +420,13 @@ class QualityEvaluator(Evaluator):
 
 ## Experiment-Level Metadata
 
-In addition to case-level metadata, you can also pass experiment-level metadata when calling [`evaluate()`][pydantic_evals.Dataset.evaluate]:
+In addition to case-level metadata, you can also pass experiment-level metadata when calling [`evaluate()`][pydantic_evals.dataset.Dataset.evaluate]:
 
 ```python
 from pydantic_evals import Case, Dataset
 
 dataset = Dataset(
+    name='experiment_metadata',
     cases=[
         Case(
             inputs='test',
@@ -444,7 +445,7 @@ async def main():
     report = await dataset.evaluate(
         task,
         metadata={
-            'model': 'gpt-4o',
+            'model': 'gpt-5.2',
             'prompt_version': 'v2.1',
             'temperature': 0.7,
         },
@@ -452,7 +453,7 @@ async def main():
 
     # Access experiment metadata in the report
     print(report.experiment_metadata)
-    #> {'model': 'gpt-4o', 'prompt_version': 'v2.1', 'temperature': 0.7}
+    #> {'model': 'gpt-5.2', 'prompt_version': 'v2.1', 'temperature': 0.7}
 ```
 
 ### When to Use Experiment Metadata
@@ -477,7 +478,7 @@ Experiment metadata appears at the top of printed reports:
 ```python
 from pydantic_evals import Case, Dataset
 
-dataset = Dataset(cases=[Case(inputs='hello', expected_output='HELLO')])
+dataset = Dataset(name='metadata_report', cases=[Case(inputs='hello', expected_output='HELLO')])
 
 
 async def task(text: str) -> str:
@@ -486,13 +487,13 @@ async def task(text: str) -> str:
 async def main():
     report = await dataset.evaluate(
         task,
-        metadata={'model': 'gpt-4o', 'version': 'v1.0'},
+        metadata={'model': 'gpt-5.2', 'version': 'v1.0'},
     )
 
     print(report.render())
     """
     ╭─ Evaluation Summary: task ─╮
-    │ model: gpt-4o              │
+    │ model: gpt-5.2             │
     │ version: v1.0              │
     ╰────────────────────────────╯
     ┏━━━━━━━━━━┳━━━━━━━━━━┓
@@ -525,9 +526,9 @@ from pydantic_evals import Case, Dataset
 # Module constants as single source of truth
 MODEL_NAME = 'openai:gpt-5-mini'
 TEMPERATURE = 0.7
-SYSTEM_PROMPT = 'You are a helpful assistant.'
+INSTRUCTIONS = 'You are a helpful assistant.'
 
-agent = Agent(MODEL_NAME, model_settings={'temperature': TEMPERATURE}, system_prompt=SYSTEM_PROMPT)
+agent = Agent(MODEL_NAME, model_settings={'temperature': TEMPERATURE}, instructions=INSTRUCTIONS)
 
 
 async def task(inputs: str) -> str:
@@ -536,7 +537,7 @@ async def task(inputs: str) -> str:
 
 
 async def main():
-    dataset = Dataset(cases=[Case(inputs='What is the capital of France?')])
+    dataset = Dataset(name='shared_constants', cases=[Case(inputs='What is the capital of France?')])
 
     # Metadata references same constants
     await dataset.evaluate(
@@ -544,7 +545,7 @@ async def main():
         metadata={
             'model': MODEL_NAME,
             'temperature': TEMPERATURE,
-            'system_prompt': SYSTEM_PROMPT,
+            'instructions': INSTRUCTIONS,
         },
     )
 ```
@@ -596,7 +597,7 @@ async def task(inputs: str) -> str:
 
 # Evaluate with metadata derived from the same config
 async def main():
-    dataset = Dataset(cases=[Case(inputs='What is the capital of France?')])
+    dataset = Dataset(name='config_evaluation', cases=[Case(inputs='What is the capital of France?')])
 
     report = await dataset.evaluate(
         task,
@@ -636,7 +637,7 @@ async def task(inputs: str) -> str:
 
 
 async def main():
-    dataset = Dataset(cases=[Case(inputs='test')])
+    dataset = Dataset(name='anti_pattern', cases=[Case(inputs='test')])
 
     # ❌ BAD: Metadata manually typed - easy to get out of sync
     await dataset.evaluate(
@@ -677,14 +678,14 @@ case = Case(
     metadata={'difficulty': 'hard', 'category': 'math'},  # Per-case metadata
 )
 
-dataset = Dataset(cases=[case])
+dataset = Dataset(name='metrics_demo', cases=[case])
 
 
 # Metrics & Attributes: Recorded during execution
 async def task(inputs):
     # These are recorded during execution for each case
     increment_eval_metric('tokens', 100)
-    set_eval_attribute('model', 'gpt-5')
+    set_eval_attribute('model', 'gpt-5.2')
     return f'Result: {inputs}'
 
 
@@ -762,6 +763,7 @@ set_eval_attribute('response_keys', list(giant_response_object.keys())[:10])  # 
 
 ## Next Steps
 
+- **[Case Lifecycle Hooks](lifecycle.md)** - Per-case setup, teardown, and context preparation
 - **[Custom Evaluators](../evaluators/custom.md)** - Use metrics/attributes in evaluators
 - **[Logfire Integration](logfire-integration.md)** - View metrics in Logfire
 - **[Concurrency & Performance](concurrency.md)** - Optimize evaluation performance

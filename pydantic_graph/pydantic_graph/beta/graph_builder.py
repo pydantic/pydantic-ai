@@ -284,6 +284,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         async def wrapper(ctx: StepContext[StateT, DepsT, InputT]):
             return call(ctx)
 
+        node_id = node_id or get_callable_name(call)
+
         return self.step(call=wrapper, node_id=node_id, label=label)
 
     @overload

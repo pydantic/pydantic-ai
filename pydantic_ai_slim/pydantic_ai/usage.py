@@ -47,8 +47,16 @@ class UsageBase:
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
         BeforeValidator(lambda d: d or {}),
-    ] = dataclasses.field(default_factory=dict)
+    ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
+
+    def __copy__(self) -> UsageBase:
+        """Shallow copy that also copies mutable fields like `details`."""
+        cls = type(self)
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        new.details = self.details.copy()
+        return new
 
     @property
     @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
@@ -75,8 +83,12 @@ class UsageBase:
 
         details = self.details.copy()
         if self.cache_write_tokens:
+            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # For backwards compat
             details['cache_write_tokens'] = self.cache_write_tokens
         if self.cache_read_tokens:
+            result['gen_ai.usage.cache_read.input_tokens'] = self.cache_read_tokens
+            # For backwards compat
             details['cache_read_tokens'] = self.cache_read_tokens
         if self.input_audio_tokens:
             details['input_audio_tokens'] = self.input_audio_tokens
@@ -197,7 +209,7 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: RunUsage | RequestUsage) -> None:
@@ -236,7 +248,9 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
-        slf.details[key] = slf.details.get(key, 0) + value
+        # Note: value can be None at runtime from model responses despite the type annotation
+        if isinstance(value, (int, float)):
+            slf.details[key] = slf.details.get(key, 0) + value
 
 
 @dataclass(repr=False, kw_only=True)
@@ -267,8 +281,18 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
-    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
+    to enforce `request_tokens_limit` ahead of time.
+
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request) and is disabled by default.
+
+    Supported by:
+
+    - Anthropic
+    - Google
+    - Bedrock Converse
+
+    Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
+    """
 
     @property
     @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
@@ -334,8 +358,8 @@ class UsageLimits:
     ):
         self.request_limit = request_limit
         self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit or request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit or response_tokens_limit
+        self.input_tokens_limit = input_tokens_limit if input_tokens_limit is not None else request_tokens_limit
+        self.output_tokens_limit = output_tokens_limit if output_tokens_limit is not None else response_tokens_limit
         self.total_tokens_limit = total_tokens_limit
         self.count_tokens_before_request = count_tokens_before_request
 

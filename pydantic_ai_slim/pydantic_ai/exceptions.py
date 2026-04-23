@@ -4,6 +4,7 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
+import pydantic_core
 from pydantic_core import core_schema
 
 if sys.version_info < (3, 11):
@@ -11,28 +12,36 @@ if sys.version_info < (3, 11):
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
+
 if TYPE_CHECKING:
-    from .messages import RetryPromptPart
+    from .messages import ModelResponse, RetryPromptPart
 
 __all__ = (
     'ModelRetry',
     'CallDeferred',
     'ApprovalRequired',
+    'SkipModelRequest',
+    'SkipToolValidation',
+    'SkipToolExecution',
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
+    'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
 )
 
 
 class ModelRetry(Exception):
-    """Exception to raise when a tool function should be retried.
+    """Exception to raise to request a model retry.
 
-    The agent will return the message to the model and ask it to try calling the function/tool again.
+    Can be raised from tool functions, output validators, and capability hooks
+    (such as `after_model_request`, `after_tool_execute`, etc.) to send
+    a retry prompt back to the model asking it to try again.
     """
 
     message: str
@@ -81,6 +90,9 @@ class CallDeferred(Exception):
         self.metadata = metadata
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.metadata,)
+
 
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
@@ -94,6 +106,52 @@ class ApprovalRequired(Exception):
 
     def __init__(self, metadata: dict[str, Any] | None = None):
         self.metadata = metadata
+        super().__init__()
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.metadata,)
+
+
+class SkipModelRequest(Exception):
+    """Exception to raise in before/wrap model request hooks to skip the model call.
+
+    The provided response will be used instead of calling the model.
+
+    Note: when raised in `before_model_request`, any message history modifications
+    made by earlier capabilities in that hook will not be persisted to the agent's
+    message history, since the request preparation is aborted.
+    """
+
+    response: ModelResponse
+
+    def __init__(self, response: ModelResponse):
+        self.response = response
+        super().__init__()
+
+
+class SkipToolValidation(Exception):
+    """Exception to raise in before/wrap tool validate hooks to skip validation.
+
+    The provided args will be used as the validated arguments.
+    """
+
+    validated_args: dict[str, Any]
+
+    def __init__(self, validated_args: dict[str, Any]):
+        self.validated_args = validated_args
+        super().__init__()
+
+
+class SkipToolExecution(Exception):
+    """Exception to raise in before/wrap tool execute hooks to skip execution.
+
+    The provided result will be used as the tool result.
+    """
+
+    result: Any
+
+    def __init__(self, result: Any):
+        self.result = result
         super().__init__()
 
 
@@ -126,6 +184,10 @@ class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
 
 
+class ConcurrencyLimitExceeded(AgentRunError):
+    """Error raised when the concurrency queue depth exceeds max_queued."""
+
+
 class UnexpectedModelBehavior(AgentRunError):
     """Error caused by unexpected Model behavior, e.g. an unexpected response code."""
 
@@ -145,11 +207,18 @@ class UnexpectedModelBehavior(AgentRunError):
                 self.body = body
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.message, self.body)
+
     def __str__(self) -> str:
         if self.body:
             return f'{self.message}, body:\n{self.body}'
         else:
             return self.message
+
+
+class ContentFilterError(UnexpectedModelBehavior):
+    """Raised when content filtering is triggered by the model provider resulting in an empty response."""
 
 
 class ModelAPIError(AgentRunError):
@@ -162,9 +231,12 @@ class ModelAPIError(AgentRunError):
         self.model_name = model_name
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.message)
+
 
 class ModelHTTPError(ModelAPIError):
-    """Raised when an model provider response has a status code of 4xx or 5xx."""
+    """Raised when a model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""
@@ -178,6 +250,9 @@ class ModelHTTPError(ModelAPIError):
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.status_code, self.model_name, self.body)
+
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
@@ -188,7 +263,34 @@ class ToolRetryError(Exception):
 
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
-        super().__init__()
+        message = (
+            tool_retry.content
+            if isinstance(tool_retry.content, str)
+            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
+        )
+        super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.tool_retry,)
+
+    @staticmethod
+    def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
+        """Format ErrorDetails as a human-readable message.
+
+        We format manually rather than using ValidationError.from_exception_data because
+        some error types (value_error, assertion_error, etc.) require an 'error' key in ctx,
+        but when ErrorDetails are serialized, exception objects are stripped from ctx.
+        The 'msg' field already contains the human-readable message, so we use that directly.
+        """
+        error_count = len(errors)
+        lines = [
+            f'{error_count} validation error{"" if error_count == 1 else "s"}{f" for {tool_name!r}" if tool_name else ""}'
+        ]
+        for e in errors:
+            loc = '.'.join(str(x) for x in e['loc']) if e['loc'] else '__root__'
+            lines.append(loc)
+            lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
+        return '\n'.join(lines)
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):

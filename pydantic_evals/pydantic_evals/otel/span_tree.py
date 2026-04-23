@@ -433,8 +433,8 @@ class SpanTree:
     You can then search or iterate the tree to make your assertions (using DFS for traversal).
     """
 
-    roots: list[SpanNode] = field(default_factory=list)
-    nodes_by_id: dict[str, SpanNode] = field(default_factory=dict)
+    roots: list[SpanNode] = field(default_factory=list[SpanNode])
+    nodes_by_id: dict[str, SpanNode] = field(default_factory=dict[str, SpanNode])
 
     # -------------------------------------------------------------------------
     # Construction

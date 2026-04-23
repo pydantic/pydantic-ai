@@ -88,6 +88,19 @@ class EndMarker(Generic[OutputT]):
 
 
 @dataclass
+class ErrorMarker:
+    """A marker indicating that a graph node raised an exception.
+
+    Yielded by the graph iterator instead of raising immediately, allowing the caller
+    to recover by sending new tasks via `GraphRun.next()` or `GraphRun.override_next()`.
+    If the caller does not override, the error is re-raised on the next iteration.
+    """
+
+    error: BaseException
+    """The exception raised by the node."""
+
+
+@dataclass
 class JoinItem:
     """An item representing data flowing into a join operation.
 
@@ -390,7 +403,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self._active_reducers: dict[tuple[JoinID, NodeRunID], JoinState] = {}
         """Active reducers for join operations."""
 
-        self._next: EndMarker[OutputT] | Sequence[GraphTask] | None = None
+        self._next: EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask] | None = None
         """The next item to be processed."""
 
         self._next_task_id = 0
@@ -464,11 +477,19 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
         Returns:
             The next execution result from the graph
+
+        Raises:
+            Exception: If a node raised an error and the caller has not recovered via
+                `override_next()`.
         """
         if self._next is None:
             self._next = await anext(self._iterator)
         else:
             self._next = await self._iterator.asend(self._next)
+        if isinstance(self._next, ErrorMarker):
+            # A node raised an error. Store it so the caller can recover via
+            # override_next() before the next __anext__ call re-raises.
+            raise self._next.error
         return self._next
 
     async def next(
@@ -490,14 +511,31 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             # if `next` is called before the `first_node` has run.
             await anext(self)
         if value is not None:
-            if isinstance(value, EndMarker):
-                self._next = value
-            else:
-                self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
+            self._set_next(value)
         return await anext(self)
 
+    def override_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
+        """Override the next pending step, allowing the graph to continue after an `End` or error.
+
+        This is used by hook systems (like `after_node_run` or `on_node_run_error`) to redirect
+        the graph to a new node when the current step produced an `End` result or raised an error,
+        or to signal early completion by passing an `EndMarker`.
+
+        Must only be called between iterations (not while an iteration is in flight).
+
+        Args:
+            value: New task requests to execute next, or an `EndMarker` to signal completion.
+        """
+        self._set_next(value)
+
+    def _set_next(self, value: Sequence[GraphTaskRequest] | EndMarker[OutputT]) -> None:
+        if isinstance(value, EndMarker):
+            self._next = value
+        else:
+            self._next = [GraphTask.from_request(gtr, self._get_next_task_id) for gtr in value]
+
     @property
-    def next_task(self) -> EndMarker[OutputT] | Sequence[GraphTask]:
+    def next_task(self) -> EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask]:
         """Get the next task(s) to be executed.
 
         Returns:
@@ -538,6 +576,7 @@ class _GraphTaskResult:
     source: GraphTask
     result: EndMarker[Any] | Sequence[GraphTask] | JoinItem
     source_is_finished: bool = True
+    error: BaseException | None = None
 
 
 @dataclass
@@ -564,7 +603,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
 
     async def iter_graph(  # noqa: C901
         self, first_task: GraphTask
-    ) -> AsyncGenerator[EndMarker[OutputT] | Sequence[GraphTask], EndMarker[OutputT] | Sequence[GraphTask]]:
+    ) -> AsyncGenerator[
+        EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask], EndMarker[OutputT] | ErrorMarker | Sequence[GraphTask]
+    ]:
         async with self.iter_stream_sender:
             try:
                 # Fire off the first task
@@ -575,7 +616,15 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 async with self.iter_stream_receiver:
                     while self.active_tasks or self.active_reducers:
                         async for task_result in self.iter_stream_receiver:  # pragma: no branch
-                            if isinstance(task_result.result, JoinItem):
+                            if task_result.error is not None:
+                                # Yield ErrorMarker instead of raising, so the caller can
+                                # recover via on_node_run_error by sending new tasks.
+                                maybe_overridden_result = yield ErrorMarker(task_result.error)
+                                if isinstance(maybe_overridden_result, ErrorMarker):
+                                    # Caller echoed the error back — actually raise
+                                    raise task_result.error
+                                # Caller recovered by sending tasks or EndMarker
+                            elif isinstance(task_result.result, JoinItem):
                                 maybe_overridden_result = task_result.result
                             else:
                                 maybe_overridden_result = yield task_result.result
@@ -618,6 +667,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                 if join_state.cancelled_sibling_tasks:
                                     await self._cancel_sibling_tasks(parent_fork_id, fork_run_id)
                             else:
+                                assert not isinstance(maybe_overridden_result, ErrorMarker)
                                 for new_task in maybe_overridden_result:
                                     self.active_tasks[new_task.task_id] = new_task
 
@@ -714,6 +764,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     # with the other `if isinstance(maybe_overridden_result, EndMarker):`
                                     self.task_group.cancel_scope.cancel()
                                     return
+                                assert not isinstance(maybe_overridden_result, ErrorMarker)
                                 for new_task in maybe_overridden_result:
                                     self.active_tasks[new_task.task_id] = new_task
                                 new_task_ids = {t.task_id for t in maybe_overridden_result}
@@ -727,7 +778,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 self.task_group.cancel_scope.cancel()
                 return
 
-        raise RuntimeError(  # pragma: no cover
+        raise RuntimeError(  # pragma: lax no cover
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
         )
 
@@ -747,7 +798,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
     async def _run_tracked_task(self, t_: GraphTask):
         with CancelScope() as scope:
             self.cancel_scopes[t_.task_id] = scope
-            result = await self._run_task(t_)
+            try:
+                result = await self._run_task(t_)
+            except BaseException as exc:
+                # Send the error through the stream instead of letting it propagate
+                # into the task group, which would transform it (e.g. into CancelledError
+                # or ExceptionGroup). This preserves the original exception for the caller.
+                try:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
+                except BrokenResourceError:
+                    pass  # pragma: no cover
+                return
             try:
                 if isinstance(result, _GraphTaskAsyncIterable):
                     async for new_tasks in result.iterable:

@@ -1,16 +1,16 @@
 interactions:
 - request:
     body: '{"input": {"converse": {"messages": [{"role": "user", "content": [{"text": "The quick brown fox jumps over the
-      lazydog."}]}], "system": []}}}'
+      lazydog."}, {"cachePoint": {"type": "default"}}, {"text": "What was next?"}]}], "system": []}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZDYxNmVkOTktYzgwMi00MDE0LTljZGUtYWFjMjk5N2I2MDFj
+        Y2FhYzlhNjAtNWYyOC00NjhmLWJkZTgtODM0OTdhMjc1ZTI3
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '141'
+      - '206'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -25,7 +25,7 @@ interactions:
       content-type:
       - application/json
     parsed_body:
-      inputTokens: 19
+      inputTokens: 23
     status:
       code: 200
       message: OK

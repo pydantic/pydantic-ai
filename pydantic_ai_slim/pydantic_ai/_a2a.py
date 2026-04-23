@@ -1,5 +1,6 @@
 from __future__ import annotations, annotations as _annotations
 
+import base64
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -224,7 +225,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
             elif part['kind'] == 'file':
                 file_content = part['file']
                 if 'bytes' in file_content:
-                    data = file_content['bytes'].encode('utf-8')
+                    data = base64.b64decode(file_content['bytes'])
                     mime_type = file_content.get('mime_type', 'application/octet-stream')
                     content = BinaryContent(data=data, media_type=mime_type)
                     model_parts.append(UserPromptPart(content=[content]))

@@ -5,7 +5,9 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
 * [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
+* [xAI](xai.md)
 * [Bedrock](bedrock.md)
+* [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
@@ -17,18 +19,18 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
+- [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [Cerebras](openai.md#cerebras)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models)
-- [Grok (xAI)](openai.md#grok-xai)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
 - [Ollama](openai.md#ollama)
 - [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
 - [Perplexity](openai.md#perplexity)
+- [SambaNova](openai.md#sambanova)
 - [Together AI](openai.md#together-ai)
 - [Vercel AI Gateway](openai.md#vercel-ai-gateway)
 
@@ -48,7 +50,7 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   any other code changes just by swapping out the Model it uses. Model classes are named
   roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIChatModel`, `AnthropicModel`, `GoogleModel`,
   etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-5`,
-  `claude-sonnet-4-5`, `gemini-2.5-flash`) as a parameter.
+  `claude-sonnet-4-5`, `gemini-3-flash-preview`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
@@ -59,11 +61,31 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   constructed to get the best results, independent of the model and provider classes used.
   For example, different models have different restrictions on the JSON schemas that can be used for tools,
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
-  with model name `gemini-2.5-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
+  with model name `gemini-3-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-3-pro-preview`.
 
-When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5` or `openrouter:google/gemini-2.5-pro-preview`,
+When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5.2` or `openrouter:google/gemini-3-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
+
+## HTTP Client Lifecycle
+
+When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+async def main():
+    async with agent:
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
+
+If you provide your own `http_client`, you are responsible for closing it yourself.
 
 ## Custom Models
 
@@ -77,14 +99,90 @@ The best place to start is to review the source code for existing implementation
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
+## HTTP Request Concurrency
+
+You can limit the number of concurrent HTTP requests to a model using the
+[`ConcurrencyLimitedModel`][pydantic_ai.ConcurrencyLimitedModel] wrapper.
+This is useful for respecting rate limits or managing resource usage when running many agents in parallel.
+
+```python {title="model_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel
+
+# Wrap a model with concurrency limiting
+model = ConcurrencyLimitedModel('openai:gpt-4o', limiter=5)
+
+# Multiple agents can share this rate-limited model
+agent = Agent(model)
+
+
+async def main():
+    # These will be rate-limited to 5 concurrent HTTP requests
+    results = await asyncio.gather(
+        *[agent.run(f'Question {i}') for i in range(20)]
+    )
+    print(len(results))
+    #> 20
+```
+
+The `limiter` parameter accepts:
+
+- An integer for simple limiting (e.g., `limiter=5`)
+- A [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure control
+- A [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across multiple models
+
+### Shared Concurrency Limits
+
+To share a concurrency limit across multiple models (e.g., different models from the same provider),
+you can create a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] and pass it to
+multiple `ConcurrencyLimitedModel` instances:
+
+```python {title="shared_concurrency.py"}
+import asyncio
+
+from pydantic_ai import Agent, ConcurrencyLimitedModel, ConcurrencyLimiter
+
+# Create a shared limiter with a descriptive name
+shared_limiter = ConcurrencyLimiter(max_running=10, name='openai-pool')
+
+# Both models share the same concurrency limit
+model1 = ConcurrencyLimitedModel('openai:gpt-4o', limiter=shared_limiter)
+model2 = ConcurrencyLimitedModel('openai:gpt-4o-mini', limiter=shared_limiter)
+
+agent1 = Agent(model1)
+agent2 = Agent(model2)
+
+
+async def main():
+    # Total concurrent requests across both agents limited to 10
+    results = await asyncio.gather(
+        *[agent1.run(f'Question {i}') for i in range(10)],
+        *[agent2.run(f'Question {i}') for i in range(10)],
+    )
+    print(len(results))
+    #> 20
+```
+
+When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
+attributes showing the queue depth and configured limits. The `name` parameter on
+`ConcurrencyLimiter` helps identify shared limiters in traces.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
-in sequence until one successfully returns a result. Under the hood, Pydantic AI automatically switches
-from one model to the next if the current model returns a 4xx or 5xx status code.
+in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
+raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
+failure (like a truncated response or a failed built-in tool call).
+
+By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
+so you don't need to configure anything for the most common use case.
+
+This behavior is controlled by the `fallback_on` parameter (see
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
+exception handlers, and response handlers — all of which can be sync or async.
 
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
@@ -102,7 +200,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 
-openai_model = OpenAIChatModel('gpt-5')
+openai_model = OpenAIChatModel('gpt-5.2')
 anthropic_model = AnthropicModel('claude-sonnet-4-5')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -152,7 +250,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
-    'gpt-5',
+    'gpt-5.2',
     settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
 )
 anthropic_model = AnthropicModel(
@@ -186,7 +284,7 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
 
-    openai_model = OpenAIChatModel('gpt-5')
+    openai_model = OpenAIChatModel('gpt-5.2')
     anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -218,7 +316,7 @@ contains all the exceptions encountered during the `run` execution.
             print(exc)
 
 
-    openai_model = OpenAIChatModel('gpt-5')
+    openai_model = OpenAIChatModel('gpt-5.2')
     anthropic_model = AnthropicModel('claude-sonnet-4-5')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -233,4 +331,241 @@ By default, the `FallbackModel` only moves on to the next model if the current m
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
-    Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agents.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+    Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+
+### Response-Based Fallback
+
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
+
+!!! note "Non-streaming only"
+    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
+    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
+
+The `fallback_on` parameter accepts:
+
+- A tuple of exception types: `(ModelAPIError, ModelHTTPError)`
+- An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
+- A response handler (sync or async): `def check(r: ModelResponse) -> bool`
+- A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
+
+Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+#### Finish Reason Example
+
+A simple use case is checking the model's finish reason — for example, falling back if the response was truncated due to length limits:
+
+```python {title="fallback_on_finish_reason.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import FinishReason, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def bad_finish_reason(response: ModelResponse) -> bool:
+    """Fallback if the model stopped due to length limit, content filter, or error."""
+    reason: FinishReason | None = response.finish_reason
+    # Trigger fallback for problematic finish reasons
+    return reason in ('length', 'content_filter', 'error')
+
+
+fallback_model = FallbackModel(
+    'openai:gpt-5.2',
+    'anthropic:claude-sonnet-4-5',
+    fallback_on=bad_finish_reason,
+)
+
+agent = Agent(fallback_model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+!!! warning "Solo response handlers replace default exception fallback"
+    When you pass a single response handler as `fallback_on` (as above), it **replaces** the default `(ModelAPIError,)` exception fallback entirely. This means API errors (4xx/5xx) will propagate as exceptions instead of triggering fallback to the next model.
+
+    To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
+
+!!! note
+    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
+    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
+    catches by default), and empty responses are retried. A response handler is useful for custom
+    checks beyond these built-in behaviors.
+
+#### Built-in Tool Failure Example
+
+A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
+
+```python {title="fallback_on_builtin_tool.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.google import GoogleModel
+
+
+def web_fetch_failed(response: ModelResponse) -> bool:
+    """Check if a web_fetch built-in tool failed to retrieve content."""
+    for call, result in response.builtin_tool_calls:
+        if call.tool_name != 'web_fetch':
+            continue
+        if not isinstance(result.content, list):
+            continue
+        for item in result.content:
+            if isinstance(item, dict):
+                status = item.get('url_retrieval_status', '')
+                if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                    return True
+    return False
+
+
+google_model = GoogleModel('gemini-2.5-flash')
+anthropic_model = AnthropicModel('claude-sonnet-4-5')
+
+# Auto-detected as response handler via type hint
+fallback_model = FallbackModel(
+    google_model,
+    anthropic_model,
+    fallback_on=web_fetch_failed,
+)
+
+agent = Agent(fallback_model)
+
+# If Google's web_fetch fails, automatically falls back to Anthropic
+result = agent.run_sync('Summarize https://ai.pydantic.dev')
+print(result.output)
+"""
+Pydantic AI is a Python agent framework for building production-grade LLM applications.
+"""
+```
+
+Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+#### Combining Handlers
+
+You can combine exception types, exception handlers, and response handlers in a single list:
+
+```python {title="fallback_on_mixed.py" requires="fallback_on_builtin_tool.py"}
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.fallback import FallbackModel
+
+from fallback_on_builtin_tool import anthropic_model, google_model, web_fetch_failed
+
+fallback_model = FallbackModel(
+    google_model,
+    anthropic_model,
+    fallback_on=[
+        ModelAPIError,  # Exception type
+        lambda exc: 'rate limit' in str(exc).lower(),  # Exception handler (untyped lambda)
+        web_fetch_failed,  # Response handler (auto-detected via type hint)
+    ],
+)
+```
+
+### Exception Handling in Middleware and Decorators
+
+When using `FallbackModel`, it's important to understand that [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]
+inherits from Python's [`ExceptionGroup`](https://docs.python.org/3/library/exceptions.html#ExceptionGroup). This means
+that existing exception handling code that catches specific exceptions (like `ModelAPIError`) won't automatically catch
+the individual exceptions wrapped inside the group.
+
+For example, if you have middleware or a decorator that catches `ModelAPIError`:
+
+```python {title="middleware_without_fallback.py"}
+from collections.abc import Callable
+from functools import wraps
+from typing import TypeVar
+
+from pydantic_ai import ModelAPIError
+
+T = TypeVar('T')
+
+
+# This handler will NOT catch ModelAPIError when using FallbackModel!
+def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+    @wraps(func)
+    def wrapper(*args, **kwargs) -> T:
+        try:
+            return func(*args, **kwargs)
+        except ModelAPIError as e:  # Won't catch FallbackExceptionGroup
+            print(f'API error: {e}')
+            raise
+
+    return wrapper
+```
+
+This decorator will miss `ModelAPIError` exceptions when using `FallbackModel`, because they're wrapped in a
+`FallbackExceptionGroup` containing one exception per failed model, in the order the models were tried.
+
+To handle both cases, you can use Python 3.11+ `except*` syntax, which catches matching exceptions from
+exception groups as well as bare exceptions. Note that `except*` always delivers the caught exceptions as an
+`ExceptionGroup` (even if the original was a bare exception), so re-raising will propagate an `ExceptionGroup`
+rather than the original exception type:
+
+=== "Python >=3.11"
+
+    ```python {title="middleware_with_fallback.py" py="3.11"}
+    from collections.abc import Callable
+    from functools import wraps
+    from typing import TypeVar
+
+    from pydantic_ai import ModelAPIError
+
+    T = TypeVar('T')
+
+
+    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            try:
+                return func(*args, **kwargs)
+            except* ModelAPIError as exc_group:
+                for exc in exc_group.exceptions:
+                    print(f'API error: {exc}')
+                raise
+
+        return wrapper
+    ```
+
+=== "Python <3.11"
+
+    ```python {title="middleware_with_fallback.py" noqa="F821" test="skip"}
+    from collections.abc import Callable
+    from functools import wraps
+    from typing import TypeVar
+
+    from pydantic_ai import FallbackExceptionGroup, ModelAPIError
+
+    T = TypeVar('T')
+
+
+    def handle_api_errors(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            try:
+                return func(*args, **kwargs)
+            except FallbackExceptionGroup as exc_group:
+                for exc in exc_group.exceptions:
+                    if isinstance(exc, ModelAPIError):
+                        print(f'API error from fallback: {exc}')
+                raise
+            except ModelAPIError as e:
+                print(f'API error: {e}')
+                raise
+
+        return wrapper
+    ```
+
+You can also catch `FallbackExceptionGroup` directly if you want to handle it specifically:
+
+```python {title="catch_fallback_exception_group.py" test="skip"}
+from pydantic_ai import Agent, FallbackExceptionGroup
+from pydantic_ai.models.fallback import FallbackModel
+
+agent = Agent(FallbackModel('openai:gpt-5-mini', 'anthropic:claude-sonnet-4-6'))
+
+try:
+    response = agent.run_sync('What is the capital of France?')
+except FallbackExceptionGroup as exc_group:
+    print(f'All {len(exc_group.exceptions)} models failed:')
+    for exc in exc_group.exceptions:
+        print(f'  - {exc}')
+```

@@ -1,6 +1,14 @@
+"""Deprecated Gemini model implementation.
+
+This module is deprecated. Use [`pydantic_ai.models.google.GoogleModel`][pydantic_ai.models.google.GoogleModel] instead.
+See the [Google model documentation](https://ai.pydantic.dev/models/google/) for more details.
+
+This module uses a custom HTTP implementation. The recommended `GoogleModel` in
+`google.py` uses the official `google-genai` SDK.
+"""
+
 from __future__ import annotations as _annotations
 
-import base64
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -22,6 +30,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     FilePart,
     FileUrl,
     ModelMessage,
@@ -36,6 +45,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -79,10 +89,7 @@ class GeminiModelSettings(ModelSettings, total=False):
     """Thinking is "on" by default in both the API and AI Studio.
 
     Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
-    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
-    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
-
-    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
+    to `True`. If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
 
     See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
     """
@@ -96,7 +103,7 @@ class GeminiModelSettings(ModelSettings, total=False):
 
 @deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
-class GeminiModel(Model):
+class GeminiModel(Model[httpx.AsyncClient]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
@@ -149,8 +156,8 @@ class GeminiModel(Model):
 
     @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'  # pragma: no cover
-        return self._url  # pragma: no cover
+        assert self._url is not None, 'URL not initialized'
+        return self._url
 
     @property
     def model_name(self) -> GeminiModelName:
@@ -299,6 +306,8 @@ class GeminiModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            provider_name=self._provider.name,
+            provider_url=self.base_url,
         )
 
     async def _process_streamed_response(
@@ -330,6 +339,7 @@ class GeminiModel(Model):
             _content=content,
             _stream=aiter_bytes,
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
         )
 
     async def _message_to_gemini_content(
@@ -363,8 +373,9 @@ class GeminiModel(Model):
                 contents.append(_content_model_response(m))
             else:
                 assert_never(m)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                sys_prompt_parts.append(_GeminiTextPart(text=part.content))
         return sys_prompt_parts, contents
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[_GeminiPartUnion]:
@@ -373,14 +384,12 @@ class GeminiModel(Model):
         else:
             content: list[_GeminiPartUnion] = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
-                elif isinstance(item, TextContent):
-                    content.append({'text': item.content})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, BinaryContent):
-                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append(
-                        _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
+                        _GeminiInlineDataPart(inline_data={'data': item.base64, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
@@ -395,8 +404,14 @@ class GeminiModel(Model):
                     else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
+                elif isinstance(item, UploadedFile):  # pragma: no cover
+                    raise NotImplementedError(
+                        'UploadedFile is not supported by GeminiModel. Use GoogleModel with the Files API instead.'
+                    )
                 elif isinstance(item, CachePoint):
-                    # Gemini doesn't support prompt caching via CachePoint
+                    # Gemini doesn't support inline CachePoint markers. Google's caching requires
+                    # pre-creating cache objects via the API, then referencing them by name using
+                    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
                     pass
                 else:
                     assert_never(item)  # pragma: lax no cover
@@ -456,6 +471,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -531,6 +547,11 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -549,8 +570,8 @@ class _GeminiRequest(TypedDict):
     """
 
     # Note: Even though Google supposedly supports camelCase and snake_case, we've had user report misbehavior
-    # when using snake_case, which is why this typeddict now uses camelCase. And anyway, the plan is to replace this
-    # with an official google SDK in the near future anyway.
+    # when using snake_case, which is why this typeddict now uses camelCase. The recommended `GoogleModel` in
+    # `google.py` uses the official `google-genai` SDK and should be used instead of this deprecated module.
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
     toolConfig: NotRequired[_GeminiToolConfig]
@@ -568,7 +589,7 @@ class GeminiSafetySettings(TypedDict):
     """Safety settings options for Gemini model request.
 
     See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
-    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
+    For an example on how to use `GeminiSafetySettings`, see [here](../../agent.md#model-specific-settings).
     """
 
     category: Literal[
@@ -637,12 +658,13 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         if isinstance(item, ToolCallPart):
             part = _function_call_part_from_call(item)
             if function_call_requires_signature and not part.get('thought_signature'):
-                # Per https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#migrating_from_other_models:
-                # > If you are transferring a conversation trace from another model (e.g., Gemini 2.5) or injecting
-                # > a custom function call that was not generated by Gemini 3, you will not have a valid signature.
-                # > To bypass strict validation in these specific scenarios, populate the field with this specific
-                # > dummy string: "thoughtSignature": "context_engineering_is_the_way_to_go"
-                part['thought_signature'] = b'context_engineering_is_the_way_to_go'
+                # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
+                # > You can set the following dummy signatures of either "context_engineering_is_the_way_to_go"
+                # > or "skip_thought_signature_validator"
+                # Per https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling:
+                # > You can set thought_signature to skip_thought_signature_validator
+                # We use "skip_thought_signature_validator" as it works for both Gemini API and Vertex AI.
+                part['thought_signature'] = b'skip_thought_signature_validator'
             # Only the first function call requires a signature
             function_call_requires_signature = False
             parts.append(part)
@@ -659,6 +681,9 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
             pass
         elif isinstance(item, FilePart):  # pragma: no cover
             # Files generated by models are not sent back to models that don't themselves generate files.
+            pass
+        elif isinstance(item, CompactionPart):  # pragma: no cover
+            # Compaction parts are not sent back to models that don't support compaction.
             pass
         else:
             assert_never(item)
@@ -716,14 +741,14 @@ def _process_response_from_parts(
     model_name: GeminiModelName,
     usage: usage.RequestUsage,
     vendor_id: str | None,
+    provider_name: str,
+    provider_url: str,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            # NOTE: Google doesn't include the `thought` field anymore. We handle this here in case they decide to
-            # change their mind and start including it again.
-            if part.get('thought'):  # pragma: no cover
+            if part.get('thought'):
                 items.append(ThinkingPart(content=part['text']))
             else:
                 items.append(TextPart(content=part['text']))
@@ -734,7 +759,13 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, provider_response_id=vendor_id, provider_details=vendor_details
+        parts=items,
+        usage=usage,
+        model_name=model_name,
+        provider_name=provider_name,
+        provider_response_id=vendor_id,
+        provider_details=vendor_details,
+        provider_url=provider_url,
     )
 
 

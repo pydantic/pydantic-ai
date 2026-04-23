@@ -14,10 +14,12 @@ from typing_extensions import assert_never, overload
 from .. import _utils, usage
 from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
+from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
@@ -25,6 +27,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -191,6 +194,10 @@ class FunctionModel(Model):
         )
 
     @property
+    def provider(self) -> None:
+        return None
+
+    @property
     def model_name(self) -> str:
         """The model name."""
         return self._model_name
@@ -199,6 +206,13 @@ class FunctionModel(Model):
     def system(self) -> str:
         """The system / model provider."""
         return self._system
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """FunctionModel supports all builtin tools for testing flexibility."""
+        from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS
+
+        return SUPPORTED_BUILTIN_TOOLS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -211,8 +225,8 @@ class AgentInfo:
     function_tools: list[ToolDefinition]
     """The function tools available on this agent.
 
-    These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
-    [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
+    These are the tools registered via the [`tool`][pydantic_ai.agent.Agent.tool] and
+    [`tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorators.
     """
     allow_text_output: bool
     """Whether a plain text output is allowed."""
@@ -348,6 +362,11 @@ class FunctionStreamedResponse(StreamedResponse):
         return None
 
     @property
+    def provider_url(self) -> None:
+        """Get the provider base URL."""
+        return None
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -378,14 +397,14 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ThinkingPart):
                     response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart):
-                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):
+                elif isinstance(part, ToolCallPart | BuiltinToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 elif isinstance(part, BuiltinToolReturnPart):
                     response_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
+                elif isinstance(part, CompactionPart):
+                    pass
                 else:
                     assert_never(part)
         else:
@@ -405,8 +424,9 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
 
     tokens = 0
     for part in content:
-        if isinstance(part, str):
-            tokens += len(_TOKEN_SPLIT_RE.split(part.strip()))
+        if isinstance(part, str | TextContent):
+            text = part if isinstance(part, str) else part.content
+            tokens += len(_TOKEN_SPLIT_RE.split(text.strip()))
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
         # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.

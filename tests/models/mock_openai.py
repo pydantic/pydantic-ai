@@ -30,7 +30,7 @@ class MockOpenAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
@@ -100,7 +100,7 @@ class MockOpenAIResponses:
     response: MockResponse | Sequence[MockResponse] | None = None
     stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     index: int = 0
-    response_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    response_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.openai.com/v1'
 
     @cached_property
@@ -121,7 +121,7 @@ class MockOpenAIResponses:
     async def responses_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> responses.Response | MockAsyncStream[MockResponseStreamEvent]:
-        self.response_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+        self.response_kwargs.append({k: v for k, v in kwargs.items() if v not in (NOT_GIVEN, OMIT)})
 
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'

@@ -89,6 +89,7 @@ class ContainsKeyword(Evaluator):
 
 # Usage
 dataset = Dataset(
+    name='keyword_check',
     cases=[Case(name='test', inputs='This is important')],
     evaluators=[
         ContainsKeyword(keyword='important', case_sensitive=False),
@@ -802,5 +803,6 @@ class APIEvaluator(Evaluator):
 
 ## Next Steps
 
+- **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses (confusion matrices, PR curves, custom tables)
 - **[Span-Based Evaluation](span-based.md)** - Using OpenTelemetry spans
 - **[Examples](../examples/simple-validation.md)** - Practical examples

@@ -33,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
@@ -46,7 +47,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,xai,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,fastmcp,evals,ag-ui,retries,temporal,logfire,ui,spec]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -59,6 +60,8 @@ outlines-llamacpp = ["pydantic-ai-slim[outlines-llamacpp]=={{ version }}"]
 outlines-mlxlm = ["pydantic-ai-slim[outlines-mlxlm]=={{ version }}; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
+sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
+voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -88,6 +91,7 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
+constraint-dependencies = ["ray>=2.54.0", "authlib>=1.6.7"]
 
 [dependency-groups]
 dev = [
@@ -97,22 +101,25 @@ dev = [
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
-    "inline-snapshot>=0.19.3",
-    "pytest>=8.3.3",
+    "exa-py>=2.0.0",
+    "tavily-python>=0.5.0",
+    "markdownify>=1.2",
+    "inline-snapshot>=0.32.5",
+    "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.3.0",
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
-    "boto3-stubs[bedrock-runtime]",
+    "boto3-stubs[bedrock-runtime]>=1.42.63",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
-    "pip>=25.2",
+    "pip>=26.0",
     "genai-prices>=0.0.28",
-    "mcp-run-python>=0.0.20",
+    "brotli>=1.2.0",
 ]
-lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
     "pydantic-ai[a2a]",
     "black>=24.10.0",
@@ -120,8 +127,8 @@ docs = [
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
     "mkdocs-redirects>=1.2.2",
-    "mkdocs-material[imaging]>=9.5.45",
-    "mkdocstrings-python>=1.12.2",
+    "mkdocs-material[imaging]>=9.7.0",
+    "mkdocstrings-python>=2.0.0",
     "griffe-warnings-deprecated>=1.1.0",
     "pydantic-docs",
 ]
@@ -196,7 +203,7 @@ quote-style = "single"
 "docs/**/*.py" = ["D"]
 
 [tool.pyright]
-pythonVersion = "3.12"
+pythonVersion = "3.10"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
@@ -220,6 +227,7 @@ executionEnvironments = [
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
 [tool.mypy]
@@ -233,19 +241,42 @@ filterwarnings = [
     "error",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
-    # mistralai accesses model_fields on the instance, which is deprecated in Pydantic 2.11.
-    "ignore:Accessing the 'model_fields' attribute",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
+    # ag-ui-protocol >= 0.1.15 deprecated BinaryInputContent
+    "ignore:BinaryInputContent is deprecated:DeprecationWarning",
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
+    # Most tests create providers without async context managers, so this is expected.
+    "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
+    # happens only for python < 3.12 because of vllms pins
+    "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
+    # This is because of cohere.
+    "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
+    # This is because of google.
+    "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
+    "ignore: Core Pydantic V1 functionality:UserWarning",
+    # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
+    # happens only for python < 3.12 because of vllms pins
+    "ignore:UnsupportedFieldAttributeWarning:UserWarning",
+    # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
+    "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # fastmcp v3 does standard OTel distributed tracing (inject on client, extract on server).
+    # logfire's default config wraps the global propagator to warn on extract via warnings.warn(),
+    # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for
+    # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
+    # informational, not a deprecation, and should never be able to crash execution.
+    "ignore:Found propagated trace context:RuntimeWarning",
 ]
-# addopts = ["--inline-snapshot=create,fix"]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
@@ -261,9 +292,15 @@ include = [
     "tests/**/*.py",
 ]
 omit = [
-    "tests/test_live.py",
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
+    # TODO(Marcelo): Enable prefect coverage again.
+    "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
+    "tests/test_prefect.py",
+    "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
+    "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -307,6 +344,8 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
+    '@pytest\.mark\.skip',
+    '@pytest\.mark\.xfail',
 ]
 
 [tool.logfire]
@@ -325,4 +364,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,aci'
+ignore-words-list = 'asend,aci,fpr'

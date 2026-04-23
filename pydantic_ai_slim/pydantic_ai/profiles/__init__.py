@@ -1,12 +1,13 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
 
 from typing_extensions import Self
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from ..output import StructuredOutputMode
 
 __all__ = [
@@ -24,6 +25,12 @@ class ModelProfile:
 
     supports_tools: bool = True
     """Whether the model supports tools."""
+    supports_tool_return_schema: bool = False
+    """Whether the model natively supports tool return schemas.
+
+    When True, the model's API accepts a structured return schema alongside each tool definition.
+    When False, return schemas are injected as JSON text into tool descriptions as a fallback.
+    """
     supports_json_schema_output: bool = False
     """Whether the model supports JSON schema output.
 
@@ -50,8 +57,23 @@ class ModelProfile:
         """
     )
     """The instructions template to use for prompted structured output. The '{schema}' placeholder will be replaced with the JSON schema for the output."""
+    native_output_requires_schema_in_instructions: bool = False
+    """Whether to add prompted output template in native structured output mode"""
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
+
+    supports_thinking: bool = False
+    """Whether the model supports thinking/reasoning configuration.
+
+    When False, the unified `thinking` setting in `ModelSettings` is silently ignored.
+    """
+
+    thinking_always_enabled: bool = False
+    """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1).
+
+    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    Implies `supports_thinking=True`.
+    """
 
     thinking_tags: tuple[str, str] = ('<think>', '</think>')
     """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""
@@ -63,6 +85,15 @@ class ModelProfile:
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
     This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    """
+
+    supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = field(
+        default_factory=lambda: SUPPORTED_BUILTIN_TOOLS
+    )
+    """The set of builtin tool types that this model/profile supports.
+
+    Defaults to ALL builtin tools. Profile functions should explicitly
+    restrict this based on model capabilities.
     """
 
     @classmethod

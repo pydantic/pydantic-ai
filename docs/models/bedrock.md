@@ -31,7 +31,7 @@ You can then use `BedrockConverseModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('bedrock:anthropic.claude-3-sonnet-20240229-v1:0')
+agent = Agent('bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0')
 ...
 ```
 
@@ -41,7 +41,7 @@ Or initialize the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
-model = BedrockConverseModel('anthropic.claude-3-sonnet-20240229-v1:0')
+model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0')
 agent = Agent(model)
 ...
 ```
@@ -74,6 +74,172 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+## Prompt Caching
+
+Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
+
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
+2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
+3. **Cache Tool Definitions**: Set [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly.
+4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly to automatically cache the last user message.
+
+!!! note "Minimum Token Threshold"
+    AWS only serves cached content once a segment crosses the provider-specific minimum token thresholds (see the [Bedrock prompt caching docs](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)). Short prompts or tool definitions below those limits will bypass the cache, so don't expect savings for tiny payloads.
+
+### Example 1: Automatic Message Caching
+
+Use `bedrock_cache_messages` to automatically cache the last user message:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockModelSettings
+
+agent = Agent(
+    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    system_prompt='You are a helpful assistant.',
+    model_settings=BedrockModelSettings(
+        bedrock_cache_messages=True,  # Automatically caches the last message
+    ),
+)
+
+# The last message is automatically cached - no need for manual CachePoint
+result1 = agent.run_sync('What is the capital of France?')
+
+# Subsequent calls with similar conversation benefit from cache
+result2 = agent.run_sync('What is the capital of Germany?')
+print(f'Cache write: {result1.usage().cache_write_tokens}')
+print(f'Cache read: {result2.usage().cache_read_tokens}')
+```
+
+### Example 2: Comprehensive Caching Strategy
+
+Combine multiple cache settings for maximum savings:
+
+```python {test="skip"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+
+model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+agent = Agent(
+    model,
+    system_prompt='Detailed instructions...',
+    model_settings=BedrockModelSettings(
+        bedrock_cache_instructions=True,       # Cache system instructions
+        bedrock_cache_tool_definitions='1h',   # Cache tool definitions with 1h TTL
+        bedrock_cache_messages=True,           # Also cache the last message
+    ),
+)
+
+
+@agent.tool
+def search_docs(ctx: RunContext, query: str) -> str:
+    """Search documentation."""
+    return f'Results for {query}'
+
+
+result = agent.run_sync('Search for Python best practices')
+print(result.output)
+```
+
+### Example 3: Fine-Grained Control with CachePoint
+
+Use manual `CachePoint` markers to control cache locations precisely:
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint
+
+agent = Agent(
+    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    system_prompt='Instructions...',
+)
+
+# Manually control cache points for specific content blocks
+result = agent.run_sync([
+    'Long context from documentation...',
+    CachePoint(),  # Cache everything up to this point
+    'First question'
+])
+print(result.output)
+```
+
+### Accessing Cache Usage Statistics
+
+Access cache usage statistics via [`RequestUsage`][pydantic_ai.usage.RequestUsage]:
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint
+
+agent = Agent('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+
+
+async def main():
+    result = await agent.run(
+        [
+            'Reference material...',
+            CachePoint(),
+            'What changed since last time?',
+        ]
+    )
+    usage = result.usage()
+    print(f'Cache writes: {usage.cache_write_tokens}')
+    print(f'Cache reads: {usage.cache_read_tokens}')
+```
+
+### Cache Point Limits
+
+Bedrock enforces a maximum of 4 cache points per request. Pydantic AI automatically manages this limit to ensure your requests always comply without errors.
+
+#### How Cache Points Are Allocated
+
+Cache points can be placed in three locations:
+
+1. **System Prompt**: Via `bedrock_cache_instructions` setting (adds cache point to last system prompt block)
+2. **Tool Definitions**: Via `bedrock_cache_tool_definitions` setting (adds cache point to last tool definition)
+3. **Messages**: Via `CachePoint` markers or `bedrock_cache_messages` setting (adds cache points to message content)
+
+Each setting uses **at most 1 cache point**, but you can combine them.
+
+#### Automatic Cache Point Limiting
+
+When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones).
+
+```python {test="skip"}
+from pydantic_ai import Agent, CachePoint
+from pydantic_ai.models.bedrock import BedrockModelSettings
+
+agent = Agent(
+    'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    system_prompt='Instructions...',
+    model_settings=BedrockModelSettings(
+        bedrock_cache_instructions=True,      # 1 cache point
+        bedrock_cache_tool_definitions=True,  # 1 cache point
+    ),
+)
+
+@agent.tool_plain
+def search() -> str:
+    return 'data'
+
+
+# Already using 2 cache points (instructions + tools)
+# Can add 2 more CachePoint markers (4 total limit)
+result = agent.run_sync([
+    'Context 1', CachePoint(),  # Oldest - will be removed
+    'Context 2', CachePoint(),  # Will be kept (3rd point)
+    'Context 3', CachePoint(),  # Will be kept (4th point)
+    'Question'
+])
+# Final cache points: instructions + tools + Context 2 + Context 3 = 4
+print(result.output)
+```
+
+**Key Points**:
+
+- System and tool cache points are **always preserved**
+- The cache point created by `bedrock_cache_messages` is **always preserved** (as it's the newest message cache point)
+- Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
+- This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
 ## `provider` argument
 
 You can provide a custom `BedrockProvider` via the `provider` argument. This is useful when you want to specify credentials directly or use a custom boto3 client:
@@ -85,7 +251,7 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 
 # Using AWS credentials directly
 model = BedrockConverseModel(
-    'anthropic.claude-3-sonnet-20240229-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
     provider=BedrockProvider(
         region_name='us-east-1',
         aws_access_key_id='your-access-key',
@@ -108,11 +274,33 @@ from pydantic_ai.providers.bedrock import BedrockProvider
 # Using a pre-configured boto3 client
 bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 model = BedrockConverseModel(
-    'anthropic.claude-3-sonnet-20240229-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
     provider=BedrockProvider(bedrock_client=bedrock_client),
 )
 agent = Agent(model)
 ...
+```
+
+## Using AWS Application Inference Profiles
+
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. Set [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(region_name='us-east-2')
+
+model = BedrockConverseModel(
+    'us.anthropic.claude-opus-4-5-20251101-v1:0',
+    provider=provider,
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    },
+)
+
+agent = Agent(model)
 ```
 
 ## Configuring Retries

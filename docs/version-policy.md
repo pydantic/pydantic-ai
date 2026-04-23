@@ -11,7 +11,7 @@ Of course, some apparently safe changes and bug fixes will inevitably break some
 The following changes will **NOT** be considered breaking changes, and may occur in minor releases:
 
 * Bug fixes that may result in existing code breaking, provided that such code was relying on undocumented features/constructs/assumptions.
-* Adding new [message parts][pydantic_ai.messages], [stream events][pydantic_ai.messages.AgentStreamEvent], or optional fields on existing message (part) and event types. Always code defensively when consuming message parts or event streams, and use the [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] to (de)serialize message histories.
+* Adding new [message parts][pydantic_ai.messages], [stream events][pydantic_ai.messages.AgentStreamEvent], or optional fields (including fields with default values) on existing message (part) and event types. Always code defensively when consuming message parts or event streams, and use the [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] to (de)serialize message histories.
 * Changing OpenTelemetry span attributes. Because different [observability platforms](logfire.md#using-opentelemetry) support different versions of the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), Pydantic AI lets you configure the [instrumentation version](logfire.md#configuring-data-format), but the default version may change in a minor release. Span attributes for [Pydantic Evals](evals.md) may also change as we iterate on Evals support in [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/).
 * Changing how `__repr__` behaves, even of public classes.
 
