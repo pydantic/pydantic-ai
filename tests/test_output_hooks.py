@@ -2922,3 +2922,201 @@ class TestAutoModeOutputWithHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=99)
         assert log == [('before_validate', 'tool'), ('after_execute', 'tool')]
+
+
+class TestHookSemanticValue:
+    """Output hooks see the **semantic value** (what the model was asked to produce), not the
+    internal dict-wrapped form used by the validator pipeline.
+
+    This is intentionally different from *tool* call hooks, which always see `dict[str, Any]`
+    (matching the tool schema the model satisfies). For outputs, users think of
+    `Agent(output_type=T)` as "the model produces a T", so hooks should see T.
+    """
+
+    async def _run_and_capture(
+        self,
+        *,
+        output_type: Any,
+        model_fn: Any,
+    ) -> tuple[Any, list[tuple[str, Any]]]:
+        log: list[tuple[str, Any]] = []
+
+        @dataclass
+        class CaptureCap(AbstractCapability[Any]):
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append(('after_validate', output))
+                return output
+
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                log.append(('before_process', output))
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=output_type, capabilities=[CaptureCap()])
+        result = await agent.run('hello')
+        return result.output, log
+
+    async def test_case_a_bare_basemodel_tool_output(self):
+        """Case A: `Agent(output_type=MyOutput)` — hooks see the BaseModel instance."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"value": 42}')])
+
+        output, log = await self._run_and_capture(output_type=MyOutput, model_fn=model_fn)
+        assert output == MyOutput(value=42)
+        assert log == [('after_validate', MyOutput(value=42)), ('before_process', MyOutput(value=42))]
+
+    async def test_case_b_bare_int_tool_output(self):
+        """Case B: `Agent(output_type=int)` — hooks see `42`, not `{'response': 42}`."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"response": 42}')])
+
+        output, log = await self._run_and_capture(output_type=int, model_fn=model_fn)
+        assert output == 42
+        assert log == [('after_validate', 42), ('before_process', 42)]
+
+    async def test_case_c_function_basemodel_arg(self):
+        """Case C: `def f(data: MyOutput) -> int` — hooks see `MyOutput(...)`, not `{'data': MyOutput(...)}`."""
+
+        def double(data: MyOutput) -> int:
+            return data.value * 2
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"value": 21}')])
+
+        output, log = await self._run_and_capture(output_type=double, model_fn=model_fn)
+        assert output == 42
+        assert log == [('after_validate', MyOutput(value=21)), ('before_process', MyOutput(value=21))]
+
+    async def test_case_d_function_primitive_arg(self):
+        """Case D: `def f(data: int) -> str` — hooks see `42`, not `{'data': 42}`."""
+
+        def stringify(data: int) -> str:
+            return f'got {data}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"data": 42}')])
+
+        output, log = await self._run_and_capture(output_type=stringify, model_fn=model_fn)
+        assert output == 'got 42'
+        assert log == [('after_validate', 42), ('before_process', 42)]
+
+    async def test_case_e_function_multiple_args(self):
+        """Case E: multi-arg function — hooks see the dict (genuine multi-value input)."""
+
+        def combine(data: MyOutput, other: str) -> str:
+            return f'{data.value}:{other}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"data": {"value": 7}, "other": "x"}')])
+
+        output, log = await self._run_and_capture(output_type=combine, model_fn=model_fn)
+        assert output == '7:x'
+        # Multi-arg: hooks see the dict
+        assert log == [
+            ('after_validate', {'data': MyOutput(value=7), 'other': 'x'}),
+            ('before_process', {'data': MyOutput(value=7), 'other': 'x'}),
+        ]
+
+    async def test_native_output_unwraps_primitive(self):
+        """NativeOutput(int) — hooks see `42`, not `{'response': 42}`."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"response": 42}')])
+
+        output, log = await self._run_and_capture(output_type=NativeOutput(int), model_fn=model_fn)
+        assert output == 42
+        assert log == [('after_validate', 42), ('before_process', 42)]
+
+    async def test_native_output_unwraps_function_basemodel(self):
+        """NativeOutput(func-with-basemodel-arg) — hooks see the BaseModel, not the wrap dict."""
+
+        def double(data: MyOutput) -> int:
+            return data.value * 2
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"value": 21}')])
+
+        output, log = await self._run_and_capture(output_type=NativeOutput(double), model_fn=model_fn)
+        assert output == 42
+        assert log == [('after_validate', MyOutput(value=21)), ('before_process', MyOutput(value=21))]
+
+    async def test_prompted_output_unwraps_primitive(self):
+        """PromptedOutput(int) — hooks see `42`, not `{'response': 42}`."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"response": 42}')])
+
+        output, log = await self._run_and_capture(output_type=PromptedOutput(int), model_fn=model_fn)
+        assert output == 42
+        assert log == [('after_validate', 42), ('before_process', 42)]
+
+    async def test_prompted_output_unwraps_function_primitive(self):
+        """PromptedOutput(func-with-primitive-arg) — hooks see the primitive value."""
+
+        def stringify(data: int) -> str:
+            return f'got {data}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"data": 42}')])
+
+        output, log = await self._run_and_capture(output_type=PromptedOutput(stringify), model_fn=model_fn)
+        assert output == 'got 42'
+        assert log == [('after_validate', 42), ('before_process', 42)]
+
+    async def test_output_validator_sees_final_processed_value(self):
+        """Output validators see the final value (after function call), not the wrapped form."""
+
+        def double(data: MyOutput) -> int:
+            return data.value * 2
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"value": 21}')])
+
+        seen: list[Any] = []
+        agent = Agent(FunctionModel(model_fn), output_type=double)
+
+        @agent.output_validator
+        def validate(v: int) -> int:
+            seen.append(v)
+            return v
+
+        result = await agent.run('hello')
+        assert result.output == 42
+        # Validator sees the post-process value (function's return), an int
+        assert seen == [42]
+
+    async def test_hook_transform_at_semantic_boundary(self):
+        """A hook can transform the semantic value and the transformed value flows through correctly."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"response": 10}')])
+
+        @dataclass
+        class DoubleCap(AbstractCapability[Any]):
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                return output * 2  # transform the semantic int value
+
+        agent = Agent(FunctionModel(model_fn), output_type=int, capabilities=[DoubleCap()])
+        result = await agent.run('hello')
+        assert result.output == 20

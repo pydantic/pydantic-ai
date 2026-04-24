@@ -14,7 +14,14 @@ from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
-from ._output import OutputToolset, run_output_process_hooks, run_output_validate_hooks
+from ._output import (
+    OutputToolset,
+    _get_unwrap_key,  # pyright: ignore[reportPrivateUsage]
+    _rewrap_internal_value,  # pyright: ignore[reportPrivateUsage]
+    _unwrap_semantic_value,  # pyright: ignore[reportPrivateUsage]
+    run_output_process_hooks,
+    run_output_validate_hooks,
+)
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import (
     ApprovalRequired,
@@ -58,8 +65,14 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """The run context for this tool call."""
     args_valid: bool
     """Whether argument validation (schema + custom validator) passed."""
-    validated_args: dict[str, Any] | None = None
-    """The validated arguments if validation passed, None otherwise."""
+    validated_args: Any = None
+    """The validated arguments if validation passed, None otherwise.
+
+    For tool calls: `dict[str, Any]` matching the tool's schema.
+    For output tools: the **semantic value** (what the model was asked to produce) — e.g.,
+    `MyModel(...)`, `42`, or a dict for multi-arg output functions. This is what output hooks
+    see; `execute_output_tool_call` re-wraps it to dict form before `processor.call()`.
+    """
     validation_error: ToolRetryError | None = None
     """The validation error if validation failed, None otherwise."""
 
@@ -487,16 +500,21 @@ class ToolManager(Generic[AgentDepsT]):
         toolset = tool.toolset
         processor = toolset.processors[name]
         output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
+        # Output hooks see the semantic value (what the model was asked to produce), not the
+        # internal dict-wrapped form. This differs from tool call validation hooks, which see
+        # `dict[str, Any]` tool args — the schema contract the model satisfies.
+        unwrap_key = _get_unwrap_key(processor)
 
-        async def do_validate(args: str | dict[str, Any]) -> str | dict[str, Any]:
-            return await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
+        async def do_validate(args: str | dict[str, Any]) -> Any:
+            validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
+            return _unwrap_semantic_value(validated, unwrap_key)
 
         cap = self.root_capability
         assert cap is not None, 'validate_output_tool_call requires root_capability'
 
         try:
             raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            validated_args: dict[str, Any] = await run_output_validate_hooks(
+            semantic_value = await run_output_validate_hooks(
                 cap,
                 run_context=ctx,
                 output_context=output_context,
@@ -505,12 +523,13 @@ class ToolManager(Generic[AgentDepsT]):
                 allow_partial=allow_partial,
                 wrap_validation_errors=wrap_validation_errors,
             )
+            # Store the semantic value directly; execute_output_tool_call re-wraps before processor.call()
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
                 ctx=ctx,
                 args_valid=True,
-                validated_args=validated_args,
+                validated_args=semantic_value,
                 validation_error=None,
             )
         except (ToolRetryError, ValidationError, ModelRetry) as e:
@@ -536,7 +555,8 @@ class ToolManager(Generic[AgentDepsT]):
         """
         assert validated.args_valid
         assert validated.tool is not None
-        assert validated.validated_args is not None
+        # validated_args may be None for `output_type=int | None` (legitimate semantic value),
+        # so we rely on args_valid above rather than asserting validated_args is not None
         assert self.ctx is not None
 
         name = validated.call.tool_name
@@ -546,13 +566,17 @@ class ToolManager(Generic[AgentDepsT]):
         tool = validated.tool
         processor = toolset.processors[name]
         output_context = processor.get_output_context('tool', tool_call=validated.call, tool_def=tool.tool_def)
+        # Hooks see the semantic value; re-wrap to the internal dict form before processor.call()
+        unwrap_key = _get_unwrap_key(processor)
 
         # Use the global output retry context for validators, matching the text output path.
         validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
 
         async def do_process(output: Any) -> Any:
+            # Re-wrap the semantic value into the dict shape processor.call() expects
+            wrapped = _rewrap_internal_value(output, unwrap_key)
             try:
-                result = await processor.call(output, validated.ctx, wrap_validation_errors=False)
+                result = await processor.call(wrapped, validated.ctx, wrap_validation_errors=False)
             except ModelRetry as e:
                 # Wrap as ToolRetryError; retry tracking is done by the outer handler
                 raise self._wrap_error_as_retry(name, validated.call, e) from e

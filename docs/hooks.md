@@ -171,6 +171,16 @@ The primary use case is **pre-parse normalization**: `before_output_validate` le
 
 Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators. These hooks fire for **all** output types (text, structured, tool, image). Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run inside the processing pipeline (within `wrap_output_process`), so `after_output_process` sees the fully validated result.
 
+!!! note "Output hooks see the semantic value, not the internal dict form"
+    Unlike *tool* hooks (which see `dict[str, Any]` tool args matching the schema), output hooks see the **semantic value** the model was asked to produce:
+
+    - `Agent(output_type=MyModel)` → hooks see `MyModel(...)`
+    - `Agent(output_type=int)` → hooks see `42`, not `{'response': 42}`
+    - `Agent(output_type=func)` where `func(data: MyModel) -> X` → hooks see `MyModel(...)`, not `{'data': MyModel(...)}`
+    - `Agent(output_type=func)` where `func(data: int, other: str) -> X` → hooks see the full `dict` of args (genuine multi-value input)
+
+    This mirrors how you think about output types: `output_type=T` means "the model produces T", so hooks see T. This applies to all output modes (tool, native, prompted).
+
 ### Tool preparation
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |

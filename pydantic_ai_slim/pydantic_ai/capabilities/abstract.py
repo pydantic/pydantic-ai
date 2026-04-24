@@ -664,6 +664,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> Any:
         """Modify validated output after successful parsing. Called only on success.
 
+        `output` is the **semantic value** the model was asked to produce — e.g., a
+        `MyModel` instance for `output_type=MyModel`, or `42` for `output_type=int`, or
+        the input to a single-arg output function. For multi-arg output functions, this
+        is the `dict` of arguments (the genuine multi-value input).
+
+        Note: this differs from *tool* hooks (`after_tool_validate`), which always see
+        `dict[str, Any]` — tool args follow the schema contract. Output hooks see the
+        semantic output value, regardless of how it's internally represented during
+        validation.
+
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated
         output and ask the model to try again.
         """
@@ -713,6 +723,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         output: Any,
     ) -> Any:
         """Modify validated output before processing (extraction, output function call).
+
+        `output` is the **semantic value** — e.g., a `MyModel` instance or `42`, matching
+        `after_output_validate`. For multi-arg output functions, it's the `dict` of args.
+        See [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate]
+        for a full explanation of the semantic-value contract.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip processing and
         ask the model to try again.

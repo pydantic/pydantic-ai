@@ -74,6 +74,71 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
+def _is_wrapped_as(value: Any, key: str) -> bool:
+    """Return True if value is a dict containing the given key."""
+    if not isinstance(value, dict):
+        return False
+    return key in cast(dict[str, Any], value)
+
+
+def _unwrap_semantic_value(validated: Any, unwrap_key: str | None) -> Any:
+    """Unwrap the validator's dict-wrapped form to the semantic value, for hooks to see."""
+    if unwrap_key is not None and _is_wrapped_as(validated, unwrap_key):
+        return cast(dict[str, Any], validated)[unwrap_key]
+    return validated
+
+
+def _rewrap_internal_value(semantic: Any, unwrap_key: str | None) -> Any:
+    """Re-wrap a semantic value into the internal dict shape `processor.call()` expects.
+
+    Idempotent: if the value is already the wrapped form, leave it unchanged.
+    """
+    if unwrap_key is None or _is_wrapped_as(semantic, unwrap_key):
+        return semantic
+    return {unwrap_key: semantic}
+
+
+def _get_unwrap_key(processor: BaseOutputProcessor[Any]) -> str | None:
+    """Return the dict key used to wrap a single semantic value, or None.
+
+    Output hooks see the **semantic value** the model was asked to produce (e.g., a
+    `MyModel` instance or an `int`), not the internal dict shape used by Pydantic
+    schema validation. This differs from *tool* hooks, which always see `dict[str, Any]`
+    tool arguments — that's the schema contract the model satisfies.
+
+    For single-value outputs (bare primitive, single-arg function), the validator
+    produces a dict like `{'response': 42}` or `{'data': my_model}`. We unwrap by
+    this key at the hook boundary and re-wrap before `processor.call()` so the
+    internal pipeline continues to operate on dicts.
+
+    Returns the key name for:
+    - Bare primitive output (`outer_typed_dict_key`, e.g. `'response'` for `int`)
+    - Single model-like arg function (`single_arg_name`, e.g. `'data'` for `def f(data: MyModel)`)
+    - Single primitive arg function (e.g. `'data'` for `def f(data: int)`)
+
+    Returns None for:
+    - Bare BaseModel output (validator already returns the model instance)
+    - Multi-arg function (the dict of arguments IS the semantic value)
+    - Non-`ObjectOutputProcessor` processors (e.g., `TextFunctionOutputProcessor`)
+    """
+    if not isinstance(processor, ObjectOutputProcessor):
+        return None
+    if processor.outer_typed_dict_key is not None:
+        return processor.outer_typed_dict_key
+    fs = processor._function_schema  # pyright: ignore[reportPrivateUsage]
+    if fs is None:
+        return None
+    if fs.single_arg_name is not None:
+        # Model-like single arg: validator wraps as `{name: model}` via _validate_single_arg
+        return fs.single_arg_name
+    # Non-model single arg: validator returns `{name: value}` as a regular TypedDict.
+    # Detect via json_schema having exactly one property.
+    properties = fs.json_schema.get('properties', {})
+    if len(properties) == 1:
+        return next(iter(properties))
+    return None
+
+
 def _build_output_handlers(
     processor: BaseOutputProcessor[OutputDataT],
     *,
@@ -86,26 +151,42 @@ def _build_output_handlers(
 ]:
     """Build validate and execute handler functions using processor's validate/call methods.
 
+    Output hooks see the **semantic value** (what the model was asked to produce),
+    not the internal dict-wrapped shape. The validate handler unwraps before returning
+    to hooks; the execute handler re-wraps before calling `processor.call()`.
+    See `_get_unwrap_key` for which cases get unwrapped.
+
     For UnionOutputProcessor, the validate handler unwraps _UnionValidatedOutput so hooks
     see clean inner data, and the execute handler re-wraps it so call() can resolve the
     correct inner processor. The kind is stored per-invocation in closure state, avoiding
-    the race condition of shared instance state.
+    the race condition of shared instance state. The inner processor's unwrap key is
+    resolved dynamically once the union member is known.
     """
     _union_kind: str | None = None
+    # For non-union processors, the unwrap key is fixed upfront.
+    # For unions, it's resolved dynamically in do_validate once the member is known.
+    _unwrap_key: str | None = None if isinstance(processor, UnionOutputProcessor) else _get_unwrap_key(processor)
 
     async def do_validate(data: RawOutput) -> Any:
-        nonlocal _union_kind
-        result = processor.validate(
+        nonlocal _union_kind, _unwrap_key
+        result: Any = processor.validate(
             data,
             allow_partial=allow_partial,
             validation_context=run_context.validation_context,
         )
         if isinstance(result, _UnionValidatedOutput):
             _union_kind = result.kind
-            return result.data
-        return result
+            # Now that we know the selected union member, resolve its unwrap key
+            assert isinstance(processor, UnionOutputProcessor)
+            inner = processor._processors[_union_kind]  # pyright: ignore[reportPrivateUsage]
+            _unwrap_key = _get_unwrap_key(inner)
+            result = result.data
+        return _unwrap_semantic_value(result, _unwrap_key)
 
     async def do_process(output: Any) -> Any:
+        # Re-wrap the semantic value into the internal dict shape `processor.call()` expects.
+        output = _rewrap_internal_value(output, _unwrap_key)
+
         if _union_kind is not None:
             # Normal path: re-wrap with the kind resolved during validation
             return await processor.call(
