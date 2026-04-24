@@ -415,11 +415,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
                                 )
                             elif part.state == 'output-error':
+                                # Prefer model_response from metadata (preserves LLM-facing
+                                # retry suffix for cache fidelity), fall back to error_text.
+                                error_content = provider_meta.get('model_response') or part.error_text
                                 builder.add(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
-                                        content=part.error_text,
+                                        content=error_content,
                                         outcome='failed',
                                     )
                                 )
@@ -697,14 +700,20 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             # Check for Vercel AI chunks returned by tool calls via metadata.
             ui_parts.extend(_extract_metadata_ui_parts(tool_result))
         elif isinstance(tool_result, RetryPromptPart):
+            # error_description() returns the error text without the LLM-facing
+            # "Fix the errors and try again." suffix — suitable for UI display.
+            # The full model_response() is preserved in metadata so load_messages()
+            # can restore it for LLM cache fidelity.
+            error_meta = call_provider_metadata or {}
+            error_meta.setdefault('pydantic_ai', {})['model_response'] = tool_result.model_response()
             ui_parts.append(
                 ToolOutputErrorPart(
                     type=tool_type,
                     tool_call_id=part.tool_call_id,
                     input=part.args_as_dict(),
-                    error_text=tool_result.model_response(),
+                    error_text=tool_result.error_description(),
                     provider_executed=False,
-                    call_provider_metadata=call_provider_metadata,
+                    call_provider_metadata=error_meta,
                 )
             )
         else:

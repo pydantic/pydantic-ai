@@ -1344,13 +1344,17 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def model_response(self) -> str:
-        """Return a string message describing why the retry is requested."""
+    def error_description(self) -> str:
+        """Return the error description without the retry instruction suffix.
+
+        This is suitable for UI display where the LLM-facing "Fix the errors and try again."
+        instruction is not appropriate. For the full model-facing text, use [`model_response()`][pydantic_ai.messages.RetryPromptPart.model_response].
+        """
         if isinstance(self.content, str):
             if self.tool_name is None:
-                description = f'Validation feedback:\n{self.content}'
+                return f'Validation feedback:\n{self.content}'
             else:
-                description = self.content
+                return self.content
         else:
             # For NativeOutput retries (no `tool_name`) the generated JSON is already in the model's
             # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
@@ -1363,10 +1367,11 @@ class RetryPromptPart:
                 exclude = {'__all__': {'ctx'}}
             json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
-            description = (
-                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
-            )
-        return f'{description}\n\nFix the errors and try again.'
+            return f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+
+    def model_response(self) -> str:
+        """Return a string message describing why the retry is requested."""
+        return f'{self.error_description()}\n\nFix the errors and try again.'
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
