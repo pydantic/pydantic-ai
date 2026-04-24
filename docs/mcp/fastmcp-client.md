@@ -90,3 +90,39 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+## Background Tasks
+
+`FastMCPToolset` supports MCP background tasks ([SEP-1686](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)).
+Tools that use `task=TaskConfig(mode="required")` or `task=TaskConfig(mode="optional")`
+will automatically use task-augmented execution for long-running operations.
+
+The toolset handles task execution transparently:
+- **`mode="required"`**: Tools that must run as background tasks will work correctly
+- **`mode="optional"`**: Tools will use background execution when supported, with graceful fallback
+- The agent waits for task completion and receives the final result
+
+> **Note:** Background task support requires the `pydocket` package. Install it with `pip install pydocket`.
+
+```python {test="skip"}
+from fastmcp import FastMCP
+from fastmcp.server.tasks import TaskConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+mcp = FastMCP("server")
+
+@mcp.tool(task=TaskConfig(mode="required"))
+async def long_task() -> str:
+    import asyncio
+    await asyncio.sleep(5)  # Long-running operation
+    return "completed"
+
+async def main():
+    agent = Agent("openai:gpt-5.2", toolsets=[FastMCPToolset(mcp)])
+    result = await agent.run("Run the long task")
+    print(result.output)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_

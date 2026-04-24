@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,7 +11,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -29,6 +30,7 @@ with try_import() as imports_successful:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
+    from fastmcp.server.tasks import TaskConfig
     from mcp.types import (
         AnyUrl,
         AudioContent,
@@ -131,6 +133,18 @@ async def fastmcp_server() -> FastMCP:
         import json
 
         return json.dumps({'received': data, 'processed': True})
+
+    @server.tool(task=TaskConfig(mode='required'))
+    async def task_required_tool() -> str:
+        """A tool that requires background task execution."""
+        await asyncio.sleep(0.1)
+        return 'task_required_completed'
+
+    @server.tool(task=TaskConfig(mode='optional'))
+    async def task_optional_tool() -> str:
+        """A tool that optionally supports background task execution."""
+        await asyncio.sleep(0.1)
+        return 'task_optional_completed'
 
     return server
 
@@ -303,6 +317,8 @@ class TestFastMCPToolsetToolDiscovery:
                 'resource_link_tool',
                 'resource_tool',
                 'resource_tool_blob',
+                'task_required_tool',
+                'task_optional_tool',
             }
             assert set(tools.keys()) == expected_tools
 
@@ -689,3 +705,88 @@ server.run()"""
         toolset = FastMCPToolset(config_dict)
         client = toolset.client
         assert isinstance(client.transport, MCPConfigTransport)
+
+
+class TestFastMCPToolsetBackgroundTasks:
+    """Test FastMCP Toolset background task support (SEP-1686)."""
+
+    @pytest.fixture
+    async def fastmcp_toolset(self, fastmcp_client: Client[FastMCPTransport]) -> FastMCPToolset[None]:
+        return FastMCPToolset(fastmcp_client)
+
+    async def test_call_tool_with_task_required(
+        self, fastmcp_toolset: FastMCPToolset[None], run_context: RunContext[None]
+    ):
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            task_tool = tools['task_required_tool']
+            result = await fastmcp_toolset.call_tool('task_required_tool', {}, run_context, task_tool)
+            assert result == snapshot('task_required_completed')
+
+    async def test_call_tool_with_task_optional(
+        self, fastmcp_toolset: FastMCPToolset[None], run_context: RunContext[None]
+    ):
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            task_tool = tools['task_optional_tool']
+            result = await fastmcp_toolset.call_tool('task_optional_tool', {}, run_context, task_tool)
+            assert result == snapshot('task_optional_completed')
+
+    async def test_task_required_without_pydocket_fails(self, run_context: RunContext[None]):
+        server = FastMCP('task_server')
+
+        @server.tool(task=TaskConfig(mode='required'))
+        async def task_required_tool() -> str:
+            return 'should_not_reach'
+
+        toolset = FastMCPToolset(Client(transport=server))
+
+        import pydantic_ai.toolsets.fastmcp as fastmcp_module
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(fastmcp_module, 'pydocket_installed', False)
+            async with toolset:
+                tools = await toolset.get_tools(run_context)
+                tool = tools['task_required_tool']
+
+                with pytest.raises(
+                    UserError, match="requires task-augmented execution but 'pydocket' is not installed"
+                ):
+                    await toolset.call_tool('task_required_tool', {}, run_context, tool)
+
+
+class TestFastMCPToolsetPydocketAvailability:
+    """Test FastMCP Toolset behavior based on pydocket availability."""
+
+    async def test_call_tool_without_pydocket(self, run_context: RunContext[None]):
+        simple_server = FastMCP('simple_server')
+
+        @simple_server.tool()
+        async def simple_tool() -> str:
+            return 'simple_result'
+
+        toolset = FastMCPToolset(Client(transport=simple_server))
+
+        import pydantic_ai.toolsets.fastmcp as fastmcp_module
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(fastmcp_module, 'pydocket_installed', False)
+            async with toolset:
+                tools = await toolset.get_tools(run_context)
+                result = await toolset.call_tool('simple_tool', {}, run_context, tools['simple_tool'])
+
+        assert result == snapshot('simple_result')
+
+    async def test_pydocket_not_installed(self):
+        import importlib
+        import sys
+
+        import pydantic_ai.toolsets.fastmcp as fastmcp_module
+
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setitem(sys.modules, 'docket', None)
+            importlib.reload(fastmcp_module)
+            assert fastmcp_module.pydocket_installed is False
+
+        importlib.reload(fastmcp_module)
+        assert fastmcp_module.pydocket_installed is True
