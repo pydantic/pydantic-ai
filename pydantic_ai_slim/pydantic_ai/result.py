@@ -206,8 +206,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_call(
-                    tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                # Output tools can't be deferred, so `handle_call` here always
+                # returns the validated output (never `ToolDenied`).
+                return cast(
+                    OutputDataT,
+                    await self._tool_manager.handle_call(
+                        tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                    ),
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
