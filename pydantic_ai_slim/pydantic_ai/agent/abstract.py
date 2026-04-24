@@ -370,13 +370,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
                         async with n.stream(agent_run.ctx) as stream:
-                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                            if _handler is not None:
-                                await _handler(run_ctx, wrapped)
-                            else:
-                                async for _ in wrapped:
+                            # ModelRequestNode wraps a StreamedResponse; a durable execution
+                            # capability (e.g. TemporalDurability) may have already run the
+                            # capability chain and handler against the live stream inside
+                            # an activity/step/task. When that flag is set, drain the replay
+                            # here without re-firing.
+                            if isinstance(stream, AgentStream) and getattr(
+                                stream._raw_stream_response,  # pyright: ignore[reportPrivateUsage]
+                                'capabilities_already_applied',
+                                False,
+                            ):
+                                async for _ in stream:
                                     pass
+                            else:
+                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                                wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(
+                                    run_ctx, stream=stream
+                                )
+                                if _handler is not None:
+                                    await _handler(run_ctx, wrapped)
+                                else:
+                                    async for _ in wrapped:
+                                        pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance

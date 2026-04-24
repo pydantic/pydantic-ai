@@ -1768,6 +1768,55 @@ async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
     assert 'durability_streaming__model.request_stream' in step_names
 
 
+async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'Stream'
+    yield 'ed '
+    yield 'response'
+
+
+async def test_dbos_durability_process_event_stream_fires_live_inside_step(dbos: DBOS) -> None:
+    """ProcessEventStream (outer capability) sees live events emitted inside a DBOS step.
+
+    With in-step chain firing, the capability's handler runs against the real streamed
+    response — so multiple PartDeltaEvents come through (one per chunk). If the chain fired
+    on the replayed stream outside the step instead, ProcessEventStream would see a single
+    synthetic delta with the full text.
+    """
+    from pydantic_ai.capabilities import ProcessEventStream
+    from pydantic_ai.messages import PartDeltaEvent, TextPartDelta
+
+    events_received: list[AgentStreamEvent] = []
+
+    async def collect(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
+    agent = Agent(
+        stream_model,
+        name='durability_process_stream',
+        capabilities=[ProcessEventStream(collect), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello')
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Streamed response'
+
+    delta_events = [
+        e.delta.content_delta
+        for e in events_received
+        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
+    ]
+    # The 'Stream' / 'ed ' / 'response' chunks: first becomes the PartStartEvent's text,
+    # subsequent chunks are deltas. Synthetic replay of the final response would collapse
+    # everything into a single delta with the full text.
+    assert delta_events == ['ed ', 'response']
+
+
 async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     """DBOSDurability discovers MCPServerStdio and creates DBOS wrappers."""
     from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer

@@ -50,6 +50,7 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -4425,3 +4426,68 @@ async def test_durability_streaming_in_workflow(client: Client):
         # instead, request_stream_activity uses the stream_function path.
         # The final response is assembled from the streamed chunks.
         assert output == 'Streamed response'
+
+
+# --- ProcessEventStream capability fires live inside the activity ---
+
+_process_events_collected: list[AgentStreamEvent] = []
+
+
+async def _process_event_stream_handler(
+    ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _process_events_collected.append(event)
+
+
+_process_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+_process_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_process_agent',
+    capabilities=[
+        ProcessEventStream(_process_event_stream_handler),
+        _process_durability,
+    ],
+)
+
+
+@workflow.defn
+class ProcessStreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _process_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_process_event_stream_fires_live_inside_activity(client: Client):
+    """ProcessEventStream (outer capability) sees live events emitted inside the Temporal activity.
+
+    With in-activity chain firing, the capability's handler runs against the real streamed
+    response — so multiple PartDeltaEvents come through (one per chunk). If the chain fired
+    on the replayed stream outside the activity instead, ProcessEventStream would see a
+    single synthetic delta with the full text.
+    """
+    _process_events_collected.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ProcessStreamDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(_process_durability)],
+    ):
+        output = await client.execute_workflow(
+            ProcessStreamDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=ProcessStreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Streamed response'
+
+    delta_events = [
+        e for e in _process_events_collected if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
+    ]
+    text_chunks = [cast(TextPartDelta, e.delta).content_delta for e in delta_events]
+    # Live stream: the first chunk becomes the PartStartEvent's text; subsequent chunks
+    # are deltas. Synthetic replay would collapse all chunks into a single delta with
+    # the full text ('Streamed response').
+    assert text_chunks == ['ed ', 'response']

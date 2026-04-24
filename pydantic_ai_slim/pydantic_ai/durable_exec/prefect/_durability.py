@@ -77,6 +77,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             prefectify_toolset_func: Custom function for wrapping leaf toolsets.
         """
         self.name = ''
+        self._agent: AbstractAgent[Any, Any] | None = None
         self._event_stream_handler = event_stream_handler
         self._prefectify_toolset_func = prefectify_toolset_func
 
@@ -98,7 +99,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             raise UserError('An agent needs to have a concrete `model` in order to be used with Prefect.')
 
         self.name = agent.name
+        self._agent = agent
         model = agent.model
+
+        # If no handler was passed to the capability, fall back to the agent's
+        # instance-level one so it fires inside the task alongside the capability chain.
+        if self._event_stream_handler is None:
+            self._event_stream_handler = agent.event_stream_handler
         event_stream_handler = self._event_stream_handler
 
         # --- Model request tasks ---
@@ -123,11 +130,15 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             async with model.request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
+                # Fire the full capability chain's wrap_run_event_stream hooks against
+                # the live stream inside the Prefect task.
+                assert run_context is not None
+                wrapped_stream = agent.root_capability.wrap_run_event_stream(run_context, stream=streamed_response)
                 if event_stream_handler is not None:
-                    assert run_context is not None
-                    await event_stream_handler(run_context, streamed_response)
-                async for _ in streamed_response:
-                    pass
+                    await event_stream_handler(run_context, wrapped_stream)
+                else:
+                    async for _ in wrapped_stream:
+                        pass
             return streamed_response.get()
 
         self._request_stream_task = request_stream_task
@@ -171,8 +182,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
         model_name = ctx.model.model_name
 
-        if self._event_stream_handler is not None:
-            return await self._request_stream_task.with_options(
+        # Use the streaming task when we need to fire the capability chain's
+        # wrap_run_event_stream hooks against live events (outer capabilities that
+        # override the hook) or to run the event_stream_handler inside the task.
+        agent = self._agent
+        needs_chain = agent is not None and agent.root_capability.has_wrap_run_event_stream
+        if self._event_stream_handler is not None or needs_chain:
+            response = await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
             )(
                 request_context.messages,
@@ -180,6 +196,8 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 request_context.model_request_parameters,
                 ctx,
             )
+            request_context.capabilities_applied_to_stream = True
+            return response
 
         return await self._request_task.with_options(name=f'Model Request: {model_name}', **self._model_task_config)(
             request_context.messages,

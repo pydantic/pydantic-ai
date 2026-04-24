@@ -176,6 +176,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self.name = agent.name
         self._agent = agent
 
+        # If no handler was passed to the capability, fall back to the agent's
+        # instance-level one so it fires inside the activity alongside the
+        # capability chain. (The per-run `event_stream_handler` argument cannot
+        # cross the activity boundary.)
+        if self._event_stream_handler is None:
+            self._event_stream_handler = agent.event_stream_handler
+
         # Build model registry
         self._models_by_id = {'default': agent.model}
         for model_id, model_instance in self._extra_models.items():
@@ -214,20 +221,27 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: RequestParams, deps: AgentDepsT) -> ModelResponse:
-            assert event_stream_handler is not None
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
+            agent = self._agent
+            assert agent is not None
             async with model_for_request.request_stream(
                 params.messages,
                 cast(ModelSettings | None, params.model_settings),
                 params.model_request_parameters,
                 run_context,
             ) as streamed_response:
-                await event_stream_handler(run_context, streamed_response)
-                async for _ in streamed_response:
-                    pass
+                # Fire the full capability chain's wrap_run_event_stream hooks against
+                # the live stream — ProcessEventStream and any other outer capability
+                # sees real events here, not synthetic ones replayed in the workflow.
+                wrapped_stream = agent.root_capability.wrap_run_event_stream(run_context, stream=streamed_response)
+                if event_stream_handler is not None:
+                    await event_stream_handler(run_context, wrapped_stream)
+                else:
+                    async for _ in wrapped_stream:
+                        pass
             return streamed_response.get()
 
         request_stream_activity.__annotations__['deps'] = deps_type | None
@@ -380,12 +394,17 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or ctx.model.model_id
 
-        if self._event_stream_handler is not None:
+        # Use the streaming activity when we need to fire the capability chain's
+        # wrap_run_event_stream hooks against live events (outer capabilities that
+        # override the hook) or to run the event_stream_handler inside the activity.
+        agent = self._agent
+        needs_chain = agent is not None and agent.root_capability.has_wrap_run_event_stream
+        if self._event_stream_handler is not None or needs_chain:
             activity_config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            return await workflow.execute_activity(
+            response = await workflow.execute_activity(
                 activity=self.request_stream_activity,
                 args=[
                     RequestParams(
@@ -399,6 +418,11 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 ],
                 **activity_config,
             )
+            # Signal to the outer agent loop that the capability chain already ran
+            # against the live stream inside the activity; do not re-fire it on the
+            # replayed response.
+            request_context.capabilities_applied_to_stream = True
+            return response
 
         activity_config = {'summary': f'request model: {model_name}', **self._model_activity_config}
         return await workflow.execute_activity(

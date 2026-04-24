@@ -566,6 +566,13 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
+    capabilities_applied_to_stream: bool = False
+    """Set to `True` by a capability (e.g. `TemporalDurability`) when it has already
+    run the capability chain's `wrap_run_event_stream` hooks against the live model
+    stream — for example, inside a durable execution activity. Signals to the outer
+    agent loop (`_stream_and_advance`) that it should not re-wrap the replayed stream.
+    """
+
 
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
