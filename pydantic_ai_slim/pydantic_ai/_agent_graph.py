@@ -1546,10 +1546,11 @@ async def process_tool_calls(  # noqa: C901
         # If re-execution raises new deferrals, they go into remaining.
         handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
-            executed, deferred_tool_requests = await tool_manager.execute_deferred_tool_results(
+            executed_outcomes, deferred_tool_requests = await tool_manager.execute_deferred_tool_results(
                 deferred_tool_requests, handler_results
             )
-            for _call_part, result_part, user_content in executed:
+            executed_parts = tool_manager.build_tool_return_parts_from_outcomes(executed_outcomes)
+            for _call_part, result_part, user_content in executed_parts:
                 output_parts.append(result_part)
                 if user_content:
                     output_parts.append(_messages.UserPromptPart(content=user_content))

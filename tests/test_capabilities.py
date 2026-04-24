@@ -9770,6 +9770,101 @@ async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     assert result.output.metadata == {'call1': {'reason': 'external'}}
 
 
+async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
+    """handle_call(resolve_deferred=True) preserves `ToolReturn` wrapper (metadata, user content).
+
+    The non-deferred `handle_call` path returns whatever the tool returned verbatim.
+    The deferred path should do the same — critical for CodeMode-style callers that
+    check `isinstance(result, ToolReturn)` to preserve metadata on nested return parts.
+    """
+    from pydantic_ai.messages import ToolReturn as _ToolReturn
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]):
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return _ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_result: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        nonlocal captured_result
+        assert ctx.tool_manager is not None
+        result = await ctx.tool_manager.handle_call(
+            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+        )
+        captured_result = result
+        return 'done'
+
+    await agent.run('go')
+    # handle_call returned the ToolReturn wrapper verbatim, not the unwrapped content
+    assert isinstance(captured_result, _ToolReturn)
+    assert captured_result.return_value == 'actual result'
+    assert captured_result.metadata == {'source': 'inner'}
+    assert captured_result.content == 'user extra'
+
+
+async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
+    """When a handler denies a deferred call, handle_call returns the denial message."""
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'never'  # pragma: no cover
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            approvals={call.tool_call_id: ToolDenied(message='not today') for call in requests.approvals}
+        )
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_result: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        nonlocal captured_result
+        assert ctx.tool_manager is not None
+        captured_result = await ctx.tool_manager.handle_call(
+            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+        )
+        return 'done'
+
+    await agent.run('go')
+    assert captured_result == 'not today'
+
+
 async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
     """After approval, if tool re-raises CallDeferred (not ApprovalRequired), the new exception type is propagated."""
     from pydantic_ai.exceptions import CallDeferred
