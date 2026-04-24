@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
@@ -14,7 +13,7 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import _utils, messages as _messages, models
+from pydantic_ai import _utils, messages as _messages
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
@@ -31,7 +30,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._model import RequestParams, TemporalProviderFactory
+from ._model import RequestParams
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -84,7 +83,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         *,
         models: Mapping[str, Model] | None = None,
         deps_type: type[AgentDepsT] = type(None),
-        provider_factory: TemporalProviderFactory[AgentDepsT] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
@@ -114,8 +112,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 ``'default'``.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters.
-            provider_factory: Optional callable for instantiating models from
-                provider strings at runtime inside activities.
             event_stream_handler: Optional handler for streaming events. When set,
                 model requests use a streaming activity that invokes this handler
                 inside the activity.
@@ -144,7 +140,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             (only valid for async tool functions).
         """
         self.run_context_type = run_context_type
-        self._provider_factory = provider_factory
         self._event_stream_handler = event_stream_handler
         self._extra_models = dict(models) if models else {}
         self._deps_type = deps_type
@@ -246,7 +241,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = self._resolve_model_id(params.model_id, run_context)
+            model_for_request = self._resolve_model_id(params.model_id)
             request_context = ModelRequestContext(
                 model=model_for_request,
                 messages=params.messages,
@@ -265,7 +260,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
-            model_for_request = self._resolve_model_id(params.model_id, run_context)
+            model_for_request = self._resolve_model_id(params.model_id)
             agent = self._agent
             assert agent is not None
             request_context = ModelRequestContext(
@@ -369,35 +364,29 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
     # --- Model resolution ---
 
     def _find_model_id(self, model: Model) -> str | None:
-        """Find the registry key for a Model instance. Returns None for default."""
+        """Find the registry key for a Model instance by identity.
+
+        Returns ``None`` for the default model or a string key for extra models.
+        Raises `UserError` if the model is not registered — runtime models must be
+        pre-registered via the `models=` constructor arg so their activities can be
+        dispatched on the worker.
+        """
         for model_id, registered in self._models_by_id.items():
             if registered is model:
                 return None if model_id == 'default' else model_id
 
-        target = model.model_id
-        for model_id, registered in self._models_by_id.items():
-            if registered.model_id == target:
-                return None if model_id == 'default' else model_id
+        raise UserError(
+            f'Model {model.model_id!r} is not registered with this TemporalDurability capability. '
+            'When overriding the model per-run with Temporal, pass a Model instance that was '
+            "registered via `TemporalDurability(models={'<id>': <model>})` so its activities "
+            'are available on the worker.'
+        )
 
-        return target
-
-    def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
+    def _resolve_model_id(self, model_id: str | None) -> Model:
         """Resolve a model ID to a Model instance (used inside activities)."""
         if model_id is None:
-            default = self._models_by_id.get('default')
-            if default is not None:
-                return default
-            return next(iter(self._models_by_id.values()))  # pragma: no cover
-
-        if model_id in self._models_by_id:  # pragma: lax no cover
-            return self._models_by_id[model_id]  # pragma: lax no cover
-
-        return self._infer_model(model_id, run_context)  # pragma: lax no cover
-
-    def _infer_model(self, model_id: str, run_context: RunContext[Any] | None) -> Model:  # pragma: lax no cover
-        if self._provider_factory is None or run_context is None:
-            return models.infer_model(model_id)
-        return models.infer_model(model_id, provider_factory=functools.partial(self._provider_factory, run_context))
+            return self._models_by_id['default']
+        return self._models_by_id[model_id]
 
     # --- Capability hooks ---
 

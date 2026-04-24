@@ -4285,37 +4285,61 @@ def test_durability_shared_instance_across_agents():
     assert b2.name == 'a2'
 
 
-# --- _find_model_id fallthrough to model_id string match ---
+# --- _find_model_id rejects unregistered models ---
 
 
-def test_durability_find_model_id_by_model_id_string():
-    """_find_model_id falls through identity check to match by model_id string."""
-    # Two FunctionModels with the same model_name produce identical model_id strings
-    m1 = FunctionModel(_durability_model_fn, model_name='shared')
-    m2 = FunctionModel(_durability_model_fn, model_name='shared')
-    assert m1 is not m2
-    assert m1.model_id == m2.model_id
+_rt_primary_model = FunctionModel(_durability_model_fn, model_name='primary')
+_rt_alt_model = FunctionModel(
+    lambda messages, info: ModelResponse(parts=[TextPart(content='alt-response')]),
+    model_name='alt',
+)
+_rt_durability = TemporalDurability(models={'alt': _rt_alt_model}, activity_config=BASE_ACTIVITY_CONFIG)
+_rt_agent = Agent(_rt_primary_model, name='runtime_model_test', capabilities=[_rt_durability])
 
-    agent = Agent(m2, name='model_id_string_test', capabilities=[TemporalDurability(models={'alt': m1})])
+
+@workflow.defn
+class RuntimeModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _rt_agent.run(prompt, model=_rt_alt_model)
+        return result.output
+
+
+async def test_durability_runtime_registered_model_is_used(client: Client):
+    """agent.run(model=registered_model) routes through the registered model's activity."""
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[RuntimeModelWorkflow], plugins=[DurabilityPlugin(_rt_agent)]
+    ):
+        output = await client.execute_workflow(
+            RuntimeModelWorkflow.run,
+            args=['ignored'],
+            id='RuntimeModelWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'alt-response'
+
+
+def test_durability_find_model_id_rejects_unregistered():
+    """_find_model_id raises UserError for models not registered by identity.
+
+    Runtime models (e.g. via `agent.run(model=...)` or `agent.override(model=...)`)
+    must be pre-registered so their activities are available on the worker. String
+    inference / model_id-string fallback is not supported inside workflows because
+    the worker cannot reach the provider to build a fresh model instance deterministically.
+    """
+    m1 = FunctionModel(_durability_model_fn, model_name='registered')
+    m_runtime = FunctionModel(_durability_model_fn, model_name='runtime')
+
+    agent = Agent(m1, name='model_reject_test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
 
-    # m2 is the default model (registered as 'default'), identity check matches
-    assert bound._find_model_id(m2) is None  # pyright: ignore[reportPrivateUsage]
+    # Registered default model matches by identity → None
+    assert bound._find_model_id(m1) is None  # pyright: ignore[reportPrivateUsage]
 
-    # m1 is registered as 'alt', identity check matches
-    assert bound._find_model_id(m1) == 'alt'  # pyright: ignore[reportPrivateUsage]
-
-    # A third model with the same model_id but a different instance falls through
-    # the identity loop and matches m2 (the 'default') by model_id string
-    m3 = FunctionModel(_durability_model_fn, model_name='shared')
-    assert m3 is not m1 and m3 is not m2
-    assert bound._find_model_id(m3) is None  # pyright: ignore[reportPrivateUsage]
-
-    # A model with a unique model_id not in the registry falls through both loops
-    # and returns the raw model_id string
-    m4 = FunctionModel(_durability_model_fn, model_name='unknown')
-    assert bound._find_model_id(m4) == 'function:unknown'  # pyright: ignore[reportPrivateUsage]
+    # Unregistered model is rejected with a clear error
+    with pytest.raises(UserError, match='not registered with this TemporalDurability'):
+        bound._find_model_id(m_runtime)  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_serialization_name returns None ---
