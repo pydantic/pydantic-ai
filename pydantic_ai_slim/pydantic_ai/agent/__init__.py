@@ -1181,16 +1181,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Prepend Instrumentation capability (outermost) so its spans wrap everything,
         # but only if the user hasn't already added one themselves.
-        has_instrumentation = False
-
-        def _check_instrumentation(c: AbstractCapability[AgentDepsT]) -> None:
-            nonlocal has_instrumentation
-            if isinstance(c, InstrumentationCap):
-                has_instrumentation = True
-
-        effective_capability.apply(_check_instrumentation)
-
-        if instrumentation_cap is not None and not has_instrumentation:
+        if instrumentation_cap is not None and not has_capability_type([effective_capability], InstrumentationCap):
             effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
