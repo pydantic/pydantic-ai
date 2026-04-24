@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.agent.spec import AgentSpec
+    from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
@@ -70,6 +71,15 @@ EventStreamHandler: TypeAlias = Callable[
     [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]], Awaitable[None]
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
+
+EventStreamProcessor: TypeAlias = Callable[
+    [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]],
+    AsyncIterator[_messages.AgentStreamEvent],
+]
+"""An async generator that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events and yields a potentially modified stream.
+
+Used with the [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability to modify, drop, or add events visible to the rest of the capability chain."""
+
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
@@ -135,6 +145,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @abstractmethod
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
+        raise NotImplementedError
+
+    @property
+    def root_capability(self) -> CombinedCapability[AgentDepsT]:
+        """The root capability of the agent, containing all registered capabilities."""
         raise NotImplementedError
 
     @property
