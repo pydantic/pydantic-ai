@@ -105,7 +105,7 @@ The toolset handles task execution transparently:
 !!! note
     Background task support requires the `pydocket` package. Install it with `pip install pydocket` or `pip install "pydantic-ai-slim[fastmcp-tasks]"`.
 
-```python {test="skip"}
+```python
 from fastmcp import FastMCP
 from fastmcp.server.tasks import TaskConfig
 
