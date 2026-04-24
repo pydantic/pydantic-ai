@@ -18,7 +18,6 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
-from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
@@ -26,6 +25,10 @@ from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
 from .process_event_stream import ProcessEventStream
+from .process_history import (
+    HistoryProcessor,  # pyright: ignore[reportDeprecated]
+    ProcessHistory,
+)
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -39,12 +42,12 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
-        HistoryProcessor,
         ImageGeneration,
         IncludeToolReturnSchemas,
         MCP,
         PrefixTools,
         PrepareTools,
+        ProcessHistory,
         ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
@@ -83,6 +86,7 @@ __all__ = [
     'PrefixTools',
     'PrepareTools',
     'ProcessEventStream',
+    'ProcessHistory',
     'ReinjectSystemPrompt',
     'SetToolMetadata',
     'Thinking',
