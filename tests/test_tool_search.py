@@ -1431,6 +1431,33 @@ async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: Non
         await agent.run('what should I wear?')
 
 
+async def test_openai_client_tool_search_stamps_envelope_marker():
+    """Client-executed tool search calls carry an envelope marker on
+    ``provider_details`` so replay doesn't depend on the current request's builtin
+    configuration (the user may have reconfigured ``ToolSearch``, or history may be
+    handed over from another run)."""
+    pytest.importorskip('openai')
+    from openai.types.responses import ResponseToolSearchCall
+
+    from pydantic_ai.models.openai import (
+        CLIENT_TOOL_SEARCH_ENVELOPE,
+        _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    call = ResponseToolSearchCall(
+        id='ts_1',
+        arguments={'keywords': 'exchange rate'},
+        call_id='call_1',
+        execution='client',
+        status='completed',
+        type='tool_search_call',
+    )
+    part = _map_client_tool_search_call(call)
+    assert part.tool_name == _SEARCH_TOOLS_NAME
+    assert part.provider_name == 'openai'
+    assert part.provider_details == {'envelope': CLIENT_TOOL_SEARCH_ENVELOPE}
+
+
 async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
     """A model switch between turns (Anthropic → OpenAI) should replay cleanly: the
     provider-specific Builtin* tool search parts are skipped by the mismatched provider,

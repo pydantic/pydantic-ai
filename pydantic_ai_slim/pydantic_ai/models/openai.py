@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, overload
+from typing import Any, Final, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -2306,8 +2306,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         # With `execution='client'` tool search, `search_tools` calls/returns need to be
         # replayed as `tool_search_call` / `tool_search_output` items so the provider can
-        # pair them with the builtin and unlock the discovered tools.
-        client_tool_search_active = _has_custom_tool_search(model_request_parameters)
+        # pair them with the builtin and unlock the discovered tools. Detect which calls
+        # came in through that envelope by the marker stamped on their
+        # ``provider_details`` at parse time, rather than by the current request's
+        # builtin configuration — the user may have reconfigured ``ToolSearch`` between
+        # turns, or the history may have been handed over from another run.
+        envelope_marked_call_ids: set[str] = set()
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -2320,7 +2324,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        if client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
+                        if call_id in envelope_marked_call_ids:
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
                             # discovered-tool state tied to the `tool_search_call`.
@@ -2390,10 +2394,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id, id = _split_combined_tool_call_id(call_id)
                         id = id or item.id
 
-                        if client_tool_search_active and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
+                        if (
+                            item.provider_details is not None
+                            and item.provider_details.get('envelope') == CLIENT_TOOL_SEARCH_ENVELOPE
+                        ):
                             # Replay the local `search_tools` call as a `tool_search_call`
                             # with `execution='client'` so OpenAI re-attaches it to the
                             # builtin and resumes the client-side discovery flow.
+                            envelope_marked_call_ids.add(call_id)
                             tool_search_call: ToolSearchCallParam = {
                                 'type': 'tool_search_call',
                                 'execution': 'client',
@@ -3894,6 +3902,14 @@ def _build_client_tool_search_output_param(
     return output
 
 
+CLIENT_TOOL_SEARCH_ENVELOPE: Final = 'openai.tool_search_client'
+"""Marker stored on ``ToolCallPart.provider_details['envelope']`` for client-executed
+tool search calls. Replay checks this marker (not the current request's builtin
+configuration) so history round-trips correctly even if the user reconfigured
+``ToolSearch`` between turns, and so cross-provider handover leaves the marker as
+harmless metadata on adapters that don't recognize it."""
+
+
 def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
     """Map a client-executed OpenAI ``tool_search_call`` into a regular ``ToolCallPart``.
 
@@ -3901,7 +3917,9 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
     as a ``tool_search_call`` item but leaves execution to us: the standard agent-graph
     tool-execution path runs the local ``search_tools`` function and produces the
     matching ``ToolReturnPart``. We pack the model's ``{"query": "..."}`` payload as the
-    ``{"keywords": ...}`` shape the local toolset expects.
+    ``{"keywords": ...}`` shape the local toolset expects, and stamp an envelope marker
+    on ``provider_details`` so replay can re-wrap this call as ``tool_search_call``
+    without relying on the current request's builtin configuration.
     """
     call_id = item.call_id or item.id
     args_dict = cast('dict[str, Any]', item.arguments)
@@ -3912,6 +3930,8 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
         args=args_dict,
         tool_call_id=call_id,
         id=item.id,
+        provider_name='openai',
+        provider_details={'envelope': CLIENT_TOOL_SEARCH_ENVELOPE},
     )
 
 
