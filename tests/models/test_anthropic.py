@@ -67,8 +67,6 @@ with try_import() as imports_successful:
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
-        BetaBashCodeExecutionResultBlock,
-        BetaBashCodeExecutionToolResultBlock,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
@@ -93,8 +91,6 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
-        BetaTextEditorCodeExecutionToolResultBlock,
-        BetaTextEditorCodeExecutionViewResultBlock,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
@@ -8689,198 +8685,6 @@ Fix the errors and try again.\
     )
 
 
-async def test_anthropic_bash_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
-    """Test passing bash code execution (20250825) tool history back to Anthropic."""
-    content: list[BetaContentBlock] = []
-    content.append(BetaTextBlock(text='Let me run that for you.', type='text'))
-    content.append(
-        BetaServerToolUseBlock(
-            id='server_tool_789',
-            name='bash_code_execution',
-            input={'command': 'echo hello'},
-            type='server_tool_use',
-            caller=BetaDirectCaller(type='direct'),
-        )
-    )
-    content.append(
-        BetaBashCodeExecutionToolResultBlock(
-            tool_use_id='server_tool_789',
-            type='bash_code_execution_tool_result',
-            content=BetaBashCodeExecutionResultBlock(
-                content=[],
-                return_code=0,
-                stderr='',
-                stdout='hello\n',
-                type='bash_code_execution_result',
-            ),
-        ),
-    )
-    content.append(BetaTextBlock(text='The output is hello.', type='text'))
-    first_response = completion_message(
-        content,
-        BetaUsage(input_tokens=10, output_tokens=20),
-    )
-
-    second_response = completion_message(
-        [BetaTextBlock(text='The bash command output was: hello', type='text')],
-        BetaUsage(input_tokens=50, output_tokens=30),
-    )
-
-    mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
-
-    result = await agent.run('Run echo hello')
-    assert result.output == 'The output is hello.'
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='Run echo hello', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='Let me run that for you.'),
-                    BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
-                        args={'command': 'echo hello'},
-                        tool_call_id='server_tool_789',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
-                        content={
-                            'content': [],
-                            'return_code': 0,
-                            'stderr': '',
-                            'stdout': 'hello\n',
-                            'type': 'bash_code_execution_result',
-                        },
-                        tool_call_id='server_tool_789',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(content='The output is hello.'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=10, output_tokens=20, details={'input_tokens': 10, 'output_tokens': 20}
-                ),
-                model_name='claude-3-5-haiku-123',
-                provider_name='anthropic',
-                timestamp=IsDatetime(),
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='123',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-    # Pass the history back to verify round-trip
-    agent2 = Agent(m)
-    result2 = await agent2.run('What was the bash output?', message_history=result.all_messages())
-    assert result2.output == 'The bash command output was: hello'
-
-
-async def test_anthropic_text_editor_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
-    """Test passing text editor code execution (20250825) tool history back to Anthropic."""
-    content: list[BetaContentBlock] = []
-    content.append(BetaTextBlock(text='Let me view the file.', type='text'))
-    content.append(
-        BetaServerToolUseBlock(
-            id='server_tool_101',
-            name='text_editor_code_execution',
-            input={'command': 'view', 'path': '/tmp/test.py'},
-            type='server_tool_use',
-            caller=BetaDirectCaller(type='direct'),
-        )
-    )
-    content.append(
-        BetaTextEditorCodeExecutionToolResultBlock(
-            tool_use_id='server_tool_101',
-            type='text_editor_code_execution_tool_result',
-            content=BetaTextEditorCodeExecutionViewResultBlock(
-                content='print("hello")',
-                file_type='text',
-                num_lines=1,
-                start_line=1,
-                total_lines=1,
-                type='text_editor_code_execution_view_result',
-            ),
-        ),
-    )
-    content.append(BetaTextBlock(text='The file contains a print statement.', type='text'))
-    first_response = completion_message(
-        content,
-        BetaUsage(input_tokens=10, output_tokens=20),
-    )
-
-    second_response = completion_message(
-        [BetaTextBlock(text='The file had: print("hello")', type='text')],
-        BetaUsage(input_tokens=50, output_tokens=30),
-    )
-
-    mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
-
-    result = await agent.run('View test.py')
-    assert result.output == 'The file contains a print statement.'
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='View test.py', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='Let me view the file.'),
-                    BuiltinToolCallPart(
-                        tool_name='text_editor_code_execution',
-                        args={'command': 'view', 'path': '/tmp/test.py'},
-                        tool_call_id='server_tool_101',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='text_editor_code_execution',
-                        content={
-                            'content': 'print("hello")',
-                            'file_type': 'text',
-                            'num_lines': 1,
-                            'start_line': 1,
-                            'total_lines': 1,
-                            'type': 'text_editor_code_execution_view_result',
-                        },
-                        tool_call_id='server_tool_101',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(content='The file contains a print statement.'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=10, output_tokens=20, details={'input_tokens': 10, 'output_tokens': 20}
-                ),
-                model_name='claude-3-5-haiku-123',
-                provider_name='anthropic',
-                timestamp=IsDatetime(),
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='123',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-    # Pass the history back to verify round-trip
-    agent2 = Agent(m)
-    result2 = await agent2.run('What was in the file?', message_history=result.all_messages())
-    assert result2.output == 'The file had: print("hello")'
-
-
 async def test_anthropic_dynamic_filtering_auto_detection(env: TestEnv, allow_model_requests: None):
     """Test that dynamic filtering is auto-detected based on model profile."""
     c = completion_message(
@@ -8898,7 +8702,7 @@ async def test_anthropic_dynamic_filtering_auto_detection(env: TestEnv, allow_mo
     tool_types = [t['type'] for t in kwargs['tools']]
     assert 'web_search_20260209' in tool_types
     assert 'web_fetch_20260209' in tool_types
-    # 20260209 web search/fetch are GA — no web-fetch beta header needed
+    # 20260209 web search/fetch are GA; no web-fetch beta header needed
     betas = kwargs.get('betas')
     betas_list: list[str] = list(betas) if isinstance(betas, list) else []  # pyright: ignore[reportUnknownArgumentType]
     assert 'web-fetch-2025-09-10' not in betas_list
@@ -8946,24 +8750,3 @@ async def test_anthropic_dynamic_filtering_explicit_override(env: TestEnv, allow
     tool_types2 = [t['type'] for t in kwargs2['tools']]
     assert 'web_search_20250305' in tool_types2
     assert 'web_fetch_20250910' in tool_types2
-
-
-async def test_anthropic_code_execution_20250825_beta_header(env: TestEnv, allow_model_requests: None):
-    """Test that code execution uses the 20250825 version and beta header."""
-    c = completion_message(
-        [BetaTextBlock(text='result', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=10),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
-    await agent.run('hello')
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    tool_types = [t['type'] for t in kwargs['tools']]
-    assert 'code_execution_20250825' in tool_types
-    assert 'code_execution_20250522' not in tool_types
-    betas = kwargs.get('betas')
-    betas_list: list[str] = list(betas) if isinstance(betas, list) else []  # pyright: ignore[reportUnknownArgumentType]
-    assert 'code-execution-2025-08-25' in betas_list
-    assert 'code-execution-2025-05-22' not in betas_list

@@ -80,12 +80,10 @@ try:
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaBase64PDFSourceParam,
-        BetaBashCodeExecutionToolResultBlock,
-        BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
-        BetaCodeExecutionTool20250825Param,
+        BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
@@ -127,8 +125,6 @@ try:
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
-        BetaTextEditorCodeExecutionToolResultBlock,
-        BetaTextEditorCodeExecutionToolResultBlockParam,
         BetaThinkingBlock,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
@@ -149,12 +145,6 @@ try:
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
         beta_tool_result_block_param,
-    )
-    from anthropic.types.beta.beta_bash_code_execution_tool_result_block_param import (
-        Content as BashCodeExecutionToolResultBlockParamContent,
-    )
-    from anthropic.types.beta.beta_text_editor_code_execution_tool_result_block_param import (
-        Content as TextEditorCodeExecutionToolResultBlockParamContent,
     )
     from anthropic.types.beta.beta_user_location_param import BetaUserLocationParam
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
@@ -612,10 +602,6 @@ class AnthropicModel(Model):
                 items.append(_map_web_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
                 items.append(_map_code_execution_tool_result_block(item, self.system))
-            elif isinstance(item, BetaBashCodeExecutionToolResultBlock):
-                items.append(_map_bash_code_execution_tool_result_block(item, self.system))
-            elif isinstance(item, BetaTextEditorCodeExecutionToolResultBlock):
-                items.append(_map_text_editor_code_execution_tool_result_block(item, self.system))
             elif isinstance(item, BetaWebFetchToolResultBlock):
                 items.append(_map_web_fetch_tool_result_block(item, self.system))
             elif isinstance(item, BetaRedactedThinkingBlock):
@@ -733,9 +719,9 @@ class AnthropicModel(Model):
                             user_location=user_location,
                         )
                     )
-            elif isinstance(tool, CodeExecutionTool):
-                tools.append(BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825'))
-                beta_features.add('code-execution-2025-08-25')
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+                beta_features.add('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 use_dynamic_filtering = (
@@ -900,8 +886,6 @@ class AnthropicModel(Model):
                     | BetaServerToolUseBlockParam
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
-                    | BetaBashCodeExecutionToolResultBlockParam
-                    | BetaTextEditorCodeExecutionToolResultBlockParam
                     | BetaWebFetchToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
@@ -973,14 +957,6 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name in ('bash_code_execution', 'text_editor_code_execution'):
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name=response_part.tool_name,
-                                    input=response_part.args_as_dict(),
-                                )
-                                assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
@@ -1036,32 +1012,6 @@ class AnthropicModel(Model):
                                         type='web_fetch_tool_result',
                                         content=cast(
                                             WebFetchToolResultBlockParamContent,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                        ),
-                                    )
-                                )
-                            elif response_part.tool_name == 'bash_code_execution' and isinstance(
-                                response_part.content, dict
-                            ):
-                                assistant_content_params.append(
-                                    BetaBashCodeExecutionToolResultBlockParam(
-                                        tool_use_id=tool_use_id,
-                                        type='bash_code_execution_tool_result',
-                                        content=cast(
-                                            BashCodeExecutionToolResultBlockParamContent,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                        ),
-                                    )
-                                )
-                            elif response_part.tool_name == 'text_editor_code_execution' and isinstance(
-                                response_part.content, dict
-                            ):
-                                assistant_content_params.append(
-                                    BetaTextEditorCodeExecutionToolResultBlockParam(
-                                        tool_use_id=tool_use_id,
-                                        type='text_editor_code_execution_tool_result',
-                                        content=cast(
-                                            TextEditorCodeExecutionToolResultBlockParamContent,
                                             response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                         ),
                                     )
@@ -1493,16 +1443,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id=event.index,
                         part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                     )
-                elif isinstance(current_block, BetaBashCodeExecutionToolResultBlock):
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=_map_bash_code_execution_tool_result_block(current_block, self.provider_name),
-                    )
-                elif isinstance(current_block, BetaTextEditorCodeExecutionToolResultBlock):
-                    yield self._parts_manager.handle_part(
-                        vendor_part_id=event.index,
-                        part=_map_text_editor_code_execution_tool_result_block(current_block, self.provider_name),
-                    )
                 elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
@@ -1630,13 +1570,8 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=tool_args,
             tool_call_id=item.id,
         )
-    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=item.name,
-            args=tool_args,
-            tool_call_id=item.id,
-        )
+    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
         # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
@@ -1670,28 +1605,6 @@ def _map_code_execution_tool_result_block(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
-        tool_call_id=item.tool_use_id,
-    )
-
-
-def _map_bash_code_execution_tool_result_block(
-    item: BetaBashCodeExecutionToolResultBlock, provider_name: str
-) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
-        provider_name=provider_name,
-        tool_name='bash_code_execution',
-        content=item.content.model_dump(mode='json'),
-        tool_call_id=item.tool_use_id,
-    )
-
-
-def _map_text_editor_code_execution_tool_result_block(
-    item: BetaTextEditorCodeExecutionToolResultBlock, provider_name: str
-) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
-        provider_name=provider_name,
-        tool_name='text_editor_code_execution',
-        content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
     )
 

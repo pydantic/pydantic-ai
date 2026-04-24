@@ -154,8 +154,8 @@ class WebSearchTool(AbstractBuiltinTool):
     dynamic_filtering: bool | None = None
     """Whether to enable dynamic filtering for web search results.
 
-    When enabled, the model uses server-side code execution to post-process search results
-    before they enter context, improving accuracy and reducing token usage.
+    When enabled, the model uses server-side filtering to refine search results before they enter
+    context, improving accuracy and reducing token usage.
 
     * `None` (default): auto-detect based on model capabilities
     * `True`: force dynamic filtering on (uses 20260209 tool version)
@@ -268,8 +268,8 @@ class WebFetchTool(AbstractBuiltinTool):
     dynamic_filtering: bool | None = None
     """Whether to enable dynamic filtering for fetched content.
 
-    When enabled, the model uses server-side code execution to post-process fetched content
-    before it enters context, improving accuracy and reducing token usage.
+    When enabled, the model uses server-side filtering to refine fetched content before it enters
+    context, improving accuracy and reducing token usage.
 
     * `None` (default): auto-detect based on model capabilities
     * `True`: force dynamic filtering on (uses 20260209 tool version)

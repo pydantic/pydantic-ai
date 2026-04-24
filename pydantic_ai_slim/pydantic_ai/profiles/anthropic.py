@@ -31,8 +31,8 @@ class AnthropicModelProfile(ModelProfile):
     """Whether the model supports dynamic filtering for web search/fetch (Sonnet 4.6+, Opus 4.6+).
 
     When True and `dynamic_filtering` is not explicitly set to `False` on the builtin tool,
-    the 20260209 tool versions are used which enable server-side code execution to
-    post-process search/fetch results before they enter context.
+    the 20260209 tool versions are used which enable server-side filtering before
+    search/fetch results enter context.
     """
 
 
