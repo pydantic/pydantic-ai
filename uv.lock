@@ -6702,6 +6702,7 @@ dev = [
     { name = "inline-snapshot" },
     { name = "markdownify" },
     { name = "pip" },
+    { name = "pydocket" },
     { name = "pytest" },
     { name = "pytest-examples" },
     { name = "pytest-mock" },
@@ -6766,6 +6767,7 @@ dev = [
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "pip", specifier = ">=26.0" },
+    { name = "pydocket", specifier = ">=0.19.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-examples", specifier = ">=0.0.18" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
@@ -6890,6 +6892,10 @@ exa = [
 fastmcp = [
     { name = "fastmcp" },
 ]
+fastmcp-tasks = [
+    { name = "fastmcp" },
+    { name = "pydocket" },
+]
 google = [
     { name = "google-genai" },
 ]
@@ -6991,6 +6997,7 @@ requires-dist = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=3.2.4" },
+    { name = "fastmcp", marker = "extra == 'fastmcp-tasks'", specifier = ">=3.2.4" },
     { name = "genai-prices", specifier = ">=0.0.48" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.66.0" },
@@ -7019,6 +7026,7 @@ requires-dist = [
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "pydantic-handlebars", marker = "extra == 'spec'", specifier = ">=0.1.0" },
+    { name = "pydocket", marker = "extra == 'fastmcp-tasks'", specifier = ">=0.19.0" },
     { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
     { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
     { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
@@ -7041,7 +7049,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "fastmcp-tasks", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
 
 [[package]]
 name = "pydantic-core"

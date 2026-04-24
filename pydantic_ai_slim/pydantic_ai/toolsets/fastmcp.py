@@ -4,6 +4,7 @@ import base64
 from asyncio import Lock
 from contextlib import AsyncExitStack
 from dataclasses import KW_ONLY, dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -11,13 +12,14 @@ from pydantic import AnyUrl
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import messages
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 try:
     from fastmcp.client import Client
+    from fastmcp.client.tasks import ToolTask
     from fastmcp.client.transports import ClientTransport
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import MCPConfig
@@ -48,6 +50,12 @@ if TYPE_CHECKING:
 
     from pydantic_ai.mcp import ProcessToolCallback
 
+try:
+    import docket  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+    pydocket_installed = True
+except ImportError:
+    pydocket_installed = False
 
 FastMCPToolResult = messages.BinaryContent | dict[str, Any] | str | None
 
@@ -205,6 +213,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'meta': mcp_tool.meta,
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
+                            'execution': mcp_tool.execution.model_dump() if mcp_tool.execution else None,
                         },
                         return_schema=mcp_tool.outputSchema or None,
                         include_return_schema=self.include_return_schema,
@@ -218,6 +227,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         name: str,
         args: dict[str, Any],
         metadata: dict[str, Any] | None = None,
+        *,
+        use_task: bool = False,
     ) -> Any:
         """Call a tool on the server.
 
@@ -225,6 +236,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             name: The name of the tool to call.
             args: The arguments to pass to the tool.
             metadata: Request-level metadata (optional)
+            use_task: Whether to use task-augmented execution for background task support.
+                When True, the tool call is sent with task=True. Should only be set for tools that advertise task
+                support via their execution metadata (taskSupport='required' or 'optional').
 
         Returns:
             The result of the tool call.
@@ -234,7 +248,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         """
         async with self:  # Ensure server is running
             try:
-                call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=args, meta=metadata)
+                if use_task:
+                    tool_task: ToolTask = await self.client.call_tool(
+                        name=name, arguments=args, task=True, meta=metadata
+                    )
+                    call_tool_result: CallToolResult = await tool_task.result()
+                else:
+                    call_tool_result = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
                 if self.tool_error_behavior == 'model_retry':
                     raise ModelRetry(message=str(e)) from e
@@ -260,10 +280,20 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
+        execution = tool.tool_def.metadata.get('execution') if tool.tool_def.metadata else None
+        task_support = execution.get('taskSupport') if execution else None
+        use_task = pydocket_installed and task_support in ('required', 'optional')
+
+        if not pydocket_installed and task_support == 'required':
+            raise UserError(
+                f"Tool '{name!r}' requires task-augmented execution but 'pydocket' is not installed. "
+                'Install it with: pip install pydocket'
+            )
+
         if self.process_tool_call is not None:
-            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
+            return await self.process_tool_call(ctx, partial(self.direct_call_tool, use_task=use_task), name, tool_args)
         else:
-            return await self.direct_call_tool(name, tool_args)
+            return await self.direct_call_tool(name, tool_args, use_task=use_task)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
