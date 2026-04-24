@@ -1,4 +1,4 @@
-"""Tool search toolset.
+"""Tool search toolset and strategy types.
 
 `ToolSearchToolset` wraps another toolset to support discovery of tools marked with
 `defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
@@ -31,21 +31,51 @@ model calls the tool by its plain name, and the ``ToolManager`` dispatches by
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
-from ..builtin_tools import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchFunc
+from ..builtin_tools import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchNativeStrategy
 from ..exceptions import ModelRetry, UserError
 from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
+
+ToolSearchFunc = Callable[[str, Sequence[ToolDefinition]], Sequence[str]]
+"""Custom search function for
+[`ToolSearch`][pydantic_ai.capabilities.ToolSearch]'s ``strategy`` field.
+
+Takes the natural-language query and the deferred tool definitions, and returns the
+matching tool names ordered by relevance.
+"""
+
+ToolSearchLocalStrategy = Literal['substring']
+"""Named local tool search strategy.
+
+``'substring'`` opts into the built-in token-overlap algorithm explicitly — use this
+to lock in the current local algorithm rather than the ``None`` default (which lets
+Pydantic AI pick the best algorithm per provider and may change over time).
+"""
+
+ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNativeStrategy]  # noqa: UP007
+"""Strategy value accepted by [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy].
+
+* ``None`` (default, on the capability): let Pydantic AI pick the best strategy for the
+  current provider — native on supporting models, the default local algorithm elsewhere.
+  The choice may change in future versions.
+* ``'substring'``: force the local token-overlap algorithm regardless of provider.
+* ``'bm25'`` / ``'regex'``: force a specific provider-native strategy (Anthropic). The
+  request fails on providers that can't honor the choice.
+* Callable ``(query, tools) -> names``: custom search function. Used locally, and also
+  by the native "client-executed" surface on providers that support it (Anthropic custom
+  tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
+"""
 
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = 'tool_search'
@@ -137,6 +167,17 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     search_guidance: str | None = None
     """Custom description for the ``keywords`` parameter shown to the model."""
 
+    local_fallback: bool = True
+    """Whether to register the local ``search_tools`` function tool.
+
+    When ``False``, deferred tools appear only in their managed form and discovery must go
+    through the provider's native tool search. Used by
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] when an explicit named native
+    strategy (``'bm25'`` / ``'regex'``) is configured — falling back to a different local
+    algorithm would silently ignore the user's choice, so we skip the local tool entirely
+    and let ``prepare_request`` raise if the native builtin is unavailable.
+    """
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -181,10 +222,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             if name in discovered:
                 result[name] = tool
 
-        # `search_tools` carries `prefer_builtin='tool_search'` — the adapter drops it
-        # when the builtin is supported. Skip emitting it once every deferred tool is
-        # already discovered: there's nothing left for the local path to find.
-        if not discovered.issuperset(deferred):
+        # `search_tools` carries `prefer_builtin='tool_search'` (when fallback-to-local
+        # is appropriate) — the adapter drops it when the builtin is supported. Skip
+        # emitting it when ``local_fallback=False`` (the capability's named-native mode:
+        # we must not silently substitute a different local algorithm for the user's
+        # explicit strategy choice) or once every deferred tool is already discovered.
+        if self.local_fallback and not discovered.issuperset(deferred):
             result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
 
         return result

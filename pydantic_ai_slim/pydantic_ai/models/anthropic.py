@@ -1101,13 +1101,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:
-                                # Default to bm25 on replay — the server side doesn't actually
-                                # validate the name here, and we don't track which variant the
-                                # original request used.
+                                # Round-trip the native variant (bm25/regex) so we don't
+                                # silently rewrite the algorithm. `_map_server_tool_use_block`
+                                # stashes it in `provider_details['strategy']`.
+                                details = response_part.provider_details or {}
+                                strategy: Literal['bm25', 'regex'] = (
+                                    'regex' if details.get('strategy') == 'regex' else 'bm25'
+                                )
+                                native_name = (
+                                    'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
+                                )
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
-                                    name='tool_search_tool_bm25',
+                                    name=native_name,
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
@@ -1977,11 +1984,15 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
+        # Preserve the native variant on the call part so history replay re-emits the
+        # same server tool type (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
+        strategy: Literal['bm25', 'regex'] = 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'
         return BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=ToolSearchTool.kind,
             args=tool_args,
             tool_call_id=item.id,
+            provider_details={'strategy': strategy},
         )
     elif item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')

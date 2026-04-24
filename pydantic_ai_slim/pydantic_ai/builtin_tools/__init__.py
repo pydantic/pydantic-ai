@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypeAlias, Union
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
@@ -23,9 +23,7 @@ __all__ = (
     'MCPServerTool',
     'FileSearchTool',
     'ToolSearchTool',
-    'ToolSearchStrategy',
-    'ToolSearchNamedStrategy',
-    'ToolSearchFunc',
+    'ToolSearchNativeStrategy',
     'TOOL_SEARCH_FUNCTION_TOOL_NAME',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
@@ -581,36 +579,20 @@ class FileSearchTool(AbstractBuiltinTool):
     """The kind of tool."""
 
 
-ToolSearchFunc: TypeAlias = Callable[[str, Sequence[Any]], Sequence[str]]
-"""Custom search function for :class:`ToolSearchTool`.
+ToolSearchNativeStrategy = Literal['bm25', 'regex']
+"""Named provider-native tool search strategy carried on
+[`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool].
 
-Takes the natural-language query and the deferred tool definitions to search through
-(sequence of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) and returns the
-matching tool names ordered by relevance. Typed as ``Sequence[Any]`` to keep agent-spec
-serialization working for the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
-capability — annotate your own function with ``Sequence[ToolDefinition]`` for IDE
-support.
+``'bm25'`` and ``'regex'`` correspond to Anthropic's server-side tool search variants.
+OpenAI's Responses API does not expose distinct named native strategies, so these values
+are rejected by the OpenAI adapter.
 """
-
-ToolSearchNamedStrategy: TypeAlias = Literal['bm25', 'regex']
-"""Named server-side tool search strategy supported by Anthropic."""
 
 TOOL_SEARCH_FUNCTION_TOOL_NAME = 'search_tools'
 """Name of the local function tool that backs [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
 for keyword-based discovery when native tool search isn't available, and that model adapters
 route to for provider-side "client-executed" custom callable modes (Anthropic tool-reference
 blocks; OpenAI ``execution='client'``)."""
-
-ToolSearchStrategy: TypeAlias = Union[ToolSearchFunc, ToolSearchNamedStrategy]  # noqa: UP007
-"""Tool search strategy value accepted by the
-[`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability.
-
-- ``'bm25'`` / ``'regex'``: force the Anthropic native BM25 or regex strategy.
-- Callable ``(query, tools) -> names``: custom local search function.
-
-``None`` is allowed on [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy]
-itself (meaning "use the provider default") but isn't part of this alias.
-"""
 
 
 @dataclass(kw_only=True)
@@ -622,12 +604,12 @@ class ToolSearchTool(AbstractBuiltinTool):
     providers with ``defer_loading`` on the wire; the provider manages their visibility
     and only exposes them once they've been discovered.
 
-    The mode of discovery depends on ``strategy``:
+    The mode of discovery depends on ``strategy`` and ``custom``:
 
     * A named strategy (or ``None`` for the provider default): the provider runs the
       search server-side using its own indexing (Anthropic ``bm25``/``regex``, OpenAI
       server-executed ``tool_search``).
-    * A custom callable: the provider invokes our local search function to answer each
+    * ``custom=True``: the provider invokes our local search function to answer each
       search request. On Anthropic this goes via a regular function tool whose return
       value the adapter re-formats as ``tool_reference`` blocks; on OpenAI it goes via
       ``ToolSearchToolParam(execution='client')`` with our callable's parameter schema.
@@ -639,16 +621,17 @@ class ToolSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic (bm25, regex, custom callable) — Sonnet 4.5+, Opus 4.5+, Haiku 4.5+
-    * OpenAI Responses (server, custom callable via ``execution='client'``) — GPT-5.4+
+    * OpenAI Responses (server default, custom callable via ``execution='client'``) — GPT-5.4+
+      (named strategies ``'bm25'``/``'regex'`` are not supported).
     """
 
-    strategy: ToolSearchNamedStrategy | None = None
+    strategy: ToolSearchNativeStrategy | None = None
     """The native search strategy to use.
 
     * ``None`` (default): use the provider's default native search. On Anthropic this is
       ``bm25``; on OpenAI it is the server-executed ``tool_search`` tool.
-    * ``'bm25'`` / ``'regex'``: force a specific Anthropic native strategy. Raises on other
-      providers.
+    * ``'bm25'`` / ``'regex'``: force a specific Anthropic native strategy. Adapters on
+      providers that can't honor the choice raise ``UserError``.
 
     Custom callable strategies aren't carried on this builtin — they live on the
     [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability, which sets ``custom=True``
@@ -668,11 +651,6 @@ class ToolSearchTool(AbstractBuiltinTool):
 
     kind: str = 'tool_search'
     """The kind of tool."""
-
-    optional: bool = True
-    """Default ``True``: the builtin is silently dropped on models that don't support
-    native tool search — the capability's local ``search_tools`` function handles
-    discovery instead."""
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:

@@ -12,7 +12,7 @@ import json
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -1332,6 +1332,192 @@ async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests:
     assert 'tool_search_tool_regex_20251119' in tool_types
 
 
+async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_requests: None):
+    """History replay must re-emit the exact server-tool variant the provider used —
+    downgrading ``tool_search_tool_regex`` to ``tool_search_tool_bm25`` on a resend would
+    silently run a different algorithm than the earlier turn."""
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import BetaServerToolUseBlock, BetaTextBlock, BetaUsage
+    from anthropic.types.beta.beta_server_tool_use_block import BetaDirectCaller
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        _map_server_tool_use_block,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+    # Provider-side call used the regex variant; the adapter must round-trip that choice.
+    regex_block = BetaServerToolUseBlock(
+        id='srv_r',
+        name='tool_search_tool_regex',
+        input={'query': '.*'},
+        type='server_tool_use',
+        caller=BetaDirectCaller(type='direct'),
+    )
+    call_part = _map_server_tool_use_block(regex_block, 'anthropic')
+    assert isinstance(call_part, BuiltinToolCallPart)
+    assert call_part.provider_details == {'strategy': 'regex'}
+
+    # On replay, the adapter should emit `tool_search_tool_regex` (not bm25).
+    response = completion_message(
+        [BetaTextBlock(text='done', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Weather in {city}.'
+
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('look it up'),
+        ModelResponse(
+            parts=[
+                call_part,
+                BuiltinToolReturnPart(
+                    provider_name='anthropic',
+                    tool_name='tool_search',
+                    tool_call_id='srv_r',
+                    content={'type': 'tool_search_tool_search_result', 'tool_references': []},
+                    metadata={'discovered_tools': ['get_weather']},
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+    await agent.run('and again', message_history=history)
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # Inspect the replayed Anthropic request: content blocks are dicts on the request
+    # path (params). Flatten manually since typed iteration over the union is fussy.
+    names: list[str] = []
+    for msg in kwargs['messages']:
+        content: Any = msg.get('content') or []
+        assert isinstance(content, list)
+        blocks = cast('list[dict[str, Any]]', content)
+        for block in blocks:
+            if block.get('type') == 'server_tool_use':
+                name = block.get('name')
+                if isinstance(name, str):
+                    names.append(name)
+    assert 'tool_search_tool_regex' in names
+    assert 'tool_search_tool_bm25' not in names
+
+
+async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: None):
+    """OpenAI Responses has no bm25/regex concept — using one must error loudly rather
+    than silently falling through to OpenAI's default server-side tool search."""
+    pytest.importorskip('openai')
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='bm25')])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Weather in {city}.'
+
+    with pytest.raises(UserError, match='Anthropic-native'):
+        await agent.run('what should I wear?')
+
+
+async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
+    """A model switch between turns (Anthropic → OpenAI) should replay cleanly: the
+    provider-specific Builtin* tool search parts are skipped by the mismatched provider,
+    and the agent can still dispatch already-discovered tools by name. This is the
+    canonical FallbackModel-style scenario the design calls for."""
+    pytest.importorskip('openai')
+    pytest.importorskip('anthropic')
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+
+    # Prior turn: Anthropic ran a native BM25 search and discovered `get_weather`.
+    prior: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('weather please'),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name='anthropic',
+                    tool_name='tool_search',
+                    tool_call_id='srv_a',
+                    args={'query': 'weather'},
+                    provider_details={'strategy': 'bm25'},
+                ),
+                BuiltinToolReturnPart(
+                    provider_name='anthropic',
+                    tool_name='tool_search',
+                    tool_call_id='srv_a',
+                    content={'type': 'tool_search_tool_search_result', 'tool_references': []},
+                    metadata={'discovered_tools': ['get_weather']},
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+    # Switch to OpenAI for the follow-up. The Anthropic builtin parts should be silently
+    # skipped (`provider_name` mismatch). `get_weather` was discovered in the prior turn,
+    # so `ToolSearchToolset._parse_discovered_tools` picks it up and exposes the regular
+    # variant on the new provider — the model can call it directly.
+    followup = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_1',
+                content=[ResponseOutputText(text='Sunny.', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(followup)
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Weather in {city}.'
+
+    await agent.run('and what about tomorrow?', message_history=prior)
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    # The Anthropic-generated tool search parts are not echoed back to OpenAI (wrong
+    # provider) — the replayed input contains only the user message from the prior turn
+    # and the new user prompt, plus no `tool_search_call` items.
+    item_types: list[str] = []
+    for item in kwargs['input']:
+        if isinstance(item, dict):
+            item_type = item.get('type')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(item_type, str):
+                item_types.append(item_type)
+    assert 'tool_search_call' not in item_types
+    # `get_weather` is visible on this turn because it was discovered in the prior turn's
+    # history — the local ``ToolSearchToolset`` emits its regular variant in the tool
+    # list so the OpenAI request carries `get_weather` as a regular function tool.
+    tool_names: list[str] = []
+    for tool in kwargs['tools']:
+        if isinstance(tool, dict):
+            tool_name = tool.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(tool_name, str):
+                tool_names.append(tool_name)
+    assert 'get_weather' in tool_names
+
+
 def test_anthropic_tool_search_result_error_block_mapping():
     """An error result block (no `tool_references`) produces a
     `BuiltinToolReturnPart` without discovered tools in its metadata."""
@@ -1948,13 +2134,90 @@ async def test_tool_search_capability_strategy_callable_registers_custom_builtin
 
 
 async def test_tool_search_capability_strategy_named_registers_builtin():
-    """Named strategies register a `ToolSearchTool` builtin so native search is used."""
+    """Named native strategies register a non-optional `ToolSearchTool` — the request
+    must error on models that can't honor the choice rather than silently substituting
+    a local algorithm for bm25/regex."""
     cap = ToolSearch(strategy='regex')
     builtins = list(cap.get_builtin_tools())
     assert len(builtins) == 1
     tool = builtins[0]
     assert isinstance(tool, ToolSearchTool)
     assert tool.strategy == 'regex'
+    assert tool.optional is False
+
+
+async def test_tool_search_capability_strategy_none_optional_builtin():
+    """The default (``None``) strategy registers an optional builtin so the local
+    token-matching fallback takes over on models without native support."""
+    cap = ToolSearch()
+    builtins = list(cap.get_builtin_tools())
+    assert len(builtins) == 1
+    tool = builtins[0]
+    assert isinstance(tool, ToolSearchTool)
+    assert tool.strategy is None
+    assert tool.optional is True
+
+
+async def test_tool_search_capability_strategy_substring_no_builtin():
+    """``strategy='substring'`` is explicitly local — no native builtin is registered,
+    the default token-overlap algorithm runs via the local ``search_tools`` function."""
+    cap = ToolSearch(strategy='substring')
+    builtins = list(cap.get_builtin_tools())
+    assert builtins == []
+
+
+async def test_tool_search_capability_substring_keeps_local_fallback():
+    """``strategy='substring'`` still registers the local ``search_tools`` toolset."""
+    toolset = _create_function_toolset()
+    cap = ToolSearch(strategy='substring')
+    wrapped = cap.get_wrapper_toolset(toolset)
+    assert isinstance(wrapped, ToolSearchToolset)
+    assert wrapped.local_fallback is True
+
+
+async def test_tool_search_capability_named_strategy_skips_local_fallback():
+    """Named native strategies (bm25/regex) must suppress the local ``search_tools``
+    tool so ``prepare_request`` raises on unsupported models instead of falling back
+    to a different local algorithm."""
+    toolset = _create_function_toolset()
+    cap = ToolSearch(strategy='bm25')
+    wrapped = cap.get_wrapper_toolset(toolset)
+    assert isinstance(wrapped, ToolSearchToolset)
+    assert wrapped.local_fallback is False
+
+
+async def test_tool_search_named_strategy_raises_on_unsupported_model():
+    """Named native strategies error on models that don't support ``ToolSearchTool``
+    — there's no legal fallback for ``strategy='bm25'`` on e.g. GPT-4."""
+    from pydantic_ai.models.test import TestModel
+
+    m = TestModel()
+    with pytest.raises(UserError, match='not supported by this model'):
+        m.prepare_request(
+            None,
+            ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool(strategy='bm25')]),
+        )
+
+
+async def test_tool_search_substring_ignores_builtin_support():
+    """``strategy='substring'`` never tries to use a native builtin — the swap is a
+    no-op even on models that support ``ToolSearchTool``."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import ToolDefinition
+
+    class ToolSearchTestModel(TestModel):
+        @classmethod
+        def supported_builtin_tools(cls):
+            return frozenset({ToolSearchTool})
+
+    m = ToolSearchTestModel()
+    search_tool = ToolDefinition(name=_SEARCH_TOOLS_NAME, description='local', parameters_json_schema={})
+    _, prepared = m.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[search_tool], builtin_tools=[]),
+    )
+    assert prepared.builtin_tools == []
+    assert [t.name for t in prepared.function_tools] == [_SEARCH_TOOLS_NAME]
 
 
 def test_managed_by_builtin_swaps_on_support():
@@ -1964,10 +2227,12 @@ def test_managed_by_builtin_swaps_on_support():
     from pydantic_ai.tools import ToolDefinition
 
     m = TestModel()
-    search_builtin = ToolSearchTool()
+    # `optional=True` models the default auto path where the builtin is a best-effort
+    # upgrade; on a model that doesn't support it, both the builtin and its corpus drop
+    # so the local `ToolSearch` fallback handles discovery.
+    search_builtin = ToolSearchTool(optional=True)
     corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search')
 
-    # TestModel doesn't support ToolSearchTool — corpus drops, builtin drops silently (optional).
     _, prepared = m.prepare_request(
         None,
         ModelRequestParameters(
@@ -2015,6 +2280,6 @@ def test_optional_builtin_dropped_with_empty_corpus():
     m = ToolSearchTestModel()
     _, prepared = m.prepare_request(
         None,
-        ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool()]),
+        ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool(optional=True)]),
     )
     assert prepared.builtin_tools == []

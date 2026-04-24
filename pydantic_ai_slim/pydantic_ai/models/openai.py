@@ -2166,7 +2166,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     )
                 )
             elif isinstance(tool, ToolSearchTool):  # pragma: no branch
-                # OpenAI doesn't expose distinct named strategies — it decides server-side.
+                # OpenAI's Responses API has no concept of named native strategies — the
+                # `tool_search` builtin is one knob, decided server-side. Honor the user's
+                # explicit choice or fail loudly; do not silently run a different algorithm.
+                if tool.strategy is not None:
+                    raise UserError(
+                        f'`ToolSearch(strategy={tool.strategy!r})` is an Anthropic-native strategy '
+                        'and is not supported by OpenAI Responses. Use `strategy=None` (default, '
+                        "provider-managed), `strategy='substring'` (local token matching), or "
+                        'a callable strategy.'
+                    )
                 # With `custom=True`, the search runs client-side via our local
                 # `search_tools` function tool: the provider surfaces the search as a
                 # `tool_search_call` with `execution='client'`, we dispatch it through the

@@ -1001,7 +1001,7 @@ though not all of these settings are supported by all models.\
                 'ToolSearchTool': {
                     'properties': {
                         'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
-                        'optional': {'default': True, 'title': 'Optional', 'type': 'boolean'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'strategy': {
                             'anyOf': [{'enum': ['bm25', 'regex'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
@@ -1413,7 +1413,11 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'strategy': {
-                            'anyOf': [{'enum': ['bm25', 'regex'], 'type': 'string'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'const': 'substring', 'type': 'string'},
+                                {'enum': ['bm25', 'regex'], 'type': 'string'},
+                                {'type': 'null'},
+                            ],
                             'title': 'Strategy',
                         },
                         'max_results': {'title': 'Max Results', 'type': 'integer'},
