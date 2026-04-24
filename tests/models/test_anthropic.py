@@ -6844,13 +6844,13 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                 parts=[
                     ThinkingPart(
                         content='The user wants to calculate 4 * 12390.',
-                        signature='EuMBClsIDBgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgxdMoxketxaRi0SIDIaDGu2uFsnBjpUQQ3styIwug8i/z8VwTo9P7ioh1eUzbeqDyUhGqCoqewksXt7lHW+lSAJvsSxI+CPacNIzonjKjbBQyrUrgAhNwvvbln6BIHioh24LlMuqf9Wk75VnwAItHuFlf/DWEZsUCO3m0kvhRO7LoMVUjYYAQ==',
+                        signature='EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='bash_code_execution',
                         args={'command': 'echo $((4 * 12390))'},
-                        tool_call_id='srvtoolu_013LtqoLW38oSHuMK5uF3qBa',
+                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -6862,7 +6862,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                             'stdout': '49560\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_013LtqoLW38oSHuMK5uF3qBa',
+                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -6882,8 +6882,8 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaESqGDN1d96H2c68TEH1'},
-                provider_response_id='msg_01NquuTQGnL369GPtASXwmm8',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRiLGQoB5CoDJP5jaVY'},
+                provider_response_id='msg_01GpqA67eRBKk6HEb9w5Rs28',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
