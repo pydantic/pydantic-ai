@@ -737,7 +737,7 @@ class TestFastMCPToolsetBackgroundTasks:
 
         @server.tool(task=TaskConfig(mode='required'))
         async def task_required_tool() -> str:
-            return 'should_not_reach'
+            return 'should_not_reach'  # pragma: no cover
 
         toolset = FastMCPToolset(Client(transport=server))
 
