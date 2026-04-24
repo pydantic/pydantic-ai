@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
+import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -277,6 +278,19 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     google_service_tier: GoogleServiceTier
     """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
+
+
+def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
+    """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
+    if (deprecated := model_settings.get('google_service_tier')) is not None:
+        warnings.warn(
+            '`google_service_tier` is deprecated; use `google_vertex_service_tier` for Vertex AI '
+            'or the top-level `service_tier` for the Gemini API (GLA).',
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return deprecated
+    return None
 
 
 def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier | ServiceTier) -> dict[str, str]:
@@ -690,7 +704,7 @@ class GoogleModel(Model[Client]):
         if self.system == 'google-vertex':
             service_tier_vertex = (
                 model_settings.get('google_vertex_service_tier')
-                or model_settings.get('google_service_tier')
+                or _get_deprecated_google_service_tier(model_settings)
                 or model_settings.get('service_tier')
                 or 'pt_then_on_demand'
             )
@@ -705,7 +719,9 @@ class GoogleModel(Model[Client]):
 
         service_tier_str: str | None = None
         if self.system != 'google-vertex':
-            if raw_service_tier := model_settings.get('google_service_tier') or model_settings.get('service_tier'):
+            if raw_service_tier := _get_deprecated_google_service_tier(model_settings) or model_settings.get(
+                'service_tier'
+            ):
                 service_tier_str = raw_service_tier.lower()
                 if service_tier_str == 'default':
                     service_tier_str = 'standard'

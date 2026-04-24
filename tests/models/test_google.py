@@ -109,7 +109,7 @@ with try_import() as imports_successful:
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
-        GoogleServiceTier,
+        GoogleVertexServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
@@ -6608,12 +6608,12 @@ async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_reque
 )
 async def test_google_service_tier_vertex_headers(
     allow_model_requests: None,
-    service_tier: GoogleServiceTier,
+    service_tier: GoogleVertexServiceTier,
     expected_headers: dict[str, str],
 ):
-    """Test that Vertex `google_service_tier` values set the expected HTTP headers."""
+    """Test that Vertex `google_vertex_service_tier` values set the expected HTTP headers."""
     m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
-    model_settings = GoogleModelSettings(google_service_tier=service_tier)
+    model_settings = GoogleModelSettings(google_vertex_service_tier=service_tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -6651,6 +6651,22 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
 
 
+async def test_google_service_tier_deprecation_warning(allow_model_requests: None):
+    """Reading the deprecated `google_service_tier` field emits a `DeprecationWarning`."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    model_settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+
+    with pytest.warns(DeprecationWarning, match=r'`google_service_tier` is deprecated'):
+        _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+            messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+            model_settings=model_settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    headers = cast(dict[str, Any], config)['http_options']['headers']
+    assert headers.get('X-Vertex-AI-LLM-Shared-Request-Type') == 'flex'
+
+
 @pytest.mark.vcr()
 async def test_google_vertex_service_tier_flex(
     allow_model_requests: None, vertex_provider: GoogleProvider
@@ -6658,7 +6674,7 @@ async def test_google_vertex_service_tier_flex(
     model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model)
 
-    settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+    settings = GoogleModelSettings(google_vertex_service_tier='pt_then_flex')
     result = await agent.run('Reply with exactly: OK', model_settings=settings)
 
     assert result.output == snapshot('OK')
@@ -6702,7 +6718,7 @@ async def test_google_vertex_service_tier_flex_stream(
     model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model)
 
-    settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+    settings = GoogleModelSettings(google_vertex_service_tier='pt_then_flex')
     async with agent.run_stream('Reply with exactly: OK', model_settings=settings) as result:
         output = await result.get_output()
         assert output == snapshot('OK')

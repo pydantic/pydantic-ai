@@ -81,9 +81,12 @@ You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.serv
 
 The unified field maps as follows for Bedrock:
 
-- `'default'` and `'auto'`: Maps to Bedrock's `'default'` tier.
+- `'auto'`: The `serviceTier` field is omitted from the request, so AWS applies its default (Standard tier).
+- `'default'`: Maps to Bedrock's `'default'` tier.
 - `'flex'`: Maps to Bedrock's `'flex'` tier.
 - `'priority'`: Maps to Bedrock's `'priority'` tier.
+
+To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity reservation), set [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] directly — it isn't reachable through the unified field.
 
 ## Prompt Caching
 

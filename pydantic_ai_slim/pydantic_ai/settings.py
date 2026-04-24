@@ -226,6 +226,9 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Groq
     * Bedrock
+    * OpenRouter
+    * Cerebras
+    * xAI
     """
 
     service_tier: ServiceTier
