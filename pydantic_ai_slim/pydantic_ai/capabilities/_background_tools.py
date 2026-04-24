@@ -65,11 +65,11 @@ class BackgroundToolCapability(AbstractCapability[Any]):
         try:
             return await handler()
         finally:
-            # Tasks normally complete before the run ends (after_node_run waits), so this
-            # branch only runs when the run aborts early (exception, iter() break-out).
-            for task in state.tasks.values():  # pragma: no cover
+            # Cancel any tasks still live (e.g. when a run aborts before
+            # `after_node_run` had a chance to wait for them).
+            for task in state.tasks.values():
                 task.cancel()
-            if state.tasks:  # pragma: no cover
+            if state.tasks:
                 await asyncio.gather(*state.tasks.values(), return_exceptions=True)
             _RUN_STATE.reset(token)
 
@@ -97,7 +97,7 @@ class BackgroundToolCapability(AbstractCapability[Any]):
                     SystemPromptPart(f"Background tool '{tool_name}' (task {task_id}) completed.\nResult: {result}"),
                     priority='follow_up',
                 )
-            except asyncio.CancelledError:  # pragma: no cover
+            except asyncio.CancelledError:
                 # Task cancelled during run cleanup — don't enqueue a follow-up;
                 # the event is still set via finally so a waiter can proceed.
                 raise
