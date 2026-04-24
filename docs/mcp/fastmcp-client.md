@@ -112,18 +112,22 @@ from fastmcp.server.tasks import TaskConfig
 from pydantic_ai import Agent
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-mcp = FastMCP("server")
+mcp = FastMCP('server')
 
-@mcp.tool(task=TaskConfig(mode="required"))
+
+@mcp.tool(task=TaskConfig(mode='required'))
 async def long_task() -> str:
     import asyncio
+
     await asyncio.sleep(5)  # Long-running operation
-    return "completed"
+    return 'completed'
+
 
 async def main():
-    agent = Agent("openai:gpt-5.2", toolsets=[FastMCPToolset(mcp)])
-    result = await agent.run("Run the long task")
+    agent = Agent('openai:gpt-5.2', toolsets=[FastMCPToolset(mcp)])
+    result = await agent.run('Run the long task')
     print(result.output)
+    #> completed
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
