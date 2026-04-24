@@ -5090,7 +5090,7 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.warns(UserWarning, match=r'prepare callback .*returned None'):
+        with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
             result = await agent.run('hello')
         assert result.output == 'tools: []'
 
