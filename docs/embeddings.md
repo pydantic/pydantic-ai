@@ -716,6 +716,33 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+### Settings precedence and merging
+
+Embedding configuration can come from three places:
+
+1. **Model defaults** – when you construct an embedding model with `settings=...`.
+2. **Embedder defaults** – when you create an [`Embedder`][pydantic_ai.embeddings.Embedder] with `settings=...`.
+3. **Per-call overrides** – when you pass `settings=` to [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query], [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents], or [`embed()`][pydantic_ai.embeddings.Embedder.embed].
+
+Internally, these settings are merged using [`merge_embedding_settings()`][pydantic_ai.embeddings.merge_embedding_settings]:
+
+- later sources override earlier ones when they specify the same key
+- keys that only appear in earlier sources are preserved
+
+For example, if you have:
+
+- model defaults: `{'dimensions': 128, 'from_model': True}`
+- embedder defaults: `{'dimensions': 256, 'from_embedder': True}`
+- per-call settings: `{'dimensions': 512, 'from_embed': True}`
+
+then the merged settings used for the request are:
+
+```python
+{'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
 ## Token Counting
 
 You can check token counts before embedding to avoid exceeding model limits:
