@@ -166,6 +166,13 @@ VideoUrl(url='https://example.com/video.mp4', force_download=True)
 DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 ```
 
+!!! warning "Trust model for file URLs"
+    When URLs are forwarded to the provider, the provider fetches them under its own credentials. For cloud-storage schemes like `s3://` (Bedrock) and `gs://` (Vertex AI), those credentials are your server's IAM role or service account, so whoever controls the URL effectively controls what the provider can read on your behalf.
+
+    Don't construct [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] from untrusted user input without validating the scheme and scope. For frontend-initiated uploads to cloud storage, prefer pre-signed `https://` URLs over references like `s3://bucket/key`. If you do need to accept the raw cloud-storage scheme, set `force_download=True` to route the fetch through the library's HTTP client (which applies SSRF protection).
+
+    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+
 ## Uploaded Files
 
 Some model providers have their own file storage APIs where you can upload files and reference them by ID or URL.

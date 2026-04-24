@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -17,10 +18,12 @@ from pydantic_ai.messages import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -48,7 +51,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 
 from ._inline_snapshot import snapshot
@@ -929,6 +932,224 @@ async def test_reinject_system_prompt_capability_preserves_existing():
     assert isinstance(first_request, ModelRequest)
     sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
     assert [p.content for p in sys_parts] == ['First agent']
+
+
+def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert 'allowed_file_url_schemes' in from_request_parameters
+    assert from_request_parameters['allowed_file_url_schemes'].default == frozenset({'http', 'https'})
+    assert 'allowed_file_url_schemes' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_file_url_schemes'].default == frozenset({'http', 'https'})
+
+
+def _make_dummy_adapter(
+    messages: list[ModelMessage],
+    *,
+    allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+) -> DummyUIAdapter[None, str]:
+    agent: Agent[None, str] = Agent(model=TestModel())
+    return DummyUIAdapter(
+        agent=agent,
+        run_input=DummyUIRunInput(messages=messages),
+        allowed_file_url_schemes=allowed_file_url_schemes,
+    )
+
+
+def test_sanitize_messages_strips_file_urls_with_disallowed_schemes():
+    """File URLs with schemes outside `allowed_file_url_schemes` are dropped with a warning."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Look at this:',
+                            ImageUrl(url='s3://my-bucket/key.png'),
+                            ImageUrl(url='https://example.com/ok.png'),
+                            DocumentUrl(url='gs://my-bucket/doc.pdf'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'gs'.*'s3'"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert len(sanitized) == 1
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
+
+
+def test_sanitize_messages_leaves_string_user_content_alone():
+    """Sanitization never modifies string-only user prompts."""
+    adapter = _make_dummy_adapter([ModelRequest(parts=[UserPromptPart(content='Plain text')])])
+    sanitized = adapter.sanitize_messages(adapter.messages)
+    assert sanitized == snapshot([ModelRequest(parts=[UserPromptPart(content='Plain text', timestamp=IsDatetime())])])
+
+
+def test_sanitize_messages_respects_custom_allowed_schemes():
+    """Schemes explicitly added to `allowed_file_url_schemes` flow through unchanged."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='s3://bucket/ok.png'),
+                            ImageUrl(url='gs://bucket/blocked.png'),
+                        ]
+                    )
+                ]
+            )
+        ],
+        allowed_file_url_schemes=frozenset({'http', 'https', 's3'}),
+    )
+
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'gs'"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot([ImageUrl(url='s3://bucket/ok.png')])
+
+
+def test_sanitize_messages_strips_dangling_tool_calls():
+    """A trailing ModelResponse with unresolved ToolCallParts has them dropped with a warning."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Working on it'),
+                    ToolCallPart(tool_name='refresh_cache', args={'key': 1}, tool_call_id='call-1'),
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*refresh_cache'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert len(sanitized) == 2
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    assert [type(p).__name__ for p in response.parts] == ['TextPart']
+
+
+def test_sanitize_messages_keeps_tool_calls_resolved_by_deferred_results():
+    """Tool calls matched by `deferred_tool_results` survive sanitization (HITL resumption)."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 1}, tool_call_id='call-1')]),
+        ]
+    )
+
+    deferred_tool_results = DeferredToolResults(approvals={'call-1': True})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages, deferred_tool_results=deferred_tool_results)
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    assert [type(p).__name__ for p in response.parts] == ['ToolCallPart']
+
+
+def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
+    """Only the *last* message is checked for dangling tool calls; completed tool exchanges earlier
+    in the history are legitimate context and must be preserved verbatim.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='do_thing', args={'x': 1}, tool_call_id='earlier-1')]),
+            ModelRequest(parts=[UserPromptPart(content='Follow up')]),
+        ]
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    mid_response = sanitized[1]
+    assert isinstance(mid_response, ModelResponse)
+    assert [type(p).__name__ for p in mid_response.parts] == ['ToolCallPart']
+
+
+async def test_run_stream_strips_dangling_tool_calls_from_client_history():
+    """End-to-end: a client-submitted history ending in an unresolved tool call does not trigger
+    tool execution; the dangling tool call is stripped before the agent sees the history.
+    """
+    executed: list[dict[str, Any]] = []
+
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    @agent.tool_plain
+    def refresh_cache(key: int) -> str:
+        executed.append({'key': key})
+        return 'refreshed'
+
+    request = DummyUIRunInput(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 42}, tool_call_id='call-1')]),
+        ]
+    )
+    adapter = DummyUIAdapter(agent=agent, run_input=request)
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*refresh_cache'):
+        async for _ in adapter.run_stream():
+            pass
+
+    assert executed == [], 'dangling client-submitted tool call must not be executed'
+
+
+async def test_run_stream_strips_file_urls_with_disallowed_schemes():
+    """End-to-end: an s3:// URL in a client-submitted user prompt is dropped before the agent runs."""
+    captured: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(list(messages))
+        yield 'ok'
+
+    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = DummyUIRunInput(
+        messages=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'See attached',
+                            ImageUrl(url='s3://some-bucket/internal.png'),
+                            ImageUrl(url='https://example.com/public.png'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+    adapter = DummyUIAdapter(agent=agent, run_input=request)
+
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'s3'"):
+        async for _ in adapter.run_stream():
+            pass
+
+    assert len(captured) == 1
+    first_request = captured[0][0]
+    assert isinstance(first_request, ModelRequest)
+    user_part = first_request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == ['See attached', ImageUrl(url='https://example.com/public.png')]
 
 
 async def test_reinject_system_prompt_capability_with_pending_tool_calls():
