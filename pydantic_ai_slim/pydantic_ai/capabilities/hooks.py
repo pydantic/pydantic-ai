@@ -553,14 +553,12 @@ class _HookRegistration(Generic[AgentDepsT]):
     # --- Deferred tool calls ---
 
     @overload
-    def handle_deferred_tool_calls(
-        self, func: HandleDeferredToolCallsHookFunc, /
-    ) -> HandleDeferredToolCallsHookFunc: ...
+    def deferred_tool_calls(self, func: HandleDeferredToolCallsHookFunc, /) -> HandleDeferredToolCallsHookFunc: ...
     @overload
-    def handle_deferred_tool_calls(
+    def deferred_tool_calls(
         self, *, timeout: float | None = None
     ) -> Callable[[HandleDeferredToolCallsHookFunc], HandleDeferredToolCallsHookFunc]: ...
-    def handle_deferred_tool_calls(
+    def deferred_tool_calls(
         self, func: HandleDeferredToolCallsHookFunc | None = None, *, timeout: float | None = None
     ) -> Any:
         return _bare_or_parameterized(self._r, 'handle_deferred_tool_calls', func, timeout=timeout)
@@ -630,7 +628,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         tool_execute: WrapToolExecuteHookFunc | None = None,
         tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
         # Deferred tool calls
-        handle_deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
+        deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
         # Ordering
         ordering: CapabilityOrdering | None = None,
     ):
@@ -661,7 +659,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_tool_execute': after_tool_execute,
             'wrap_tool_execute': tool_execute,
             'on_tool_execute_error': tool_execute_error,
-            'handle_deferred_tool_calls': handle_deferred_tool_calls,
+            'handle_deferred_tool_calls': deferred_tool_calls,
         }
         for key, func in _kwargs.items():
             if func is not None:

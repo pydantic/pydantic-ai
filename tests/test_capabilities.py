@@ -11065,7 +11065,7 @@ async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id()
 
 
 async def test_deferred_tool_handler_via_hooks_decorator():
-    """`@hooks.on.handle_deferred_tool_calls` resolves deferred calls inline."""
+    """`@hooks.on.deferred_tool_calls` resolves deferred calls inline."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -11074,7 +11074,7 @@ async def test_deferred_tool_handler_via_hooks_decorator():
 
     hooks = Hooks[None]()
 
-    @hooks.on.handle_deferred_tool_calls
+    @hooks.on.deferred_tool_calls
     async def handler(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
@@ -11091,7 +11091,7 @@ async def test_deferred_tool_handler_via_hooks_decorator():
 
 
 async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulation():
-    """`Hooks(handle_deferred_tool_calls=...)` accumulates results across registered handlers."""
+    """`Hooks(deferred_tool_calls=...)` accumulates results across registered handlers."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -11111,14 +11111,14 @@ async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulatio
                 results.approvals[call.tool_call_id] = True
         return results
 
-    hooks = Hooks[None](handle_deferred_tool_calls=handle_a)
+    hooks = Hooks[None](deferred_tool_calls=handle_a)
 
-    @hooks.on.handle_deferred_tool_calls
+    @hooks.on.deferred_tool_calls
     async def handle_rest(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         # tool_a was already resolved by handle_a; this handler sees only tool_b and tool_c
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
-    @hooks.on.handle_deferred_tool_calls
+    @hooks.on.deferred_tool_calls
     async def never_called(  # pragma: no cover
         ctx: RunContext[None], *, requests: DeferredToolRequests
     ) -> DeferredToolResults | None:
@@ -11150,18 +11150,18 @@ async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulatio
 
 
 async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
-    """`Hooks` returns None from `handle_deferred_tool_calls` when no registered handler resolves anything."""
+    """`Hooks` returns None from the deferred-tool-calls hook when no registered handler resolves anything."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
     hooks = Hooks[None]()
 
-    @hooks.on.handle_deferred_tool_calls
+    @hooks.on.deferred_tool_calls
     async def declines(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         return None
 
-    @hooks.on.handle_deferred_tool_calls
+    @hooks.on.deferred_tool_calls
     async def empty(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         # Empty results count as "didn't handle"
         return DeferredToolResults()

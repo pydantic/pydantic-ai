@@ -24,7 +24,7 @@ from .exceptions import (
     ToolRetryError,
     UnexpectedModelBehavior,
 )
-from .messages import ToolCallPart
+from .messages import ToolCallPart, ToolReturn
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -609,7 +609,7 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         approved: bool = False,
         metadata: Any = None,
-    ) -> Any | ToolDenied:
+    ) -> ToolDenied | ToolReturn[Any] | Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
         This is a convenience method that combines validate_tool_call() and execute_tool_call().
@@ -677,7 +677,7 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
-    ) -> Any | ToolDenied:
+    ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
         Dispatches the handler's result for `call` on the same set of

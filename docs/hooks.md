@@ -153,18 +153,18 @@ Filters or modifies tool definitions the model sees on each step. Controls visib
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
-| `handle_deferred_tool_calls` | `handle_deferred_tool_calls=` | `handle_deferred_tool_calls` |
+| `deferred_tool_calls` | `deferred_tool_calls=` | `handle_deferred_tool_calls` |
 
 Resolves [deferred tool calls](deferred-tools.md) (approval-required or externally-executed) inline during a run. The hook receives a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and returns a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] (or `None` to decline). Multiple registered hooks accumulate: each receives the still-unresolved requests and can resolve some or all of them.
 
-```python {title="hooks_handle_deferred.py"}
+```python {title="hooks_deferred_tool_calls.py"}
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import Hooks
 
 hooks = Hooks()
 
 
-@hooks.on.handle_deferred_tool_calls
+@hooks.on.deferred_tool_calls
 async def auto_approve(
     ctx: RunContext[None], *, requests: DeferredToolRequests
 ) -> DeferredToolResults:
