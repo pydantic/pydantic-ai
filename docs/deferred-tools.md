@@ -444,7 +444,7 @@ async def send_to_worker(task: str) -> str:
 1. Never reached here — the handler denies this call, so the model sees the denial message instead.
 2. The handler supplies the result for this external call, so the tool body just signals the deferral.
 
-If the handler declines to resolve some or all of the calls (by omitting them from the returned `DeferredToolResults` or returning `None`), those calls bubble up as a `DeferredToolRequests` output, and `DeferredToolRequests` must be in the agent's output type — so you can combine inline handling with the stop-the-world flow when it makes sense.
+If the handler declines to resolve some or all of the calls (by omitting them from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] or returning `None`), those calls bubble up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output, and `DeferredToolRequests` must be in the agent's output type — so you can combine inline handling with the stop-the-world flow when it makes sense.
 
 See [Capabilities](capabilities.md) for how capabilities compose, including [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] and multi-capability composition via `capabilities=[...]`.
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -9,6 +8,7 @@ from pydantic import ValidationError
 
 from pydantic_ai import _system_prompt
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
@@ -57,7 +57,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await asyncio.gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return replace(self, capabilities=list(new_caps))

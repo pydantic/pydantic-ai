@@ -6,16 +6,26 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, MCPServerTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -25,6 +35,8 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
+    ProcessEventStream,
+    ReinjectSystemPrompt,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -55,6 +67,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -71,7 +84,10 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr, try_import
+
+with try_import() as xai_imports:
+    from pydantic_ai.models.xai import XSearch
 
 pytestmark = [
     pytest.mark.anyio,
@@ -86,6 +102,7 @@ def test_capability_types() -> None:
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
@@ -511,23 +528,18 @@ def test_model_json_schema_with_capabilities():
                 },
                 'KnownModelName': {
                     'enum': [
-                        'anthropic:claude-3-5-haiku-20241022',
-                        'anthropic:claude-3-5-haiku-latest',
-                        'anthropic:claude-3-7-sonnet-20250219',
-                        'anthropic:claude-3-7-sonnet-latest',
                         'anthropic:claude-3-haiku-20240307',
-                        'anthropic:claude-3-opus-20240229',
-                        'anthropic:claude-3-opus-latest',
-                        'anthropic:claude-4-opus-20250514',
-                        'anthropic:claude-4-sonnet-20250514',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-preview',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-opus-4-0',
+                        'anthropic:claude-opus-4-1',
                         'anthropic:claude-opus-4-1-20250805',
                         'anthropic:claude-opus-4-20250514',
                         'anthropic:claude-opus-4-5-20251101',
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-6',
+                        'anthropic:claude-opus-4-7',
                         'anthropic:claude-sonnet-4-0',
                         'anthropic:claude-sonnet-4-20250514',
                         'anthropic:claude-sonnet-4-5-20250929',
@@ -605,16 +617,17 @@ def test_model_json_schema_with_capabilities():
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
                         'gateway/anthropic:claude-3-haiku-20240307',
-                        'gateway/anthropic:claude-4-opus-20250514',
-                        'gateway/anthropic:claude-4-sonnet-20250514',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-preview',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-opus-4-0',
+                        'gateway/anthropic:claude-opus-4-1',
                         'gateway/anthropic:claude-opus-4-1-20250805',
                         'gateway/anthropic:claude-opus-4-20250514',
                         'gateway/anthropic:claude-opus-4-5-20251101',
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-6',
+                        'gateway/anthropic:claude-opus-4-7',
                         'gateway/anthropic:claude-sonnet-4-0',
                         'gateway/anthropic:claude-sonnet-4-20250514',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -1086,6 +1099,48 @@ Supported by:
                     'title': 'WebSearchUserLocation',
                     'type': 'object',
                 },
+                'XSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'default': False,
+                            'title': 'Enable Image Understanding',
+                            'type': 'boolean',
+                        },
+                        'enable_video_understanding': {
+                            'default': False,
+                            'title': 'Enable Video Understanding',
+                            'type': 'boolean',
+                        },
+                        'include_output': {
+                            'default': False,
+                            'title': 'Include Output',
+                            'type': 'boolean',
+                        },
+                    },
+                    'title': 'XSearchTool',
+                    'type': 'object',
+                },
                 'short_spec_BuiltinTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1094,6 +1149,7 @@ Supported by:
                                 {
                                     'oneOf': [
                                         {'$ref': '#/$defs/WebSearchTool'},
+                                        {'$ref': '#/$defs/XSearchTool'},
                                         {'$ref': '#/$defs/CodeExecutionTool'},
                                         {'$ref': '#/$defs/WebFetchTool'},
                                         {'$ref': '#/$defs/UrlContextTool'},
@@ -1131,6 +1187,12 @@ Supported by:
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
                     'required': ['MCP'],
                     'title': 'short_spec_MCP',
+                    'type': 'object',
+                },
+                'short_spec_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
+                    'title': 'short_spec_ReinjectSystemPrompt',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -1303,6 +1365,8 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
@@ -1413,7 +1477,7 @@ Supported by:
                 },
                 'end_strategy': {
                     'default': 'early',
-                    'enum': ['early', 'exhaustive'],
+                    'enum': ['early', 'graceful', 'exhaustive'],
                     'title': 'End Strategy',
                     'type': 'string',
                 },
@@ -1445,6 +1509,8 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
@@ -1780,6 +1846,26 @@ async def test_capability_returning_toolset_func():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
+async def test_runtime_capability_contributions_applied():
+    """Run-time `capabilities=` contributions (tools, instructions, etc.) must be applied.
+
+    Regression guard: the `source_cap` selection previously only checked for `override()`
+    or spec capabilities, so tool contributions from a capability passed only via
+    `Agent.run(capabilities=[...])` were silently dropped.
+    """
+    agent = Agent(TestModel())
+    result = await agent.run('Greet Alice', capabilities=[ToolsetFuncCapability()])
+
+    tool_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [c.tool_name for c in tool_calls] == ['greet']
+
+
 async def test_capability_returning_toolset_func_combined():
     """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
     agent = Agent(
@@ -1982,6 +2068,33 @@ async def test_combined_capability_for_run_returns_new_when_child_changes():
     new_per_run = result.capabilities[1]
     assert isinstance(new_per_run, PerRunCap)
     assert new_per_run.run_id == 1
+
+
+async def test_combined_capability_for_run_cancels_siblings_on_failure():
+    """When one child's for_run fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    @dataclass
+    class FailingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            raise RuntimeError('boom')
+
+    @dataclass
+    class SlowCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return self  # pragma: no cover
+
+    combined = CombinedCapability([FailingCap(), SlowCap()])
+    ctx = _build_run_context()
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.for_run(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
 
 
 def test_apply_single_capability():
@@ -2245,6 +2358,11 @@ async def tool_calling_stream_function(
         return
 
     yield 'no tools available'  # pragma: no cover
+
+
+# Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
+class SingleBaseModelArg(BaseModel):
+    label: str = 'default'
 
 
 def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2921,6 +3039,104 @@ class TestToolExecuteHooks:
         await agent.run('call tool')
         assert cap.caught_error == 'tool failed'
 
+    async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
+        """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
+
+        The JSON schema sent to the model unwraps the BaseModel, so the model generates its fields at the
+        top level. Pydantic's validator returns a BaseModel instance directly, but the framework wraps it
+        as `{param_name: model}` so hooks and `call_tool` always see a dict.
+        """
+        captured_args: list[tuple[str, dict[str, Any]]] = []
+
+        @dataclass
+        class CapturingCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                captured_args.append(('validate', args))
+                return args
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                captured_args.append(('execute', args))
+                return await handler(args)
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CapturingCap()])
+
+        @agent.tool_plain
+        def my_tool(payload: SingleBaseModelArg) -> str:
+            return f'got {payload.label}'
+
+        await agent.run('call the tool')
+        assert captured_args == [
+            ('validate', {'payload': SingleBaseModelArg()}),
+            ('execute', {'payload': SingleBaseModelArg()}),
+        ]
+
+    async def test_tool_hooks_skip_output_tools(self):
+        """Tool hooks don't fire for internal output tools (#5111).
+
+        Output tools deliver structured output to the user via `result.output`; they're not
+        user-facing tool calls. Firing hooks on them lets e.g. `after_tool_execute` return a
+        `ToolReturn` that leaks through to `result.output` instead of the typed value.
+        """
+
+        class MyOutput(BaseModel):
+            answer: str
+
+        hooks = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def wrap_result(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> ToolReturn:
+            return ToolReturn(return_value=result, content='extra context')
+
+        cap = LoggingCapability()
+        agent = Agent(
+            TestModel(custom_output_args={'answer': 'hi'}),
+            output_type=MyOutput,
+            capabilities=[cap, hooks],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool and answer')
+
+        # Function tool still fires every tool hook.
+        assert 'before_tool_validate:my_tool' in cap.log
+        assert 'after_tool_validate:my_tool' in cap.log
+        assert 'wrap_tool_validate:my_tool:before' in cap.log
+        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert 'before_tool_execute:my_tool' in cap.log
+        assert 'after_tool_execute:my_tool' in cap.log
+        assert 'wrap_tool_execute:my_tool:before' in cap.log
+        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        # Output tool does not appear in any hook log entry.
+        assert all('final_result' not in entry for entry in cap.log)
+        # Regression for #5111: the ToolReturn from `after_tool_execute` would have corrupted
+        # `result.output` if output tool hooks still fired.
+        assert result.output == MyOutput(answer='hi')
+
 
 class TestCompositionOrder:
     async def test_multiple_capabilities_model_request_order(self):
@@ -3423,6 +3639,156 @@ class TestWrapRunEventStream:
         assert any(isinstance(e, PartStartEvent) for e in observed_events)
 
 
+class TestProcessEventStream:
+    """Tests for the ProcessEventStream capability."""
+
+    async def test_handler_receives_events(self):
+        """Handler registered via capability receives events from model streaming."""
+        handler_events: list[AgentStreamEvent] = []
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                handler_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=handler)],
+        )
+
+        # No event_stream_handler arg — capability should drive streaming
+        result = await agent.run('hello')
+        assert result.output is not None
+        assert any(isinstance(e, PartStartEvent) for e in handler_events)
+
+    async def test_multiple_handlers_and_param_all_observe(self):
+        """Multiple ProcessEventStream capabilities and an explicit event_stream_handler all see the same events."""
+        cap1_events: list[AgentStreamEvent] = []
+        cap2_events: list[AgentStreamEvent] = []
+        param_events: list[AgentStreamEvent] = []
+
+        async def cap1_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                cap1_events.append(event)
+
+        async def cap2_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                cap2_events.append(event)
+
+        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                param_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=cap1_handler), ProcessEventStream(handler=cap2_handler)],
+        )
+
+        await agent.run('hello', event_stream_handler=param_handler)
+        assert len(cap1_events) > 0
+        assert cap1_events == cap2_events == param_events
+
+    async def test_handler_sees_events_after_inner_wrappers(self):
+        """Events passed to the handler go through inner wrap_run_event_stream wrappers."""
+        transformed_calls: list[AgentStreamEvent] = []
+        handler_events: list[AgentStreamEvent] = []
+
+        @dataclass
+        class InnerWrapper(AbstractCapability[Any]):
+            async def wrap_run_event_stream(
+                self,
+                ctx: RunContext[Any],
+                *,
+                stream: AsyncIterable[AgentStreamEvent],
+            ) -> AsyncIterable[AgentStreamEvent]:
+                async for event in stream:
+                    transformed_calls.append(event)
+                    yield event
+
+        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                handler_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=handler), InnerWrapper()],
+        )
+
+        await agent.run('hello')
+        assert handler_events == transformed_calls
+        assert len(handler_events) > 0
+
+    async def test_transformer_handler_replaces_stream(self):
+        """An async-generator handler transforms the stream seen by downstream wrappers and the param handler."""
+        downstream_events: list[AgentStreamEvent] = []
+
+        async def transformer(
+            _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            async for event in stream:
+                if isinstance(event, PartStartEvent):
+                    # Drop PartStart events — downstream should never see them.
+                    continue
+                yield event
+
+        async def param_handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                downstream_events.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=transformer)],
+        )
+
+        await agent.run('hello', event_stream_handler=param_handler)
+        assert len(downstream_events) > 0
+        assert not any(isinstance(e, PartStartEvent) for e in downstream_events)
+
+    async def test_callable_instance_processor(self):
+        """A callable-class processor (not a plain async-generator function) is detected via its return type."""
+        captured: list[AgentStreamEvent] = []
+
+        class Transformer:
+            async def __call__(
+                self, _ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]
+            ) -> AsyncIterator[AgentStreamEvent]:
+                async for event in stream:
+                    captured.append(event)
+                    yield event
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=Transformer())],
+        )
+        await agent.run('hello')
+        assert any(isinstance(e, PartStartEvent) for e in captured)
+
+    async def test_observer_bailout_does_not_break_downstream(self):
+        """If an observer stops iterating early, downstream consumers still see all events."""
+        received_by_observer: list[AgentStreamEvent] = []
+        received_downstream: list[AgentStreamEvent] = []
+
+        async def bail_after_first(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                received_by_observer.append(event)
+                return
+
+        async def downstream(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                received_downstream.append(event)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ProcessEventStream(handler=bail_after_first)],
+        )
+        await agent.run('hello', event_stream_handler=downstream)
+        assert len(received_by_observer) == 1
+        assert len(received_downstream) > 1
+
+    async def test_not_spec_serializable(self):
+        """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
+        assert ProcessEventStream.get_serialization_name() is None
+
+
 class TestWrapRunShortCircuit:
     """Test short-circuiting wrap_run via iter() and run_stream()."""
 
@@ -3841,6 +4207,55 @@ class TestWebSearchCapability:
 
         cap = WebSearch(local=my_search)
         assert isinstance(cap.local, Tool)
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+class TestXSearchCapability:
+    def test_xsearch_default(self):
+        """XSearch() with defaults → builtin XSearchTool, no local."""
+        cap = XSearch()
+        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is None
+
+    def test_xsearch_with_all_constraints(self):
+        """XSearch with all constraint fields → XSearchTool configured."""
+        cap = XSearch(
+            allowed_x_handles=['handle1'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+            include_output=True,
+        )
+        assert cap.get_builtin_tools() == snapshot(
+            [
+                XSearchTool(
+                    allowed_x_handles=['handle1'],
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                    enable_image_understanding=True,
+                    enable_video_understanding=True,
+                    include_output=True,
+                )
+            ]
+        )
+
+    def test_xsearch_requires_builtin_with_handles(self):
+        """XSearch with handle constraints requires builtin."""
+        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
+            [XSearchTool(excluded_x_handles=['h'])]
+        )
+
+    def test_xsearch_builtin_false_local_false_raises(self):
+        """XSearch(builtin=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            XSearch(builtin=False, local=False)
+
+    def test_xsearch_builtin_false_with_constraints_raises(self):
+        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            XSearch(builtin=False, allowed_x_handles=['handle1'])
 
 
 class TestWebFetchCapability:
@@ -5366,6 +5781,13 @@ def test_web_fetch_unique_id():
     """WebFetch returns the correct builtin unique_id."""
     cap = WebFetch()
     assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+def test_xsearch_unique_id():
+    """XSearch returns the correct builtin unique_id."""
+    cap = XSearch()
+    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
@@ -8385,6 +8807,226 @@ class TestCtxAgentInCapability:
         agent = Agent(FunctionModel(simple_model_function), name='hook_test_agent', capabilities=[AgentTrackingCap()])
         await agent.run('hello')
         assert hook_agent_names == ['hook_test_agent', 'hook_test_agent']
+
+
+# region --- Compaction capability tests ---
+
+
+class TestCompaction:
+    def test_compaction_part_serialization(self):
+        """CompactionPart round-trips through Pydantic serialization."""
+        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
+
+        # Anthropic-style (text content)
+        anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
+        assert anthropic_part.has_content()
+        assert anthropic_part.part_kind == 'compaction'
+
+        # OpenAI-style (encrypted, no content)
+        openai_part = CompactionPart(
+            content=None,
+            id='cmp_123',
+            provider_name='openai',
+            provider_details={'encrypted_content': 'abc123', 'type': 'compaction'},
+        )
+        assert not openai_part.has_content()
+        assert openai_part.part_kind == 'compaction'
+
+        # Round-trip through serialization
+        response = ModelResponse(parts=[anthropic_part, openai_part])
+        messages: list[ModelMessage] = [response]
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+        assert len(deserialized) == 1
+        assert isinstance(deserialized[0], ModelResponse)
+        parts = deserialized[0].parts
+        assert len(parts) == 2
+        assert isinstance(parts[0], CompactionPart)
+        assert parts[0].content == 'Summary of conversation'
+        assert parts[0].provider_name == 'anthropic'
+        assert isinstance(parts[1], CompactionPart)
+        assert parts[1].content is None
+        assert parts[1].id == 'cmp_123'
+        assert parts[1].provider_details == {'encrypted_content': 'abc123', 'type': 'compaction'}
+
+    async def test_openai_compaction_with_wrong_model(self):
+        """OpenAICompaction raises UserError when used with a non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    async def test_openai_compaction_with_wrapped_wrong_model(self):
+        """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+        from pydantic_ai.models.wrapper import WrapperModel
+
+        wrapped = WrapperModel(FunctionModel(simple_model_function))
+        agent = Agent(
+            wrapped,
+            capabilities=[OpenAICompaction(message_count_threshold=0)],
+        )
+        with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+            await agent.run('hello')
+
+    def test_openai_compaction_should_compact_with_trigger(self):
+        """OpenAICompaction._should_compact delegates to custom trigger."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
+            [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')]),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+        )
+
+    def test_openai_compaction_should_compact_no_config(self):
+        """Bare `OpenAICompaction()` is stateful mode and never triggers the before_model_request hook."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        cap = OpenAICompaction()
+        assert cap.stateless is False
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+
+    def test_openai_compaction_mode_inference(self):
+        """`stateless` is inferred from which mode-specific fields are passed."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction().stateless is False
+        assert OpenAICompaction(token_threshold=1000).stateless is False
+        assert OpenAICompaction(message_count_threshold=5).stateless is True
+        assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
+
+    def test_openai_compaction_stateful_model_settings(self):
+        """Stateful mode returns `openai_context_management` via get_model_settings."""
+        pytest.importorskip('openai')
+        from types import SimpleNamespace
+        from typing import cast
+
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        def _resolve(cap: OpenAICompaction[None], model_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+            resolver = cap.get_model_settings()
+            assert resolver is not None
+            ctx = SimpleNamespace(model_settings=model_settings)
+            return cast(dict[str, Any], resolver(cast(Any, ctx)))
+
+        assert _resolve(OpenAICompaction()) == {'openai_context_management': [{'type': 'compaction'}]}
+        assert _resolve(OpenAICompaction(token_threshold=50_000)) == {
+            'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]
+        }
+        # If the user already configured `openai_context_management` directly, we defer
+        # to them entirely and don't append our own entry. OpenAI's context_management
+        # list only meaningfully supports one `compaction` entry, so mixing the capability
+        # with manual config would produce ambiguous/conflicting state.
+        assert (
+            _resolve(
+                OpenAICompaction(token_threshold=50_000),
+                model_settings={'openai_context_management': [{'type': 'compaction', 'compact_threshold': 200_000}]},
+            )
+            == {}
+        )
+        # When user has other model settings but no `openai_context_management`,
+        # the capability's compaction entry is injected normally.
+        assert _resolve(
+            OpenAICompaction(token_threshold=50_000),
+            model_settings={'temperature': 0.5},
+        ) == {'openai_context_management': [{'type': 'compaction', 'compact_threshold': 50_000}]}
+        # Stateless mode does not inject model settings
+        assert OpenAICompaction(message_count_threshold=5).get_model_settings() is None
+
+    def test_openai_compaction_rejects_mixed_fields(self):
+        """Mixing stateful-only and stateless-only fields raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='`token_threshold` is only valid for stateful compaction'):
+            OpenAICompaction(stateless=True, token_threshold=1000, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, message_count_threshold=5)
+
+        with pytest.raises(UserError, match='only valid for stateless compaction'):
+            OpenAICompaction(stateless=False, trigger=lambda _msgs: True)
+
+    def test_openai_compaction_stateless_requires_trigger(self):
+        """`stateless=True` without message_count_threshold or trigger raises UserError."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.raises(UserError, match='requires `message_count_threshold` or `trigger`'):
+            OpenAICompaction(stateless=True)
+
+    def test_openai_compaction_instructions_deprecated(self):
+        """Passing `instructions` emits a DeprecationWarning because OpenAI semantics differ from Anthropic."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        with pytest.warns(DeprecationWarning, match='OpenAICompaction\\(instructions='):
+            OpenAICompaction(message_count_threshold=5, instructions='Summarize briefly')
+
+    def test_openai_compaction_serialization_name(self):
+        """OpenAICompaction has the correct serialization name."""
+        pytest.importorskip('openai')
+        from pydantic_ai.models.openai import OpenAICompaction
+
+        assert OpenAICompaction.get_serialization_name() == 'OpenAICompaction'
+
+    def test_anthropic_compaction_serialization_name(self):
+        """AnthropicCompaction has the correct serialization name."""
+        pytest.importorskip('anthropic')
+        from pydantic_ai.models.anthropic import AnthropicCompaction
+
+        assert AnthropicCompaction.get_serialization_name() == 'AnthropicCompaction'
+
+    async def test_compaction_part_in_function_model_history(self):
+        """FunctionModel handles message history containing CompactionPart."""
+        from pydantic_ai.messages import CompactionPart
+
+        compaction_response = ModelResponse(
+            parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
+            provider_name='anthropic',
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+            compaction_response,
+            ModelRequest(parts=[UserPromptPart(content='How are you?')]),
+        ]
+
+        agent = Agent(FunctionModel(simple_model_function))
+        result = await agent.run('Follow up', message_history=history)
+        assert result.output == 'response from model'
+
+    async def test_compaction_part_without_content_in_response(self):
+        """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
+        from pydantic_ai.messages import CompactionPart
+
+        def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    CompactionPart(content=None, id='cmp_123', provider_name='openai'),
+                    TextPart(content='actual response'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(model_with_compaction))
+        result = await agent.run('hello')
+        assert result.output == 'actual response'
+
+
+# endregion
 
 
 def test_thread_executor_not_serializable() -> None:

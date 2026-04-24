@@ -143,7 +143,7 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
-If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
+If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
@@ -348,18 +348,17 @@ the message history before each model request. History processors can also be pr
     This means that if you want to keep the original message history, you need to make a copy of it.
 
 !!! warning "History processors can affect `new_messages()` results"
-    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] determines which messages belong to the
-    current run after all history processors have been applied. If your processor reorders, inserts, or
-    removes messages, the set of messages returned by `new_messages()` may differ from what you expect.
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
+    produced during the current run. Messages provided via `message_history` are excluded —
+    including the trailing `ModelRequest` when resuming without a user prompt, even though
+    the framework may stamp it with the current run's `run_id` for observability.
 
-    To avoid surprises:
+    To keep this working when your processor mutates or adds messages:
 
-    - Preserve `run_id` on existing messages.
-    - When creating new messages in a processor that should be part of the current run, use a
-      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on the new message.
-    - Reordering or removing messages may shift the boundary between "old" and "new" messages, test
-      with [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] to verify the behavior
-      matches your expectations.
+    - If you rebuild the trailing `ModelRequest`, preserve its `parts`, `timestamp`,
+      `instructions`, and `metadata` so it can still be identified as prior context.
+    - If you insert a new message that should appear in `new_messages()`, use a
+      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on it.
 
 ### Usage
 
