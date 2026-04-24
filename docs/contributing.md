@@ -8,6 +8,7 @@ Pydantic AI is maintained by a small team. We set our own priorities based on wh
 - **Want a feature or API change?** Open an issue describing the problem you're solving. Do not start with code.
 - **Want to help build a feature?** Comment on the issue explaining why you need it and what context you bring. We call this being a "champion" — more on that below.
 - **Have a fix or code to share?** Make sure a maintainer has agreed to the approach on the issue and assigned you. Then open a PR.
+- **Using AI tools?** Read our [AI Policy](https://github.com/pydantic/pydantic-ai/blob/main/AI_POLICY.md) first. The short version: issues, PR descriptions, and replies to maintainers should be written in your own words.
 
 The rest of this page explains why we work this way and what to expect.
 

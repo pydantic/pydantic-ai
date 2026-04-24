@@ -10,6 +10,8 @@ body:
 
         Please provide as much information as possible to help us reproduce and fix your issue quickly.
 
+        Please describe the bug in your own words — see our [AI Policy](https://github.com/pydantic/pydantic-ai/blob/main/AI_POLICY.md).
+
   - type: checkboxes
     id: checks
     attributes:
