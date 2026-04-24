@@ -346,6 +346,7 @@ class Instrumentation(AbstractCapability[Any]):
         include_content = settings.include_content
 
         span_attributes: dict[str, Any] = {
+            'gen_ai.operation.name': 'execute_tool',
             'gen_ai.tool.name': call.tool_name,
             'gen_ai.tool.call.id': call.tool_call_id,
             **({names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),

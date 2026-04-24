@@ -26,6 +26,7 @@ from .instrumentation import Instrumentation
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .reinject_system_prompt import ReinjectSystemPrompt
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -44,6 +45,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         MCP,
         PrefixTools,
         PrepareTools,
+        ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
         Toolset,
@@ -53,6 +55,9 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     if (name := cls.get_serialization_name()) is not None
 }
 """Registry of all capability types that have a serialization name, mapping name to class."""
+
+# Note: OpenAICompaction and AnthropicCompaction have serialization names but can't be
+# registered here due to circular imports. Use custom_capability_types in AgentSpec instead.
 
 __all__ = [
     'AbstractCapability',
@@ -78,6 +83,7 @@ __all__ = [
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'ReinjectSystemPrompt',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',

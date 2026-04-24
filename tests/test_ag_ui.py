@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -50,6 +51,7 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
@@ -161,6 +163,13 @@ def simple_result() -> Any:
             },
         ]
     )
+
+
+def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
+    from_request_parameters = inspect.signature(AGUIAdapter.from_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
 
 
 async def run_and_collect_events(
@@ -374,7 +383,10 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    events = await run_and_collect_events(agent, run_input)
+    # The frontend-sent `SystemMessage` is stripped by the default server mode; verify
+    # that doesn't change the event stream (which is driven by the assistant's output).
+    with pytest.warns(UserWarning, match='manage_system_prompt'):
+        events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -2402,7 +2414,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
     assert messages[1].run_id is None
     assert messages[2].run_id == run_result.run_id
     assert messages[3].run_id == run_result.run_id
-    assert run_result.new_messages() == messages[-2:]
+    assert run_result.new_messages() == messages[-1:]
 
 
 async def test_callback_async() -> None:
@@ -3986,6 +3998,491 @@ def test_load_messages_unknown_type_warns() -> None:
         messages = AGUIAdapter.load_messages([UnknownMessage(id='msg-1')])  # pyright: ignore[reportArgumentType]
 
     assert messages == []
+
+
+# endregion
+
+
+# region: System prompt tests
+
+
+async def test_system_prompt_with_ag_ui_adapter():
+    """Test that system prompts are included when using AGUIAdapter on first message."""
+
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_dynamic_system_prompt_with_ag_ui_adapter():
+    """Test that dynamic system prompts are included when using AGUIAdapter on first message."""
+
+    agent = Agent(model=TestModel())
+
+    @agent.system_prompt
+    def dynamic_prompt(ctx: RunContext[None]) -> str:
+        return 'Dynamic system prompt'
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Dynamic system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_by_default():
+    """Test that frontend system prompts are stripped and a warning emitted when `manage_system_prompt='server'`."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Agent system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_no_agent_prompt():
+    """Test that frontend system prompts are stripped even when there's no agent system prompt."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_only_request_dropped():
+    """Test that a `ModelRequest` containing only `SystemPromptParts` is dropped entirely when filtering."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        AssistantMessage(
+            id='msg_assistant',
+            content='Previous response',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Previous response')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt():
+    """Test that frontend system prompts are kept and agent prompt skipped when `manage_system_prompt='client'`."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
+    """Test that frontend system prompts are used when `manage_system_prompt='client'` and agent has no system_prompt."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
+    """Test that client-managed frontend system prompts are preserved across multi-turn conversations."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[
+            SystemMessage(
+                id='msg_sys',
+                content='Frontend system prompt',
+            ),
+            UserMessage(
+                id='msg_1',
+                content='First message',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                content='First response',
+            ),
+            UserMessage(
+                id='msg_3',
+                content='Second message',
+            ),
+        ],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=57, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_does_not_reinject_agent_system_prompt():
+    """In `manage_system_prompt='client'`, the agent's configured prompt is not injected when
+    the frontend sends none — frontend ownership means the frontend is responsible for any
+    system prompt. To get fallback-to-configured behavior anyway, callers can add the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to the
+    agent.
+    """
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_system_prompt_reinjected_with_ag_ui_history():
+    """Test that system prompts ARE reinjected on followup messages via UI adapters."""
+
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[
+            UserMessage(
+                id='msg_1',
+                content='First message',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                content='First response',
+            ),
+            UserMessage(
+                id='msg_3',
+                content='Second message',
+            ),
+        ],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # endregion

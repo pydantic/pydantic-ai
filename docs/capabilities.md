@@ -66,6 +66,15 @@ print(result.output)
 
 See [Thinking](thinking.md) for provider-specific details and the [unified thinking settings](thinking.md#unified-thinking-settings).
 
+### Compaction
+
+Provider-specific compaction capabilities manage conversation context size by compacting older messages into summaries:
+
+| Provider | Capability | Details |
+|----------|-----------|---------|
+| OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](models/openai.md#message-compaction) |
+| Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](models/anthropic.md#message-compaction) |
+
 ### ThreadExecutor
 
 The [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] capability provides a custom [`Executor`][concurrent.futures.Executor] for running sync tool functions and other sync callbacks in threads. This is useful in long-running servers (e.g. FastAPI) where the default ephemeral threads from [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] can accumulate under sustained load:
@@ -81,7 +90,6 @@ agent = Agent('openai:gpt-5.2', capabilities=[ThreadExecutor(executor)])
 ```
 
 See [Thread executor for long-running servers](tools-advanced.md#thread-executor-for-long-running-servers) for more details.
-
 ### Hooks
 
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability provides decorator-based [lifecycle hook](#hooking-into-the-lifecycle) registration — the easiest way to intercept model requests, tool calls, and other events without subclassing [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability]:
@@ -329,6 +337,37 @@ assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is No
 _(This example is complete, it can be run "as is")_
 
 The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
+
+### ReinjectSystemPrompt
+
+[`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] ensures the agent's configured [`system_prompt`](agent.md#system-prompts) is at the head of the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] on every model request. By default, if any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is already present in the history, the capability is a no-op (so multi-agent handoff and user-managed system prompts remain authoritative). Set `replace_existing=True` to instead strip any existing `SystemPromptPart`s before prepending the agent's configured prompt — useful when the history comes from an untrusted source and the server's prompt must win.
+
+Useful when `message_history` comes from a source that doesn't round-trip system prompts — UI frontends, database persistence layers, conversation compaction pipelines. Without this capability, an agent configured with a `system_prompt` will silently run without it if the history doesn't already include one.
+
+```python {title="reinject_system_prompt.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+agent = Agent('test', system_prompt='You are a helpful assistant.', capabilities=[ReinjectSystemPrompt()])
+
+# History that's missing the system prompt (e.g. reconstructed from a UI frontend).
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')]),
+    ModelResponse(parts=[TextPart(content='Hello!')]),
+]
+
+# Without the capability, the agent would run without its configured system prompt.
+# With the capability, the system prompt is reinjected at the head of the first request.
+result = agent.run_sync('Follow up', message_history=history)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+assert first_request.parts[0].content == 'You are a helpful assistant.'
+```
+
+_(This example is complete, it can be run "as is")_
+
+The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
 
 ## Building custom capabilities
 
@@ -1033,6 +1072,10 @@ result = agent.run_sync('hello')
 print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?
 ```
+
+## Pydantic AI Harness
+
+[**Pydantic AI Harness**](harness/overview.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode) live there rather than in core. See [What goes where?](harness/overview.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
 
 ## Third-party capabilities
 

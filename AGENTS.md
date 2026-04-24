@@ -67,6 +67,8 @@ All changes need to:
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
 
+Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
+
 ## Repository structure
 
 The repo contains a `uv` workspace defining multiple Python packages:
@@ -105,5 +107,6 @@ Additionally, always read the directory-specific instructions when working in th
 
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/builtin_tools/AGENTS.md](pydantic_ai_slim/pydantic_ai/builtin_tools/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/models/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/AGENTS.md)
 - [tests/AGENTS.md](tests/AGENTS.md)

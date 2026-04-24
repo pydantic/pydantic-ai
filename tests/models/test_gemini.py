@@ -87,6 +87,13 @@ async def test_model_simple(allow_model_requests: None):
     assert tool_config is None
 
 
+def test_gemini_client_property_delegates_to_provider():
+    provider = GoogleGLAProvider(api_key='via-arg')
+    model = GeminiModel('gemini-1.5-flash', provider=provider)
+    assert model.client is provider.client
+    assert model.base_url == str(provider.client.base_url)
+
+
 async def test_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     tools = [
