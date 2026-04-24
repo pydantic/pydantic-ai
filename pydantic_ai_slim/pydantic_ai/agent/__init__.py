@@ -375,6 +375,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
+
+                !!! warning "Deprecated: prefer `before_model_request` hooks"
+                    The [`before_model_request`](../hooks.md#model-request-hooks) hook on the [`Hooks`][pydantic_ai.capabilities.Hooks]
+                    capability supersedes `history_processors` for all use cases and additionally exposes per-step
+                    tool definitions via [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]. `history_processors`
+                    may be removed in a future major version — see the
+                    [migration guide](https://github.com/pydantic/pydantic-ai/blob/main/V2.md#history_processors--before_model_request).
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
             tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
                 the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
@@ -397,6 +404,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._description = description
         self.end_strategy = end_strategy
 
+        # TODO(v2): remove history_processors in favor of the before_model_request hook (see V2.md)
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
         capabilities = list(capabilities or [])

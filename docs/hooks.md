@@ -112,6 +112,8 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
+`before_model_request` is also the recommended way to mutate the message history before each model call (e.g. for token-aware compaction) — see [Processing Message History](message-history.md#processing-message-history). `request_context.model_request_parameters.function_tools` gives per-step access to the exact tool definitions the model will see, which `history_processors` can't expose.
+
 ### Tool validation hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |

@@ -61,6 +61,7 @@ All changes need to:
 
 - be thoughtful and deliberate about new abstractions, public APIs, and behaviors, as every wrong-in-retrospect choice (made in a rush or with insufficient context) makes life harder for hundreds of thousands of users (and agents), and is much more difficult to change later than to do right the first time
 - be backward compatible as laid out in the [version policy](docs/version-policy.md), so that users can upgrade with confidence
+- not entrench patterns slated for retirement in the [v2 roadmap](V2.md) — that file tracks API simplifications planned for the next major release and their preferred alternatives; new code should use the alternatives, and reviewers may reject code that adds new usage of deprecated patterns listed there
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
 - update/add all relevant documentation, following the existing voice and patterns
