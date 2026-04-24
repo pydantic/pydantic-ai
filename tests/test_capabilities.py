@@ -35,6 +35,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
+    ReinjectSystemPrompt,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -99,6 +100,7 @@ def test_capability_types() -> None:
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
@@ -1185,6 +1187,12 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
+                'short_spec_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
+                    'title': 'short_spec_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -1355,6 +1363,8 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
@@ -1497,6 +1507,8 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
@@ -1830,6 +1842,26 @@ async def test_capability_returning_toolset_func():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+async def test_runtime_capability_contributions_applied():
+    """Run-time `capabilities=` contributions (tools, instructions, etc.) must be applied.
+
+    Regression guard: the `source_cap` selection previously only checked for `override()`
+    or spec capabilities, so tool contributions from a capability passed only via
+    `Agent.run(capabilities=[...])` were silently dropped.
+    """
+    agent = Agent(TestModel())
+    result = await agent.run('Greet Alice', capabilities=[ToolsetFuncCapability()])
+
+    tool_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [c.tool_name for c in tool_calls] == ['greet']
 
 
 async def test_capability_returning_toolset_func_combined():

@@ -110,8 +110,10 @@ pytestmark = [
 
 
 def test_init():
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    provider = OpenAIProvider(api_key='foobar')
+    m = OpenAIChatModel('gpt-4o', provider=provider)
     assert m.base_url == 'https://api.openai.com/v1/'
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
 
@@ -827,6 +829,18 @@ async def test_none_delta(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+async def test_none_choices(allow_model_requests: None):
+    # OpenAI-compatible providers can emit malformed chunks with `choices=null`; the openai SDK's
+    # loose constructor lets them through despite the typed-as-list field declaration.
+    bad_chunk = text_chunk('')
+    bad_chunk.choices = None  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client = MockOpenAI.create_mock_stream([bad_chunk, text_chunk('hello '), text_chunk('world')])
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
 
 
 @pytest.mark.filterwarnings('ignore:Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
@@ -4262,6 +4276,43 @@ async def test_openai_auto_mode_no_thinking_field_uses_default_fields(allow_mode
     assert thinking_parts[0].id == 'reasoning_content'
     mapped2 = m2._map_model_response(resp2)  # type: ignore[reportPrivateUsage]
     assert mapped2 == snapshot({'role': 'assistant', 'reasoning_content': 'thought', 'content': 'response'})
+
+
+async def test_openai_non_string_reasoning_content_warns(allow_model_requests: None):
+    """Malformed OpenAI-compatible responses where `reasoning_content` is a dict (e.g. via a buggy gateway)
+    should not crash; they should emit a warning and be skipped."""
+    dict_reasoning = {'reasoningContent': {'reasoningText': {'text': '', 'signature': 'CoAI...'}}}
+    c = completion_message(
+        ChatCompletionMessage.model_construct(content='response', reasoning_content=dict_reasoning, role='assistant')
+    )
+    m = OpenAIChatModel('foobar', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+    settings = ModelSettings()
+    params = ModelRequestParameters()
+
+    with pytest.warns(UserWarning, match=r"Unexpected non-string value for 'reasoning_content': dict"):
+        resp = await m.request(messages=[], model_settings=settings, model_request_parameters=params)
+
+    assert [p for p in resp.parts if isinstance(p, ThinkingPart)] == []
+
+
+async def test_openai_non_string_reasoning_content_warns_stream(allow_model_requests: None):
+    """Streaming equivalent: dict `reasoning_content` deltas should warn instead of crashing."""
+    dict_reasoning = {'reasoningContent': {'reasoningText': {'text': '', 'signature': 'CoAI...'}}}
+    stream = [
+        chunk([ChoiceDelta.model_construct(role='assistant', reasoning_content=dict_reasoning)]),
+        chunk([ChoiceDelta(content='response')]),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    m = OpenAIChatModel('foobar', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match=r"Unexpected non-string value for 'reasoning_content': dict"):
+        async with agent.run_stream('') as result:
+            await result.get_output()
+
+    messages = result.all_messages()
+    response = next(m for m in messages if isinstance(m, ModelResponse))
+    assert [p for p in response.parts if isinstance(p, ThinkingPart)] == []
 
 
 async def test_openai_auto_mode_mismatched_field_uses_tags(allow_model_requests: None):
