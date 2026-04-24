@@ -9,7 +9,7 @@ for building interactive AI applications with streaming event-based communicatio
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from . import DeferredToolResults
 from .agent import AbstractAgent
@@ -68,6 +68,7 @@ async def handle_ag_ui_request(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    manage_system_prompt: Literal['server', 'client'] = 'server',
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -93,6 +94,7 @@ async def handle_ag_ui_request(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -114,6 +116,7 @@ async def handle_ag_ui_request(
         infer_name=infer_name,
         toolsets=toolsets,
         on_complete=on_complete,
+        manage_system_prompt=manage_system_prompt,
     )
 
 
@@ -136,6 +139,7 @@ def run_ag_ui(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    manage_system_prompt: Literal['server', 'client'] = 'server',
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -162,6 +166,7 @@ def run_ag_ui(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
@@ -172,6 +177,7 @@ def run_ag_ui(
         accept=accept,
         ag_ui_version=ag_ui_version,
         preserve_file_data=preserve_file_data,
+        manage_system_prompt=manage_system_prompt,
     )
     return adapter.encode_stream(
         adapter.run_stream(
