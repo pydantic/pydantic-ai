@@ -39,13 +39,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2464'
+      - '3128'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=14859
+      - x-originResponse;dur=16807
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -54,39 +54,55 @@ interactions:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T08:29:13.853510Z'
-        id: container_011CaEdTsPcpTGKorQbzuHiU
+        expires_at: '2026-04-24T11:14:17.825248Z'
+        id: container_011CaNRHVR8X8ny5XjueVygS
       content:
       - text: Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!
         type: text
-      - id: srvtoolu_01MQuAaMzvaquNAovWW5eJgW
+      - id: srvtoolu_016pLxxM63EiNXuNu4xif3v6
         input:
           command: create
           file_text: Hello, world!
           path: /tmp/hello.txt
         name: text_editor_code_execution
         type: server_tool_use
-      - id: srvtoolu_01QEGXucYpkvkvF6i6Prs46W
+      - id: srvtoolu_01PZq4iFAcL7tePiLnstxaXh
         input:
           command: view
           path: /tmp/hello.txt
         name: text_editor_code_execution
         type: server_tool_use
       - content:
-          is_file_update: false
-          type: text_editor_code_execution_create_result
-        tool_use_id: srvtoolu_01MQuAaMzvaquNAovWW5eJgW
+          error_code: unavailable
+          error_message: 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length,
+            empty document: line 1 column 1 (char 0)'
+          type: text_editor_code_execution_tool_result_error
+        tool_use_id: srvtoolu_016pLxxM63EiNXuNu4xif3v6
         type: text_editor_code_execution_tool_result
       - content:
           error_code: unavailable
           error_message: 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character:
             line 1 column 1 (char 0)'
           type: text_editor_code_execution_tool_result_error
-        tool_use_id: srvtoolu_01QEGXucYpkvkvF6i6Prs46W
+        tool_use_id: srvtoolu_01PZq4iFAcL7tePiLnstxaXh
         type: text_editor_code_execution_tool_result
-      - text: The file was created successfully! The `view` hit a snag running in parallel, so let me fetch it now.
+      - text: Let me try again, this time sequentially -- first creating, then viewing.
         type: text
-      - id: srvtoolu_017mhGf2cjGCwQnNTyqFXuLS
+      - id: srvtoolu_01R4E6F3kJy4AHsq9D956u2Q
+        input:
+          command: create
+          file_text: Hello, world!
+          path: /tmp/hello.txt
+        name: text_editor_code_execution
+        type: server_tool_use
+      - content:
+          is_file_update: false
+          type: text_editor_code_execution_create_result
+        tool_use_id: srvtoolu_01R4E6F3kJy4AHsq9D956u2Q
+        type: text_editor_code_execution_tool_result
+      - text: File created! Now let's view it.
+        type: text
+      - id: srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw
         input:
           command: view
           path: /tmp/hello.txt
@@ -99,17 +115,13 @@ interactions:
           start_line: 1
           total_lines: 1
           type: text_editor_code_execution_view_result
-        tool_use_id: srvtoolu_017mhGf2cjGCwQnNTyqFXuLS
+        tool_use_id: srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw
         type: text_editor_code_execution_tool_result
-      - text: |-
-          Here's a summary of what happened:
-
-          1. **Created** `/tmp/hello.txt` -- The file was successfully created with the specified text.
-          2. **Viewed** `/tmp/hello.txt` -- The file contains exactly:
-
-          > **Hello, world!**
+      - text: "Here's a summary of what happened:\n\n1. **Created** `/tmp/hello.txt` with the text `Hello, world!` -- the
+          tool confirmed the file was created successfully.\n2. **Viewed** `/tmp/hello.txt` -- the file contains exactly:\n\n>
+          `Hello, world!`\n\nEverything looks perfect! \U0001F389"
         type: text
-      id: msg_01LvCN3ma8pm9iHSZvWE6QzS
+      id: msg_015ZT9schxByyYqpexx5ir4o
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -123,8 +135,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 7599
-        output_tokens: 351
+        input_tokens: 10490
+        output_tokens: 469
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0

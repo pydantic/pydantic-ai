@@ -1,7 +1,7 @@
 interactions:
 - request:
-    body: "--834f57f62ca4d3aca2905b43890e88a2\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.txt\"\r\nContent-Type:
-      text/plain\r\n\r\nvalue: 42\n\r\n--834f57f62ca4d3aca2905b43890e88a2--\r\n"
+    body: "--0f9aa75c4077e8d13638a397f1bd4363\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.txt\"\r\nContent-Type:
+      text/plain\r\n\r\nvalue: 42\n\r\n--0f9aa75c4077e8d13638a397f1bd4363--\r\n"
     headers:
       accept:
       - application/json
@@ -12,7 +12,7 @@ interactions:
       content-length:
       - '180'
       content-type:
-      - multipart/form-data; boundary=834f57f62ca4d3aca2905b43890e88a2
+      - multipart/form-data; boundary=0f9aa75c4077e8d13638a397f1bd4363
       host:
       - api.anthropic.com
     method: POST
@@ -28,7 +28,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=450
+      - x-originResponse;dur=423
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -36,10 +36,10 @@ interactions:
       vary:
       - Accept-Encoding
     parsed_body:
-      created_at: '2026-04-20T05:37:42.473000Z'
+      created_at: '2026-04-24T10:13:41.039000Z'
       downloadable: false
       filename: data.txt
-      id: file_011CaEUyb6P7Lgdktk1rFXHz
+      id: file_011CaNRFrWbPx42fPbrJEnyE
       mime_type: text/plain
       size_bytes: 10
       type: file
@@ -65,7 +65,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - file_id: file_011CaEUyb6P7Lgdktk1rFXHz
+        - file_id: file_011CaNRFrWbPx42fPbrJEnyE
           type: container_upload
         - text: Read the uploaded file and tell me what value it contains.
           type: text
@@ -83,13 +83,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1195'
+      - '1188'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=3727
+      - x-originResponse;dur=8067
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -98,10 +98,10 @@ interactions:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T06:37:45.635082Z'
-        id: container_011CaEUyeCQRB8K8rr1TG3SJ
+        expires_at: '2026-04-24T11:13:46.138965Z'
+        id: container_011CaNRFuDZ1c88cB9WLFVjU
       content:
-      - id: srvtoolu_01Dp8nZUfDyUej9XbGxjs6KV
+      - id: srvtoolu_01JTbAsbaVruRcBjxpKvYAdZ
         input:
           command: cat $INPUT_DIR/data.txt
         name: bash_code_execution
@@ -113,17 +113,17 @@ interactions:
           stdout: |
             value: 42
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_01Dp8nZUfDyUej9XbGxjs6KV
+        tool_use_id: srvtoolu_01JTbAsbaVruRcBjxpKvYAdZ
         type: bash_code_execution_tool_result
       - text: |-
-          The uploaded file `data.txt` contains the following:
+          The file **data.txt** contains the following:
 
           - **Key:** `value`
           - **Value:** `42`
 
           In other words, the file stores a single key-value pair: `value: 42`.
         type: text
-      id: msg_013QnmEwxYpLgbaRStHg5BsD
+      id: msg_01JDFN4JLb7zx55KXshhNCBa
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -138,7 +138,7 @@ interactions:
         cache_read_input_tokens: 0
         inference_geo: global
         input_tokens: 4609
-        output_tokens: 116
+        output_tokens: 115
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0

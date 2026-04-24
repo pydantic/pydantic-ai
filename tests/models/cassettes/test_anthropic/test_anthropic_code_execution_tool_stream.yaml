@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -36,127 +36,109 @@ interactions:
     body:
       string: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01MRmeYbighzLi29iVmpzFgA","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2293,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}  }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_01Js8aWE7YbmiaUPneGiCskE","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2293,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"}}             }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me calculate this mathematical expression."}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me calculate this mathematical expression."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB"}      }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0   }
+        data: {"type":"content_block_stop","index":0  }
 
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll calculate this expression right away using"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the correct order of operations (multiplication first, then addition/subtraction)!"}      }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll calculate that expression for you right away!"}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1               }
+        data: {"type":"content_block_stop","index":1            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF","name":"bash_code_execution","input":{}}       }
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01MwXaweAHve88x6s3Fc8x6Q","name":"bash_code_execution","input":{}}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}         }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\""}     }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"com"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"command\": "}        }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"mand\": \"ec"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"python"}         }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ho \\\"65465-"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"3 -c"}       }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"6544 * 6"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" \\\"result "}    }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"54"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"= 65465 - 65"}         }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"64-6+1.02"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"44"}         }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"255\\\" | "}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" *"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" 65464 -"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" 6 +"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" 1"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":".02255; pr"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"int(resu"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"lt)\\\"\"}"}             }
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"bc -l\"}"}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":2   }
+        data: {"type":"content_block_stop","index":2               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF","content":{"type":"bash_code_execution_result","stdout":"-428330955.97745\n","stderr":"","return_code":0,"content":[]}}     }
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01MwXaweAHve88x6s3Fc8x6Q","content":{"type":"bash_code_execution_result","stdout":"-428330955.97745\n","stderr":"","return_code":0,"content":[]}}               }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":3    }
+        data: {"type":"content_block_stop","index":3          }
 
         event: content_block_start
         data: {"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"Following"}              }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"Following"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:\n\n|"}  }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" the standard **order of operations (PEMDAS/BODMAS)** — multiplication is"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" Step | Operation | Result |\n|------|-----------|--------|\n| 1️⃣ | **Multiplication first:** 6544 × 65464 |"}            }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" performed before addition and subtraction — here's the breakdown:\n\n| Step | Operation | Result |\n|------|-----------|--------|\n| 1️"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" 428,395,616 |\n| 2️⃣ | **Left to right:** 65465 − 428,395,616 "}          }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"⃣ | `6544 × 65464` | `428,394,416"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"| −428,330,151 |\n| 3️⃣ | **Subtract:** − 6 |"}       }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"` |\n| 2️⃣ | `65465 - 428,394,416` | `-428,328,951"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" −428,330,157 |\n| 4️⃣ | **Add:** + 1.02255 | **−"}    }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"` |\n| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |\n| 4️"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"428,330,155.97745** |\n\n### ✅ Final Answer: **-428,330,155.97745**"}        }
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |\n\n### "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"✅ Final Answer: **-428,330,955.97745**"}            }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":4  }
+        data: {"type":"content_block_stop","index":4      }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_011CaETBrDK7Us1ZS9SHUbBR","expires_at":"2026-04-20T06:14:19.745288Z"}},"usage":{"input_tokens":4741,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":322,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}   }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_011CaNRFAbjdPf4rmBarZzqQ","expires_at":"2026-04-24T11:13:36.730129Z"}},"usage":{"input_tokens":4714,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":304,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}     }
 
         event: message_stop
-        data: {"type":"message_stop"     }
+        data: {"type":"message_stop"               }
 
     headers:
       cache-control:
@@ -164,13 +146,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '6876'
+      - '6023'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=1061
+      - x-originResponse;dur=833
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:

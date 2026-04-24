@@ -6755,7 +6755,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
     )
 
 
-async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
+async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
@@ -6765,8 +6765,10 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
         instructions='Always use the code execution tool for math.',
     )
 
-    result = await agent.run('How much is 3 * 12390?')
-    messages = result.all_messages()
+    first_result = await agent.run('How much is 3 * 12390?')
+    messages = first_result.all_messages()
+    second_result = await agent.run('How about 4 * 12390?')
+
     assert messages == snapshot(
         [
             ModelRequest(
@@ -6779,14 +6781,13 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                 parts=[
                     ThinkingPart(
                         content='The user wants to calculate 3 * 12390.',
-                        signature='EuMBClsIDBgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgwm/iPvim7OkDjb00IaDCdF9DxFUZx+4ZwZASIw7cguD4xLWWJ0lN5/NN6NFNG/OJFpXwCy70FgXEnsrTwUAbeo1V33+WXxW20rbeBAKjZflikOuG96A6Ofg1qKu3w+P+B0mBjppH+XX6Y9rIObaww4PD04cm+6SPP2jT8vOHy6/tkKHywYAQ==',
+                        signature='EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==',
                         provider_name='anthropic',
                     ),
-                    TextPart(content='Sure! Let me calculate that for you.'),
                     BuiltinToolCallPart(
                         tool_name='bash_code_execution',
                         args={'command': 'echo $((3 * 12390))'},
-                        tool_call_id='srvtoolu_01F7HTFLdWeSYRgv5Sa6wyd1',
+                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -6798,36 +6799,35 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                             'stdout': '37170\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01F7HTFLdWeSYRgv5Sa6wyd1',
                         timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
                     ),
-                    TextPart(content='**3 × 12,390 = 37,170**'),
+                    TextPart(content='The result of **3 × 12,390 = 37,170**.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4702,
-                    output_tokens=113,
+                    input_tokens=4692,
+                    output_tokens=106,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 4702,
-                        'output_tokens': 113,
+                        'input_tokens': 4692,
+                        'output_tokens': 106,
                     },
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaESptZNJVC9Cg3c28Buh'},
-                provider_response_id='msg_01EP8eZP7GTY1FPE1ZaDywmS',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRhtVsGiXZx1CgSETLH'},
+                provider_response_id='msg_01FzttSG1H2WSfUwv2J5qbMB',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
     )
 
-    result = await agent.run('How about 4 * 12390?')
-    assert result.new_messages() == snapshot(
+    assert second_result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -6890,6 +6890,13 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
         ]
     )
 
+    assert len(vcr.requests) == 2
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    for request, request_body in zip(vcr.requests, request_bodies):
+        assert 'anthropic-beta' not in {header.lower() for header in request.headers}
+        assert request_body['tools'] == [{'name': 'code_execution', 'type': 'code_execution_20260120'}]
+        assert request_body['tool_choice'] == {'type': 'auto'}
+
 
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -6921,16 +6928,14 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content='Let me calculate this mathematical expression.',
-                        signature='EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB',
+                        signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content="I'll calculate this expression right away using the correct order of operations (multiplication first, then addition/subtraction)!"
-                    ),
+                    TextPart(content="I'll calculate that expression for you right away!"),
                     BuiltinToolCallPart(
                         tool_name='bash_code_execution',
-                        args='{"command": "python3 -c \\"result = 65465 - 6544 * 65464 - 6 + 1.02255; print(result)\\""}',
-                        tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                        args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -6942,41 +6947,44 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                             'stdout': '-428330955.97745\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-Following the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:
+Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
 
 | Step | Operation | Result |
 |------|-----------|--------|
-| 1️⃣ | **Multiplication first:** 6544 × 65464 | 428,395,616 |
-| 2️⃣ | **Left to right:** 65465 − 428,395,616 | −428,330,151 |
-| 3️⃣ | **Subtract:** − 6 | −428,330,157 |
-| 4️⃣ | **Add:** + 1.02255 | **−428,330,155.97745** |
+| 1️⃣ | `6544 × 65464` | `428,394,416` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
 
-### ✅ Final Answer: **-428,330,155.97745**\
+### ✅ Final Answer: **-428,330,955.97745**\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4741,
-                    output_tokens=322,
+                    input_tokens=4714,
+                    output_tokens=304,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 4741,
-                        'output_tokens': 322,
+                        'input_tokens': 4714,
+                        'output_tokens': 304,
                     },
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01MRmeYbighzLi29iVmpzFgA',
+                provider_details={
+                    'finish_reason': 'end_turn',
+                    'container_id': 'container_011CaNRFAbjdPf4rmBarZzqQ',
+                },
+                provider_response_id='msg_01Js8aWE7YbmiaUPneGiCskE',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -6997,109 +7005,79 @@ Following the standard **order of operations (PEMDAS/BODMAS)**, here's the break
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB'
+                    signature_delta='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
                     content='Let me calculate this mathematical expression.',
-                    signature='EusBClsIDBgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzXl4valJriByxAVQMaDBawPu6lnUQ1E0AX1CIw+ZvYF7BzxvZ+IEzVYeHatwNfZHFp24TkXK90Zv7Sq7fKC/uN2TTo5ZQ6XTBt3mCdKj5NxlEkV/8pFRjXccrk6+ew85isOjgXgGDFFViFT5okwC+5dUR5o9wOtQ3HA4M4MuB4Guj+del55ST0+N8CZBgB',
+                    signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=1,
-                part=TextPart(content="I'll calculate this expression right away using"),
+                part=TextPart(content="I'll calculate that expression for you right away!"),
                 previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta=' the correct order of operations (multiplication first, then addition/subtraction)!'
-                ),
-            ),
             PartEndEvent(
                 index=1,
-                part=TextPart(
-                    content="I'll calculate this expression right away using the correct order of operations (multiplication first, then addition/subtraction)!"
-                ),
+                part=TextPart(content="I'll calculate that expression for you right away!"),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='bash_code_execution',
-                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q')
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='{"', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='{"com', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='command": ', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='mand": "ec', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='"python', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='ho \\"65465-', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='3 -c', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='6544 * 6', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta=' \\"result ', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='54', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='= 65465 - 65', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='64-6+1.02', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='44', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta=' *', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF')
+                delta=ToolCallPartDelta(args_delta='255\\" | ', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta=' 65464 -', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta=' 6 +', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF')
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta=' 1', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF')
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='.02255; pr', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='int(resu', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='lt)\\""}', tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF'),
+                delta=ToolCallPartDelta(args_delta='bc -l"}', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='bash_code_execution',
-                    args='{"command": "python3 -c \\"result = 65465 - 6544 * 65464 - 6 + 1.02255; print(result)\\""}',
-                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -7115,7 +7093,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)**, here's the break
                         'stdout': '-428330955.97745\n',
                         'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -7125,20 +7103,31 @@ Following the standard **order of operations (PEMDAS/BODMAS)**, here's the break
             PartDeltaEvent(
                 index=4,
                 delta=TextPartDelta(
-                    content_delta="""\
- the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:
-
-|\
-"""
+                    content_delta=' the standard **order of operations (PEMDAS/BODMAS)** — multiplication is'
                 ),
             ),
             PartDeltaEvent(
                 index=4,
                 delta=TextPartDelta(
                     content_delta="""\
- Step | Operation | Result |
+ performed before addition and subtraction — here's the breakdown:
+
+| Step | Operation | Result |
 |------|-----------|--------|
-| 1️⃣ | **Multiplication first:** 6544 × 65464 |\
+| 1️\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='⃣ | `6544 × 65464` | `428,394,416'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951\
 """
                 ),
             ),
@@ -7146,8 +7135,9 @@ Following the standard **order of operations (PEMDAS/BODMAS)**, here's the break
                 index=4,
                 delta=TextPartDelta(
                     content_delta="""\
- 428,395,616 |
-| 2️⃣ | **Left to right:** 65465 − 428,395,616 \
+` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️\
 """
                 ),
             ),
@@ -7155,52 +7145,35 @@ Following the standard **order of operations (PEMDAS/BODMAS)**, here's the break
                 index=4,
                 delta=TextPartDelta(
                     content_delta="""\
-| −428,330,151 |
-| 3️⃣ | **Subtract:** − 6 |\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
- −428,330,157 |
-| 4️⃣ | **Add:** + 1.02255 | **−\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-428,330,155.97745** |
+⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
 
-### ✅ Final Answer: **-428,330,155.97745**\
+### \
 """
                 ),
             ),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='✅ Final Answer: **-428,330,955.97745**')),
             PartEndEvent(
                 index=4,
                 part=TextPart(
                     content="""\
-Following the standard **order of operations (PEMDAS/BODMAS)**, here's the breakdown:
+Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
 
 | Step | Operation | Result |
 |------|-----------|--------|
-| 1️⃣ | **Multiplication first:** 6544 × 65464 | 428,395,616 |
-| 2️⃣ | **Left to right:** 65465 − 428,395,616 | −428,330,151 |
-| 3️⃣ | **Subtract:** − 6 | −428,330,157 |
-| 4️⃣ | **Add:** + 1.02255 | **−428,330,155.97745** |
+| 1️⃣ | `6544 × 65464` | `428,394,416` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
 
-### ✅ Final Answer: **-428,330,155.97745**\
+### ✅ Final Answer: **-428,330,955.97745**\
 """
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='bash_code_execution',
-                    args='{"command": "python3 -c \\"result = 65465 - 6544 * 65464 - 6 + 1.02255; print(result)\\""}',
-                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
                 )
             ),
@@ -7214,13 +7187,35 @@ Following the standard **order of operations (PEMDAS/BODMAS)**, here's the break
                         'stdout': '-428330955.97745\n',
                         'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01Lkb6PF4ifPVbtC8JomSkxF',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
             ),
         ]
     )
+
+
+async def test_anthropic_code_execution_tool_haiku_4_5_support(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-haiku-4-5-20251001', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    async with m.request_stream(
+        [ModelRequest.user_text_prompt('Use code execution to print 2 + 2.')],
+        None,
+        ModelRequestParameters(
+            function_tools=[], builtin_tools=[CodeExecutionTool()], output_tools=[], allow_text_output=False
+        ),
+    ) as response:
+        async for _ in response:
+            pass
+        model_response = response.get()
+
+    tool_calls = [part for part in model_response.parts if isinstance(part, BuiltinToolCallPart)]
+    tool_returns = [part for part in model_response.parts if isinstance(part, BuiltinToolReturnPart)]
+    assert len(tool_calls) == 1
+    assert len(tool_returns) == 1
+    assert tool_returns[0].tool_name in {CodeExecutionTool.kind, 'bash_code_execution'}
+    assert '4' in str(tool_returns[0].content)
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
@@ -7292,12 +7287,6 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
                 BuiltinToolCallPart,
                 BuiltinToolReturnPart,
                 TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
-                TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
-                TextPart,
             ],
         ]
     )
@@ -7307,12 +7296,6 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
-                TextPart,
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
-                TextPart,
                 BuiltinToolCallPart,
                 BuiltinToolReturnPart,
                 TextPart,
@@ -7928,19 +7911,23 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                     BuiltinToolCallPart(
                         tool_name='text_editor_code_execution',
                         args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_01MQuAaMzvaquNAovWW5eJgW',
+                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='text_editor_code_execution',
                         args={'command': 'view', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_01QEGXucYpkvkvF6i6Prs46W',
+                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='text_editor_code_execution',
-                        content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
-                        tool_call_id='srvtoolu_01MQuAaMzvaquNAovWW5eJgW',
+                        content={
+                            'error_code': 'unavailable',
+                            'error_message': 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length, empty document: line 1 column 1 (char 0)',
+                            'type': 'text_editor_code_execution_tool_result_error',
+                        },
+                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -7951,17 +7938,32 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                             'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
                             'type': 'text_editor_code_execution_tool_result_error',
                         },
-                        tool_call_id='srvtoolu_01QEGXucYpkvkvF6i6Prs46W',
+                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content='The file was created successfully! The `view` hit a snag running in parallel, so let me fetch it now.'
+                    TextPart(content='Let me try again, this time sequentially -- first creating, then viewing.'),
+                    BuiltinToolCallPart(
+                        tool_name='text_editor_code_execution',
+                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
+                        provider_name='anthropic',
                     ),
+                    BuiltinToolReturnPart(
+                        tool_name='text_editor_code_execution',
+                        content={
+                            'is_file_update': False,
+                            'type': 'text_editor_code_execution_create_result',
+                        },
+                        timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content="File created! Now let's view it."),
                     BuiltinToolCallPart(
                         tool_name='text_editor_code_execution',
                         args={'command': 'view', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_017mhGf2cjGCwQnNTyqFXuLS',
+                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -7974,27 +7976,29 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                             'total_lines': 1,
                             'type': 'text_editor_code_execution_view_result',
                         },
+                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
                         timestamp=IsDatetime(),
-                        tool_call_id='srvtoolu_017mhGf2cjGCwQnNTyqFXuLS',
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
 Here's a summary of what happened:
 
-1. **Created** `/tmp/hello.txt` -- The file was successfully created with the specified text.
-2. **Viewed** `/tmp/hello.txt` -- The file contains exactly:
+1. **Created** `/tmp/hello.txt` with the text `Hello, world!` -- the tool confirmed the file was created successfully.
+2. **Viewed** `/tmp/hello.txt` -- the file contains exactly:
 
-> **Hello, world!**\
+> `Hello, world!`
+
+Everything looks perfect! 🎉\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=7599,
-                    output_tokens=351,
+                    input_tokens=10490,
+                    output_tokens=469,
                     details={
-                        'input_tokens': 7599,
-                        'output_tokens': 351,
+                        'input_tokens': 10490,
+                        'output_tokens': 469,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -8003,8 +8007,8 @@ Here's a summary of what happened:
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaEdTsPcpTGKorQbzuHiU'},
-                provider_response_id='msg_01LvCN3ma8pm9iHSZvWE6QzS',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRHVR8X8ny5XjueVygS'},
+                provider_response_id='msg_015ZT9schxByyYqpexx5ir4o',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -8057,67 +8061,66 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='text_editor_code_execution',
-                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"co', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='mmand": "cre', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta=' "creat', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='ate"', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta='e"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=', "pa', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='th": ', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='"/t', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+                index=1, delta=ToolCallPartDelta(args_delta=', "p', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='mp/he', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta='ath": "/', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='llo.', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta='llo.t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='txt"', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta='xt"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta=', "file_te', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta=', "file_t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='xt": "Hello,', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz'),
+                delta=ToolCallPartDelta(args_delta='ext', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=' worl', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='": "Hello', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='d!"}', tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz')
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', world!"}', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
             ),
             PartEndEvent(
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='text_editor_code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
-                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-call',
@@ -8126,43 +8129,46 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='text_editor_code_execution',
-                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='{"comma', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='nd": "', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='view"', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG'),
+                delta=ToolCallPartDelta(args_delta='{"comman', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta=', "path": "/', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG'),
+                delta=ToolCallPartDelta(args_delta='d": "view', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='tmp', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+                index=2, delta=ToolCallPartDelta(args_delta='"', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='/hello.', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+                index=2,
+                delta=ToolCallPartDelta(args_delta=', "pa', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='txt"}', tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG')
+                index=2,
+                delta=ToolCallPartDelta(args_delta='th": "/', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='tmp/hello.', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='txt"}', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
             ),
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='text_editor_code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
-                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -8172,14 +8178,104 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
                 part=BuiltinToolReturnPart(
                     tool_name='text_editor_code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
-                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
                     timestamp=IsDatetime(),
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=4,
+                part=BuiltinToolReturnPart(
+                    tool_name='text_editor_code_execution',
+                    content={
+                        'error_code': 'unavailable',
+                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                        'type': 'text_editor_code_execution_tool_result_error',
+                    },
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=5,
+                part=TextPart(content='No'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=5, delta=TextPartDelta(content_delta=" worries — the `view` couldn't run in parallel with")
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta=" the `create` since the file didn't exist yet at the time both calls"
+                ),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta=' were dispatched. Now that the file has been created, let me view it!'
+                ),
+            ),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="No worries — the `view` couldn't run in parallel with the `create` since the file didn't exist yet at the time both calls were dispatched. Now that the file has been created, let me view it!"
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=6,
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta=' "view"', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta=', ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='"p', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='ath": ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='"/', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=ToolCallPartDelta(args_delta='llo.txt"}', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+            ),
+            PartEndEvent(
+                index=6,
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=7,
                 part=BuiltinToolReturnPart(
                     tool_name='text_editor_code_execution',
                     content={
@@ -8190,56 +8286,56 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
                         'total_lines': 1,
                         'type': 'text_editor_code_execution_view_result',
                     },
-                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
-                previous_part_kind='builtin-tool-return',
+                previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(
-                index=5,
-                part=TextPart(content='Both'),
-                previous_part_kind='builtin-tool-return',
-            ),
+            PartStartEvent(index=8, part=TextPart(content="Here's a"), previous_part_kind='builtin-tool-return'),
             PartDeltaEvent(
-                index=5,
+                index=8,
                 delta=TextPartDelta(
                     content_delta="""\
- steps are done! Here's a summary of what happened:
+ summary of what happened:
 
-1. **Created**\
+1. **Created** `/tmp/hello.txt` — the file was successfully written to\
 """
                 ),
             ),
             PartDeltaEvent(
-                index=5,
+                index=8,
                 delta=TextPartDelta(
                     content_delta="""\
- `/tmp/hello.txt` — The file was created successfully.
-2. **Viewed** `/tmp/hello.txt` —\
+ disk.
+2. **Viewed** `/tmp/hello.txt` — the file contains exactly:\
 """
                 ),
             ),
             PartDeltaEvent(
-                index=5,
+                index=8,
                 delta=TextPartDelta(
                     content_delta="""\
- The file contains exactly:
 
-> Hello, world!\
+
+> `Hello, world!`
+
+Everything looks perfect! The file contains the text you specified.\
 """
                 ),
             ),
             PartEndEvent(
-                index=5,
+                index=8,
                 part=TextPart(
                     content="""\
-Both steps are done! Here's a summary of what happened:
+Here's a summary of what happened:
 
-1. **Created** `/tmp/hello.txt` — The file was created successfully.
-2. **Viewed** `/tmp/hello.txt` — The file contains exactly:
+1. **Created** `/tmp/hello.txt` — the file was successfully written to disk.
+2. **Viewed** `/tmp/hello.txt` — the file contains exactly:
 
-> Hello, world!\
+> `Hello, world!`
+
+Everything looks perfect! The file contains the text you specified.\
 """
                 ),
             ),
@@ -8247,7 +8343,7 @@ Both steps are done! Here's a summary of what happened:
                 part=BuiltinToolCallPart(
                     tool_name='text_editor_code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
-                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
                 )
             ),
@@ -8255,7 +8351,7 @@ Both steps are done! Here's a summary of what happened:
                 part=BuiltinToolCallPart(
                     tool_name='text_editor_code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
-                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
                 )
             ),
@@ -8263,8 +8359,29 @@ Both steps are done! Here's a summary of what happened:
                 result=BuiltinToolReturnPart(
                     tool_name='text_editor_code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
-                    tool_call_id='srvtoolu_013dRPQKQjDnVnWGLYfmo3Fz',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='text_editor_code_execution',
+                    content={
+                        'error_code': 'unavailable',
+                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                        'type': 'text_editor_code_execution_tool_result_error',
+                    },
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='text_editor_code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     provider_name='anthropic',
                 )
             ),
@@ -8279,7 +8396,7 @@ Both steps are done! Here's a summary of what happened:
                         'total_lines': 1,
                         'type': 'text_editor_code_execution_view_result',
                     },
-                    tool_call_id='srvtoolu_017BJJCwURZdkZu6BZTx1pKG',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -10019,18 +10136,37 @@ Fix the errors and try again.\
 
 
 async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None, anthropic_api_key: str):
+    """Record first-use file mounting through Anthropic's `container_upload` content block."""
     client = AsyncAnthropic(api_key=anthropic_api_key)
     file_meta = await client.beta.files.upload(
         file=('data.txt', b'value: 42\n', 'text/plain'),
         betas=['files-api-2025-04-14'],
     )
 
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool(file_ids=[file_meta.id])])
+    sent_bodies: list[dict[str, Any]] = []
 
-    result = await agent.run('Read the uploaded file and tell me what value it contains.')
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    async with httpx.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+        m = AnthropicModel(
+            'claude-sonnet-4-6',
+            provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+        )
+        agent = Agent(m, builtin_tools=[CodeExecutionTool(file_ids=[file_meta.id])])
+
+        result = await agent.run(
+            'Read the uploaded file and tell me what value it contains.',
+            model_settings=AnthropicModelSettings(anthropic_container=False),
+        )
+    assert len(sent_bodies) == 1
+    assert 'container' not in sent_bodies[0]
+    assert sent_bodies[0]['messages'][0]['content'][0] == {
+        'type': 'container_upload',
+        'file_id': file_meta.id,
+    }
     assert result.output == snapshot("""\
-The uploaded file `data.txt` contains the following:
+The file **data.txt** contains the following:
 
 - **Key:** `value`
 - **Value:** `42`
@@ -10053,7 +10189,7 @@ In other words, the file stores a single key-value pair: `value: 42`.\
                     BuiltinToolCallPart(
                         tool_name='bash_code_execution',
                         args={'command': 'cat $INPUT_DIR/data.txt'},
-                        tool_call_id='srvtoolu_01Dp8nZUfDyUej9XbGxjs6KV',
+                        tool_call_id='srvtoolu_01JTbAsbaVruRcBjxpKvYAdZ',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -10065,13 +10201,13 @@ In other words, the file stores a single key-value pair: `value: 42`.\
                             'stdout': 'value: 42\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01Dp8nZUfDyUej9XbGxjs6KV',
+                        tool_call_id='srvtoolu_01JTbAsbaVruRcBjxpKvYAdZ',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-The uploaded file `data.txt` contains the following:
+The file **data.txt** contains the following:
 
 - **Key:** `value`
 - **Value:** `42`
@@ -10082,10 +10218,10 @@ In other words, the file stores a single key-value pair: `value: 42`.\
                 ],
                 usage=RequestUsage(
                     input_tokens=4609,
-                    output_tokens=116,
+                    output_tokens=115,
                     details={
                         'input_tokens': 4609,
-                        'output_tokens': 116,
+                        'output_tokens': 115,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -10094,8 +10230,8 @@ In other words, the file stores a single key-value pair: `value: 42`.\
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaEUyeCQRB8K8rr1TG3SJ'},
-                provider_response_id='msg_013QnmEwxYpLgbaRStHg5BsD',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRFuDZ1c88cB9WLFVjU'},
+                provider_response_id='msg_01JDFN4JLb7zx55KXshhNCBa',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -10106,6 +10242,7 @@ In other words, the file stores a single key-value pair: `value: 42`.\
 async def test_anthropic_code_execution_tool_file_ids_not_resent_with_reused_container(
     allow_model_requests: None, anthropic_api_key: str
 ):
+    """Record that subsequent runs reuse the returned container instead of resending `container_upload`."""
     client = AsyncAnthropic(api_key=anthropic_api_key)
     file_meta = await client.beta.files.upload(
         file=('data.txt', b'value: 42\n', 'text/plain'),
@@ -10135,8 +10272,8 @@ async def test_anthropic_code_execution_tool_file_ids_not_resent_with_reused_con
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='bash_code_execution',
-                        args={'command': 'cat $INPUT_DIR/data.txt'},
-                        tool_call_id='srvtoolu_01NBYK73KjU3ZM22X4PNJmnz',
+                        args={'command': 'cat "$INPUT_DIR/data.txt"'},
+                        tool_call_id='srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -10148,24 +10285,27 @@ async def test_anthropic_code_execution_tool_file_ids_not_resent_with_reused_con
                             'stdout': 'value: 42\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01NBYK73KjU3ZM22X4PNJmnz',
+                        tool_call_id='srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(
                         content="""\
-The uploaded file **data.txt** contains the following value:
+The uploaded file **data.txt** contains the following:
 
-- **value: 42**\
+- **Key:** `value`
+- **Value:** `42`
+
+In other words, the file stores a single key-value pair: `value: 42`.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4609,
-                    output_tokens=88,
+                    input_tokens=4610,
+                    output_tokens=117,
                     details={
-                        'input_tokens': 4609,
-                        'output_tokens': 88,
+                        'input_tokens': 4610,
+                        'output_tokens': 117,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -10174,8 +10314,8 @@ The uploaded file **data.txt** contains the following value:
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaEVXChNcJJJ59GdnUid4'},
-                provider_response_id='msg_01FkTKDaVaLD2qipcT4bVmuP',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRGaQjqDSvHoSZCuLk2'},
+                provider_response_id='msg_011DQwRgpZsMJBeZBFfqxw25',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -10191,7 +10331,7 @@ The uploaded file **data.txt** contains the following value:
                     BuiltinToolCallPart(
                         tool_name='bash_code_execution',
                         args={'command': 'echo $((42 * 2))'},
-                        tool_call_id='srvtoolu_014a6HLhadGXjzdeUbycXWbe',
+                        tool_call_id='srvtoolu_012sVKUHuq7CupDkzsjRQQ5F',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -10203,17 +10343,17 @@ The uploaded file **data.txt** contains the following value:
                             'stdout': '84\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_014a6HLhadGXjzdeUbycXWbe',
+                        tool_call_id='srvtoolu_012sVKUHuq7CupDkzsjRQQ5F',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
                     TextPart(content='The result of multiplying **42 × 2 = 84**!'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4844,
+                    input_tokens=4902,
                     output_tokens=84,
                     details={
-                        'input_tokens': 4844,
+                        'input_tokens': 4902,
                         'output_tokens': 84,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -10223,8 +10363,8 @@ The uploaded file **data.txt** contains the following value:
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaEVXChNcJJJ59GdnUid4'},
-                provider_response_id='msg_01K3UNQocW4TvjhQdtvaqeBn',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRGaQjqDSvHoSZCuLk2'},
+                provider_response_id='msg_016xXcjtRVd7owfwq21ADL3A',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

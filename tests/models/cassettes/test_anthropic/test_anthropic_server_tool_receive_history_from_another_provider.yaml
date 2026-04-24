@@ -4,7 +4,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -30,11 +30,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2243'
+      - '1526'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3961
+      - gfet4t7; dur=2728
       transfer-encoding:
       - chunked
       vary:
@@ -56,8 +56,23 @@ interactions:
 
                 stderr output:
 
-          - text: |
-              I apologize. I seem to be having an error. Let me try again.
+          - text: |+
+              I apologize for the error in the previous response. I should have used the correct python syntax. Here's the correct calculation.
+
+          - executableCode:
+              code: |
+                print(3 * 12390)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_FAILED
+              output: |+
+                1:1: "foo(" must be followed by )
+
+                stderr output:
+
+          - text: |+
+              I seem to be struggling with the python tool. I apologize. Let me try it one more time:
+
           - executableCode:
               code: |
                 print(3 * 12390)
@@ -70,68 +85,29 @@ interactions:
                 stderr output:
 
           - text: |
-              I seem to be having trouble with my python code. Let me try this again.
-          - executableCode:
-              code: |
-                print(3 * 12390)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_FAILED
-              output: |+
-                1:1: "foo(" must be followed by )
+              It appears I am still having trouble with the python tool. I will calculate the answer without the tool.
 
-                stderr output:
+              3 * 12390 = 37170
 
-          - text: |
-              I seem to be having a hard time with my code. Let me try with a new method.
-          - executableCode:
-              code: |
-                import numpy as np
-                result = np.multiply(3, 12390)
-                print(result)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_FAILED
-              output: |+
-                2:21: a command can only contain words and redirects; encountered (
-
-                stderr output:
-
-          - text: |
-              I apologize. I am having some issues with running my code. It appears that I am encountering some errors with the way that I am calling the commands. Let me try using a different method for doing the computation.
-          - executableCode:
-              code: |
-                print(3 * 12390)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_FAILED
-              output: |+
-                1:1: "foo(" must be followed by )
-
-                stderr output:
-
-          - text: |
-              I seem to be having persistent errors. I am not sure why, but I will attempt to answer the question without relying on the tool.
-
-              3 multiplied by 12390 is 37170.
+              Therefore, 3 * 12390 is 37170.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 2rblaYH1Arzd4-EPk5-6IA
+      responseId: 30PraemqKIqJjuMPsanQqQ0
       usageMetadata:
-        candidatesTokenCount: 310
+        candidatesTokenCount: 194
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 310
+          tokenCount: 194
         promptTokenCount: 13
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 13
-        toolUsePromptTokenCount: 744
+        toolUsePromptTokenCount: 289
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 744
-        totalTokenCount: 1067
+          tokenCount: 289
+        totalTokenCount: 496
     status:
       code: 200
       message: OK
@@ -140,11 +116,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1128'
+      - '862'
       content-type:
       - application/json
       host:
@@ -158,22 +134,20 @@ interactions:
           type: text
         role: user
       - content:
-        - text: |
-            I apologize. I seem to be having an error. Let me try again.
-          type: text
-        - text: |
-            I seem to be having trouble with my python code. Let me try this again.
-          type: text
-        - text: |
-            I seem to be having a hard time with my code. Let me try with a new method.
-          type: text
-        - text: |
-            I apologize. I am having some issues with running my code. It appears that I am encountering some errors with the way that I am calling the commands. Let me try using a different method for doing the computation.
-          type: text
-        - text: |
-            I seem to be having persistent errors. I am not sure why, but I will attempt to answer the question without relying on the tool.
+        - text: |+
+            I apologize for the error in the previous response. I should have used the correct python syntax. Here's the correct calculation.
 
-            3 multiplied by 12390 is 37170.
+          type: text
+        - text: |+
+            I seem to be struggling with the python tool. I apologize. Let me try it one more time:
+
+          type: text
+        - text: |
+            It appears I am still having trouble with the python tool. I will calculate the answer without the tool.
+
+            3 * 12390 = 37170
+
+            Therefore, 3 * 12390 is 37170.
           type: text
         role: assistant
       - content:
@@ -199,7 +173,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=4527
+      - x-originResponse;dur=6910
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -208,12 +182,12 @@ interactions:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T06:17:21.411773Z'
-        id: container_011CaETRMZn9YeL5CutGDqys
+        expires_at: '2026-04-24T11:20:24.298055Z'
+        id: container_011CaNRmAuRsc1bTXJHURocN
       content:
       - text: Let me calculate that for you!
         type: text
-      - id: srvtoolu_01QYZmWznnUoAyQeF82WuNLo
+      - id: srvtoolu_01WfUaaFz37BpfdgW88S57Fd
         input:
           command: echo $((37170 * 12390))
         name: bash_code_execution
@@ -225,11 +199,11 @@ interactions:
           stdout: |
             460536300
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_01QYZmWznnUoAyQeF82WuNLo
+        tool_use_id: srvtoolu_01WfUaaFz37BpfdgW88S57Fd
         type: bash_code_execution_tool_result
       - text: '**37,170 × 12,390 = 460,536,300**'
         type: text
-      id: msg_01DDDbXJgViTx5dETwDSZGA2
+      id: msg_01LDYJ8LntjtaytbpRZuF8K1
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -243,7 +217,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 4923
+        input_tokens: 4827
         output_tokens: 95
         server_tool_use:
           web_fetch_requests: 0

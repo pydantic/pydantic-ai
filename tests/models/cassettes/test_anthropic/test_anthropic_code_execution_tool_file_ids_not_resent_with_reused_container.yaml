@@ -1,7 +1,7 @@
 interactions:
 - request:
-    body: "--823d2df25b4eb11b7b5a48698cdea248\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.txt\"\r\nContent-Type:
-      text/plain\r\n\r\nvalue: 42\n\r\n--823d2df25b4eb11b7b5a48698cdea248--\r\n"
+    body: "--1753d0633ebd0b22a60078abd94905cd\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.txt\"\r\nContent-Type:
+      text/plain\r\n\r\nvalue: 42\n\r\n--1753d0633ebd0b22a60078abd94905cd--\r\n"
     headers:
       accept:
       - application/json
@@ -12,7 +12,7 @@ interactions:
       content-length:
       - '180'
       content-type:
-      - multipart/form-data; boundary=823d2df25b4eb11b7b5a48698cdea248
+      - multipart/form-data; boundary=1753d0633ebd0b22a60078abd94905cd
       host:
       - api.anthropic.com
     method: POST
@@ -28,7 +28,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=395
+      - x-originResponse;dur=424
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -36,10 +36,10 @@ interactions:
       vary:
       - Accept-Encoding
     parsed_body:
-      created_at: '2026-04-20T05:44:50.674000Z'
+      created_at: '2026-04-24T10:13:50.211000Z'
       downloadable: false
       filename: data.txt
-      id: file_011CaEVX9qVUqHf73EeGapUA
+      id: file_011CaNRGXj1wSKeGSQQ4yNJP
       mime_type: text/plain
       size_bytes: 10
       type: file
@@ -65,7 +65,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - file_id: file_011CaEVX9qVUqHf73EeGapUA
+        - file_id: file_011CaNRGXj1wSKeGSQQ4yNJP
           type: container_upload
         - text: Read the uploaded file and tell me what value it contains.
           type: text
@@ -83,25 +83,27 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1107'
+      - '1201'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=3673
+      - x-originResponse;dur=7179
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T06:44:54.025013Z'
-        id: container_011CaEVXChNcJJJ59GdnUid4
+        expires_at: '2026-04-24T11:13:55.209761Z'
+        id: container_011CaNRGaQjqDSvHoSZCuLk2
       content:
-      - id: srvtoolu_01NBYK73KjU3ZM22X4PNJmnz
+      - id: srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa
         input:
-          command: cat $INPUT_DIR/data.txt
+          command: cat "$INPUT_DIR/data.txt"
         name: bash_code_execution
         type: server_tool_use
       - content:
@@ -111,14 +113,17 @@ interactions:
           stdout: |
             value: 42
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_01NBYK73KjU3ZM22X4PNJmnz
+        tool_use_id: srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa
         type: bash_code_execution_tool_result
       - text: |-
-          The uploaded file **data.txt** contains the following value:
+          The uploaded file **data.txt** contains the following:
 
-          - **value: 42**
+          - **Key:** `value`
+          - **Value:** `42`
+
+          In other words, the file stores a single key-value pair: `value: 42`.
         type: text
-      id: msg_01FkTKDaVaLD2qipcT4bVmuP
+      id: msg_011DQwRgpZsMJBeZBFfqxw25
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -132,8 +137,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 4609
-        output_tokens: 88
+        input_tokens: 4610
+        output_tokens: 117
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0
@@ -150,16 +155,16 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '986'
+      - '1079'
       content-type:
       - application/json
       cookie:
-      - _cfuvid=GFUXBvS0e8xF23fq7.gk2EDqEIpX1YRdXhqtyRsSqsU-1776663891.1461785-1.0.1.1-Z0Xy2eUdiG35ykegKpB_ovtkFsh6UUzMsvFIzv0mWiQ
+      - _cfuvid=KOnrJCTsR8.IdYxG4ztPQRxn32PWI4vnqPXc9cjOZ6E-1777025630.672009-1.0.1.1-Mg7Jt2HckAQsFXpmMgkIguo76PtDc8I0cmI_Ey_AGyI
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      container: container_011CaEVXChNcJJJ59GdnUid4
+      container: container_011CaNRGaQjqDSvHoSZCuLk2
       max_tokens: 4096
       messages:
       - content:
@@ -167,9 +172,9 @@ interactions:
           type: text
         role: user
       - content:
-        - id: srvtoolu_01NBYK73KjU3ZM22X4PNJmnz
+        - id: srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa
           input:
-            command: cat $INPUT_DIR/data.txt
+            command: cat "$INPUT_DIR/data.txt"
           name: bash_code_execution
           type: server_tool_use
         - content:
@@ -179,12 +184,15 @@ interactions:
             stdout: |
               value: 42
             type: bash_code_execution_result
-          tool_use_id: srvtoolu_01NBYK73KjU3ZM22X4PNJmnz
+          tool_use_id: srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa
           type: bash_code_execution_tool_result
         - text: |-
-            The uploaded file **data.txt** contains the following value:
+            The uploaded file **data.txt** contains the following:
 
-            - **value: 42**
+            - **Key:** `value`
+            - **Value:** `42`
+
+            In other words, the file stores a single key-value pair: `value: 42`.
           type: text
         role: assistant
       - content:
@@ -210,7 +218,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=2906
+      - x-originResponse;dur=4572
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -219,10 +227,10 @@ interactions:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T06:44:57.320645Z'
-        id: container_011CaEVXChNcJJJ59GdnUid4
+        expires_at: '2026-04-24T11:14:01.131853Z'
+        id: container_011CaNRGaQjqDSvHoSZCuLk2
       content:
-      - id: srvtoolu_014a6HLhadGXjzdeUbycXWbe
+      - id: srvtoolu_012sVKUHuq7CupDkzsjRQQ5F
         input:
           command: echo $((42 * 2))
         name: bash_code_execution
@@ -234,11 +242,11 @@ interactions:
           stdout: |
             84
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_014a6HLhadGXjzdeUbycXWbe
+        tool_use_id: srvtoolu_012sVKUHuq7CupDkzsjRQQ5F
         type: bash_code_execution_tool_result
       - text: The result of multiplying **42 × 2 = 84**!
         type: text
-      id: msg_01K3UNQocW4TvjhQdtvaqeBn
+      id: msg_016xXcjtRVd7owfwq21ADL3A
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -252,7 +260,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 4844
+        input_tokens: 4902
         output_tokens: 84
         server_tool_use:
           web_fetch_requests: 0

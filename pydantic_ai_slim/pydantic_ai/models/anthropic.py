@@ -99,6 +99,7 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaContainerParams,
+        BetaContainerUploadBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -964,11 +965,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
                 if i == current_request_index and code_execution_file_ids and not reusing_container:
                     for file_id in code_execution_file_ids:
-                        # container_upload is a beta feature for mounting files into the code execution sandbox.
-                        # It is currently only supported in the content array of a user message.
-                        # Using cast since container_upload is a very new beta feature not yet in BetaContentBlockParam union
                         user_content_params.append(
-                            cast(BetaContentBlockParam, {'type': 'container_upload', 'file_id': file_id})
+                            BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
                         )
 
                 for request_part in m.parts:
@@ -987,9 +985,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             if isinstance(item, UploadedFile):
                                 if item.provider_name != self.system:
                                     raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` '
-                                        f'cannot be used with AnthropicModel. Expected `provider_name` '
-                                        f'to be `{self.system!r}`.'
+                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                                        f'Expected `provider_name` to be `{self.system!r}`.'
                                     )
                                 if item.media_type.startswith('image/'):
                                     tool_result_content.append(
@@ -1840,10 +1837,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                             part=_map_web_search_tool_result_block(current_block, self.provider_name),
                         )
                     elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
-                        # Defensive: the unified `code_execution_20260120` tool we request emits
-                        # `bash_code_execution_tool_result` / `text_editor_code_execution_tool_result`,
-                        # never bare `code_execution_tool_result` — this branch only fires if the
-                        # deprecated `code_execution_20250522` shape resurfaces.
+                        # Legacy code execution responses used this bare `code_execution_tool_result` shape.
+                        # The current `code_execution_20260120` tool emits the named bash/text-editor blocks below.
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_code_execution_tool_result_block(current_block, self.provider_name),
@@ -1941,6 +1936,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if event.delta.container:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['container_id'] = event.delta.container.id
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if isinstance(current_block, BetaMCPToolUseBlock):

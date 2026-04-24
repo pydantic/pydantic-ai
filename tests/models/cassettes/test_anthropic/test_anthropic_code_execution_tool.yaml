@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -40,13 +40,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1520'
+      - '1469'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=4418
+      - x-originResponse;dur=5649
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -55,15 +55,13 @@ interactions:
       - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T06:09:34.096815Z'
-        id: container_011CaESptZNJVC9Cg3c28Buh
+        expires_at: '2026-04-24T11:19:38.758845Z'
+        id: container_011CaNRhtVsGiXZx1CgSETLH
       content:
-      - signature: EuMBClsIDBgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgwm/iPvim7OkDjb00IaDCdF9DxFUZx+4ZwZASIw7cguD4xLWWJ0lN5/NN6NFNG/OJFpXwCy70FgXEnsrTwUAbeo1V33+WXxW20rbeBAKjZflikOuG96A6Ofg1qKu3w+P+B0mBjppH+XX6Y9rIObaww4PD04cm+6SPP2jT8vOHy6/tkKHywYAQ==
+      - signature: EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==
         thinking: The user wants to calculate 3 * 12390.
         type: thinking
-      - text: Sure! Let me calculate that for you.
-        type: text
-      - id: srvtoolu_01F7HTFLdWeSYRgv5Sa6wyd1
+      - id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
         input:
           command: echo $((3 * 12390))
         name: bash_code_execution
@@ -75,11 +73,11 @@ interactions:
           stdout: |
             37170
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_01F7HTFLdWeSYRgv5Sa6wyd1
+        tool_use_id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
         type: bash_code_execution_tool_result
-      - text: '**3 × 12,390 = 37,170**'
+      - text: The result of **3 × 12,390 = 37,170**.
         type: text
-      id: msg_01EP8eZP7GTY1FPE1ZaDywmS
+      id: msg_01FzttSG1H2WSfUwv2J5qbMB
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -93,8 +91,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 4702
-        output_tokens: 113
+        input_tokens: 4692
+        output_tokens: 106
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0
@@ -107,7 +105,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -115,7 +113,7 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - _cfuvid=uOV8TdS5fkQ5QdJ_Wq_IOu24XJs1adXIaqkX2cSXTPM-1776661770.6578977-1.0.1.1-1iZNQnrIx9X5riW_XgesdkvuXPxubb9hs8gDPA15R0g
+      - _cfuvid=j72gcLZrTocYXb_vinek8NA1OCCR6yME.LP4xDAzUm8-1777025974.0505912-1.0.1.1-4G21WdL0FAHoHQLaobcbSsV3hID5SurjleBDz1zHi_E
       host:
       - api.anthropic.com
     method: POST
@@ -150,23 +148,19 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      server-timing:
-      - x-originResponse;dur=4908
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-      vary:
-      - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2026-04-20T06:09:39.528688Z'
-        id: container_011CaESqGDN1d96H2c68TEH1
+        expires_at: '2026-04-24T11:19:44.819633Z'
+        id: container_011CaNRiLGQoB5CoDJP5jaVY
       content:
-      - signature: EuMBClsIDBgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgxdMoxketxaRi0SIDIaDGu2uFsnBjpUQQ3styIwug8i/z8VwTo9P7ioh1eUzbeqDyUhGqCoqewksXt7lHW+lSAJvsSxI+CPacNIzonjKjbBQyrUrgAhNwvvbln6BIHioh24LlMuqf9Wk75VnwAItHuFlf/DWEZsUCO3m0kvhRO7LoMVUjYYAQ==
+      - signature: EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==
         thinking: The user wants to calculate 4 * 12390.
         type: thinking
-      - id: srvtoolu_013LtqoLW38oSHuMK5uF3qBa
+      - id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
         input:
           command: echo $((4 * 12390))
         name: bash_code_execution
@@ -178,11 +172,11 @@ interactions:
           stdout: |
             49560
           type: bash_code_execution_result
-        tool_use_id: srvtoolu_013LtqoLW38oSHuMK5uF3qBa
+        tool_use_id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
         type: bash_code_execution_tool_result
       - text: '**4 × 12,390 = 49,560**'
         type: text
-      id: msg_01NquuTQGnL369GPtASXwmm8
+      id: msg_01GpqA67eRBKk6HEb9w5Rs28
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
