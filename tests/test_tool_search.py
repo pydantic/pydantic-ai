@@ -33,7 +33,6 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
-    DISCOVERED_TOOLS_METADATA_KEY,
     ToolSearchToolset,
 )
 from pydantic_ai.usage import RunUsage
@@ -471,7 +470,6 @@ async def test_tool_search_toolset_search_returns_matching_tools():
                     {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
                 ]
             },
-            metadata={'discovered_tools': ['calculate_mortgage']},
         )
     )
 
@@ -536,7 +534,6 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
                     {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
                 ]
             },
-            metadata={'discovered_tools': ['github_get_me', 'github_create_gist']},
         )
     )
 
@@ -569,7 +566,6 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
                     {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
                 ]
             },
-            metadata={'discovered_tools': ['stock_price', 'crypto_price']},
         )
     )
 
@@ -597,7 +593,6 @@ async def test_tool_search_toolset_does_not_match_substrings_inside_words():
     assert result == snapshot(
         ToolReturn(
             return_value={'tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]},
-            metadata={'discovered_tools': ['github_get_me']},
         )
     )
 
@@ -614,7 +609,6 @@ async def test_tool_search_toolset_search_returns_no_matches():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'nonexistent'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot({'tools': []})
-    assert result.metadata == snapshot({'discovered_tools': []})
 
 
 async def test_tool_search_toolset_search_empty_query():
@@ -677,11 +671,7 @@ async def test_tool_search_toolset_discovered_tools_available():
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={
-                        'message': "Found 1 tool(s) matching 'mortgage'",
-                        'tools': [{'name': 'calculate_mortgage'}],
-                    },
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 ),
             ]
         )
@@ -704,8 +694,13 @@ async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'message': 'Found all deferred tools.', 'tools': []},
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage', 'stock_price', 'crypto_price']},
+                    content={
+                        'tools': [
+                            {'name': 'calculate_mortgage', 'description': None},
+                            {'name': 'stock_price', 'description': None},
+                            {'name': 'crypto_price', 'description': None},
+                        ]
+                    },
                 )
             ]
         )
@@ -884,11 +879,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={
-                        'message': "Found 1 tool(s) matching 'mortgage'",
-                        'tools': [{'name': 'calculate_mortgage'}],
-                    },
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 ),
             ]
         ),
@@ -896,8 +887,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'message': "Found 1 tool(s) matching 'stock'", 'tools': [{'name': 'stock_price'}]},
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['stock_price']},
+                    content={'tools': [{'name': 'stock_price', 'description': None}]},
                 ),
             ]
         ),
@@ -937,45 +927,35 @@ async def test_function_toolset_all_deferred():
     )
 
 
-async def test_tool_search_toolset_ignores_non_metadata_history():
-    """Test that discovery only reads metadata, ignoring malformed content."""
+async def test_tool_search_toolset_ignores_malformed_content_history():
+    """Discovery reads ``content`` via ``extract_tool_search_return``; malformed shapes
+    (non-dict content, non-list ``tools``, entries missing a string ``name``) are
+    ignored, and only well-formed entries are picked up."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
-        # metadata is None (no discovered tools)
+        # content is not a dict
+        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content='not a dict')]),
+        # content is a dict but `tools` is missing
         ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'message': 'hi'})]),
-        # metadata is not a dict
-        ModelRequest(
-            parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'tools': 'not a list'}, metadata='not a dict')]
-        ),
-        # metadata is a dict but value is not a list
+        # `tools` is not a list
+        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'tools': 'not a list'})]),
+        # `tools` contains malformed entries (non-dict, missing/non-string name)
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': []},
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: 'not a list'},
-                )
+                    content={'tools': ['not a dict', {'name': 123}, {'description': 'no name'}]},
+                ),
             ]
         ),
-        # metadata contains non-string items in the list
+        # valid content
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': []},
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: [123, None]},
-                )
-            ]
-        ),
-        # valid metadata
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
-                    content={'message': 'found', 'tools': [{'name': 'calculate_mortgage'}]},
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 ),
             ]
         ),
@@ -1092,7 +1072,12 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
-    assert result.metadata == {'discovered_tools': ['stock_price', 'crypto_price']}
+    assert result.return_value == {
+        'tools': [
+            {'name': 'stock_price', 'description': 'Get the current stock price for a symbol.'},
+            {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+        ]
+    }
     assert calls == ['anything']
 
 
@@ -1390,8 +1375,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
                     provider_name='anthropic',
                     tool_name='tool_search',
                     tool_call_id='srv_r',
-                    content={'type': 'tool_search_tool_search_result', 'tool_references': []},
-                    metadata={'discovered_tools': ['get_weather']},
+                    content={'tools': [{'name': 'get_weather', 'description': None}]},
                 ),
             ],
             provider_name='anthropic',
@@ -1496,8 +1480,7 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
                     provider_name='anthropic',
                     tool_name='tool_search',
                     tool_call_id='srv_a',
-                    content={'type': 'tool_search_tool_search_result', 'tool_references': []},
-                    metadata={'discovered_tools': ['get_weather']},
+                    content={'tools': [{'name': 'get_weather', 'description': None}]},
                 ),
             ],
             provider_name='anthropic',
@@ -1627,12 +1610,13 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
     assert isinstance(call_part, BuiltinToolCallPart)
     assert call_part.tool_name == 'tool_search'
     assert isinstance(return_part, BuiltinToolReturnPart)
-    assert return_part.metadata == {'discovered_tools': ['get_exchange_rate']}
+    assert return_part.content == {'tools': [{'name': 'get_exchange_rate', 'description': ''}]}
+    assert return_part.provider_details == {'status': 'completed'}
 
     # No output item → empty discovery (streaming start case).
     empty_return = _build_tool_search_return_part('call_1', 'in_progress', None, 'openai')
-    assert empty_return.content == {'status': 'in_progress', 'discovered_tools': []}
-    assert empty_return.metadata is None
+    assert empty_return.content == {'tools': []}
+    assert empty_return.provider_details == {'status': 'in_progress'}
 
     # Non-function tools in the output don't have a `name` attribute and are skipped.
     from openai.types.responses.file_search_tool import FileSearchTool
@@ -1650,7 +1634,7 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
         type='tool_search_output',
     )
     mixed = _build_tool_search_return_part('call_mix', 'completed', mixed_output, 'openai')
-    assert mixed.metadata == {'discovered_tools': ['real']}
+    assert mixed.content == {'tools': [{'name': 'real', 'description': ''}]}
 
     # End-to-end: run an agent with a deferred tool, let the mock emit a tool search
     # call + output followed by a regular function call, then verify the history round-trips.
@@ -1687,7 +1671,8 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
         for p in m.parts
     )
     assert any(
-        isinstance(p, BuiltinToolReturnPart) and p.metadata == {'discovered_tools': ['get_exchange_rate']}
+        isinstance(p, BuiltinToolReturnPart)
+        and p.content == {'tools': [{'name': 'get_exchange_rate', 'description': ''}]}
         for m in result.all_messages()
         for p in m.parts
     )
@@ -1770,10 +1755,10 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     assert 'search_tools' in tool_call_names
     assert 'get_exchange_rate' in tool_call_names
 
-    # The local `search_tools` run recorded the discovered tool name in metadata — this
-    # is the same key read back by `ToolSearchToolset` on later turns to unlock the
-    # deferred tool on the local path (and round-tripped as `tool_search_output.tools`
-    # in the cassette's replay request body).
+    # The local `search_tools` run recorded the discovered tool on `content` as a typed
+    # ``ToolSearchReturn`` — this is the same value read back by `ToolSearchToolset` on
+    # later turns to unlock the deferred tool on the local path (and round-tripped as
+    # `tool_search_output.tools` in the cassette's replay request body).
     search_returns = [
         part
         for msg in result.all_messages()
@@ -1781,7 +1766,14 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
         if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
     ]
     assert len(search_returns) == 1
-    assert search_returns[0].metadata == {'discovered_tools': ['get_exchange_rate']}
+    assert search_returns[0].content == {
+        'tools': [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up the current exchange rate between two currencies.',
+            }
+        ]
+    }
 
     rate_returns = [
         part
@@ -1861,7 +1853,7 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
             pass
         response = streamed.get()
     return_parts = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
-    assert return_parts and return_parts[0].metadata == {'discovered_tools': ['get_exchange_rate']}
+    assert return_parts and return_parts[0].content == {'tools': [{'name': 'get_exchange_rate', 'description': None}]}
 
 
 @pytest.mark.filterwarnings(
@@ -1966,7 +1958,8 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None):
     parts = response.parts
     assert any(isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search' for p in parts)
     assert any(
-        isinstance(p, BuiltinToolReturnPart) and p.metadata == {'discovered_tools': ['real_tool']} for p in parts
+        isinstance(p, BuiltinToolReturnPart) and p.content == {'tools': [{'name': 'real_tool', 'description': ''}]}
+        for p in parts
     )
 
 
@@ -2102,8 +2095,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
             parts=[
                 BuiltinToolReturnPart(
                     tool_name='tool_search',
-                    content={'discovered_tools': ['calculate_mortgage']},
-                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 )
             ]
         )
@@ -2128,7 +2120,12 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
-    assert result.metadata == {'discovered_tools': ['stock_price', 'crypto_price']}
+    assert result.return_value == {
+        'tools': [
+            {'name': 'stock_price', 'description': 'Get the current stock price for a symbol.'},
+            {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+        ]
+    }
 
 
 async def test_tool_search_toolset_custom_search_fn_no_matches():
@@ -2146,7 +2143,6 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
     assert isinstance(result, ToolReturn)
     assert result.return_value == {'tools': []}
     assert result.content == 'No matching tools found. The tools you need may not be available.'
-    assert result.metadata == {'discovered_tools': []}
 
 
 async def test_tool_search_capability_strategy_callable_registers_custom_builtin():

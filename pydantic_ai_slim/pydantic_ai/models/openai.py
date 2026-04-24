@@ -34,6 +34,8 @@ from ..builtin_tools import (
     ImageAspectRatio,
     ImageGenerationTool,
     MCPServerTool,
+    ToolSearchMatch,
+    ToolSearchReturn,
     ToolSearchTool,
     WebSearchTool,
     extract_tool_search_return,
@@ -76,7 +78,6 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, Open
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
-from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY
 from . import (
     Model,
     ModelRequestContext,
@@ -3945,22 +3946,28 @@ def _build_tool_search_return_part(
     output_item: responses.ResponseToolSearchOutputItem | None,
     provider_name: str,
 ) -> BuiltinToolReturnPart:
-    """Build the builtin return part for an OpenAI tool search, with or without output."""
-    tool_names: list[str] = []
+    """Build the builtin return part for an OpenAI tool search, with or without output.
+
+    Writes the cross-provider :class:`ToolSearchReturn` to ``content`` (with as much
+    detail as the provider returned — name and description for OpenAI's full
+    function-tool definitions) and stashes the ``status`` field on
+    ``provider_details``.
+    """
+    matches: list[ToolSearchMatch] = []
     if output_item is not None:
         # `output_item.tools` is a union of OpenAI Responses tool variants; only
-        # function tools carry the name we want. Other variants (file_search, image
-        # generation, etc.) can't appear here in practice but aren't statically
-        # excluded from the union, so we filter by type.
+        # function tools carry the name + description we want. Other variants
+        # (file_search, image generation, etc.) can't appear here in practice but
+        # aren't statically excluded from the union, so we filter by type.
         for t in output_item.tools:
             if isinstance(t, responses.FunctionTool):
-                tool_names.append(t.name)
+                matches.append({'name': t.name, 'description': t.description})
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,
-        content={'status': status, DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+        content=cast('dict[str, Any]', ToolSearchReturn(tools=matches)),
         tool_call_id=call_id,
-        metadata={DISCOVERED_TOOLS_METADATA_KEY: tool_names} if tool_names else None,
+        provider_details={'status': status},
     )
 
 

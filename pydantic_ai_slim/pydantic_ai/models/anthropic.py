@@ -20,6 +20,8 @@ from ..builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    ToolSearchMatch,
+    ToolSearchReturn,
     ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
@@ -61,7 +63,6 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
-from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -1182,13 +1183,37 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif response_part.tool_name == ToolSearchTool.kind and isinstance(
                                 response_part.content, dict
                             ):
+                                # Reconstruct the Anthropic block from the cross-provider typed
+                                # ``ToolSearchReturn`` on ``content`` plus any error fields the
+                                # parse-time mapper stashed on ``provider_details``. The success
+                                # case has no provider-side data beyond the tool names; the error
+                                # case round-trips ``error_code``/``error_message`` from the
+                                # original failure block.
+                                err = response_part.provider_details or {}
+                                if err.get('error_code') is not None:
+                                    inner: dict[str, Any] = {
+                                        'type': 'tool_search_tool_result_error',
+                                        'error_code': err['error_code'],
+                                        'error_message': err.get('error_message', ''),
+                                    }
+                                else:
+                                    parsed = extract_tool_search_return(response_part.content) or ToolSearchReturn(  # pyright: ignore[reportUnknownMemberType]
+                                        tools=[]
+                                    )
+                                    inner = {
+                                        'type': 'tool_search_tool_search_result',
+                                        'tool_references': [
+                                            {'type': 'tool_reference', 'tool_name': match['name']}
+                                            for match in parsed['tools']
+                                        ],
+                                    }
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
                                 # `BetaContentBlockParam` union yet; cast through Any until
                                 # the SDK's union is widened.
                                 tool_search_result_block: Any = BetaToolSearchToolResultBlockParam(
                                     tool_use_id=tool_use_id,
                                     type='tool_search_tool_result',
-                                    content=cast(Any, response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                    content=cast(Any, inner),
                                 )
                                 assistant_content_params.append(tool_search_result_block)
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
@@ -2008,22 +2033,25 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
 def _map_tool_search_tool_result_block(
     item: BetaToolSearchToolResultBlock, provider_name: str
 ) -> BuiltinToolReturnPart:
-    """Convert a tool search result block into a `BuiltinToolReturnPart`.
+    """Map a tool-search result block into a typed :class:`BuiltinToolReturnPart`.
 
-    The ``discovered_tools`` metadata key mirrors the format written by our local
-    `search_tools` function, so cross-provider fallbacks recover discovery state
-    from history without provider-specific parsing.
+    Writes a cross-provider :class:`ToolSearchReturn` to ``content`` (no provider-shape
+    smuggling) and stashes the Anthropic-specific error fields on ``provider_details``
+    so we can faithfully reconstruct the original block on replay.
     """
-    content = item.content
-    discovered_tools: list[str] = []
-    if content.type == 'tool_search_tool_search_result':
-        discovered_tools = [ref.tool_name for ref in content.tool_references]
+    block = item.content
+    provider_details: dict[str, Any] | None = None
+    matches: list[ToolSearchMatch] = []
+    if block.type == 'tool_search_tool_search_result':
+        matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
+    else:  # tool_search_tool_result_error
+        provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,
-        content=content.model_dump(mode='json'),
+        content=cast('dict[str, Any]', ToolSearchReturn(tools=matches)),
         tool_call_id=item.tool_use_id,
-        metadata={DISCOVERED_TOOLS_METADATA_KEY: discovered_tools} if discovered_tools else None,
+        provider_details=provider_details,
     )
 
 

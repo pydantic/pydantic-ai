@@ -45,6 +45,7 @@ from ..builtin_tools import (
     ToolSearchMatch,
     ToolSearchNativeStrategy,
     ToolSearchReturn,
+    extract_tool_search_return,
 )
 from ..exceptions import ModelRetry, UserError
 from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
@@ -81,41 +82,6 @@ ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNa
   by the native "client-executed" surface on providers that support it (Anthropic custom
   tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
 """
-
-
-DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
-"""Cross-path normalized index on ``ToolReturnPart.metadata`` /
-``BuiltinToolReturnPart.metadata`` that carries the list of tool names discovered by a
-tool-search turn.
-
-Written by the local ``search_tools`` tool (toolset) and by each provider adapter when
-mapping a native tool-search result, so
-:meth:`ToolSearchToolset._parse_discovered_tools` can scan message history for
-previously-unlocked tools without knowing each path's native return shape. This is an
-*index*, not a typed contract — provider adapters on the replay path read the typed
-``ToolSearchReturn`` off of :class:`ToolReturnPart.content` instead.
-
-A future cleanup could fold this index into the typed return value by having all three
-paths (local + the two native adapters) write a shared ``ToolSearchReturn`` to
-``content`` — that would require reconstructing Anthropic's
-``BetaToolSearchToolResultBlockParam`` from typed names on replay, plus a richer
-typed shape that can carry error states. Not done here to keep the change scoped.
-"""
-
-
-def extract_discovered_tool_names(metadata: Any) -> list[str] | None:
-    """Read the normalized discovered-names index off of a return part's metadata.
-
-    Returns ``None`` when the metadata doesn't carry the convention (not a dict, key
-    absent, or value isn't a list of strings). Callers should treat ``None`` as
-    "no discovery data"; an empty list means "search ran, nothing matched".
-    """
-    if not isinstance(metadata, dict):
-        return None
-    value = metadata.get(DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    if not isinstance(value, list):
-        return None
-    return [item for item in value if isinstance(item, str)]  # pyright: ignore[reportUnknownVariableType]
 
 
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
@@ -311,33 +277,32 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         )
 
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
-        """Scan message history for tool discovery metadata.
+        """Scan message history for previously-discovered tool names.
 
-        Picks up metadata written by our local ``search_tools`` (on
-        ``ToolReturnPart`` in a ``ModelRequest``) and by the provider's native tool
-        search (on ``BuiltinToolReturnPart`` in a ``ModelResponse`` — each adapter
-        writes the ``discovered_tools`` key when mapping the provider's result block).
+        Reads the typed :class:`ToolSearchReturn` off of ``content`` for both the local
+        ``search_tools`` return (on ``ToolReturnPart`` in a ``ModelRequest``) and the
+        provider-native return (on ``BuiltinToolReturnPart`` in a ``ModelResponse`` —
+        each adapter normalizes its provider's wire format into the same shape). The
+        return value is the contract; no metadata sideband.
         """
         discovered: set[str] = set()
         for msg in ctx.messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                        self._collect_discovered_from_metadata(part.metadata, discovered)
+                        self._collect_discovered_from_content(part.content, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
-                        self._collect_discovered_from_metadata(part.metadata, discovered)
+                        self._collect_discovered_from_content(part.content, discovered)
         return discovered
 
     @staticmethod
-    def _collect_discovered_from_metadata(metadata: Any, discovered: set[str]) -> None:
-        if not isinstance(metadata, dict):
+    def _collect_discovered_from_content(content: Any, discovered: set[str]) -> None:
+        parsed = extract_tool_search_return(content)
+        if parsed is None:
             return
-        tool_names = metadata.get(DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if not isinstance(tool_names, list):
-            return
-        discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]
+        discovered.update(match['name'] for match in parsed['tools'])
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -414,21 +379,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         The note is sent to the model as separate content (``ToolReturn.content``) so
         the model doesn't retry searching with the same keywords, while
-        ``return_value`` stays as a typed :class:`ToolSearchReturn` the adapter can
-        cast cleanly.
+        ``return_value`` stays as a typed :class:`ToolSearchReturn`.
         """
         return_value: ToolSearchReturn = {'tools': []}
         return ToolReturn(
             return_value=return_value,
             content='No matching tools found. The tools you need may not be available.',
-            metadata={DISCOVERED_TOOLS_METADATA_KEY: []},
         )
 
     @staticmethod
     def _build_return(matches: list[ToolSearchMatch]) -> ToolReturn:
-        """Shaped matches return: typed ``ToolSearchReturn`` + discovery index."""
+        """Shaped matches return: typed :class:`ToolSearchReturn`."""
         return_value: ToolSearchReturn = {'tools': matches}
-        return ToolReturn(
-            return_value=return_value,
-            metadata={DISCOVERED_TOOLS_METADATA_KEY: [m['name'] for m in matches]},
-        )
+        return ToolReturn(return_value=return_value)
