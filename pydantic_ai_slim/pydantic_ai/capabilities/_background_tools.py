@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
@@ -15,6 +16,19 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+
+@dataclass
+class _RunState:
+    tasks: dict[str, asyncio.Task[None]]
+    completion_event: asyncio.Event
+
+
+# Per-run state is scoped via ContextVar so the capability instance itself is stateless
+# and safe to share across concurrent agent runs. `wrap_run` installs a fresh `_RunState`
+# on entry and tears it down on exit; `wrap_tool_execute` and `after_node_run` read
+# from it without needing per-run capability instances.
+_RUN_STATE: ContextVar[_RunState] = ContextVar('pydantic_ai.background_tools.run_state')
 
 
 @dataclass
@@ -34,21 +48,30 @@ class BackgroundToolCapability(AbstractCapability[Any]):
     it's a no-op.
     """
 
-    _tasks: dict[str, asyncio.Task[None]] = field(default_factory=lambda: {})
-    _completion_event: asyncio.Event = field(default_factory=asyncio.Event)
-
-    @classmethod
-    def get_serialization_name(cls) -> None:
-        return None
-
-    async def for_run(self, ctx: RunContext[Any]) -> BackgroundToolCapability:
-        """Return a fresh instance for per-run state isolation."""
-        return BackgroundToolCapability()
-
     def get_ordering(self) -> CapabilityOrdering:
         # Outermost so `after_node_run` waits for background tasks before
         # `PendingMessageDrainCapability` redirects End to ModelRequestNode.
         return CapabilityOrdering(position='outermost')
+
+    async def wrap_run(
+        self,
+        ctx: RunContext[Any],
+        *,
+        handler: Any,
+    ) -> AgentRunResult[Any]:
+        """Install per-run task state; cancel any leftover tasks on cleanup."""
+        state = _RunState(tasks={}, completion_event=asyncio.Event())
+        token = _RUN_STATE.set(state)
+        try:
+            return await handler()
+        finally:
+            # Tasks normally complete before the run ends (after_node_run waits), so this
+            # branch only runs when the run aborts early (exception, iter() break-out).
+            for task in state.tasks.values():  # pragma: no cover
+                task.cancel()
+            if state.tasks:  # pragma: no cover
+                await asyncio.gather(*state.tasks.values(), return_exceptions=True)
+            _RUN_STATE.reset(token)
 
     async def wrap_tool_execute(
         self,
@@ -63,6 +86,7 @@ class BackgroundToolCapability(AbstractCapability[Any]):
         if not tool_def.background:
             return await handler(args)
 
+        state = _RUN_STATE.get()
         task_id = call.tool_call_id
         tool_name = call.tool_name
 
@@ -73,7 +97,7 @@ class BackgroundToolCapability(AbstractCapability[Any]):
                     SystemPromptPart(f"Background tool '{tool_name}' (task {task_id}) completed.\nResult: {result}"),
                     priority='follow_up',
                 )
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pragma: no cover
                 # Task cancelled during run cleanup — don't enqueue a follow-up;
                 # the event is still set via finally so a waiter can proceed.
                 raise
@@ -83,10 +107,10 @@ class BackgroundToolCapability(AbstractCapability[Any]):
                     priority='follow_up',
                 )
             finally:
-                self._tasks.pop(task_id, None)
-                self._completion_event.set()
+                state.tasks.pop(task_id, None)
+                state.completion_event.set()
 
-        self._tasks[task_id] = asyncio.create_task(_run())
+        state.tasks[task_id] = asyncio.create_task(_run())
         return (
             f"Tool '{tool_name}' is running in background (task {task_id}). "
             f'You will receive the result automatically when it completes. '
@@ -103,30 +127,14 @@ class BackgroundToolCapability(AbstractCapability[Any]):
         """If the agent would end but background tasks are pending, wait for at least one."""
         from pydantic_graph import End
 
-        if not isinstance(result, End) or not self._tasks:
+        state = _RUN_STATE.get(None)
+        if state is None or not isinstance(result, End) or not state.tasks:
             return result
 
         # Wait for at least one task to complete
-        self._completion_event.clear()
-        await self._completion_event.wait()
+        state.completion_event.clear()
+        await state.completion_event.wait()
         # Task completion enqueued follow_up messages.
-        # _PendingMessageDrainCapability (runs after us in reverse order)
+        # `PendingMessageDrainCapability` (runs after us in reverse order)
         # will redirect End -> ModelRequestNode.
         return result
-
-    async def wrap_run(
-        self,
-        ctx: RunContext[Any],
-        *,
-        handler: Any,
-    ) -> AgentRunResult[Any]:
-        """Ensure all background tasks are cancelled on run cleanup."""
-        try:
-            return await handler()
-        finally:
-            for task in self._tasks.values():
-                task.cancel()
-            # Wait for cancelled tasks to finish
-            if self._tasks:
-                await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-            self._tasks.clear()

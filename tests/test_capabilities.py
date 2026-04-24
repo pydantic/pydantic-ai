@@ -9651,8 +9651,10 @@ async def test_enqueue_message_from_agent_run():
     agent = Agent(FunctionModel(model_fn))
 
     async with agent.iter('Hello') as agent_run:
+        assert agent_run.pending_messages == []
         # Enqueue a follow-up message from external code before iteration
         agent_run.enqueue_message(UserPromptPart('External follow-up'), priority='follow_up')
+        assert len(agent_run.pending_messages) == 1
         # Use next() to drive iteration so after_node_run fires
         node = agent_run.next_node
         while not isinstance(node, End):
@@ -9685,18 +9687,15 @@ async def test_background_tool_basic():
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
             )
         else:
-            # After background result is delivered as follow-up
-            # Check if the background result is in the messages
-            for msg in messages:
-                if isinstance(msg, ModelRequest):
-                    for part in msg.parts:
-                        if isinstance(part, SystemPromptPart) and 'completed' in part.content:
-                            return ModelResponse(
-                                parts=[TextPart(content='got the background result')],
-                                usage=RequestUsage(input_tokens=10, output_tokens=5),
-                            )
+            # After background result is delivered as follow-up, the result is present in the messages.
+            assert any(
+                isinstance(part, SystemPromptPart) and 'completed' in part.content
+                for msg in messages
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+            )
             return ModelResponse(
-                parts=[TextPart(content='no background result yet')],
+                parts=[TextPart(content='got the background result')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
             )
 
@@ -9729,16 +9728,14 @@ async def test_background_tool_error_handling():
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
             )
         else:
-            for msg in messages:
-                if isinstance(msg, ModelRequest):
-                    for part in msg.parts:
-                        if isinstance(part, SystemPromptPart) and 'failed' in part.content:
-                            return ModelResponse(
-                                parts=[TextPart(content='handled the failure')],
-                                usage=RequestUsage(input_tokens=10, output_tokens=5),
-                            )
+            assert any(
+                isinstance(part, SystemPromptPart) and 'failed' in part.content
+                for msg in messages
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+            )
             return ModelResponse(
-                parts=[TextPart(content='no error message')],
+                parts=[TextPart(content='handled the failure')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
             )
 

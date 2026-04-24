@@ -45,10 +45,6 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     redirection runs after all other `after_node_run` hooks (which run in reverse).
     """
 
-    @classmethod
-    def get_serialization_name(cls) -> None:
-        return None
-
     def get_ordering(self) -> CapabilityOrdering:
         # Outermost so steering messages are drained into the request before other
         # capabilities see it, and follow-up redirection runs after all other
