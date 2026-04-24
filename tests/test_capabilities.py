@@ -9788,6 +9788,47 @@ async def test_background_tool_ack_message():
     assert 'running in background' in ack_content
 
 
+async def test_background_tool_cancelled_on_run_abort():
+    """Live background tasks are cancelled when the run is aborted (e.g. via timeout)."""
+    cancel_seen = asyncio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # First call → spawn the background tool; subsequent calls → final text.
+        if any(
+            isinstance(part, ToolReturnPart) and 'running in background' in str(part.content)
+            for msg in messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        ):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='slow_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain(background=True)
+    async def slow_tool() -> str:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancel_seen.set()
+            raise
+        return 'never'  # pragma: no cover — tool is cancelled before completing
+
+    # The model returns final text on call 2, which makes after_node_run wait forever
+    # for the 60s background task. The timeout cancels the run while the task is live,
+    # exercising wrap_run's finally cleanup.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(agent.run('go'), timeout=0.5)
+
+    await asyncio.wait_for(cancel_seen.wait(), timeout=1)
+
+
 async def test_non_background_tool_unaffected():
     """Non-background tools are executed normally, not spawned as background tasks."""
 
