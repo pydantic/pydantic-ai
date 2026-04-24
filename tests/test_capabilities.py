@@ -37,6 +37,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
+    PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
     SetToolMetadata,
@@ -5095,7 +5096,6 @@ class TestPrepareToolsCapability:
 
     async def test_prepare_tools_empty_list_does_not_warn(self):
         """Returning [] is the explicit 'disable all' alternative and must not emit the warning."""
-        from pydantic_ai.capabilities import PrepareTools
 
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return []
