@@ -34,6 +34,10 @@ class CompletedStreamedResponse(StreamedResponse):
         # noinspection PyUnreachableCode
         yield
 
+    async def close_stream(self) -> None:
+        # The stream was already consumed by the durable execution wrapper.
+        pass
+
     def get(self) -> ModelResponse:
         return self.response
 

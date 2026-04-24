@@ -5,7 +5,7 @@ import datetime
 import json
 import re
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
@@ -19,6 +19,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
+    AgentEventStream,
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -51,6 +52,7 @@ from pydantic_ai.agent import AgentRun
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
+from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
@@ -4264,6 +4266,18 @@ async def test_run_stream_cancel_after_complete():
         assert result.cancelled
 
 
+async def test_completed_streamed_response_cancel_noop():
+    response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
+    streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+
+    await streamed_response.cancel()
+    await streamed_response.cancel()
+
+    assert streamed_response.cancelled
+    assert streamed_response.get() is response
+    assert response.state == 'complete'
+
+
 async def test_run_stream_events_cancel():
     agent = Agent(TestModel())
 
@@ -4293,6 +4307,22 @@ async def test_run_stream_events_break_cleanup():
 
     # __aexit__ closed the generator (because _closed was False);
     # no task leak, no error.
+
+
+async def test_agent_event_stream_standalone_break_cleanup():
+    cleanup_finished = asyncio.Event()
+
+    async def generator() -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='hello'))
+        finally:
+            cleanup_finished.set()
+
+    stream = AgentEventStream(generator())
+    async for _ in stream:  # pragma: no branch
+        break
+
+    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
 
 
 async def test_run_stream_events_standalone_deprecation():

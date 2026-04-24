@@ -1118,6 +1118,7 @@ class StreamedResponse(ABC):
             if not self.cancelled:
                 raise
 
+    # TODO: (v2) We should not have public private methods which need to be overwritten.
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
