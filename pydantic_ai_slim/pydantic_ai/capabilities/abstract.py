@@ -635,9 +635,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> DeferredToolResults | None:
         """Handle deferred tool calls (approval-required or externally-executed) inline during an agent run.
 
-        Called by [`ToolManager`][pydantic_ai.tool_manager.ToolManager] after tool calls raise
-        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
-        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred].
+        Called by [`ToolManager`][pydantic_ai.tool_manager.ToolManager] when:
+
+        - a tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+          [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] during execution, or
+        - the model calls a tool registered with `requires_approval=True` (see
+          [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval))
+          or a tool backed by [external execution](../deferred-tools.md#external-tool-execution).
 
         Uses accumulation dispatch: each capability in the chain receives remaining
         unresolved requests and can resolve some or all of them. Results are merged

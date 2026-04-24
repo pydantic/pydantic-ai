@@ -273,9 +273,43 @@ class DeferredToolRequests:
         approvals: dict[str, bool | DeferredToolApprovalResult] | None = None,
         calls: dict[str, DeferredToolCallResult | Any] | None = None,
         metadata: dict[str, dict[str, Any]] | None = None,
+        approve_all: bool = False,
     ) -> DeferredToolResults:
-        """Create a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] for these requests."""
-        return DeferredToolResults(approvals=approvals or {}, calls=calls or {}, metadata=metadata or {})
+        """Create a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] for these requests.
+
+        Args:
+            approvals: Results for tool calls that required approval. Keys must match
+                `tool_call_id`s in `self.approvals`.
+            calls: Results for tool calls that required external execution. Keys must
+                match `tool_call_id`s in `self.calls`.
+            metadata: Per-call metadata, keyed by `tool_call_id`.
+            approve_all: If `True`, every approval-requesting call not already listed in
+                `approvals` is approved (with default `ToolApproved()`).
+
+        Raises:
+            ValueError: If a key in `approvals`/`calls` doesn't match a pending request of
+                the appropriate kind.
+        """
+        approvals = dict(approvals) if approvals else {}
+        calls = dict(calls) if calls else {}
+
+        approval_ids = {c.tool_call_id for c in self.approvals}
+        call_ids = {c.tool_call_id for c in self.calls}
+
+        if extra_approvals := set(approvals) - approval_ids:
+            raise ValueError(
+                f'`approvals` contains tool call IDs not in this `DeferredToolRequests.approvals`: {sorted(extra_approvals)}'
+            )
+        if extra_calls := set(calls) - call_ids:
+            raise ValueError(
+                f'`calls` contains tool call IDs not in this `DeferredToolRequests.calls`: {sorted(extra_calls)}'
+            )
+
+        if approve_all:
+            for tool_call_id in approval_ids - set(approvals):
+                approvals[tool_call_id] = ToolApproved()
+
+        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata or {})
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
@@ -360,6 +394,27 @@ class DeferredToolResults:
         self.approvals.update(other.approvals)
         self.calls.update(other.calls)
         self.metadata.update(other.metadata)
+
+    def to_tool_call_results(self) -> dict[str, DeferredToolResult]:
+        """Convert results into the internal per-call format used by the tool-execution pipeline.
+
+        Normalizes `True`/`False` approvals to `ToolApproved`/`ToolDenied`, and wraps
+        plain external-call values in `ToolReturn`.
+        """
+        tool_call_results: dict[str, DeferredToolResult] = {}
+        for tool_call_id, approval in self.approvals.items():
+            if approval is True:
+                approval = ToolApproved()
+            elif approval is False:
+                approval = ToolDenied()
+            tool_call_results[tool_call_id] = approval
+
+        call_result_types = _utils.get_union_args(DeferredToolCallResult)
+        for tool_call_id, call_result in self.calls.items():
+            if not isinstance(call_result, call_result_types):
+                call_result = ToolReturn(call_result)
+            tool_call_results[tool_call_id] = call_result
+        return tool_call_results
 
 
 A = TypeVar('A')

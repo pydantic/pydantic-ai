@@ -2725,6 +2725,3 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         return 'the agent'
-
-    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
-        super().add_tool(tool)

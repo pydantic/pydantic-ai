@@ -64,7 +64,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -9319,6 +9319,47 @@ async def test_deferred_tool_handler_build_results_helper():
     assert result.output == 'Done.'
 
 
+def test_deferred_tool_requests_build_results_validates_ids():
+    """build_results rejects result IDs that don't match a pending request of the right kind."""
+    requests = DeferredToolRequests(
+        approvals=[ToolCallPart('a', {}, tool_call_id='approval_1')],
+        calls=[ToolCallPart('b', {}, tool_call_id='call_1')],
+    )
+
+    # Mis-routed ID: tool-result provided for something in the approvals list.
+    with pytest.raises(ValueError, match='calls.*not in.*DeferredToolRequests.calls'):
+        requests.build_results(calls={'approval_1': 'oops'})
+
+    # Unknown ID entirely.
+    with pytest.raises(ValueError, match='approvals.*not in.*DeferredToolRequests.approvals'):
+        requests.build_results(approvals={'unknown_id': True})
+
+    # Happy path still works.
+    results = requests.build_results(approvals={'approval_1': True}, calls={'call_1': 'result'})
+    assert results.approvals == {'approval_1': True}
+    assert results.calls == {'call_1': 'result'}
+
+
+def test_deferred_tool_requests_build_results_approve_all():
+    """approve_all=True approves every pending approval not explicitly specified."""
+    requests = DeferredToolRequests(
+        approvals=[
+            ToolCallPart('a', {}, tool_call_id='approval_1'),
+            ToolCallPart('b', {}, tool_call_id='approval_2'),
+            ToolCallPart('c', {}, tool_call_id='approval_3'),
+        ],
+    )
+
+    # Explicit deny wins; the other two get auto-approved.
+    results = requests.build_results(
+        approvals={'approval_1': False},
+        approve_all=True,
+    )
+    assert results.approvals['approval_1'] is False
+    assert isinstance(results.approvals['approval_2'], ToolApproved)
+    assert isinstance(results.approvals['approval_3'], ToolApproved)
+
+
 async def test_deferred_tool_handler_wrapper_capability():
     """HandleDeferredToolCalls works through WrapperCapability delegation."""
 
@@ -9482,41 +9523,6 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
     ]
     assert len(tool_returns) == 1
     assert tool_returns[0].content == 'got: approved result'
-
-
-async def test_deferred_tool_handler_via_handle_call_resolve_false():
-    """handle_call(resolve_deferred=False) lets exceptions propagate (no handler configured)."""
-    from pydantic_ai.toolsets import FunctionToolset
-
-    inner_toolset = FunctionToolset()
-
-    @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
-        if not ctx.tool_call_approved:
-            raise ApprovalRequired
-        return 'result'  # pragma: no cover
-
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
-        return ModelResponse(parts=[TextPart('final')])
-
-    agent = Agent(FunctionModel(llm), toolsets=[inner_toolset])
-
-    @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
-        assert ctx.tool_manager is not None
-        try:
-            await ctx.tool_manager.handle_call(
-                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
-                resolve_deferred=False,
-            )
-            return 'should not reach'  # pragma: no cover
-        except ApprovalRequired:
-            return 'caught approval'
-
-    result = await agent.run('go')
-    assert result.output == 'final'
 
 
 async def test_deferred_tool_handler_approved_tool_returns_tool_return():

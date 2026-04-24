@@ -17,7 +17,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
+from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -34,7 +34,6 @@ from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentBuiltinTool,
-    DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -284,7 +283,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
 
-    async def _handle_deferred_tool_results(  # noqa: C901
+    async def _handle_deferred_tool_results(
         self,
         deferred_tool_results: DeferredToolResults,
         messages: list[_messages.ModelMessage],
@@ -311,21 +310,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
-        for tool_call_id, approval in deferred_tool_results.approvals.items():
-            if approval is True:
-                approval = ToolApproved()
-            elif approval is False:
-                approval = ToolDenied()
-            tool_call_results[tool_call_id] = approval
-
-        if calls := deferred_tool_results.calls:
-            call_result_types = get_union_args(DeferredToolCallResult)
-            for tool_call_id, result in calls.items():
-                if not isinstance(result, call_result_types):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
+        tool_call_results.update(deferred_tool_results.to_tool_call_results())
 
         if last_model_request:
             for part in last_model_request.parts:
@@ -1543,18 +1529,57 @@ async def process_tool_calls(  # noqa: C901
         )
 
         # Let capability handlers resolve deferred calls inline (one shot).
-        # If re-execution raises new deferrals, they go into remaining.
+        # Results are fed back through the existing tool-execution pipeline so that
+        # approvals, denials, retries, and ToolReturn unwrapping all behave identically
+        # to the UserPromptNode resume path.
         handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
-            executed_outcomes, deferred_tool_requests = await tool_manager.execute_deferred_tool_results(
-                deferred_tool_requests, handler_results
+            handler_tool_call_results = handler_results.to_tool_call_results()
+            resolved_calls = [
+                call
+                for call in [*deferred_calls['unapproved'], *deferred_calls['external']]
+                if call.tool_call_id in handler_tool_call_results
+            ]
+
+            handler_validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
+            for call in resolved_calls:
+                handler_result = handler_tool_call_results[call.tool_call_id]
+                if not isinstance(handler_result, ToolApproved):
+                    continue
+                validate_call = call
+                if handler_result.override_args is not None:
+                    validate_call = dataclasses.replace(call, args=handler_result.override_args)
+                call_metadata = handler_results.metadata.get(call.tool_call_id)
+                try:
+                    handler_validated_calls[call.tool_call_id] = await tool_manager.validate_tool_call(
+                        validate_call, approved=True, metadata=call_metadata
+                    )
+                except exceptions.UnexpectedModelBehavior:
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
+                    raise
+
+            new_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(
+                list
             )
-            executed_parts = tool_manager.build_tool_return_parts_from_outcomes(executed_outcomes)
-            for _call_part, result_part, user_content in executed_parts:
-                output_parts.append(result_part)
-                if user_content:
-                    output_parts.append(_messages.UserPromptPart(content=user_content))
-                yield _messages.FunctionToolResultEvent(result_part, content=user_content)
+            new_deferred_metadata: dict[str, dict[str, Any]] = {}
+            async for event in _call_tools(
+                tool_manager=tool_manager,
+                tool_calls=resolved_calls,
+                tool_call_results=handler_tool_call_results,
+                validated_calls=handler_validated_calls,
+                output_parts=output_parts,
+                output_deferred_calls=new_deferred_calls,
+                output_deferred_metadata=new_deferred_metadata,
+            ):
+                yield event
+
+            deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
+            if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
+                if deferred_tool_requests is None:
+                    deferred_tool_requests = _output.DeferredToolRequests()
+                deferred_tool_requests.calls.extend(new_deferred_calls['external'])
+                deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
+                deferred_tool_requests.metadata.update(new_deferred_metadata)
 
         if deferred_tool_requests is not None:
             if not ctx.deps.output_schema.allows_deferred_tools:

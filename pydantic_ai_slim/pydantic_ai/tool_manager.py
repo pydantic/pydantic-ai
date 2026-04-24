@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
@@ -37,35 +37,6 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
-
-
-@dataclass
-class DeferredCallSuccess:
-    """A deferred tool call that resolved to a successful tool execution.
-
-    `result` is the raw tool return (possibly a [`ToolReturn`][pydantic_ai.messages.ToolReturn]),
-    or the raw value supplied as the external call result.
-    """
-
-    result: Any
-
-
-@dataclass
-class DeferredCallDenied:
-    """A deferred tool call denied by the approval handler."""
-
-    denied: ToolDenied
-
-
-@dataclass
-class DeferredCallRetry:
-    """A deferred tool call where execution raised `ModelRetry` after approval."""
-
-    retry: _messages.RetryPromptPart
-
-
-DeferredCallOutcome: TypeAlias = DeferredCallSuccess | DeferredCallDenied | DeferredCallRetry
-"""Outcome of resolving a single deferred tool call."""
 
 
 @dataclass
@@ -631,7 +602,6 @@ class ToolManager(Generic[AgentDepsT]):
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
         *,
-        resolve_deferred: bool = True,
         approved: bool = False,
         metadata: Any = None,
     ) -> Any:
@@ -639,15 +609,14 @@ class ToolManager(Generic[AgentDepsT]):
 
         This is a convenience method that combines validate_tool_call() and execute_tool_call().
 
+        If the tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], the capability handler
+        (if any) is invoked to resolve it inline; otherwise the exception propagates.
+
         Args:
             call: The tool call part to handle.
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
-            resolve_deferred: Whether to resolve deferred tool calls inline using the
-                capability handler. When `True` (default), if the tool raises
-                [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
-                [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], the handler is
-                called to resolve it. When `False`, the exceptions propagate to the caller.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
         """
@@ -661,8 +630,6 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             return await self.execute_tool_call(validated)
         except (CallDeferred, ApprovalRequired) as exc:
-            if not resolve_deferred:
-                raise
             return await self._resolve_single_deferred(call, exc)
 
     async def resolve_deferred_tool_calls(
@@ -682,167 +649,6 @@ class ToolManager(Generic[AgentDepsT]):
             return None  # pragma: no cover
         return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
 
-    async def execute_deferred_tool_results(
-        self,
-        requests: DeferredToolRequests,
-        results: DeferredToolResults,
-    ) -> tuple[list[tuple[_messages.ToolCallPart, DeferredCallOutcome]], DeferredToolRequests | None]:
-        """Execute resolved deferred tool calls and compute remaining unresolved requests.
-
-        Validates and executes approved calls, builds outcomes for denied/external
-        results, and computes remaining unresolved requests.
-
-        Outcomes are raw tool results (preserving `ToolReturn` wrappers when the tool or
-        handler returned one). Use
-        [`build_tool_return_parts_from_outcomes`][pydantic_ai.tool_manager.ToolManager.build_tool_return_parts_from_outcomes]
-        to convert them to `ToolReturnPart`s for message history.
-
-        Args:
-            requests: The original deferred tool requests.
-            results: The handler's results for some or all calls.
-
-        Returns:
-            A tuple of (executed outcomes, remaining unresolved requests or None).
-        """
-        all_deferred_calls = [*requests.approvals, *requests.calls]
-        resolved_ids = set(results.approvals) | set(results.calls)
-        executed: list[tuple[_messages.ToolCallPart, DeferredCallOutcome]] = []
-        re_deferred: dict[str, CallDeferred | ApprovalRequired] = {}
-
-        for call in all_deferred_calls:
-            if call.tool_call_id not in resolved_ids:
-                continue
-
-            # Get the deferred result for this call
-            if call.tool_call_id in results.approvals:
-                approval = results.approvals[call.tool_call_id]
-                if isinstance(approval, bool):
-                    deferred_result: ToolApproved | ToolDenied = ToolApproved() if approval else ToolDenied()
-                else:
-                    deferred_result = approval
-            elif call.tool_call_id in results.calls:
-                # External call results are used directly as the raw tool result
-                executed.append((call, DeferredCallSuccess(result=results.calls[call.tool_call_id])))
-                continue
-            else:
-                continue  # pragma: no cover
-
-            # Handle approval results
-            approval_outcome = await self._execute_approval_result(call, deferred_result, results.metadata)
-            if isinstance(approval_outcome, (CallDeferred, ApprovalRequired)):
-                # Tool re-raised deferral — track the new exception for correct categorization
-                re_deferred[call.tool_call_id] = approval_outcome
-            else:
-                executed.append((call, approval_outcome))
-
-        # Compute remaining: unresolved calls + re-deferred calls (categorized by new exception type)
-        remaining = requests.remaining(results)
-        if re_deferred:
-            re_deferred_calls = [c for c in all_deferred_calls if c.tool_call_id in re_deferred]
-            if remaining is None:
-                remaining = DeferredToolRequests()
-            for call in re_deferred_calls:
-                exc = re_deferred[call.tool_call_id]
-                if isinstance(exc, ApprovalRequired):
-                    remaining.approvals.append(call)
-                else:
-                    remaining.calls.append(call)
-                if exc.metadata:
-                    remaining.metadata[call.tool_call_id] = exc.metadata
-        return executed, remaining
-
-    @staticmethod
-    def build_tool_return_parts_from_outcomes(
-        outcomes: list[tuple[_messages.ToolCallPart, DeferredCallOutcome]],
-    ) -> list[
-        tuple[
-            _messages.ToolCallPart,
-            _messages.ToolReturnPart | _messages.RetryPromptPart,
-            str | Sequence[_messages.UserContent] | None,
-        ]
-    ]:
-        """Convert raw `DeferredCallOutcome`s into `ToolReturnPart`s (+ optional user content) for message history.
-
-        Mirrors the part-building logic in `_call_tool` in `_agent_graph.py`:
-        - `DeferredCallSuccess` with `ToolReturn` → unwraps into content/metadata/user_content
-        - `DeferredCallSuccess` with plain value → wraps as `ToolReturnPart`
-        - `DeferredCallDenied` → `ToolReturnPart(outcome='denied', content=denial message)`
-        - `DeferredCallRetry` → `RetryPromptPart` (caller is responsible for raising `ToolRetryError` if needed)
-        """
-        parts: list[
-            tuple[
-                _messages.ToolCallPart,
-                _messages.ToolReturnPart | _messages.RetryPromptPart,
-                str | Sequence[_messages.UserContent] | None,
-            ]
-        ] = []
-        for call, outcome in outcomes:
-            if isinstance(outcome, DeferredCallRetry):
-                parts.append((call, outcome.retry, None))
-            elif isinstance(outcome, DeferredCallDenied):
-                parts.append(
-                    (
-                        call,
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=outcome.denied.message,
-                            tool_call_id=call.tool_call_id,
-                            outcome='denied',
-                        ),
-                        None,
-                    )
-                )
-            else:
-                result = outcome.result
-                if isinstance(result, _messages.ToolReturn):
-                    content = result.return_value
-                    result_metadata = result.metadata
-                    user_content = result.content or None
-                else:
-                    content = result
-                    result_metadata = None
-                    user_content = None
-                parts.append(
-                    (
-                        call,
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=content,
-                            tool_call_id=call.tool_call_id,
-                            metadata=result_metadata,
-                        ),
-                        user_content,
-                    )
-                )
-        return parts
-
-    async def _execute_approval_result(
-        self,
-        call: ToolCallPart,
-        deferred_result: ToolApproved | ToolDenied,
-        metadata: dict[str, dict[str, Any]],
-    ) -> DeferredCallOutcome | CallDeferred | ApprovalRequired:
-        """Execute a single approval result.
-
-        Returns a `DeferredCallOutcome` on success/denial/retry, or the re-raised deferral exception.
-        """
-        if isinstance(deferred_result, ToolDenied):
-            return DeferredCallDenied(denied=deferred_result)
-
-        validate_call = call
-        if deferred_result.override_args is not None:
-            validate_call = replace(call, args=deferred_result.override_args)
-        call_metadata = metadata.get(call.tool_call_id)
-        try:
-            validated = await self.validate_tool_call(validate_call, approved=True, metadata=call_metadata)
-            tool_result = await self.execute_tool_call(validated)
-        except ToolRetryError as e:
-            return DeferredCallRetry(retry=e.tool_retry)
-        except (CallDeferred, ApprovalRequired) as exc:
-            return exc
-
-        return DeferredCallSuccess(result=tool_result)
-
     async def _resolve_single_deferred(
         self,
         call: ToolCallPart,
@@ -850,11 +656,15 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
-        Used by handle_call() when resolve_deferred=True.
+        Returns the tool result verbatim (a raw value, or a `ToolReturn` if the tool or
+        handler returned one — preserved so callers like CodeMode can unwrap metadata
+        themselves). Denials surface as the denial message, matching how they appear in
+        message history.
 
         Raises:
-            CallDeferred: If the handler cannot resolve the call.
-            ApprovalRequired: If the handler cannot resolve the call.
+            ToolRetryError: If the approved execution raised `ModelRetry`.
+            CallDeferred / ApprovalRequired: If the handler couldn't resolve the call, or
+                the approved tool re-raised a deferral.
         """
         requests = DeferredToolRequests(
             approvals=[call] if isinstance(exc, ApprovalRequired) else [],
@@ -865,21 +675,35 @@ class ToolManager(Generic[AgentDepsT]):
         if deferred_results is None:
             raise exc
 
-        executed, remaining = await self.execute_deferred_tool_results(requests, deferred_results)
-        if remaining:
-            # The tool may have re-raised with a different exception type/metadata.
-            # Reconstruct the exception from the remaining requests so the caller sees the current state.
-            new_metadata = remaining.metadata.get(call.tool_call_id)
-            if any(c.tool_call_id == call.tool_call_id for c in remaining.calls):
-                raise CallDeferred(metadata=new_metadata)
-            raise ApprovalRequired(metadata=new_metadata)
-        if executed:
-            _call, outcome = executed[0]
-            if isinstance(outcome, DeferredCallRetry):
-                raise ToolRetryError(outcome.retry)
-            if isinstance(outcome, DeferredCallDenied):
-                # Consistent with the denial message surfacing as the tool return in message history
-                return outcome.denied.message
-            # DeferredCallSuccess — return the raw tool result (preserves `ToolReturn` wrapper for CodeMode etc.)
-            return outcome.result
-        raise exc  # pragma: no cover
+        if call.tool_call_id in deferred_results.approvals:
+            approval = deferred_results.approvals[call.tool_call_id]
+            if approval is True:
+                approval = ToolApproved()
+            elif approval is False:
+                approval = ToolDenied()
+            if isinstance(approval, ToolDenied):
+                return approval.message
+            validate_call = call
+            if approval.override_args is not None:
+                validate_call = replace(call, args=approval.override_args)
+            call_metadata = deferred_results.metadata.get(call.tool_call_id)
+            validated = await self.validate_tool_call(validate_call, approved=True, metadata=call_metadata)
+            return await self.execute_tool_call(validated)
+
+        if call.tool_call_id in deferred_results.calls:
+            call_result = deferred_results.calls[call.tool_call_id]
+            if isinstance(call_result, ModelRetry):
+                raise ToolRetryError(
+                    _messages.RetryPromptPart(
+                        content=call_result.message,
+                        tool_name=call.tool_name,
+                        tool_call_id=call.tool_call_id,
+                    )
+                )
+            if isinstance(call_result, _messages.RetryPromptPart):
+                call_result.tool_name = call.tool_name
+                call_result.tool_call_id = call.tool_call_id
+                raise ToolRetryError(call_result)
+            return call_result
+
+        raise exc

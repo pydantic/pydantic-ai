@@ -21,10 +21,11 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
     them, and continues the agent run automatically.
 
     The handler receives the [`RunContext`][pydantic_ai.tools.RunContext] and the
-    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests], and must return
+    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]. It may return
     [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with results for
-    some or all pending tool calls. Unresolved calls are passed to the next capability
-    in the chain, or bubble up as `DeferredToolRequests` output.
+    some or all pending calls, or return `None` to decline handling (the next capability
+    in the chain gets a chance, otherwise the calls bubble up as `DeferredToolRequests`
+    output).
 
     Example:
         ```python
@@ -37,8 +38,7 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
             ctx: RunContext[None], requests: DeferredToolRequests
         ) -> DeferredToolResults:
             # Auto-approve all tools that need approval
-            approvals = {call.tool_call_id: True for call in requests.approvals}
-            return DeferredToolResults(approvals=approvals)
+            return requests.build_results(approve_all=True)
 
 
         agent = Agent(
@@ -50,13 +50,13 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
 
     handler: Callable[
         [RunContext[AgentDepsT], DeferredToolRequests],
-        DeferredToolResults | Awaitable[DeferredToolResults],
+        DeferredToolResults | None | Awaitable[DeferredToolResults | None],
     ]
     """The handler function that resolves deferred tool requests.
 
-    Receives the run context and the deferred tool requests, and must return
-    `DeferredToolResults` with results for some or all pending tool calls.
-    Can be sync or async.
+    Receives the run context and the deferred tool requests, and returns
+    [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with results for some
+    or all pending calls, or `None` to decline handling. Can be sync or async.
     """
 
     @classmethod
