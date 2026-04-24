@@ -640,9 +640,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Modify raw model output before validation/parsing.
 
         The primary hook for pre-parse repair and normalization of model output.
-        Fires for all output types: text, structured text, and tool-based output.
+        Fires only for structured output that requires parsing: prompted, native,
+        tool, and union output. Does **not** fire for plain text or image output.
 
-        For text/structured output, `output` is the raw text string from the model.
+        For structured text output, `output` is the raw text string from the model.
         For tool output, `output` is the raw tool arguments (string or dict).
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
