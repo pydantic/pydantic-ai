@@ -293,15 +293,54 @@ def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> 
     return None
 
 
+_GLA_SERVICE_TIERS: tuple[str, ...] = ('standard', 'flex', 'priority')
+
+
+def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> str | None:
+    """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
+
+    Checks the deprecated `google_service_tier` first (for back-compat, with warning),
+    then the top-level `service_tier`. Maps `'default'` → `'standard'`; drops any value
+    that isn't valid for GLA (including `'auto'`, which signals "let the server decide").
+    """
+    raw = _get_deprecated_google_service_tier(model_settings) or model_settings.get('service_tier')
+    if raw is None:
+        return None
+    lowered = raw.lower()
+    if lowered == 'default':
+        return 'standard'
+    if lowered in _GLA_SERVICE_TIERS:
+        return lowered
+    # 'auto' (omit) and Vertex-only values fall through here.
+    return None
+
+
+def _resolve_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleVertexServiceTier | ServiceTier:
+    """Resolve the tier to feed to `_google_vertex_service_tier_headers` on a Vertex AI request.
+
+    Per-provider `google_vertex_service_tier` wins, then the deprecated `google_service_tier`
+    (with warning), then the top-level `service_tier`; defaults to `'pt_then_on_demand'` so
+    Vertex's built-in PT-with-spillover behavior is the baseline.
+    """
+    return (
+        model_settings.get('google_vertex_service_tier')
+        or _get_deprecated_google_service_tier(model_settings)
+        or model_settings.get('service_tier')
+        or 'pt_then_on_demand'
+    )
+
+
 def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier | ServiceTier) -> dict[str, str]:
     """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing.
 
     Accepts both the Vertex-specific values from [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier]
-    and the top-level [`ServiceTier`][pydantic_ai.settings.ServiceTier] values, which are mapped
-    to the safe PT-with-spillover equivalent where one exists (currently only `'flex'`).
+    and the top-level [`ServiceTier`][pydantic_ai.settings.ServiceTier] values. `'flex'` and `'priority'`
+    are mapped to the safe PT-with-spillover equivalents (`'pt_then_flex'` / `'pt_then_priority'`) so
+    the top-level field behaves consistently across providers while still letting Vertex users with
+    Provisioned Throughput capacity use it first.
     """
     # No routing headers: Vertex's default spillover (PT → on-demand) already matches these semantics.
-    if service_tier in ('auto', 'default', 'priority', 'pt_then_on_demand'):
+    if service_tier in ('auto', 'default', 'pt_then_on_demand'):
         return {}
     if service_tier == 'pt_only':
         return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
@@ -309,7 +348,7 @@ def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier | 
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
     if service_tier in ('flex', 'pt_then_flex'):
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
-    if service_tier == 'pt_then_priority':
+    if service_tier in ('priority', 'pt_then_priority'):
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
     if service_tier == 'flex_only':
         return {
@@ -664,7 +703,7 @@ class GoogleModel(Model[Client]):
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
-    async def _build_content_and_config(  # noqa: C901
+    async def _build_content_and_config(
         self,
         messages: list[ModelMessage],
         model_settings: GoogleModelSettings,
@@ -701,14 +740,11 @@ class GoogleModel(Model[Client]):
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
+        service_tier_str: str | None = None
         if self.system == 'google-vertex':
-            service_tier_vertex = (
-                model_settings.get('google_vertex_service_tier')
-                or _get_deprecated_google_service_tier(model_settings)
-                or model_settings.get('service_tier')
-                or 'pt_then_on_demand'
-            )
-            headers.update(_google_vertex_service_tier_headers(service_tier_vertex))
+            headers.update(_google_vertex_service_tier_headers(_resolve_vertex_service_tier(model_settings)))
+        else:
+            service_tier_str = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
@@ -716,18 +752,6 @@ class GoogleModel(Model[Client]):
                 http_options['timeout'] = int(1000 * timeout)
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
-
-        service_tier_str: str | None = None
-        if self.system != 'google-vertex':
-            if raw_service_tier := _get_deprecated_google_service_tier(model_settings) or model_settings.get(
-                'service_tier'
-            ):
-                service_tier_str = raw_service_tier.lower()
-                if service_tier_str == 'default':
-                    service_tier_str = 'standard'
-                elif service_tier_str not in ('standard', 'flex', 'priority'):
-                    # 'auto' (omit) and any Vertex-only values fall through here.
-                    service_tier_str = None
 
         config = GenerateContentConfigDict(
             http_options=http_options,

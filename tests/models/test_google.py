@@ -75,7 +75,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -2795,10 +2795,24 @@ async def test_google_service_tier_not_in_config_when_unset(allow_model_requests
     assert 'service_tier' not in config_dict
 
 
-async def test_google_unified_service_tier_omitted_for_vertex(allow_model_requests: None):
-    """Test that unified `service_tier` is not sent in the GLA config dictionary when using Vertex AI."""
+@pytest.mark.parametrize(
+    'tier,expected_header',
+    [
+        pytest.param('flex', 'flex', id='flex'),
+        pytest.param('priority', 'priority', id='priority'),
+    ],
+)
+async def test_google_unified_service_tier_maps_to_vertex_spillover(
+    allow_model_requests: None, tier: ServiceTier, expected_header: str
+):
+    """Top-level `service_tier='flex'`/`'priority'` maps to `Shared-Request-Type` on Vertex.
+
+    Both set only the single spillover header so Provisioned Throughput quota is still
+    used first when available; users who want to bypass PT entirely need
+    `google_vertex_service_tier='flex_only'`/`'priority_only'` explicitly.
+    """
     m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project', location='us-central1'))
-    model_settings = GoogleModelSettings(service_tier='flex')
+    model_settings = GoogleModelSettings(service_tier=tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -2807,9 +2821,10 @@ async def test_google_unified_service_tier_omitted_for_vertex(allow_model_reques
     )
 
     config_dict = cast(dict[str, Any], config)
-    assert 'service_tier' not in config_dict
+    assert 'service_tier' not in config_dict, 'GLA config field must stay off on Vertex'
     headers = config_dict['http_options']['headers']
-    assert headers['X-Vertex-AI-LLM-Shared-Request-Type'] == 'flex'
+    assert headers['X-Vertex-AI-LLM-Shared-Request-Type'] == expected_header
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers, 'Single-header form preserves PT-first behavior'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):

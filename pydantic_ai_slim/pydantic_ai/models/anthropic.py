@@ -591,7 +591,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
         service_tier = model_settings.get('anthropic_service_tier') or model_settings.get('service_tier')
-        if service_tier == 'default':
+        if service_tier is None:
+            service_tier = OMIT
+        elif service_tier == 'default':
             service_tier = 'standard_only'
         elif service_tier not in ('auto', 'standard_only'):
             service_tier = OMIT
