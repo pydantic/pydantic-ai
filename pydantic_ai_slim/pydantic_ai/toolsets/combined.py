@@ -64,9 +64,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await gather(
-            *(toolset.get_tools(toolset._adjusted_ctx_for_get_tools(ctx)) for toolset in self.toolsets)
-        )
+        toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):

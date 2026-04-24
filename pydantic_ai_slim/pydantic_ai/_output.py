@@ -1017,13 +1017,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         new._output_max_retries = self.max_retries
         return new
 
-    def _adjusted_ctx_for_get_tools(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-        # Output-tool prepare functions (e.g. `prepare_output_tools`) expect `ctx.max_retries`
-        # to carry the output retry count, while the rest of the pipeline carries the tool
-        # retry count (the graph-level default).
-        assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
-        return replace(ctx, max_retries=self.max_retries)
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
         max_retries = self.max_retries

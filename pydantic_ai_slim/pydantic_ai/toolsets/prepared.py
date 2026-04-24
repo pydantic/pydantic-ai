@@ -18,11 +18,17 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     """
 
     prepare_func: ToolsPrepareFunc[AgentDepsT]
+    max_retries: int | None = None
+    """If set, overrides `ctx.max_retries` passed to `prepare_func`. Used by the agent when
+    wrapping `OutputToolset` so `prepare_output_tools` sees the output retry limit rather
+    than the graph-level tool retry default.
+    """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
         original_tool_defs = [tool.tool_def for tool in original_tools.values()]
-        result = self.prepare_func(ctx, original_tool_defs)
+        prepare_ctx = replace(ctx, max_retries=self.max_retries) if self.max_retries is not None else ctx
+        result = self.prepare_func(prepare_ctx, original_tool_defs)
         if inspect.isawaitable(result):
             result = await result
         prepared_tool_defs_by_name = {tool_def.name: tool_def for tool_def in (result or [])}

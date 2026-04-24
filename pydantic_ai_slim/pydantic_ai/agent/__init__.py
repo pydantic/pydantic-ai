@@ -2404,7 +2404,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
             if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+                # When wrapping an `OutputToolset`, carry its `max_retries` into the ctx that `prepare_output_tools`
+                # sees, so the callback observes the output retry limit rather than the graph-level tool default.
+                output_max_retries = output_toolset.max_retries if isinstance(output_toolset, OutputToolset) else None
+                output_toolset = PreparedToolset(
+                    output_toolset,
+                    self._prepare_output_tools,
+                    max_retries=output_max_retries,
+                )
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
