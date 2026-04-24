@@ -1821,54 +1821,57 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     """DBOSDurability discovers MCPServerStdio and creates DBOS wrappers."""
     from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer
 
-    durability = DBOSDurability()
     mcp_toolset = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='my_mcp')
-    Agent(
+    agent = Agent(
         _durability_fn_model,
         name='durability_mcp',
         toolsets=[mcp_toolset],
-        capabilities=[durability],
+        capabilities=[DBOSDurability()],
     )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
 
     # The capability should have stored a DBOS wrapper keyed by the toolset id
-    assert 'my_mcp' in durability._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(durability._dbos_toolsets_by_id['my_mcp'], DBOSMCPServer)  # pyright: ignore[reportPrivateUsage]
+    assert 'my_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound._dbos_toolsets_by_id['my_mcp'], DBOSMCPServer)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_fastmcp_toolset_wrapping(dbos: DBOS) -> None:
     """DBOSDurability discovers FastMCPToolset and creates DBOS wrappers."""
     from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
 
-    durability = DBOSDurability()
     fastmcp_toolset = FastMCPToolset('https://example.com/mcp', id='my_fastmcp')
-    Agent(
+    agent = Agent(
         _durability_fn_model,
         name='durability_fastmcp',
         toolsets=[fastmcp_toolset],
-        capabilities=[durability],
+        capabilities=[DBOSDurability()],
     )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
 
     # The capability should have stored a DBOS wrapper keyed by the toolset id
-    assert 'my_fastmcp' in durability._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(durability._dbos_toolsets_by_id['my_fastmcp'], DBOSFastMCPToolset)  # pyright: ignore[reportPrivateUsage]
+    assert 'my_fastmcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound._dbos_toolsets_by_id['my_fastmcp'], DBOSFastMCPToolset)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
     """DBOSDurability.get_wrapper_toolset replaces MCP toolsets by id."""
     from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer
 
-    durability = DBOSDurability()
     mcp_toolset = MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='swap_mcp')
-    Agent(
+    agent = Agent(
         _durability_fn_model,
         name='durability_swap',
         toolsets=[mcp_toolset],
-        capabilities=[durability],
+        capabilities=[DBOSDurability()],
     )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
 
-    assert 'swap_mcp' in durability._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert 'swap_mcp' in bound._dbos_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
     # get_wrapper_toolset should replace the original MCP toolset with the DBOS wrapper
-    replaced = durability.get_wrapper_toolset(mcp_toolset)
+    replaced = bound.get_wrapper_toolset(mcp_toolset)
     assert replaced is not None
     assert isinstance(replaced, DBOSMCPServer)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -88,9 +89,28 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
 
         self._prefect_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+        # Populated by for_agent when the capability is attached to an agent.
+        self._request_task: Any = None
+        self._request_stream_task: Any = None
+
+    @classmethod
+    def from_agent(cls, agent: AbstractAgent[Any, Any]) -> PrefectDurability[Any] | None:
+        """Return the bound `PrefectDurability` on an agent, walking its capability chain."""
+        found: list[PrefectDurability[Any]] = []
+
+        def visitor(cap: Any) -> None:
+            if isinstance(cap, cls):
+                found.append(cap)
+
+        agent.root_capability.apply(visitor)
+        return found[0] if found else None
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> PrefectDurability[AgentDepsT]:
-        """Bind to the agent: discover model, name, toolsets and register Prefect tasks."""
+        """Bind to the agent: discover model, name, toolsets and register Prefect tasks.
+
+        Returns a new bound instance; the original capability is left pristine so the
+        same instance can be passed to multiple agents.
+        """
         from pydantic_ai.exceptions import UserError
 
         if not agent.name:
@@ -98,15 +118,17 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         if not isinstance(agent.model, Model):
             raise UserError('An agent needs to have a concrete `model` in order to be used with Prefect.')
 
-        self.name = agent.name
-        self._agent = agent
+        bound = copy.copy(self)
+        bound.name = agent.name
+        bound._agent = agent
         model = agent.model
 
         # If no handler was passed to the capability, fall back to the agent's
         # instance-level one so it fires inside the task alongside the capability chain.
-        if self._event_stream_handler is None:
-            self._event_stream_handler = agent.event_stream_handler
-        event_stream_handler = self._event_stream_handler
+        if bound._event_stream_handler is None:
+            bound._event_stream_handler = agent.event_stream_handler
+        event_stream_handler = bound._event_stream_handler
+        bound._prefect_toolsets_by_id = {}
 
         # --- Model request tasks ---
 
@@ -127,7 +149,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             )
             return await call_model(model, request_context, run_context)
 
-        self._request_task = request_task
+        bound._request_task = request_task
 
         @task
         async def request_stream_task(
@@ -155,13 +177,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                         pass
             return streamed_response.get()
 
-        self._request_stream_task = request_stream_task
+        bound._request_stream_task = request_stream_task
 
         # --- Toolset wrapping ---
         for toolset in agent.toolsets:
-            self._prefectify_leaf_toolsets(toolset)
+            bound._prefectify_leaf_toolsets(toolset)
 
-        return self
+        return bound
 
     def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap leaf toolsets as Prefect tasks."""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -160,8 +161,30 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
         self._temporal_activities: list[Callable[..., Any]] = []
 
+    @classmethod
+    def from_agent(cls, agent: AbstractAgent[Any, Any]) -> TemporalDurability[Any] | None:
+        """Return the bound `TemporalDurability` on an agent, walking its capability chain.
+
+        Use this to retrieve the instance whose `temporal_activities` are registered
+        with Temporal, since `for_agent` returns a new bound copy and leaves the
+        user's original capability ref pristine.
+        """
+        found: list[TemporalDurability[Any]] = []
+
+        def visitor(cap: Any) -> None:
+            if isinstance(cap, cls):
+                found.append(cap)
+
+        agent.root_capability.apply(visitor)
+        return found[0] if found else None
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> TemporalDurability[AgentDepsT]:
-        """Bind to the agent: discover model, name, toolsets and register Temporal activities."""
+        """Bind to the agent: discover model, name, toolsets and register Temporal activities.
+
+        Returns a new bound instance; the original capability is left pristine so the
+        same instance can be passed to multiple agents. Use
+        `TemporalDurability.from_agent(agent)` to retrieve the bound copy.
+        """
         if not agent.name:
             raise UserError(
                 'An agent needs to have a unique `name` in order to be used with Temporal. '
@@ -173,27 +196,30 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 'it cannot be set at agent run time.'
             )
 
-        self.name = agent.name
-        self._agent = agent
+        bound = copy.copy(self)
+        bound.name = agent.name
+        bound._agent = agent
 
         # If no handler was passed to the capability, fall back to the agent's
         # instance-level one so it fires inside the activity alongside the
         # capability chain. (The per-run `event_stream_handler` argument cannot
         # cross the activity boundary.)
-        if self._event_stream_handler is None:
-            self._event_stream_handler = agent.event_stream_handler
+        if bound._event_stream_handler is None:
+            bound._event_stream_handler = agent.event_stream_handler
 
         # Build model registry
-        self._models_by_id = {'default': agent.model}
-        for model_id, model_instance in self._extra_models.items():
+        bound._models_by_id = {'default': agent.model}
+        for model_id, model_instance in bound._extra_models.items():
             if model_id == 'default':
                 raise UserError("Model ID 'default' is reserved for the agent's primary model.")
-            self._models_by_id[model_id] = model_instance
+            bound._models_by_id[model_id] = model_instance
 
-        # Register activities
-        self._register_activities(agent)
+        # Register activities on the bound copy
+        bound._temporal_toolsets_by_id = {}
+        bound._temporal_activities = []
+        bound._register_activities(agent)
 
-        return self
+        return bound
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Register all Temporal activities for model requests, event streaming, and toolsets."""

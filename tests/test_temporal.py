@@ -4081,7 +4081,7 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[SimpleDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(simple_durability)],
+        plugins=[DurabilityPlugin(simple_durable_agent)],
     ):
         output = await client.execute_workflow(
             SimpleDurableAgentWorkflow.run,
@@ -4138,7 +4138,7 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[ComplexDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(complex_durability)],
+        plugins=[DurabilityPlugin(complex_durable_agent)],
     ):
         output = await client.execute_workflow(
             ComplexDurableAgentWorkflow.run,
@@ -4179,7 +4179,7 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[ThreadsDurableWorkflow],
-        plugins=[DurabilityPlugin(_threads_durability)],
+        plugins=[DurabilityPlugin(_threads_agent)],
     ):
         output = await client.execute_workflow(
             ThreadsDurableWorkflow.run,
@@ -4219,10 +4219,11 @@ def test_durability_rejects_default_model_key():
 
 def test_durability_image_output_rejected():
     """TemporalDurability rejects image output because of the 2MB payload limit."""
-    durability = TemporalDurability()
-    Agent(_durability_fn_model, name='test', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
     with pytest.raises(UserError, match='Image output is not supported'):
-        durability._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
+        bound._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(allow_image_output=True),
         )
 
@@ -4234,31 +4235,54 @@ def test_durability_find_model_id_by_identity():
     """_find_model_id matches models by identity."""
     m1 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
     m2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
-    durability = TemporalDurability(models={'alt': m2})
-    Agent(m1, name='test', capabilities=[durability])
-    assert durability._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
-    assert durability._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(m1, name='test', capabilities=[TemporalDurability(models={'alt': m2})])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert bound._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_durability_temporal_activities():
     """temporal_activities returns all registered activities after for_agent."""
-    durability = TemporalDurability()
-    Agent(_durability_fn_model, name='test', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
     # 3 base activities + 1 for the agent's <agent> FunctionToolset
-    assert len(durability.temporal_activities) == 4
+    assert len(bound.temporal_activities) == 4
 
 
 def test_durability_temporal_activities_with_toolsets():
     """temporal_activities includes toolset activities for agent's toolsets."""
-    durability = TemporalDurability()
-    Agent(
+    agent = Agent(
         _durability_fn_model,
         name='test',
         toolsets=[FunctionToolset(id='test_toolset')],
-        capabilities=[durability],
+        capabilities=[TemporalDurability()],
     )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
     # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
-    assert len(durability.temporal_activities) == 5
+    assert len(bound.temporal_activities) == 5
+
+
+def test_durability_shared_instance_across_agents():
+    """Same TemporalDurability instance can be reused across multiple agents.
+
+    for_agent returns a new bound copy; the original stays pristine.
+    """
+    durability = TemporalDurability()
+    a1 = Agent(_durability_fn_model, name='a1', capabilities=[durability])
+    a2 = Agent(_durability_fn_model, name='a2', capabilities=[durability])
+    # Original is unbound
+    assert durability.name == ''
+    assert durability.temporal_activities == []
+    # Each agent has its own bound copy
+    b1 = TemporalDurability.from_agent(a1)
+    b2 = TemporalDurability.from_agent(a2)
+    assert b1 is not None and b2 is not None
+    assert b1 is not b2
+    assert b1.name == 'a1'
+    assert b2.name == 'a2'
 
 
 # --- _find_model_id fallthrough to model_id string match ---
@@ -4272,25 +4296,26 @@ def test_durability_find_model_id_by_model_id_string():
     assert m1 is not m2
     assert m1.model_id == m2.model_id
 
-    durability = TemporalDurability(models={'alt': m1})
-    Agent(m2, name='model_id_string_test', capabilities=[durability])
+    agent = Agent(m2, name='model_id_string_test', capabilities=[TemporalDurability(models={'alt': m1})])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
 
     # m2 is the default model (registered as 'default'), identity check matches
-    assert durability._find_model_id(m2) is None  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m2) is None  # pyright: ignore[reportPrivateUsage]
 
     # m1 is registered as 'alt', identity check matches
-    assert durability._find_model_id(m1) == 'alt'  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m1) == 'alt'  # pyright: ignore[reportPrivateUsage]
 
     # A third model with the same model_id but a different instance falls through
     # the identity loop and matches m2 (the 'default') by model_id string
     m3 = FunctionModel(_durability_model_fn, model_name='shared')
     assert m3 is not m1 and m3 is not m2
-    assert durability._find_model_id(m3) is None  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m3) is None  # pyright: ignore[reportPrivateUsage]
 
     # A model with a unique model_id not in the registry falls through both loops
     # and returns the raw model_id string
     m4 = FunctionModel(_durability_model_fn, model_name='unknown')
-    assert durability._find_model_id(m4) == 'function:unknown'  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m4) == 'function:unknown'  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_serialization_name returns None ---
@@ -4321,18 +4346,19 @@ def test_durability_toolset_without_id_raises():
 
 def test_durability_non_temporal_wrapper_toolset_not_in_registry():
     """When temporalize returns a non-TemporalWrapperToolset, it's not added to the registry."""
-    durability = TemporalDurability()
-    Agent(
+    agent = Agent(
         _durability_fn_model,
         name='external_ts_test',
         toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')], id='ext')],
-        capabilities=[durability],
+        capabilities=[TemporalDurability()],
     )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
     # ExternalToolset is not wrapped into a TemporalWrapperToolset by the default
     # temporalize_toolset, so 'ext' should not appear in _temporal_toolsets_by_id.
-    assert 'ext' not in durability._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert 'ext' not in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
     # The agent's built-in <agent> FunctionToolset IS wrapped.
-    assert '<agent>' in durability._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    assert '<agent>' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_wrapper_toolset returns None when no temporal toolsets ---
@@ -4341,14 +4367,21 @@ def test_durability_non_temporal_wrapper_toolset_not_in_registry():
 def test_durability_get_wrapper_toolset_returns_none():
     """get_wrapper_toolset returns None when _temporal_toolsets_by_id is empty."""
     # Use a no-op temporalize_toolset_func so no toolsets get wrapped
-    durability = TemporalDurability(
-        temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type: ts,
+    agent = Agent(
+        _durability_fn_model,
+        name='no_wrap_test',
+        capabilities=[
+            TemporalDurability(
+                temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type: ts,
+            )
+        ],
     )
-    Agent(_durability_fn_model, name='no_wrap_test', capabilities=[durability])
-    assert len(durability._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert len(bound._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
 
     dummy_toolset = FunctionToolset(id='dummy')
-    assert durability.get_wrapper_toolset(dummy_toolset) is None
+    assert bound.get_wrapper_toolset(dummy_toolset) is None
 
 
 # --- get_wrapper_toolset swap returns unchanged toolset ---
@@ -4356,12 +4389,13 @@ def test_durability_get_wrapper_toolset_returns_none():
 
 def test_durability_get_wrapper_toolset_swap_unchanged():
     """get_wrapper_toolset's swap returns a toolset unchanged if its ID is not in the registry."""
-    durability = TemporalDurability()
-    Agent(_durability_fn_model, name='swap_test', capabilities=[durability])
+    agent = Agent(_durability_fn_model, name='swap_test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
 
     # Create a new toolset not registered with this durability
     unregistered_toolset = FunctionToolset(id='unregistered')
-    result = durability.get_wrapper_toolset(unregistered_toolset)
+    result = bound.get_wrapper_toolset(unregistered_toolset)
     # The toolset should be returned as-is since its ID is not in the registry
     assert result is unregistered_toolset
 
@@ -4414,7 +4448,7 @@ async def test_durability_streaming_in_workflow(client: Client):
         client,
         task_queue=TASK_QUEUE,
         workflows=[StreamDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(_stream_durability)],
+        plugins=[DurabilityPlugin(_stream_durable_agent)],
     ):
         output = await client.execute_workflow(
             StreamDurableAgentWorkflow.run,
@@ -4473,7 +4507,7 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
         client,
         task_queue=TASK_QUEUE,
         workflows=[ProcessStreamDurableAgentWorkflow],
-        plugins=[DurabilityPlugin(_process_durability)],
+        plugins=[DurabilityPlugin(_process_durable_agent)],
     ):
         output = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,

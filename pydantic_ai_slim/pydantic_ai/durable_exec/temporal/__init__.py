@@ -12,6 +12,7 @@ from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
+from ...agent.abstract import AbstractAgent
 from ...exceptions import UserError
 from ._agent import TemporalAgent
 from ._durability import TemporalDurability
@@ -120,11 +121,16 @@ class PydanticAIPlugin(SimplePlugin):
                     f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent instances, got {type(agents)}'
                 )
             for agent in agents:  # type: ignore[reportUnknownVariableType]
-                if not isinstance(agent, TemporalAgent):
+                if isinstance(agent, TemporalAgent):
+                    activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                elif isinstance(agent, AbstractAgent):
+                    durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
+                    if durability is not None:
+                        activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                else:
                     raise TypeError(  # pragma: no cover
-                        f'__pydantic_ai_agents__ must be a Sequence of TemporalAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
+                        f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
                     )
-                activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
 
         config['activities'] = activities
 
@@ -142,9 +148,19 @@ class AgentPlugin(SimplePlugin):
 
 
 class DurabilityPlugin(SimplePlugin):
-    """Temporal worker plugin for a `TemporalDurability` capability."""
+    """Temporal worker plugin for an agent carrying a `TemporalDurability` capability.
 
-    def __init__(self, durability: TemporalDurability[Any]):
+    Walks the agent's capability chain to find the bound `TemporalDurability` and
+    registers its activities on the worker.
+    """
+
+    def __init__(self, agent: AbstractAgent[Any, Any]):
+        durability = TemporalDurability.from_agent(agent)
+        if durability is None:
+            raise UserError(
+                f'Agent {agent.name!r} has no `TemporalDurability` capability; '
+                'add one to `capabilities=[...]` before constructing the plugin.'
+            )
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='DurabilityPlugin',
             activities=durability.temporal_activities,
