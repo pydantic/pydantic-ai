@@ -1,0 +1,303 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1289'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1787
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                name: input_file_1.wav
+              name: get_file
+            thoughtSignature: ErwECrkEAb4+9vv6CQQ2LQDZ3v9m6F6AHCPOgJabvRcbQ0XtFjk6Y7fzGchYSnrY8imfdO/uZ+jXlz78Ht6aZZzZo8l8FUOrk5242jcByD+Wh5/XGJFPe0/xyQDus1ieOMpchMTY1lhigWbgdxOuwajsImKXtJv8dO8psJEsg+da3fJluMuHE1ybYenwDTA9NEL0MS5+q/sPWdUMKgrFx8EEIPHKrucIu1yAzoVfKfxoQoBSd2019t3aTi/N7aa9LgxICd7pQ26M+nK/E/e1I708WYmVo6UVX8V/DF2iJOPxzVPcRASBDytz/i0OxpXVTjoGvMSbAlTCff4yzQWfX4X1d0e6HlpgK5f/fbndry+SZFSRSCr9+HcOxO0lNrwBdAnF5Xwg6wZL9XtVnm5TGzkS0z9wuch+renWvmLhDj26EXqz24kz0dW/JMhdWV0MTp9Uv95Mp9I/2QSMEJADHMvUlDHnolVhtj5dttadMhSp563R2I2wgNHESFfp8M97jsestbNmG1MbxjgwFPSvKOTlaLfP9qGyQdLJI/6IlBK1hIxLuVzywoq+xR5ajpIzxqwLLZmjDPOrRJHhNDU7WpgvKiNcxz1Ldaf8pusg385bFtFzAW22LP+3k++CQu6JV6v3IJecCwXInnDkmJx4RdM3hwYFzqicngxz0EiIRoBY3+mwOcygjylTYyQ8OIXF/OUHJJMre8kdBBnj5KZC46LgedzbZRV3pKt1vnCcdRhB0EPFYi+ouREKv4ylKOk=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: _5ioaaimOO_sz7IPyb_Z-A0
+      usageMetadata:
+        candidatesTokenCount: 22
+        promptTokenCount: 36
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 36
+        thoughtsTokenCount: 168
+        totalTokenCount: 226
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1713'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              name: input_file_1.wav
+            id: pyd_ai_da013b29b19b4902a4d8c5780cca6c10
+            name: get_file
+          thoughtSignature: ErwECrkEAb4-9vv6CQQ2LQDZ3v9m6F6AHCPOgJabvRcbQ0XtFjk6Y7fzGchYSnrY8imfdO_uZ-jXlz78Ht6aZZzZo8l8FUOrk5242jcByD-Wh5_XGJFPe0_xyQDus1ieOMpchMTY1lhigWbgdxOuwajsImKXtJv8dO8psJEsg-da3fJluMuHE1ybYenwDTA9NEL0MS5-q_sPWdUMKgrFx8EEIPHKrucIu1yAzoVfKfxoQoBSd2019t3aTi_N7aa9LgxICd7pQ26M-nK_E_e1I708WYmVo6UVX8V_DF2iJOPxzVPcRASBDytz_i0OxpXVTjoGvMSbAlTCff4yzQWfX4X1d0e6HlpgK5f_fbndry-SZFSRSCr9-HcOxO0lNrwBdAnF5Xwg6wZL9XtVnm5TGzkS0z9wuch-renWvmLhDj26EXqz24kz0dW_JMhdWV0MTp9Uv95Mp9I_2QSMEJADHMvUlDHnolVhtj5dttadMhSp563R2I2wgNHESFfp8M97jsestbNmG1MbxjgwFPSvKOTlaLfP9qGyQdLJI_6IlBK1hIxLuVzywoq-xR5ajpIzxqwLLZmjDPOrRJHhNDU7WpgvKiNcxz1Ldaf8pusg385bFtFzAW22LP-3k--CQu6JV6v3IJecCwXInnDkmJx4RdM3hwYFzqicngxz0EiIRoBY3-mwOcygjylTYyQ8OIXF_OUHJJMre8kdBBnj5KZC46LgedzbZRV3pKt1vnCcdRhB0EPFYi-ouREKv4ylKOk=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_da013b29b19b4902a4d8c5780cca6c10
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "name"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "input_file_1.wav"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2777'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3105
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: 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
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: A5moaeb_DbCsz7IP4ZOTwAg
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 316
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 316
+        thoughtsTokenCount: 393
+        totalTokenCount: 719
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4507'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              name: input_file_1.wav
+            id: pyd_ai_da013b29b19b4902a4d8c5780cca6c10
+            name: get_file
+          thoughtSignature: ErwECrkEAb4-9vv6CQQ2LQDZ3v9m6F6AHCPOgJabvRcbQ0XtFjk6Y7fzGchYSnrY8imfdO_uZ-jXlz78Ht6aZZzZo8l8FUOrk5242jcByD-Wh5_XGJFPe0_xyQDus1ieOMpchMTY1lhigWbgdxOuwajsImKXtJv8dO8psJEsg-da3fJluMuHE1ybYenwDTA9NEL0MS5-q_sPWdUMKgrFx8EEIPHKrucIu1yAzoVfKfxoQoBSd2019t3aTi_N7aa9LgxICd7pQ26M-nK_E_e1I708WYmVo6UVX8V_DF2iJOPxzVPcRASBDytz_i0OxpXVTjoGvMSbAlTCff4yzQWfX4X1d0e6HlpgK5f_fbndry-SZFSRSCr9-HcOxO0lNrwBdAnF5Xwg6wZL9XtVnm5TGzkS0z9wuch-renWvmLhDj26EXqz24kz0dW_JMhdWV0MTp9Uv95Mp9I_2QSMEJADHMvUlDHnolVhtj5dttadMhSp563R2I2wgNHESFfp8M97jsestbNmG1MbxjgwFPSvKOTlaLfP9qGyQdLJI_6IlBK1hIxLuVzywoq-xR5ajpIzxqwLLZmjDPOrRJHhNDU7WpgvKiNcxz1Ldaf8pusg385bFtFzAW22LP-3k--CQu6JV6v3IJecCwXInnDkmJx4RdM3hwYFzqicngxz0EiIRoBY3-mwOcygjylTYyQ8OIXF_OUHJJMre8kdBBnj5KZC46LgedzbZRV3pKt1vnCcdRhB0EPFYi-ouREKv4ylKOk=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_da013b29b19b4902a4d8c5780cca6c10
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "name"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "input_file_1.wav"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_3beba1f4a430440484b5167d399578fb
+            name: get_file
+          thoughtSignature: EqoNCqcNAb4-9vtfOrWzAvyYQNGhhg17Z2DKvmdb3Fse5K-4sXBtKRfsq5JYVdDccqtr3UxPL7zkCIDb3IKv0LTsjVyIm5vyL2Sa8FdDUy6_-CZOuToKqZCDC5yXX0ER8okV1rs1UJ4nj-iddjBcWwcUfmp_yJENmfi3UEOgPOqGQ9SFzGdm-l9tWlF7sD6dlNm8nYiovFfiaHRucXGVUs1P2w8mvlh03IyQTY72MuqUKND68Smlbg4hjp5qXBxiDQD0u_Y2CVw7_H-aAYdatUi1ttCSVkSfzccynHgotuKZrJrB0eYd8q5pSQkjsUcvDi4issyimQkdDIeIccixDCSU-qM9LgD0I6HjhAihdAoQeNC5aUOLH0XyABm9hVgAbyo5GuYrXzmY0VPaNTDm6Uoo7cvEa4GL7_lBTnhQAwByj4SsowD46m1WZPGWxsuYPsm1Tfur5lXrn-5Ymz-0Y_0Y3vDxfsMQ9nzfN3-Xux0TQU45D945AbC7A6Pi-Hn6q_TJQF1mGu7ywwKVNJEt3fF6geBanAS-QRTdEfbDBJS1WiszfoxkMudw9sIEJNRAm-FH6WFjZ2yO5draZZgOoUBBv6GXc6-BbDDUt8d6Qe75YmTs5ItWzACTfuB4yT6NyTSJXqn9oicEwU0x43qsC1lgQSPFZ43Po4sgb2vcQxj_TgwhMLINKRqBI2Q5RnOm4UUrDoSNiiBsVpTq73TyBVzlGF898mvEGhMie6pRMZA8pvr2tPd7eGwBoaxDoOj_FyqbSB1nEVuuKrNGcRArPy0rWEjrCuUdGP_hXv-tWmfxMBsLDZoT5tVdokSns52GnFmau_4ImrlY-enM2nFB3sfC0sx05IKh0-NdMMbZzeTiZILFo0jKw4CYRT8s4GzMAun0zb_4ojaUj88moS4yquImLbUoUWj5GFCpjCi4kDZlzNyi2jtgAgm2kyrasZ-4VTKSjEYyTxM-HlLX3b9uALfLw-Qo9dKNROqiV5xhoy5OnsdNn2aa_2FsHcL-fMe1mOscKmYcZ8pI0hq_H-4i1CMx4EHuG3YoN0KL-JbfItWDYvlVDSCN_Ud9BiISmRCOVmqiS8fh293KSCvJ4CxYOQCDVDbL6lyPfcAOGXU-5SHtwN9bI8EBtxxO64bkfjPPXmrDZyWGRibPVgBsL6VuDiuRC96q_oOhnQafKhqVViD2qugdD5Fi53KDCzVz3N5y6kuXa_ISsFiLcSpIkS8pjEQwX_8fvjTyL8t1ROA6lXgpquZl6lg11o_9EIIpl0MWbPjsEqIIp7ncT0h-UJPS5l59yEoAhFEZZ01ycZZBq0NRGmJ95TV-hTdHmmZXLd0UEewPdxLuw-3iBmZdJGs6cWR07QYs7CAVCq79PB9DH6keJTuGIwl-q5zyVS2SsAiNs6pB1SEJaXZm7YCgeUl4v3-jT5gcqFaoZ7EE9T5RqoTQH6Q5C65I2dy_fRV15GgYMNdycFVTaW8PFNwbBGIb3tTKQFwm693A7Jd2U8gv4dhXLe0OrV12h99HHDMWUOtort9VEPIPs5WBWO5D-7HPkGX1yyiOkCwy6Doj-a1bNX1AYbThgXpZ8fCdhuRMWS1vC6pRTLuY46CI39q6iWcUW4UsKJcR2Ih2uRCQpV2kGNR4NP6XA-Wdvc7s8pJMUEYBK0U2rPv2w4zwAdVMeGKC5LqoypkGzY40msFEAQ0aP1LUJD87LK_ma1lUAi3pUvrqvCCisxwT93vM7iWXZyb_ygg9BQHK8IOX2bUyadw334MTqxHpPdG8_Y1pncdfi0emQzAjImIGqv0FMIfFCKDai9EstxCNL9EXMVW4yKQcXHsEsTVtjoSwAESRCsXCEXwFkriOQsxxcLynOhKzJkBuF12PSgQck_hkr_eM82-H9V33NBAV-YWxP0U_cgBa5CcNTGvBqyr2pPx9BaRVxLDz9GlwTY2laK57eyZOm1IqPJklM5kDgziDAOFWP0lf7TgzNMdWhmUR-02F76acZR-MuAx5fup4fKs9ffDu1McxL8yyP5YadKOeFKLDkyTuE81b4Sr17i_IjpCYt-pdAy6ifU_qz0dSxQZzhKr0NSUxVCfMfXtojaga22U-OizAdyOHj9cQwIlAweEoL10XRZ9JSTlhCGd5nm-kUlthEr1k6naDlpwh-kVON6neZ2dXeBDz9tcYlbXEmrZsqwsfyNCUNZ-Cc4a1FGlbWCir4owhM_TieB6d05ecVfVBrRDmCqXXqZxK8_i-jgw7XVi9B3u1Szjy0DZAPP_w646_yV8=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_3beba1f4a430440484b5167d399578fb
+            name: get_file
+            response:
+              output:
+              - {}
+              - See file dbe602.
+        role: user
+      - parts:
+        - text: 'This is file dbe602:'
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/8b2bhnsluaai
+            mimeType: audio/mpeg
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1311'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2681
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The audio file is a 4-second recording of a man's voice. He says, "Hello, my name is Marcelo."
+            thoughtSignature: ErsECrgEAb4+9vt2BE7H25U66Twq+BvpOIS29kzJb/D1m3EjOyfTvxVUXXNO417T4cZRvOjVOpJkfu8Ak6o+u5ircL+pDmZzViSOSbWRPXUY7vFIrh8FEFZlcqc89xZiQ8s7jDld70TP1CADFCnfD52AZCade77XS5dErX5wzKQtUAdueMgJbQ2UaX8/GRg5c0rzAy7Sv3MMdGPs+KVqqeFeYHfPQHqBI5ECY1qRQW2bzH5agOnirA1E8PEB/4Ff477uP6K8d5K27Khu58zb5ipYgz574q6mXBM+thy0H9ApdYTlN8XO7OrzY+bJDxSpNolB+62/a6heCIsdB0Bc3hMsI5DLiYdavO2WXRRKWcg4tX0ZYb4jdsI9kqNTBTuM4HMjkYU7J5dcRIw5ua3blf/JQIl9/p6U8NCHP9v9cwQa/mq1iDJkFnBT10k6tPsCWYuNrBzuVh0DLjRHTxm21rx48CVlUHcyrQg3UUiWoIGW9W7IWNWf100vwvbAzo3hiWpsZv0Elkc9FhCKT1+jPr346rw5AvYmGI93J1ONk4OWdzl1enKHYHv+aHUI81MFqd6IJXrJdkkOF9jjovH0NhlN8lCQ1X59h9gZCws86X2fFGgnqcSCRCvKFDOP50ghgQyYaAwcUnoLGQvFS4q/3T0+j7gH6IhfZRupecrFug0NQrqBGCnV5EUhDktJwAxvF0GgghEvjFSopdB/LkH/+8B2Tqx9MZGmIXviHu2lxJDQGPP6VJKlmr11aUuSLQ==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: BpmoabSYC46Ez7IP5MHLkQQ
+      usageMetadata:
+        candidatesTokenCount: 28
+        promptTokenCount: 303
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 190
+        - modality: AUDIO
+          tokenCount: 113
+        thoughtsTokenCount: 175
+        totalTokenCount: 506
+    status:
+      code: 200
+      message: OK
+version: 1

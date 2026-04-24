@@ -157,7 +157,7 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
             snapshot_id: The ID of the snapshot to record.
 
         Raises:
-            GraphNodeRunningError: if the node status it not `'created'` or `'pending'`.
+            GraphNodeRunningError: if the node status is not `'created'` or `'pending'`.
             LookupError: if the snapshot ID is not found in persistence.
 
         Returns:
@@ -174,12 +174,12 @@ class BaseStatePersistence(ABC, Generic[StateT, RunEndT]):
 
     @abstractmethod
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
-        """Retrieve a node snapshot with status `'created`' and set its status to `'pending'`.
+        """Retrieve a node snapshot with status `'created'` and set its status to `'pending'`.
 
         This is used by [`Graph.iter_from_persistence`][pydantic_graph.graph.Graph.iter_from_persistence]
         to get the next node to run.
 
-        Returns: The snapshot, or `None` if no snapshot with status `'created`' exists.
+        Returns: The snapshot, or `None` if no snapshot with status `'created'` exists.
         """
         raise NotImplementedError
 

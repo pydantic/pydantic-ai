@@ -1,0 +1,21 @@
+rules:
+  # setup-uv and setup-node use integrity-checked package registries (PyPI, npm) with
+  # lockfile hash-based cache keys. The HuggingFace model cache lacks integrity checks but
+  # is only used in test jobs that don't publish artifacts to external systems.
+  cache-poisoning:
+    ignore:
+      - after-ci.yml
+      - at-claude.yml
+      - ci.yml
+      - manually-deploy-docs.yml
+
+  # Secrets passed via `with:` to action inputs are the standard GitHub Actions pattern.
+  # These are not exposed to shell interpolation. Using `environment:` protection is applied
+  # where deployment secrets are involved.
+  secrets-outside-env:
+    ignore:
+      - after-ci.yml
+      - at-claude.yml
+      - bots.yml
+      - ci.yml
+      - manually-deploy-docs.yml

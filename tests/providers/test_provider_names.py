@@ -66,6 +66,7 @@ with try_import() as imports_successful:
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('outlines', OutlinesProvider, None),
+        ('vertexai', GoogleProvider, 'Your default credentials were not found'),
     ]
 
 if not imports_successful():
@@ -85,10 +86,10 @@ def empty_env():
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 @pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
-    if provider == 'google-vertex':
+    if provider in ('google-vertex', 'vertexai'):
         try:
             infer_provider(provider)
-        except (GoogleAuthError, ValueError):  # pragma: no branch
+        except (GoogleAuthError, UserError, ValueError):  # pragma: no branch
             pytest.skip('Google credentials not available')
 
     if exception_has is not None:

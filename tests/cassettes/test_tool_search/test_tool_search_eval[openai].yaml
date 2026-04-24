@@ -1,0 +1,1046 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1183'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '801'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '481'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"keywords":"exchange rate currency USD EUR"}'
+              name: search_tools
+            id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
+            type: function
+      created: 1774971120
+      id: chatcmpl-DPVMOaxmpjGNNrcAQrP5ywnudG8Hn
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 21
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 241
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 262
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1954'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"keywords":"exchange rate currency USD EUR"}'
+            name: search_tools
+          id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
+          type: function
+      - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
+        role: tool
+        tool_call_id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '399'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+              name: get_exchange_rate
+            id: call_a4Esau7B6fHEOZi2ytRjNaDj
+            type: function
+      created: 1774971121
+      id: chatcmpl-DPVMPwCzIsfwwUuIZ0XwDJyOxFgR7
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 24
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 325
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 349
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2280'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"keywords":"exchange rate currency USD EUR"}'
+            name: search_tools
+          id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
+          type: function
+      - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
+        role: tool
+        tool_call_id: call_YJT3HXwq06KgTc6ZeGaKtLsZ
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+            name: get_exchange_rate
+          id: call_a4Esau7B6fHEOZi2ytRjNaDj
+          type: function
+      - content: 1 USD = 0.92 EUR
+        role: tool
+        tool_call_id: call_a4Esau7B6fHEOZi2ytRjNaDj
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '662'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '343'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: The current exchange rate is **1 USD = 0.92 EUR**.
+          refusal: null
+          role: assistant
+      created: 1774971122
+      id: chatcmpl-DPVMQqh5CvhpbLMrWe48RcQ4SF2hR
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 369
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 388
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1174'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current stock price for AAPL?
+        role: user
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '553'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"keywords":"stock price market quote finance AAPL"}'
+              name: search_tools
+            id: call_3THg2zExDs3Be7m3ehieCnAR
+            type: function
+      created: 1774971123
+      id: chatcmpl-DPVMRMSWVBv8a9GjZdg32ZoYsAXf0
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 23
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 240
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 263
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1838'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current stock price for AAPL?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"keywords":"stock price market quote finance AAPL"}'
+            name: search_tools
+          id: call_3THg2zExDs3Be7m3ehieCnAR
+          type: function
+      - content: '[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]'
+        role: tool
+        tool_call_id: call_3THg2zExDs3Be7m3ehieCnAR
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Look up stock price by ticker symbol.
+          name: stock_lookup
+          parameters:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '773'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '445'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"symbol":"AAPL"}'
+              name: stock_lookup
+            id: call_gsAeW7tpEd2wz8s6PumwpdGO
+            type: function
+      created: 1774971124
+      id: chatcmpl-DPVMSzoZlR04jLweILjCXruSjE476
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 18
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 314
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 332
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2132'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current stock price for AAPL?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"keywords":"stock price market quote finance AAPL"}'
+            name: search_tools
+          id: call_3THg2zExDs3Be7m3ehieCnAR
+          type: function
+      - content: '[{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}]'
+        role: tool
+        tool_call_id: call_3THg2zExDs3Be7m3ehieCnAR
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"symbol":"AAPL"}'
+            name: stock_lookup
+          id: call_gsAeW7tpEd2wz8s6PumwpdGO
+          type: function
+      - content: 'Stock AAPL: $150.00'
+        role: tool
+        tool_call_id: call_gsAeW7tpEd2wz8s6PumwpdGO
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Look up stock price by ticker symbol.
+          name: stock_lookup
+          parameters:
+            additionalProperties: false
+            properties:
+              symbol:
+                type: string
+            required:
+            - symbol
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '642'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '469'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: AAPL is currently **$150.00**.
+          refusal: null
+          role: assistant
+      created: 1774971125
+      id: chatcmpl-DPVMTOu4J5uPytgy8YHBqASKRgUM2
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 14
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 351
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 365
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1175'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Translate 'hello, how are you?' to French.
+        role: user
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '697'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '483'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: '"Hello, how are you?" in French is: **« Bonjour, comment ça va ? »**'
+          refusal: null
+          role: assistant
+      created: 1774971126
+      id: chatcmpl-DPVMUAleuig8g2Heo5aFYx7ydGSoI
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 24
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 241
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 265
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1185'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=BiDv2wScz2emvARuHDAFNoRYX5cRIv5Sth0bmuaqMOQ-1774971120.2865405-1.0.1.1-a_fjRzhnTuom1zTkjAIW884oVsIENyn.IxnjF0hHNJ.2flP8pyW_n2fGS1UZf70NYyOny8BuOqObun3Vck.WTbAUSmwGxZp_Dy6kasWmgkm1IDCB87gA63ks3SRWuzrA
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Book a flight from New York to London for next week.
+        role: user
+      model: gpt-5.4-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: There are additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+            is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+            retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              keywords:
+                description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools.
+                type: string
+            required:
+            - keywords
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1016'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1098'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: |-
+            I can help plan it, but I can't actually book flights from here.
+
+            If you want, I can help you narrow it down by:
+            - departure airport in New York: JFK, LGA, or EWR
+            - arrival airport in London: LHR, LGW, LTN, STN, or LCY
+            - exact dates next week
+            - one-way or round-trip
+            - preferred budget, airline, and cabin class
+
+            If you send those details, I can help you build the best search and booking plan.
+          refusal: null
+          role: assistant
+      created: 1774971126
+      id: chatcmpl-DPVMUf2MZpzVarcq3V5Saer4WxMYf
+      model: gpt-5.4-mini-2026-03-17
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 111
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 242
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 353
+    status:
+      code: 200
+      message: OK
+version: 1

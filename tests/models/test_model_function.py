@@ -262,6 +262,7 @@ def test_var_args():
             'tool_call_id': IsStr(),
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
+            'outcome': 'success',
             'part_kind': 'tool-return',
         }
     )

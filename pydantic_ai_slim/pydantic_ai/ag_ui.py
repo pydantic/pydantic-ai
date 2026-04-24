@@ -9,7 +9,7 @@ for building interactive AI applications with streaming event-based communicatio
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from . import DeferredToolResults
 from .agent import AbstractAgent
@@ -30,6 +30,7 @@ try:
 
     from .ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, StateHandler
     from .ui.ag_ui import AGUIAdapter
+    from .ui.ag_ui._utils import DEFAULT_AG_UI_VERSION
     from .ui.ag_ui.app import AGUIApp
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -53,6 +54,8 @@ async def handle_ag_ui_request(
     agent: AbstractAgent[AgentDepsT, Any],
     request: Request,
     *,
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION,
+    preserve_file_data: bool = False,
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -65,12 +68,16 @@ async def handle_ag_ui_request(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    manage_system_prompt: Literal['server', 'client'] = 'server',
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
     Args:
         agent: The agent to run.
         request: The Starlette request (e.g. from FastAPI) containing the AG-UI run input.
+        ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
+        preserve_file_data: Whether to preserve agent-generated files and uploaded files
+            in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -87,6 +94,7 @@ async def handle_ag_ui_request(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -94,6 +102,8 @@ async def handle_ag_ui_request(
     return await AGUIAdapter[AgentDepsT].dispatch_request(
         request,
         agent=agent,
+        ag_ui_version=ag_ui_version,
+        preserve_file_data=preserve_file_data,
         deps=deps,
         output_type=output_type,
         message_history=message_history,
@@ -106,6 +116,7 @@ async def handle_ag_ui_request(
         infer_name=infer_name,
         toolsets=toolsets,
         on_complete=on_complete,
+        manage_system_prompt=manage_system_prompt,
     )
 
 
@@ -114,6 +125,8 @@ def run_ag_ui(
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION,
+    preserve_file_data: bool = False,
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
@@ -126,6 +139,7 @@ def run_ag_ui(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    manage_system_prompt: Literal['server', 'client'] = 'server',
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -133,6 +147,9 @@ def run_ag_ui(
         agent: The agent to run.
         run_input: The AG-UI run input containing thread_id, run_id, messages, etc.
         accept: The accept header value for the run.
+        ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
+        preserve_file_data: Whether to preserve agent-generated files and uploaded files
+            in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -149,11 +166,19 @@ def run_ag_ui(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
     """
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
+    adapter = AGUIAdapter(
+        agent=agent,
+        run_input=run_input,
+        accept=accept,
+        ag_ui_version=ag_ui_version,
+        preserve_file_data=preserve_file_data,
+        manage_system_prompt=manage_system_prompt,
+    )
     return adapter.encode_stream(
         adapter.run_stream(
             output_type=output_type,

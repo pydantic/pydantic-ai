@@ -73,3 +73,25 @@ model = OpenRouterModel('openai/gpt-5.2')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Web Search
+
+OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guides/features/plugins/web-search). You can enable it using the [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool].
+
+### Web Search Parameters
+
+You can customize the web search behavior using the `search_context_size` parameter on [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.models.openrouter import OpenRouterModel
+
+tool = WebSearchTool(search_context_size='high')
+model = OpenRouterModel('openai/gpt-4.1')
+agent = Agent(
+    model,
+    builtin_tools=[tool]
+)
+result = agent.run_sync('What is the latest news in AI?')
+```

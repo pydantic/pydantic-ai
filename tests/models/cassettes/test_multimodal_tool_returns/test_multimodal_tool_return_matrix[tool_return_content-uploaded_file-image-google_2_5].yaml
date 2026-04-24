@@ -1,0 +1,168 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1361'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1199
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: CooFAb4+9vuoRMP3zcDPDVZDPhSTvmTLbbNJ5d8u/RuDzOilnqRidYlwN1YyOHZabs7f30umbXVngEal7RvzZTmRTCE+ZlKyi5dZ3e3S6Osgp2eUN/OSGsOU3Y3FU3uLoD7Bnmfr4Ss+ugIOiVhe8/2tS+lNe+skIUQq5PZBzzmtwoWlNyrlLwP2MlENaEyDCgOKXFIqxfhoZ9Ds86rqAA7WYQjE8hRT+zSH83e55Go8shhLkIKeu2LxL+tGyaE5i3xcE4tzuz1MQJ4wYy7DFRytsB/X2k4/V2J3JP7OVeTU3l3EomD5e72pBdoJXKa6FI519IC6Uy716Os4vK6rC6s2uXGmS+97oLAFZOgB/tprDrxAu/Lf8NKRNEGqPtvuRaGVvYSA2ild2G4hwoolQgnk+LVq6Aaq+zyIMOHJF23PtfH4nX7scQxdLBSB7JqyNbmnKZNbKKXf1RZYGbP7vJKPCuMPY6y6qZWXIFlBI7zbxkdyY15nVXT5GLvDHgI2Tl67WqU/AJM28Q5x55OM6qPv+fA9egXWL8eARoDUqcT+wYDCmQlUlNgTS/EMog7DbOzHmkvIiDoDzIS6gRPrTYnID/qqGUqz+PJ0+i8Qr543kcK84TQz0BpTZjsjylMb2lGe96h7VgBAISp5Nkn+3eQWsxGgn+UAlqMP9Xso2gGYoy201Biy/lwYvr53DtrIVTBW+0dLGmp8lsB+lHLbfqPYv9EhCWxDWrmACgolQ4uvifbkW5xGxwiwJTeBsdxXPkf+NuJfEQclUXAgYfVbncqx0vEmEjuorD1xphnWzcD1rS8eper372o1t3e7KIIFWAWRwvOTONqWZkAs3caFPKwRLTTDiEZoGxMA1dw=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: E5moaaGeNYSiqtsP8Y7FyA4
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        thoughtsTokenCount: 148
+        totalTokenCount: 199
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1719'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_3f4ba37c655c4365906b2a7707901abb
+            name: get_file
+          thoughtSignature: CooFAb4-9vuoRMP3zcDPDVZDPhSTvmTLbbNJ5d8u_RuDzOilnqRidYlwN1YyOHZabs7f30umbXVngEal7RvzZTmRTCE-ZlKyi5dZ3e3S6Osgp2eUN_OSGsOU3Y3FU3uLoD7Bnmfr4Ss-ugIOiVhe8_2tS-lNe-skIUQq5PZBzzmtwoWlNyrlLwP2MlENaEyDCgOKXFIqxfhoZ9Ds86rqAA7WYQjE8hRT-zSH83e55Go8shhLkIKeu2LxL-tGyaE5i3xcE4tzuz1MQJ4wYy7DFRytsB_X2k4_V2J3JP7OVeTU3l3EomD5e72pBdoJXKa6FI519IC6Uy716Os4vK6rC6s2uXGmS-97oLAFZOgB_tprDrxAu_Lf8NKRNEGqPtvuRaGVvYSA2ild2G4hwoolQgnk-LVq6Aaq-zyIMOHJF23PtfH4nX7scQxdLBSB7JqyNbmnKZNbKKXf1RZYGbP7vJKPCuMPY6y6qZWXIFlBI7zbxkdyY15nVXT5GLvDHgI2Tl67WqU_AJM28Q5x55OM6qPv-fA9egXWL8eARoDUqcT-wYDCmQlUlNgTS_EMog7DbOzHmkvIiDoDzIS6gRPrTYnID_qqGUqz-PJ0-i8Qr543kcK84TQz0BpTZjsjylMb2lGe96h7VgBAISp5Nkn-3eQWsxGgn-UAlqMP9Xso2gGYoy201Biy_lwYvr53DtrIVTBW-0dLGmp8lsB-lHLbfqPYv9EhCWxDWrmACgolQ4uvifbkW5xGxwiwJTeBsdxXPkf-NuJfEQclUXAgYfVbncqx0vEmEjuorD1xphnWzcD1rS8eper372o1t3e7KIIFWAWRwvOTONqWZkAs3caFPKwRLTTDiEZoGxMA1dw=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_3f4ba37c655c4365906b2a7707901abb
+            name: get_file
+            response:
+              return_value: File attached
+        role: user
+      - parts:
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x
+            mimeType: image/jpeg
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1441'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1703
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The file I received is an image of a kiwi fruit cut in half. The kiwi has vibrant green flesh with a lighter,
+              almost yellow-white core. Concentric rings of tiny black seeds are arranged around the core. The very outer
+              edge of the kiwi shows a thin, fuzzy brown skin. The image is set against a plain white background.
+            thoughtSignature: Cv4DAb4+9vsX3ovHIagiXlYoJuvW7b6N5F5Dw+DfQ+sTFLxGRzj4yiANNEzvtFSvu5M82W1MfLbgm9Xs/NoS5xgAKu8h/RkLmaEb4VhKgtKOtWuBU5i1/GYi5k91kemxb11QxRNWY8wlWOgf6T1dlUmsxABbu5dL3T/SymhiNfiwnBAih6hvlOR5t8bdO8dIOtfnngvnOA55UnwWZOVY+AInEotEyPDshiH0peYsAqNd81FfbE1oW9SkK+B5a0fOTZGnE699oeMyBW8MkFuItEjX+nP5gFKYIUYt7Seon5smxa2tL8ChXTwnjEV9Drzcik+DGfVs75JBe3FGE7bDW13P6ahUa53odurQnBbPMi6WfMS8DJu2dM+i9zzl7DS2+9tShcDZFCm17+CkrKhbRQYNCuO13S8lHjIYx5EIJGuNMWbbM6wl4TyXVzrQJCthLJpboI67vB7U+FhrkFXy2iivu8RBxtJOk0fihp/U/tXMNzA8Yzf9UgdmT4w7C9SM+4FVFg8yS4enoL9pDRI48XYXK+Zmr/fuZTL9/+h/P3U+rGxx5trk7ExMN5qSAWoJb5cCY8XiIDefFwGvkmWLhLwNykeAVSgjoBGS5Y+BKSbQh9ah2VkKIL0d/RITDWGcC+DR2KsGd3Mn7wzamUvcfWxIou1eMTCo/R+Oy4ELUMyk
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: FZmoae7fDp7nz7IPjL3OmAc
+      usageMetadata:
+        candidatesTokenCount: 69
+        promptTokenCount: 328
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 70
+        - modality: IMAGE
+          tokenCount: 258
+        thoughtsTokenCount: 112
+        totalTokenCount: 509
+    status:
+      code: 200
+      message: OK
+version: 1

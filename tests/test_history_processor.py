@@ -18,6 +18,10 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
+from pydantic_ai.capabilities import (
+    HistoryProcessor,  # pyright: ignore[reportDeprecated]
+    ProcessHistory,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -1288,8 +1292,8 @@ async def test_history_processor_resuming_without_prompt(
 ):
     """
     When running without a user prompt (resuming from history), new_messages()
-    should include the resumed request when that request has the current
-    run_id.
+    should exclude the request supplied via message_history even when that
+    request gets the current run_id.
     """
 
     def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1351,14 +1355,14 @@ async def test_history_processor_resuming_without_prompt(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_with_current_run_id():
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request():
     """
     When resuming without a user prompt and the model enters a tool-call loop,
-    new_messages() should include the resumed history request when it has
-    the current run_id.
+    new_messages() should exclude the resumed history request even though it
+    gets the current run_id.
     """
 
     call_count = 0
@@ -1418,7 +1422,7 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_resuming_without_prompt_excludes_request_with_different_run_id(
@@ -1487,8 +1491,8 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
 ):
     """
     When a history processor deep-copies messages (breaking object identity),
-    new_messages() should still include the resumed request when it has the
-    current run_id.
+    new_messages() should still exclude the resumed request supplied via
+    message_history.
     """
 
     def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1526,7 +1530,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_rebuild_resuming_without_prompt(
@@ -1534,8 +1538,8 @@ async def test_history_processor_rebuild_resuming_without_prompt(
 ):
     """
     When a history processor rebuilds `ModelRequest` instances with equivalent
-    values, new_messages() should include the resumed request when it has the
-    current run_id.
+    values, new_messages() should still exclude the resumed request supplied
+    via message_history.
     """
 
     def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1601,7 +1605,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_replace_resumed_request_falls_through(
@@ -1677,3 +1681,36 @@ async def test_history_processor_replace_resumed_request_falls_through(
     # Falls back to run_id-based detection: the replaced request got run_id from
     # the framework, so new_messages includes both it and the model response
     assert result.new_messages() == result.all_messages()[-2:]
+
+
+def test_takes_ctx_returns_false_for_untyped_processor():
+    """takes_run_context returns False when the processor's first param has no type annotation."""
+    from pydantic_ai._utils import takes_run_context
+
+    def untyped_processor(messages) -> list[ModelMessage]:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return messages  # pyright: ignore[reportUnknownVariableType] # pragma: no cover
+
+    # When first param has no type annotation, takes_run_context returns False
+    assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_history_processor_deprecated_alias(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[1:]
+
+    with pytest.warns(DeprecationWarning, match='`HistoryProcessor` is deprecated'):
+        capability = HistoryProcessor(drop_first)  # pyright: ignore[reportDeprecated]
+
+    assert isinstance(capability, ProcessHistory)
+
+    agent = Agent(function_model, capabilities=[capability])
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First')]),
+        ModelResponse(parts=[TextPart(content='Answer')]),
+    ]
+    await agent.run('Second', message_history=message_history)
+
+    # First message dropped by the processor before the provider sees it.
+    assert [part for msg in received_messages for part in msg.parts if isinstance(part, UserPromptPart)] == snapshot(
+        [UserPromptPart(content='Second', timestamp=IsDatetime())]
+    )

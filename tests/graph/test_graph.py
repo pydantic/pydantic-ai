@@ -7,7 +7,6 @@ from functools import cache
 from typing import Union
 
 import pytest
-from dirty_equals import IsStr
 
 from pydantic_graph import (
     BaseNode,
@@ -23,7 +22,7 @@ from pydantic_graph import (
 )
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsFloat, IsNow
+from ..conftest import IsFloat, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 

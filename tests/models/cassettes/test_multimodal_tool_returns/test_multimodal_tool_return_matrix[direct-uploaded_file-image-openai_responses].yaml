@@ -1,0 +1,210 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2629'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2212'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772656527
+      created_at: 1772656525
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0bd829367fd711020069a8978d442c819da7a46f9fb8f14b31
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpqJePspCxTNhErJas5K2F0FwwwJ5Mj7MDD7kw5r0j7rviZ32bap_C1ofPf6EOc43Bg7oXFltfqapGJP4ljvUX5Kia1f-U-jxuJ6i_ooEWpTY3c3INRy-qVZEdWP1NIMa434n7LifTTWw52EcZm2kVv4wfd0yaoY2gzmPo9zHLbosE7Mrdo7gJCkpub92zfVZlepiCPNttVxglBlmRxn6pBvcF85a1GWbYi3Bir0P5y1OiL2RvXdfPrmtpbsI3KL1tm2hDgjL6jva5fjctkIcEjkZT6Glr4So0xfi8tUbsZohCkyUWuDxi2ZVjXyf45SfsJcpuLD6050jALr1JHChKIF_SWkT1j-5xu1hH3UCIABV2MuMzcZpRWQIVQ3HM29vo0lHFpYCQUHjJc1_fEChhk_mGJcAoClCtUrt7IeZG0vEyoqG6_jLxTkRU6XCiJtMgazzLpQrcLoxhst3tkaLcVdlnK3Ce0oPkuO0eUVUYsZfh1Gbo56esveWXZEIYzemNI8x3Bo-CC9tOWFsS1Ww3VU4YCBzk3sPJiZlXEauf-vdwXJOKHkrfqcqTJrA7CWUBayA1Ro4XFYnIoLZT9FBj19ZZi1-K9jEMYYmkBF3T85CjJ_xhMrlDwGCqVWwBjF_x4Wnsu6oUGHD7Fo4_x_TdfwwUVBOi4BH08BiZo52wrNWMy-1qN6kpk2dnPecIXkf788YybZSrAiUGrA_FHG6N3jK3iI3LSXChd2nn-m84P8y-KpGnPbktcKz0EUDHgDvynpobsYhwoJ1n8FVFgAvF3eAVO0dt5o3_8VfGUaUObN9q0iluOjlkEwxy3tjvwuNCGga0C07wjTpePokJTmy-RktbfXvr6Jnan-LDA3GHgTF_qUNDm6oVI4bmR8GduNgVNMm8TxC63FG-VRBVxxPkqVnWSUgMW7DBT2C-KpLlxVkCoC8HkMMwgkqS68gPNLKThwUsaXJkTsykIbg2iH7_fxLwQVSkASWeDQhP1ahyXSHFDlfQkSaGCC1kvQoDXv67oS9AnGXtSaztwbzhGJig_HQn6Ks2Snozb3jglBXPdn057Yjf7eAayFVm05DncBhPdBtD
+        id: rs_0bd829367fd711020069a8978df9a8819da9f98d1655face40
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_8t0zA59hO3PEXyYz44dGTFRL
+        id: fc_0bd829367fd711020069a8978f342c819d8501b959049d0c74
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 47
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 58
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 105
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1964'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Yv3vdage1kbnv0Rn.2bDYTkWDpfQYZ3EQz2K4aQaE6E-1772656525.2056496-1.0.1.1-v71Pz3op5Zr2TaYPC.qmmifW.tLVXInNdvxBZkDjoHLsHhILpIEz4verxgJT.S4AAJDilyZLEeHujrsM8uH2Qq219vObt.qZCgpxLeZtYMJEJpaBFGf7Jdj8FdWWcw2L
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - encrypted_content: gAAAAABpqJePspCxTNhErJas5K2F0FwwwJ5Mj7MDD7kw5r0j7rviZ32bap_C1ofPf6EOc43Bg7oXFltfqapGJP4ljvUX5Kia1f-U-jxuJ6i_ooEWpTY3c3INRy-qVZEdWP1NIMa434n7LifTTWw52EcZm2kVv4wfd0yaoY2gzmPo9zHLbosE7Mrdo7gJCkpub92zfVZlepiCPNttVxglBlmRxn6pBvcF85a1GWbYi3Bir0P5y1OiL2RvXdfPrmtpbsI3KL1tm2hDgjL6jva5fjctkIcEjkZT6Glr4So0xfi8tUbsZohCkyUWuDxi2ZVjXyf45SfsJcpuLD6050jALr1JHChKIF_SWkT1j-5xu1hH3UCIABV2MuMzcZpRWQIVQ3HM29vo0lHFpYCQUHjJc1_fEChhk_mGJcAoClCtUrt7IeZG0vEyoqG6_jLxTkRU6XCiJtMgazzLpQrcLoxhst3tkaLcVdlnK3Ce0oPkuO0eUVUYsZfh1Gbo56esveWXZEIYzemNI8x3Bo-CC9tOWFsS1Ww3VU4YCBzk3sPJiZlXEauf-vdwXJOKHkrfqcqTJrA7CWUBayA1Ro4XFYnIoLZT9FBj19ZZi1-K9jEMYYmkBF3T85CjJ_xhMrlDwGCqVWwBjF_x4Wnsu6oUGHD7Fo4_x_TdfwwUVBOi4BH08BiZo52wrNWMy-1qN6kpk2dnPecIXkf788YybZSrAiUGrA_FHG6N3jK3iI3LSXChd2nn-m84P8y-KpGnPbktcKz0EUDHgDvynpobsYhwoJ1n8FVFgAvF3eAVO0dt5o3_8VfGUaUObN9q0iluOjlkEwxy3tjvwuNCGga0C07wjTpePokJTmy-RktbfXvr6Jnan-LDA3GHgTF_qUNDm6oVI4bmR8GduNgVNMm8TxC63FG-VRBVxxPkqVnWSUgMW7DBT2C-KpLlxVkCoC8HkMMwgkqS68gPNLKThwUsaXJkTsykIbg2iH7_fxLwQVSkASWeDQhP1ahyXSHFDlfQkSaGCC1kvQoDXv67oS9AnGXtSaztwbzhGJig_HQn6Ks2Snozb3jglBXPdn057Yjf7eAayFVm05DncBhPdBtD
+        id: rs_0bd829367fd711020069a8978df9a8819da9f98d1655face40
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_8t0zA59hO3PEXyYz44dGTFRL
+        id: fc_0bd829367fd711020069a8978f342c819d8501b959049d0c74
+        name: get_file
+        type: function_call
+      - call_id: call_8t0zA59hO3PEXyYz44dGTFRL
+        output:
+        - file_id: file-BVTjj4CLd1Z7cgppk5sL45
+          type: input_file
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '637'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '672'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: null
+        message: 'Invalid input: Expected context stuffing file type to be a supported format: .art, .bat, .brf, .c, .cls,
+          .css, .csv, .diff, .doc, .docx, .dot, .eml, .es, .h, .hs, .htm, .html, .hwp, .hwpx, .ics, .ifb, .java, .js, .json,
+          .keynote, .ksh, .ltx, .mail, .markdown, .md, .mht, .mhtml, .mjs, .nws, .odt, .pages, .patch, .pdf, .pl, .pm, .pot,
+          .ppa, .pps, .ppt, .pptx, .pwz, .py, .rst, .rtf, .scala, .sh, .shtml, .srt, .sty, .svg, .svgz, .tex, .text, .txt,
+          .vcf, .vtt, .wiz, .xla, .xlb, .xlc, .xlm, .xls, .xlsx, .xlt, .xlw, .xml, .yaml, .yml but got .jpg.'
+        param: input
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

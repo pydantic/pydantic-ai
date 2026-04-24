@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -28,7 +29,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -44,6 +45,7 @@ try:
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
+        TaskConfig,
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 except ImportError:  # pragma: lax no cover
@@ -79,7 +81,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = cached_async_http_client(provider='prefect')
+http_client = create_async_http_client()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -294,22 +296,17 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     ],
                                 ),
                                 BasicSpan(
-                                    content='running 1 tool',
+                                    content='running tool: get_country',
+                                    children=[BasicSpan(content=IsStr(regex=r'Call Tool: get_country-\w+'))],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='running tool: get_country',
-                                            children=[BasicSpan(content=IsStr(regex=r'Call Tool: get_country-\w+'))],
-                                        ),
-                                        BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
+                                            content=IsStr(
+                                                regex=r'\{"result":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                            )
                                         ),
                                     ],
                                 ),
@@ -373,44 +370,37 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     ],
                                 ),
                                 BasicSpan(
-                                    content='running 2 tools',
+                                    content='running tool: get_weather',
                                     children=[
                                         BasicSpan(
-                                            content='running tool: get_weather',
-                                            children=[
-                                                BasicSpan(
-                                                    content=IsStr(regex=r'Call Tool: get_weather-\w+'),
-                                                    children=[BasicSpan(content=IsStr(regex=r'get_weather-\w+'))],
-                                                )
-                                            ],
-                                        ),
+                                            content=IsStr(regex=r'Call Tool: get_weather-\w+'),
+                                            children=[BasicSpan(content=IsStr(regex=r'get_weather-\w+'))],
+                                        )
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
+                                            content=IsStr(
+                                                regex=r'\{"result":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                            )
                                         ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content='running tool: get_product_name',
+                                    children=[BasicSpan(content=IsStr(regex=r'Call MCP Tool: get_product_name-\w+'))],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='running tool: get_product_name',
-                                            children=[
-                                                BasicSpan(content=IsStr(regex=r'Call MCP Tool: get_product_name-\w+'))
-                                            ],
-                                        ),
-                                        BasicSpan(
-                                            content=IsStr(regex=r'Handle Stream Event-\w+'),
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
-                                                    )
-                                                ),
-                                            ],
+                                            content=IsStr(
+                                                regex=r'\{"result":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","metadata":null,"timestamp":"[^"]+","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                            )
                                         ),
                                     ],
                                 ),
@@ -1165,6 +1155,35 @@ async def test_cache_policy_empty_inputs():
     )
 
     assert result is None
+
+
+async def test_repeated_run_hits_cache():
+    """Same prompt across two separate flow runs must only call the model once.
+
+    `PrefectAgent.run()` wraps each call in its own Prefect flow, so a cross-flow
+    cache hit requires the Model Request task's cache key to be stable across flow
+    runs. This is a field-agnostic regression guard: any per-run field that leaks
+    into the hashed inputs (today `run_id`/`timestamp`, or anything added to
+    `ModelMessage` in the future) will make the two keys differ, miss the cache,
+    and fail this test with `call_count == 2`. The UUID in the prompt keeps the
+    test isolated from any other run in the session-scoped Prefect test harness.
+    """
+    call_count = 0
+
+    def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    prefect_agent = PrefectAgent(
+        Agent(FunctionModel(counting_model), name='cache_test_agent'),
+        model_task_config=TaskConfig(cache_policy=PrefectAgentInputs()),
+    )
+
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    await prefect_agent.run(prompt)
+    await prefect_agent.run(prompt)
+    assert call_count == 1
 
 
 # Test custom model settings

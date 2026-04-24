@@ -4,7 +4,9 @@ import asyncio
 import contextvars
 import functools
 import os
+import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
 
 import pytest
@@ -19,6 +21,7 @@ from pydantic_ai._utils import (
     merge_json_schema_defs,
     run_in_executor,
     strip_markdown_fences,
+    using_thread_executor,
     validate_empty_kwargs,
 )
 
@@ -186,6 +189,53 @@ async def test_run_in_executor_with_disable_threads() -> None:
         result = await run_in_executor(sync_func)
         assert result == 'result'
         assert calls == ['called']
+
+
+async def test_run_in_executor_with_custom_executor() -> None:
+    main_thread = threading.current_thread()
+
+    def sync_func() -> threading.Thread:
+        return threading.current_thread()
+
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='custom-pool')
+    try:
+        with using_thread_executor(executor):
+            result = await run_in_executor(sync_func)
+            assert result is not main_thread
+            assert result.name.startswith('custom-pool')
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_run_in_executor_custom_executor_preserves_context_vars() -> None:
+    ctx_var = contextvars.ContextVar('test_var', default='default')
+    ctx_var.set('custom_value')
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        with using_thread_executor(executor):
+            result = await run_in_executor(ctx_var.get)
+            assert result == 'custom_value'
+    finally:
+        executor.shutdown(wait=True)
+
+
+async def test_disable_threads_takes_priority_over_custom_executor() -> None:
+    from pydantic_ai._utils import disable_threads
+
+    main_thread = threading.current_thread()
+
+    def check_thread() -> threading.Thread:
+        return threading.current_thread()
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        with using_thread_executor(executor):
+            with disable_threads():
+                result = await run_in_executor(check_thread)
+                assert result is main_thread
+    finally:
+        executor.shutdown(wait=True)
 
 
 def test_is_async_callable():
@@ -509,6 +559,216 @@ def test_merge_json_schema_defs():
                 },
                 'type': 'object',
                 'title': 'ComplexSchema',
+            },
+        ]
+    )
+
+
+def test_merge_json_schema_defs_internal_refs_in_renamed_defs():
+    """When defs are renamed due to collisions, internal $refs within those defs must also be updated."""
+    schema_a = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Outer': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}, 'extra_a': {'type': 'string'}},
+            },
+        },
+        'properties': {'outer': {'$ref': '#/$defs/Outer'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Outer': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}, 'extra_b': {'type': 'number'}},
+            },
+        },
+        'properties': {'outer': {'$ref': '#/$defs/Outer'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's Outer was renamed to SchemaB_Outer_1, and its internal $ref to Inner
+    # must now point to SchemaB_Inner_1 (not the original Inner from SchemaA)
+    assert all_defs == snapshot(
+        {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Outer': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}, 'extra_a': {'type': 'string'}},
+            },
+            'SchemaB_Inner_1': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'SchemaB_Outer_1': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/SchemaB_Inner_1'}, 'extra_b': {'type': 'number'}},
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'outer': {'$ref': '#/$defs/Outer'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'outer': {'$ref': '#/$defs/SchemaB_Outer_1'}},
+                'type': 'object',
+                'title': 'SchemaB',
+            },
+        ]
+    )
+
+
+def test_merge_json_schema_defs_non_renamed_def_refs_renamed_def():
+    """A non-renamed def that references a renamed def must also have its $refs updated."""
+    schema_a = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+        },
+        'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+        },
+        'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # Wrapper is new (no collision), but its $ref to Inner must be rewritten
+    # to SchemaB_Inner_1 because SchemaB's Inner was renamed
+    assert all_defs == snapshot(
+        {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'SchemaB_Inner_1': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Wrapper': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/SchemaB_Inner_1'}},
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+                'type': 'object',
+                'title': 'SchemaB',
+            },
+        ]
+    )
+
+
+def test_merge_json_schema_defs_additional_properties_allof_not():
+    """$refs under additionalProperties, allOf, and not must be rewritten during merge."""
+    schema_a = {
+        '$defs': {
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'string'}}},
+            'Base': {'type': 'object', 'properties': {'b': {'type': 'string'}}},
+            'Excluded': {'type': 'object', 'properties': {'e': {'type': 'string'}}},
+        },
+        'properties': {
+            'map': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Value'}},
+            'composed': {'allOf': [{'$ref': '#/$defs/Base'}, {'$ref': '#/$defs/Value'}]},
+            'excluded': {'not': {'$ref': '#/$defs/Excluded'}},
+        },
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Value': {'type': 'object', 'properties': {'v': {'type': 'integer'}}},
+            'Base': {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+            'Excluded': {'type': 'object', 'properties': {'e': {'type': 'integer'}}},
+        },
+        'properties': {
+            'map': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Value'}},
+            'composed': {'allOf': [{'$ref': '#/$defs/Base'}, {'$ref': '#/$defs/Value'}]},
+            'excluded': {'not': {'$ref': '#/$defs/Excluded'}},
+        },
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, _ = merge_json_schema_defs([schema_a, schema_b])
+
+    # SchemaB's refs should all be rewritten to the renamed defs
+    assert rewritten_schemas[1] == snapshot(
+        {
+            'properties': {
+                'map': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/SchemaB_Value_1'}},
+                'composed': {'allOf': [{'$ref': '#/$defs/SchemaB_Base_1'}, {'$ref': '#/$defs/SchemaB_Value_1'}]},
+                'excluded': {'not': {'$ref': '#/$defs/SchemaB_Excluded_1'}},
+            },
+            'type': 'object',
+            'title': 'SchemaB',
+        }
+    )
+
+
+def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
+    """Defs that are structurally equal but whose $refs resolve to different types need separate copies."""
+    schema_a = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+        },
+        'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+        'type': 'object',
+        'title': 'SchemaA',
+    }
+    schema_b = {
+        '$defs': {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+        },
+        'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+        'type': 'object',
+        'title': 'SchemaB',
+    }
+
+    rewritten_schemas, all_defs = merge_json_schema_defs([schema_a, schema_b])
+
+    # Both Wrappers are structurally identical ({$ref: Inner}), but their Inner
+    # defs differ, so SchemaB needs its own Wrapper copy with updated refs.
+    assert all_defs == snapshot(
+        {
+            'Inner': {'type': 'object', 'properties': {'x': {'type': 'string'}}},
+            'Wrapper': {'type': 'object', 'properties': {'inner': {'$ref': '#/$defs/Inner'}}},
+            'SchemaB_Inner_1': {'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+            'SchemaB_Wrapper_1': {
+                'type': 'object',
+                'properties': {'inner': {'$ref': '#/$defs/SchemaB_Inner_1'}},
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'wrapper': {'$ref': '#/$defs/Wrapper'}},
+                'type': 'object',
+                'title': 'SchemaA',
+            },
+            {
+                'properties': {'wrapper': {'$ref': '#/$defs/SchemaB_Wrapper_1'}},
+                'type': 'object',
+                'title': 'SchemaB',
             },
         ]
     )
