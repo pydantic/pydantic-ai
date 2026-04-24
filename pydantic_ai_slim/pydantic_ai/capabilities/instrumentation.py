@@ -336,11 +336,6 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        # Skip output tools — they have their own span in execute_output_function,
-        # and will get proper hooks via wrap_execute_output when output hooks land.
-        if tool_def.kind == 'output':
-            return await handler(args)
-
         settings = self.settings
         names = self._instrumentation_names
         include_content = settings.include_content

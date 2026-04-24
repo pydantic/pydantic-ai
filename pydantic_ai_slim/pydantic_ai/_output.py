@@ -81,9 +81,9 @@ async def execute_output_function(
 ) -> Any:
     """Execute an output function within a traced span with error handling.
 
-    Creates an OpenTelemetry span for observability (used by text output functions
-    that don't go through tool hooks). For tool-based output functions, the
-    Instrumentation capability also creates an outer span via wrap_tool_execute.
+    Creates an OpenTelemetry span for observability. Output functions don't
+    go through capability tool hooks (tool_manager skips the wrap_tool_execute
+    chain for tools with `kind='output'`), so this is the only span for them.
 
     Args:
         function_schema: The function schema containing the function to execute
