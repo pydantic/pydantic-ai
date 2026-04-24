@@ -1957,25 +1957,18 @@ async def test_anthropic_speed_setting(allow_model_requests: None, speed: Litera
 async def test_anthropic_speed_ignored_on_unsupported_model(
     allow_model_requests: None, speed: Literal['fast', 'standard']
 ) -> None:
-    """On models without fast-mode support, `anthropic_speed` is omitted; `'fast'` also warns."""
+    """On models without fast-mode support, `anthropic_speed` is silently omitted regardless of value."""
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         await agent.run(
             'hello',
             model_settings=AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta']),
         )
-    speed_warnings = [w for w in caught if 'anthropic_speed' in str(w.message)]
-    if speed == 'fast':
-        assert len(speed_warnings) == 1
-        assert issubclass(speed_warnings[0].category, UserWarning)
-    else:
-        assert speed_warnings == []
-
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('speed') is OMIT
     betas = kwargs.get('betas')
@@ -1985,7 +1978,7 @@ async def test_anthropic_speed_ignored_on_unsupported_model(
 
 @pytest.mark.parametrize('client_cls_name', ['AsyncAnthropicBedrock', 'AsyncAnthropicVertex', 'AsyncAnthropicFoundry'])
 async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls_name: str) -> None:
-    """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
+    """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` silently omitted."""
     client_cls = getattr(anthropic, client_cls_name)
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MagicMock()
@@ -1994,7 +1987,8 @@ async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_request
 
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']))
-    with pytest.warns(UserWarning, match='anthropic_speed=.fast. is not supported'):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         await agent.run('hello')
 
     call_kwargs = mock_client.beta.messages.create.call_args.kwargs
