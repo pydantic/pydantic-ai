@@ -211,21 +211,18 @@ async def run_output_process_hooks(
         except ModelRetry:
             raise  # Propagate to outer handler, skip on_output_process_error
         except Exception as e:
-            try:
-                result = await capability.on_output_process_error(
-                    run_context, output_context=output_context, output=output, error=e
-                )
-            except (ValidationError, ModelRetry) as hook_error:
-                if wrap_validation_errors:
-                    raise _make_retry_prompt(hook_error, run_context) from hook_error
-                raise
+            # If the error hook itself raises ValidationError/ModelRetry, it propagates out
+            # to the outer handler below, where it's wrapped as ToolRetryError if needed.
+            result = await capability.on_output_process_error(
+                run_context, output_context=output_context, output=output, error=e
+            )
 
         return await capability.after_output_process(run_context, output_context=output_context, output=result)
     except ToolRetryError:
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
-        # ValidationError or ModelRetry from before_output_process or after_output_process
-        # (e.g. a user hook that does additional Pydantic validation on the processed output)
+        # ValidationError or ModelRetry from before_output_process, after_output_process, or
+        # on_output_process_error (e.g. a user hook doing additional Pydantic validation).
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
         raise
@@ -258,7 +255,7 @@ async def run_none_process_hooks(
     async def do_process(output: Any) -> Any:
         result = output
         for validator in output_validators:
-            result = await validator.validate(result, run_context, wrap_validation_errors=False)
+            result = await validator.validate(result, run_context)
         return result
 
     return await run_output_process_hooks(
@@ -298,7 +295,7 @@ async def run_image_process_hooks(
     async def do_process(output: Any) -> Any:
         result = output
         for validator in output_validators:
-            result = await validator.validate(result, run_context, wrap_validation_errors=False)
+            result = await validator.validate(result, run_context)
         return result
 
     return await run_output_process_hooks(
@@ -338,9 +335,7 @@ async def run_output_with_hooks(
             text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
         for validator in output_validators:
-            result = await validator.validate(
-                result, run_context, wrap_validation_errors=wrap_validation_errors
-            )  # pragma: no cover
+            result = await validator.validate(result, run_context)  # pragma: no cover
         return result
 
     output_context = processor.get_output_context(
@@ -359,7 +354,7 @@ async def run_output_with_hooks(
     async def do_process(output: Any) -> Any:
         result = await base_do_process(output)
         for validator in output_validators:
-            result = await validator.validate(result, run_context, wrap_validation_errors=False)
+            result = await validator.validate(result, run_context)
         return result
 
     if isinstance(processor, BaseObjectOutputProcessor):
@@ -490,43 +485,23 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         self,
         result: T,
         run_context: RunContext[AgentDepsT],
-        wrap_validation_errors: bool = True,
     ) -> T:
-        """Validate a result but calling the function.
+        """Run the validator function on `result`.
 
-        Args:
-            result: The result data after Pydantic validation the message content.
-            run_context: The current run context.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Result of either the validated result data (ok) or a retry message (Err).
+        Propagates `ModelRetry` raised by the user's validator unwrapped; the caller
+        (`run_output_process_hooks`, `stream_text`, etc.) decides whether to wrap in
+        `ToolRetryError` for retry handling or re-raise.
         """
         if self._takes_ctx:
             args = run_context, result
         else:
             args = (result,)
 
-        try:
-            if self._is_async:
-                function = cast(Callable[[Any], Awaitable[T]], self.function)
-                result_data = await function(*args)
-            else:
-                function = cast(Callable[[Any], T], self.function)
-                result_data = await _utils.run_in_executor(function, *args)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                    tool_name=run_context.tool_name,
-                )
-                if run_context.tool_call_id:  # pragma: no cover
-                    m.tool_call_id = run_context.tool_call_id
-                raise ToolRetryError(m) from r
-            else:
-                raise r
-        else:
-            return result_data
+        if self._is_async:
+            function = cast(Callable[[Any], Awaitable[T]], self.function)
+            return await function(*args)
+        function = cast(Callable[[Any], T], self.function)
+        return await _utils.run_in_executor(function, *args)
 
 
 @dataclass(kw_only=True)

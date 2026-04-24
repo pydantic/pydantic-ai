@@ -631,7 +631,7 @@ class ToolManager(Generic[AgentDepsT]):
             # complete pipeline. Validators use wrap_validation_errors=False — the outer
             # run_output_process_hooks handles wrapping ModelRetry as ToolRetryError.
             for validator in toolset.output_validators:
-                result = await validator.validate(result, validator_ctx, wrap_validation_errors=False)
+                result = await validator.validate(result, validator_ctx)
             return result
 
         cap = self.root_capability
