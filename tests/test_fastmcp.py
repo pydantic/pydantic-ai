@@ -754,6 +754,31 @@ class TestFastMCPToolsetBackgroundTasks:
                 ):
                     await toolset.call_tool('task_required_tool', {}, run_context, tool)
 
+    async def test_process_tool_call_with_task_tool(
+        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
+    ):
+        """Test that process_tool_call receives a properly configured callable for task-enabled tools."""
+        called = False
+
+        async def process_tool_call(
+            ctx: RunContext[None],
+            call_tool: CallToolFunc,
+            name: str,
+            tool_args: dict[str, Any],
+        ) -> ToolResult:
+            nonlocal called
+            called = True
+            return await call_tool(name, tool_args, None)
+
+        toolset = FastMCPToolset(fastmcp_client, process_tool_call=process_tool_call)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            task_tool = tools['task_required_tool']
+            result = await toolset.call_tool('task_required_tool', {}, run_context, task_tool)
+
+        assert result == snapshot('task_required_completed')
+        assert called
+
 
 class TestFastMCPToolsetPydocketAvailability:
     """Test FastMCP Toolset behavior based on pydocket availability."""
@@ -779,6 +804,7 @@ class TestFastMCPToolsetPydocketAvailability:
 
     async def test_pydocket_not_installed(self):
         import importlib
+        import importlib.util
         import sys
 
         import pydantic_ai.toolsets.fastmcp as fastmcp_module
@@ -789,4 +815,4 @@ class TestFastMCPToolsetPydocketAvailability:
             assert fastmcp_module.pydocket_installed is False
 
         importlib.reload(fastmcp_module)
-        assert fastmcp_module.pydocket_installed is True
+        assert fastmcp_module.pydocket_installed is (importlib.util.find_spec('docket') is not None)

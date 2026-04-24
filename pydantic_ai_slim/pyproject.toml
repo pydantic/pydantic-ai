@@ -113,6 +113,7 @@ cli = [
 mcp = ["mcp>=1.25.0,<2.0"]
 # FastMCP
 fastmcp = ["fastmcp>=3.2.4"]
+fastmcp-tasks = ["fastmcp>=3.2.4", "pydocket>=0.19.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI

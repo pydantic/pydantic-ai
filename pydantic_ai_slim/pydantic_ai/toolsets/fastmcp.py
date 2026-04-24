@@ -213,7 +213,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                             'meta': mcp_tool.meta,
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
                             'output_schema': mcp_tool.outputSchema or None,
-                            'execution': mcp_tool.execution,
+                            'execution': mcp_tool.execution.model_dump() if mcp_tool.execution else None,
                         },
                         return_schema=mcp_tool.outputSchema or None,
                         include_return_schema=self.include_return_schema,
@@ -281,11 +281,12 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         tool: ToolsetTool[Any],
     ) -> Any:
         execution = tool.tool_def.metadata.get('execution') if tool.tool_def.metadata else None
-        use_task = pydocket_installed and execution is not None
+        task_support = execution.get('taskSupport') if execution else None
+        use_task = pydocket_installed and task_support in ('required', 'optional')
 
-        if not pydocket_installed and execution is not None and getattr(execution, 'taskSupport', None) == 'required':
+        if not pydocket_installed and task_support == 'required':
             raise UserError(
-                f"Tool '{name}' requires task-augmented execution but 'pydocket' is not installed. "
+                f"Tool '{name!r}' requires task-augmented execution but 'pydocket' is not installed. "
                 'Install it with: pip install pydocket'
             )
 

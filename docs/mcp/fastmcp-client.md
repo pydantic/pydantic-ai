@@ -93,7 +93,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Background Tasks
 
-`FastMCPToolset` supports MCP background tasks ([SEP-1686](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)).
+[`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset] supports MCP background tasks ([SEP-1686](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks)).
 Tools that use `task=TaskConfig(mode="required")` or `task=TaskConfig(mode="optional")`
 will automatically use task-augmented execution for long-running operations.
 
@@ -102,9 +102,10 @@ The toolset handles task execution transparently:
 - **`mode="optional"`**: Tools will use background execution when supported, with graceful fallback
 - The agent waits for task completion and receives the final result
 
-> **Note:** Background task support requires the `pydocket` package. Install it with `pip install pydocket`.
+!!! note
+    Background task support requires the `pydocket` package. Install it with `pip install pydocket` or `pip install "pydantic-ai-slim[fastmcp-tasks]"`.
 
-```python {test="skip"}
+```python
 from fastmcp import FastMCP
 from fastmcp.server.tasks import TaskConfig
 
