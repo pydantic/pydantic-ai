@@ -464,6 +464,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
     """
 
+    openai_disable_streaming: bool
+    """Disable streaming for OpenAI requests even when streaming is requested.
+
+    When `True`, forces the model to use non-streaming requests (`request()`) even when `request_stream()`
+    is called. This is useful for:
+    - Working with models that don't parse tool calls correctly when streaming (e.g., some open-weight models on vLLM/Ollama)
+    - Debugging streaming-related issues
+    - Using with UIs that expect streaming but you want non-streaming for performance or compatibility
+
+    The response will be delivered in a single chunk instead of being streamed incrementally.
+    """
+
 
 @deprecated('Use `OpenAIChatModelSettings` instead.')
 class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
@@ -776,9 +788,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         model_settings_cast = cast(OpenAIChatModelSettings, model_settings or {})
-        response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
-        async with response:
-            yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
+
+        # Check if streaming is disabled
+        if model_settings_cast.get('openai_disable_streaming'):
+            # Use non-streaming request and wrap the response
+            model_response = await self.request(messages, model_settings, model_request_parameters)
+            yield _NonStreamingWrapper(
+                model_request_parameters=model_request_parameters,
+                _model_response=model_response,
+            )
+        else:
+            # Use normal streaming
+            response = await self._completions_create(messages, True, model_settings_cast, model_request_parameters)
+            async with response:
+                yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
     @overload
     async def _completions_create(
@@ -2805,6 +2828,52 @@ class OpenAIStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+@dataclass
+class _NonStreamingWrapper(StreamedResponse):
+    """Wrapper that converts a non-streaming ModelResponse into a streaming interface.
+
+    Used when `openai_disable_streaming` is enabled to maintain compatibility with
+    streaming-based UIs while using non-streaming requests under the hood.
+    """
+
+    _model_response: ModelResponse
+    _timestamp: datetime = field(default_factory=_now_utc)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Yield all parts from the ModelResponse as PartStartEvents."""
+        # Update usage from the response
+        self._usage = self._model_response.usage
+
+        # Set metadata from response
+        self.provider_response_id = self._model_response.provider_response_id
+        self.provider_details = self._model_response.provider_details
+        self.finish_reason = self._model_response.finish_reason
+
+        # Yield all parts as events
+        for part in self._model_response.parts:
+            yield self._parts_manager.handle_part(vendor_part_id=id(part), part=part)
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name of the response."""
+        return self._model_response.model_name or 'unknown'
+
+    @property
+    def provider_name(self) -> str | None:
+        """Get the provider name."""
+        return self._model_response.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._model_response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
+        return self._model_response.timestamp
 
 
 @dataclass

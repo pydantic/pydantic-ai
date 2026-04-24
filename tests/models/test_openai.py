@@ -800,6 +800,51 @@ async def test_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+async def test_disable_streaming(allow_model_requests: None):
+    """Test that openai_disable_streaming=True uses non-streaming requests."""
+    # Create a non-streaming response
+    c = completion_message(
+        ChatCompletionMessage(content='hello world', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings={'openai_disable_streaming': True})
+
+    # Call run_stream but it should use non-streaming under the hood
+    async with agent.run_stream('test') as result:
+        assert not result.is_complete
+        # The entire response should be delivered in a single chunk
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello world'])
+        assert result.is_complete
+        assert result.usage() == snapshot(RunUsage(requests=1))
+
+    # Verify that the final result matches what we'd get from non-streaming
+    assert await result.get_output() == 'hello world'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello world')],
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
     choice = ChunkChoice(index=0, delta=ChoiceDelta())
     # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
