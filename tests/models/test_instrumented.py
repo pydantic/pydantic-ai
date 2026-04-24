@@ -2033,8 +2033,8 @@ def test_cache_point_in_user_prompt():
 
 
 def test_build_tool_definitions():
-    """Test _build_tool_definitions with various tool configurations."""
-    from pydantic_ai.models.instrumented import _build_tool_definitions  # pyright: ignore[reportPrivateUsage]
+    """Test build_tool_definitions with various tool configurations."""
+    from pydantic_ai.models.instrumented import build_tool_definitions
     from pydantic_ai.tools import ToolDefinition
 
     tool_without_params = ToolDefinition(
@@ -2066,7 +2066,7 @@ def test_build_tool_definitions():
         allow_image_output=False,
     )
 
-    result = _build_tool_definitions(params)
+    result = build_tool_definitions(params)
 
     assert result == [
         {'type': 'function', 'name': 'no_params_tool', 'description': 'A tool without parameters'},
@@ -2316,3 +2316,92 @@ async def test_instrumented_model_count_tokens(capfire: CaptureLogfire):
         messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters()
     )
     assert usage == RequestUsage(input_tokens=10)
+
+
+async def test_instrumented_model_with_tools_and_finish_reason(capfire: CaptureLogfire):
+    """Test _instrument() with tool definitions and a response that has finish_reason."""
+    from pydantic_ai.tools import ToolDefinition
+
+    class FinishReasonModel(MyModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart('done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='gpt-4o-2024-11-20',
+                provider_response_id='resp-123',
+                finish_reason='stop',
+            )
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+    )
+
+    model = InstrumentedModel(FinishReasonModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[tool_def],
+            allow_text_output=True,
+            output_tools=[],
+            output_mode='text',
+            output_object=None,
+        ),
+    )
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert len(spans) == 1
+    attrs = spans[0]['attributes']
+    # Tool definitions should be set
+    assert attrs['gen_ai.tool.definitions'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'name': 'get_weather',
+                'description': 'Get the weather',
+                'parameters': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            }
+        ]
+    )
+    # finish_reason should be set
+    assert attrs['gen_ai.response.finish_reasons'] == ('stop',)
+    assert attrs['gen_ai.response.id'] == 'resp-123'
+
+
+async def test_instrumented_model_request_error(capfire: CaptureLogfire):
+    """Test _instrument() when the wrapped model raises before finish() is called."""
+
+    class ErrorModel(MyModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            raise RuntimeError('model error')
+
+    model = InstrumentedModel(ErrorModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+
+    with pytest.raises(RuntimeError, match='model error'):
+        await model.request(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    # Span should still be created, but without finish()-specific attributes
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert len(spans) == 1
+    assert spans[0]['attributes']['gen_ai.request.model'] == 'gpt-4o'
+    # finish() was never called, so response-specific attributes are absent
+    assert 'gen_ai.response.id' not in spans[0]['attributes']
+    assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']

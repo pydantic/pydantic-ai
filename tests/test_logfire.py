@@ -1244,13 +1244,13 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'final_result': 'success (no tool calls)',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'pydantic_ai.all_messages': [
                         {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'success (no tool calls)'}]},
                     ],
-                    'final_result': 'success (no tool calls)',
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -3695,3 +3695,88 @@ async def test_agent_description_absent_when_none(capfire: CaptureLogfire) -> No
     spans = capfire.exporter.exported_spans_as_dict()
     agent_run_span = next(s for s in spans if s['name'] == 'agent run')
     assert 'gen_ai.agent.description' not in agent_run_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrumentation_capability_with_model_settings(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """Test that Instrumentation capability correctly records model settings like temperature."""
+    agent = Agent(
+        model=TestModel(),
+        model_settings={'temperature': 0.5, 'max_tokens': 100},
+        instrument=True,
+    )
+    agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    chat_attrs = summary.attributes[1]
+    assert chat_attrs['gen_ai.request.temperature'] == 0.5
+    assert chat_attrs['gen_ai.request.max_tokens'] == 100
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrumentation_capability_serialization_name() -> None:
+    """Instrumentation capability opts out of spec-based construction."""
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
+
+    assert Instrumentation.get_serialization_name() is None
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrumentation_capability_explicit(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """Test using Instrumentation as an explicit capability (not via instrument=True).
+
+    This covers the code path where the model is NOT wrapped in InstrumentedModel.
+    """
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
+
+    instrumentation = Instrumentation(settings=InstrumentationSettings())
+    agent = Agent(model=TestModel(), capabilities=[instrumentation])
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'agent run',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrumentation_capability_template_description(
+    capfire: CaptureLogfire,
+) -> None:
+    """Test that TemplateStr descriptions are rendered in agent run spans."""
+    from dataclasses import dataclass
+
+    from pydantic_ai._template import TemplateStr
+    from pydantic_ai.capabilities.instrumentation import Instrumentation
+
+    @dataclass
+    class MyDeps:
+        name: str
+
+    instrumentation = Instrumentation(settings=InstrumentationSettings())
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[instrumentation],
+        description=TemplateStr('Agent for {{name}}'),
+        deps_type=MyDeps,
+    )
+
+    result = agent.run_sync('Hello', deps=MyDeps(name='testing'))
+    assert result.output == snapshot('success (no tool calls)')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    agent_span = spans[-1]  # outermost span is the agent run
+    assert agent_span['attributes']['gen_ai.agent.description'] == snapshot('Agent for testing')

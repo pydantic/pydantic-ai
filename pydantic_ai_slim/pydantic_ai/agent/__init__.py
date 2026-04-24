@@ -4,7 +4,6 @@ import asyncio
 import contextvars
 import dataclasses
 import inspect
-import json
 import warnings
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
@@ -13,13 +12,10 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
-from opentelemetry.baggage import set_baggage as _otel_set_baggage
-from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import NoOpTracer, use_span
+from opentelemetry.trace import NoOpTracer
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_ai._spec import load_from_registry
 
 from .. import (
@@ -52,6 +48,7 @@ from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
+from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -888,6 +885,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Set the description of the agent."""
         self._description = value
 
+    def render_description(self, deps: AgentDepsT = None) -> str | None:
+        """Return the agent description, rendering any TemplateStr with the given deps."""
+        if self._description is None:
+            return None
+        if isinstance(self._description, TemplateStr):
+            return self._description.render(deps)
+        return self._description
+
     @property
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
@@ -1141,9 +1146,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings
             tracer = model_used.instrumentation_settings.tracer
+            instrumentation_cap: InstrumentationCap | None = InstrumentationCap(settings=instrumentation_settings)
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
+            instrumentation_cap = None
 
         # Build initial RunContext for for_run lifecycle hooks
         initial_ctx = RunContext[AgentDepsT](
@@ -1171,6 +1178,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
+
+        # Prepend Instrumentation capability (outermost) so its spans wrap everything,
+        # but only if the user hasn't already added one themselves.
+        has_instrumentation = False
+
+        def _check_instrumentation(c: AbstractCapability[AgentDepsT]) -> None:
+            nonlocal has_instrumentation
+            if isinstance(c, InstrumentationCap):
+                has_instrumentation = True
+
+        effective_capability.apply(_check_instrumentation)
+
+        if instrumentation_cap is not None and not has_instrumentation:
+            effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
@@ -1287,220 +1308,164 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         agent_name = self.name or 'agent'
-        instrumentation_names = InstrumentationNames.for_version(
-            instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
-        )
 
-        span_attributes: dict[str, str] = {
-            'model_name': model_used.model_name if model_used else 'no-model',
-            'agent_name': agent_name,
-            'gen_ai.agent.name': agent_name,
-            'gen_ai.agent.call.id': state.run_id,
-            'gen_ai.operation.name': 'invoke_agent',
-            'logfire.msg': f'{agent_name} run',
-        }
-        if self._description is not None:
-            if isinstance(self._description, TemplateStr):
-                span_attributes['gen_ai.agent.description'] = self._description.render(deps)
-            else:
-                span_attributes['gen_ai.agent.description'] = self._description
-
-        run_span = tracer.start_span(
-            instrumentation_names.get_agent_run_span_name(agent_name),
-            attributes=span_attributes,
-        )
-        run_metadata: dict[str, Any] | None = None
-        try:
-            async with AsyncExitStack() as stack:
-                if run_span.is_recording():
-                    ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-                    ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
-                    token = _otel_attach(ctx)
-                    stack.callback(_otel_detach, token)
-                await stack.enter_async_context(
-                    _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
+            )
+            graph_run = await stack.enter_async_context(
+                graph.iter(
+                    inputs=user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=None,
+                    infer_name=False,
                 )
-                graph_run = await stack.enter_async_context(
-                    graph.iter(
-                        inputs=user_prompt_node,
-                        state=state,
-                        deps=graph_deps,
-                        span=use_span(run_span) if run_span.is_recording() else None,
-                        infer_name=False,
-                    )
-                )
-                await stack.enter_async_context(toolset)
-                agent_run = AgentRun(graph_run)
-                run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
+            )
+            agent_run = AgentRun(graph_run)
+            self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
-                # Build RunContext for run lifecycle hooks
-                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+            # Build RunContext for run lifecycle hooks
+            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
 
-                # wrap_run cooperative hand-off protocol:
-                #
-                # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
-                # 2. wrap_run wraps _do_run via the capability middleware chain.
-                # 3. We await either _run_ready (handler started) or _wrap_task completion
-                #    (short-circuit: wrap_run returned without calling handler).
-                # 4. We yield agent_run to the caller for iteration.
-                # 5. When the caller finishes (or an error occurs), we set _run_done.
-                # 6. _do_run resumes: returns the result (success) or re-raises the error.
-                # 7. If wrap_run catches the error and returns a recovery result, we use it.
-                #    Otherwise the original error propagates.
-                _run_ready = asyncio.Event()
-                _run_done = asyncio.Event()
-                _run_error: BaseException | None = None
-                _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+            # wrap_run cooperative hand-off protocol:
+            #
+            # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
+            # 2. wrap_run wraps _do_run via the capability middleware chain.
+            # 3. We await either _run_ready (handler started) or _wrap_task completion
+            #    (short-circuit: wrap_run returned without calling handler).
+            # 4. We yield agent_run to the caller for iteration.
+            # 5. When the caller finishes (or an error occurs), we set _run_done.
+            # 6. _do_run resumes: returns the result (success) or re-raises the error.
+            # 7. If wrap_run catches the error and returns a recovery result, we use it.
+            #    Otherwise the original error propagates.
+            _run_ready = asyncio.Event()
+            _run_done = asyncio.Event()
+            _run_error: BaseException | None = None
+            _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
 
-                async def _do_run() -> AgentRunResult[Any]:
-                    nonlocal _wrap_context
-                    await run_capability.before_run(run_ctx)
-                    # Capture context vars set by wrap_run/before_run so
-                    # they can be propagated to the outer task where
-                    # agent_run.next() (and therefore node hooks) execute.
-                    _current_ctx = contextvars.copy_context()
-                    _wrap_context = [
-                        (var, _current_ctx[var])
-                        for var in _current_ctx
-                        if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
-                    ]
-                    _run_ready.set()
-                    await _run_done.wait()
-                    if _run_error is not None:
-                        # Raise the original node error, not the potentially
-                        # transformed version from context manager __aexit__ chains.
-                        raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
-                    r = agent_run.result
-                    assert r is not None
-                    return r
+            async def _do_run() -> AgentRunResult[Any]:
+                nonlocal _wrap_context
+                await run_capability.before_run(run_ctx)
+                # Capture context vars set by wrap_run/before_run so
+                # they can be propagated to the outer task where
+                # agent_run.next() (and therefore node hooks) execute.
+                _current_ctx = contextvars.copy_context()
+                _wrap_context = [
+                    (var, _current_ctx[var])
+                    for var in _current_ctx
+                    if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
+                ]
+                _run_ready.set()
+                await _run_done.wait()
+                if _run_error is not None:
+                    # Raise the original node error, not the potentially
+                    # transformed version from context manager __aexit__ chains.
+                    raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
+                r = agent_run.result
+                assert r is not None
+                return r
 
-                _outer_context = contextvars.copy_context()
-                _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+            _outer_context = contextvars.copy_context()
+            _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
 
-                # Wait for handler to start or wrap_run to complete (short-circuit)
-                _ready_waiter = asyncio.create_task(_run_ready.wait())
-                await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-                _ready_waiter.cancel()
+            # Wait for handler to start or wrap_run to complete (short-circuit)
+            _ready_waiter = asyncio.create_task(_run_ready.wait())
+            await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+            _ready_waiter.cancel()
 
-                # Propagate context vars set by wrap_run/before_run to
-                # the outer task so that agent_run.next() (and therefore
-                # node hooks) can see them.
-                _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
-                # Note: indexing instead of tuple unpacking because pyright
-                # can't resolve types through nonlocal + Optional unpacking.
-                for _cv_pair in _wrap_context or ():
-                    _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
+            # Propagate context vars set by wrap_run/before_run to
+            # the outer task so that agent_run.next() (and therefore
+            # node hooks) can see them.
+            _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
+            # Note: indexing instead of tuple unpacking because pyright
+            # can't resolve types through nonlocal + Optional unpacking.
+            for _cv_pair in _wrap_context or ():
+                _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
 
-                async def _finalize_result(r: AgentRunResult[Any]) -> None:
-                    """Call after_run, store the result override, and clear any pending error."""
-                    nonlocal _run_error
-                    r = await run_capability.after_run(run_ctx, result=r)
-                    agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
-                    _run_error = None
+            # Register context var restore on the stack so it happens in LIFO order
+            # (after toolset exit, before graph run exit).
+            def _restore_context_vars() -> None:
+                for _var, _token in _context_tokens:
+                    _var.reset(_token)
 
-                try:
-                    _short_circuited = _wrap_task.done() and not _run_ready.is_set()
-                    if _short_circuited:
-                        await _finalize_result(_wrap_task.result())
+            stack.callback(_restore_context_vars)
 
-                    try:
-                        yield agent_run
-                    except BaseException as _exc:
-                        # Use the original node error if available, since context manager
-                        # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
-                        # the exception (e.g. into CancelledError or ExceptionGroup).
-                        _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
-                        # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
-                        # awaiting _wrap_task during cleanup could delay shutdown.
-                        if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                            raise
-                        # Don't re-raise yet — give wrap_run a chance to recover.
-                        # If wrap_run catches the error from handler() and returns
-                        # a recovery result, the exception will be suppressed.
-                    finally:
-                        if agent_run.result is not None:
-                            run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
-                        else:
-                            run_metadata = graph_run.state.metadata
+            # Enter toolset AFTER context vars are propagated so that
+            # toolset __aenter__/__aexit__ run inside the run span context
+            # (set by the Instrumentation capability's wrap_run).
+            await stack.enter_async_context(toolset)
 
-                        if not _short_circuited:
-                            _run_done.set()
-                            if _run_error is None and agent_run.result is not None:
-                                await _finalize_result(await _wrap_task)
-                            elif _run_error is not None:
-                                # Error path: await wrap_run to see if it recovers.
-                                # _do_run() re-raises _run_error; if wrap_run catches
-                                # it and returns a result, recovery succeeds.
-                                try:
-                                    await _finalize_result(await _wrap_task)
-                                except BaseException as _wrap_exc:
-                                    # Attach wrap_run's own errors as context so they're
-                                    # visible in tracebacks (but don't mask the original).
-                                    # Skip CancelledError: it's expected cancellation propagation,
-                                    # and setting __context__ on it causes hangs on Python 3.10.
-                                    if (
-                                        not isinstance(_wrap_exc, asyncio.CancelledError)
-                                        and _wrap_exc is not _run_error
-                                    ):
-                                        _run_error.__context__ = _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
-                            elif (
-                                not _wrap_task.done()
-                            ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
-                                _wrap_task.cancel()
-                                try:
-                                    await _wrap_task
-                                except (asyncio.CancelledError, BaseException):
-                                    pass
+            async def _finalize_result(r: AgentRunResult[Any]) -> None:
+                """Call after_run, store the result override, and clear any pending error."""
+                nonlocal _run_error
+                r = await run_capability.after_run(run_ctx, result=r)
+                agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
+                _run_error = None
 
-                    # If wrap_run didn't recover, give on_run_error a chance.
-                    if _run_error is not None:
-                        try:
-                            _result = await run_capability.on_run_error(run_ctx, error=_run_error)
-                        except BaseException as _on_error_exc:
-                            _run_error = _on_error_exc
-                        else:
-                            await _finalize_result(_result)
+            _short_circuited = _wrap_task.done() and not _run_ready.is_set()
+            if _short_circuited:
+                await _finalize_result(_wrap_task.result())
 
-                    # If on_run_error didn't recover either, re-raise.
-                    # In an @asynccontextmanager, not re-raising suppresses the exception.
-                    if _run_error is not None:
-                        raise _run_error
-                finally:
-                    # Always restore context vars, even on
-                    # GeneratorExit/KeyboardInterrupt.
-                    for _var, _token in _context_tokens:
-                        _var.reset(_token)
-
-                final_result = agent_run.result
-                if (
-                    instrumentation_settings
-                    and instrumentation_settings.include_content
-                    and run_span.is_recording()
-                    and final_result is not None
-                ):
-                    run_span.set_attribute(
-                        'final_result',
-                        (
-                            final_result.output
-                            if isinstance(final_result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                        ),
-                    )
-        finally:
             try:
-                if instrumentation_settings and run_span.is_recording():
-                    run_span.set_attributes(
-                        self._run_span_end_attributes(
-                            instrumentation_settings,
-                            usage,
-                            state.message_history,
-                            graph_deps.new_message_index,
-                            run_metadata,
-                            model_request_parameters=state.last_model_request_parameters,
-                        )
-                    )
+                yield agent_run
+            except BaseException as _exc:
+                # Use the original node error if available, since context manager
+                # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
+                # the exception (e.g. into CancelledError or ExceptionGroup).
+                _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
+                # awaiting _wrap_task during cleanup could delay shutdown.
+                if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                    raise
+                # Don't re-raise yet — give wrap_run a chance to recover.
+                # If wrap_run catches the error from handler() and returns
+                # a recovery result, the exception will be suppressed.
             finally:
-                run_span.end()
+                if agent_run.result is not None:
+                    self._resolve_and_store_metadata(agent_run.ctx, metadata)
+
+                if not _short_circuited:
+                    _run_done.set()
+                    if _run_error is None and agent_run.result is not None:
+                        await _finalize_result(await _wrap_task)
+                    elif _run_error is not None:
+                        # Error path: await wrap_run to see if it recovers.
+                        # _do_run() re-raises _run_error; if wrap_run catches
+                        # it and returns a result, recovery succeeds.
+                        try:
+                            await _finalize_result(await _wrap_task)
+                        except BaseException as _wrap_exc:
+                            # Attach wrap_run's own errors as context so they're
+                            # visible in tracebacks (but don't mask the original).
+                            # Skip CancelledError: it's expected cancellation propagation,
+                            # and setting __context__ on it causes hangs on Python 3.10.
+                            if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
+                                _run_error.__context__ = (
+                                    _wrap_exc  # pragma: no cover — only fires for bugs in wrap_run implementations
+                                )
+                    elif (
+                        not _wrap_task.done()
+                    ):  # pragma: no branch — _run_done.set() can't complete _wrap_task synchronously
+                        _wrap_task.cancel()
+                        try:
+                            await _wrap_task
+                        except (asyncio.CancelledError, BaseException):
+                            pass
+
+            # If wrap_run didn't recover, give on_run_error a chance.
+            if _run_error is not None:
+                try:
+                    _result = await run_capability.on_run_error(run_ctx, error=_run_error)
+                except BaseException as _on_error_exc:
+                    _run_error = _on_error_exc
+                else:
+                    await _finalize_result(_result)
+
+            # If on_run_error didn't recover either, re-raise.
+            # In an @asynccontextmanager, not re-raising suppresses the exception.
+            if _run_error is not None:
+                raise _run_error
 
     def _get_metadata(
         self,
@@ -1537,72 +1502,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         resolved_metadata = self._get_metadata(run_context, metadata)
         graph_run_ctx.state.metadata = resolved_metadata
         return resolved_metadata
-
-    def _run_span_end_attributes(
-        self,
-        settings: InstrumentationSettings,
-        usage: _usage.RunUsage,
-        message_history: list[_messages.ModelMessage],
-        new_message_index: int,
-        metadata: dict[str, Any] | None = None,
-        model_request_parameters: models.ModelRequestParameters | None = None,
-    ) -> dict[str, str | int | float | bool]:
-        if settings.version == 1:
-            attrs = {
-                'all_messages_events': json.dumps(
-                    [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
-                )
-            }
-        else:
-            last_instructions = InstrumentedModel._get_instructions(message_history, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-            attrs: dict[str, Any] = {
-                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
-                **settings.system_instructions_attributes(last_instructions),
-            }
-
-            # If this agent run was provided with existing history, store an attribute indicating the point at which the
-            # new messages begin.
-            if new_message_index > 0:
-                attrs['pydantic_ai.new_message_index'] = new_message_index
-
-            # If the instructions for this agent run were not always the same, store an attribute that indicates that.
-            # This can signal to an observability UI that different steps in the agent run had different instructions.
-            # Note: We purposely only look at "new" messages because they are the only ones produced by this agent run.
-            if any(
-                (
-                    isinstance(m, _messages.ModelRequest)
-                    and m.instructions is not None
-                    and m.instructions != last_instructions
-                )
-                for m in message_history[new_message_index:]
-            ):
-                attrs['pydantic_ai.variable_instructions'] = True
-
-        if metadata is not None:
-            attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
-
-        usage_attrs = (
-            {
-                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in usage.opentelemetry_attributes().items()
-            }
-            if settings.use_aggregated_usage_attribute_names
-            else usage.opentelemetry_attributes()
-        )
-
-        return {
-            **usage_attrs,
-            **attrs,
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {
-                        **{k: {'type': 'array'} if isinstance(v, str) else {} for k, v in attrs.items()},
-                        'final_result': {'type': 'object'},
-                    },
-                }
-            ),
-        }
 
     def _resolve_spec(
         self,
