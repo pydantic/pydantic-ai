@@ -1023,8 +1023,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     if is_empty and output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
-                            result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
-                            self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                            result_data = await _output.run_none_process_hooks(
+                                capability=ctx.deps.root_capability,
+                                run_context=run_context,
+                                output_validators=ctx.deps.output_validators,
+                                allows_text=output_schema.allows_text,
+                                allows_image=output_schema.allows_image,
+                                allows_deferred_tools=output_schema.allows_deferred_tools,
+                            )
+                            self._next_node = self._handle_final_result(
+                                ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
+                            )
                         except ToolRetryError as e:
                             ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
                             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -1205,14 +1214,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = _build_output_run_context(ctx)
+        schema = ctx.deps.output_schema
 
         result_data = await _output.run_output_with_hooks(
             text_processor,
             text=text,
             run_context=run_context,
             capability=ctx.deps.root_capability,
-            output_mode=ctx.deps.output_schema.mode,
+            output_mode=schema.mode,
             output_validators=ctx.deps.output_validators,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
@@ -1223,11 +1236,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = _build_output_run_context(ctx)
+        schema = ctx.deps.output_schema
         result_data = await _output.run_image_process_hooks(
             image,
             capability=ctx.deps.root_capability,
             run_context=run_context,
             output_validators=ctx.deps.output_validators,
+            allows_text=schema.allows_text,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
@@ -1312,17 +1328,6 @@ def _build_output_run_context(
     )
 
 
-async def _run_output_validators(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-    result_data: NodeRunEndT,
-    run_context: RunContext[DepsT],
-) -> NodeRunEndT:
-    """Run all output validators on the result data."""
-    for validator in ctx.deps.output_validators:
-        result_data = await validator.validate(result_data, run_context)
-    return result_data
-
-
 def _emit_skipped_output_tool(
     call: _messages.ToolCallPart,
     message: str,
@@ -1387,8 +1392,14 @@ async def process_tool_calls(  # noqa: C901
         else:
             # Validate and execute the output tool call using output hooks (not tool hooks).
             # Unlike deferred tools, output tools track retries and can be skipped if a final_result exists.
+            schema = ctx.deps.output_schema
             try:
-                validated = await tool_manager.validate_output_tool_call(call)
+                validated = await tool_manager.validate_output_tool_call(
+                    call,
+                    allows_text=schema.allows_text,
+                    allows_image=schema.allows_image,
+                    allows_deferred_tools=schema.allows_deferred_tools,
+                )
             except exceptions.UnexpectedModelBehavior as e:
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
@@ -1422,7 +1433,12 @@ async def process_tool_calls(  # noqa: C901
 
             # Validation passed - execute through output hooks
             try:
-                result_data = await tool_manager.execute_output_tool_call(validated)
+                result_data = await tool_manager.execute_output_tool_call(
+                    validated,
+                    allows_text=schema.allows_text,
+                    allows_image=schema.allows_image,
+                    allows_deferred_tools=schema.allows_deferred_tools,
+                )
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(

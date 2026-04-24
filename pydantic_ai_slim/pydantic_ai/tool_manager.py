@@ -16,9 +16,6 @@ from . import messages as _messages
 from ._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from ._output import (
     OutputToolset,
-    _get_unwrap_key,  # pyright: ignore[reportPrivateUsage]
-    _rewrap_internal_value,  # pyright: ignore[reportPrivateUsage]
-    _unwrap_semantic_value,  # pyright: ignore[reportPrivateUsage]
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -483,11 +480,18 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> ValidatedToolCall[AgentDepsT]:
         """Validate output tool args through output validate hooks (skipping tool hooks).
 
         Output tools use output hooks for validation instead of tool hooks. The Pydantic
         schema validation is used as the inner handler wrapped by output validate hooks.
+
+        `allows_text`/`allows_image`/`allows_deferred_tools` are forwarded to
+        [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
+        of what the schema accepts.
 
         Raises:
             UnexpectedModelBehavior: If max retries exceeded.
@@ -501,15 +505,23 @@ class ToolManager(Generic[AgentDepsT]):
 
         toolset = tool.toolset
         processor = toolset.processors[name]
-        output_context = processor.get_output_context('tool', tool_call=call, tool_def=tool.tool_def)
+        output_context = processor.get_output_context(
+            'tool',
+            tool_call=call,
+            tool_def=tool.tool_def,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
+        )
+
         # Output hooks see the semantic value (what the model was asked to produce), not the
         # internal dict-wrapped form. This differs from tool call validation hooks, which see
         # `dict[str, Any]` tool args — the schema contract the model satisfies.
-        unwrap_key = _get_unwrap_key(processor)
-
+        # `processor.hook_validate` runs Pydantic validation and unwraps; output tools are
+        # always `ObjectOutputProcessor` (never union), so the opaque state is always `None`.
         async def do_validate(args: str | dict[str, Any]) -> Any:
-            validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
-            return _unwrap_semantic_value(validated, unwrap_key)
+            semantic, _state = processor.hook_validate(args, run_context=ctx, allow_partial=allow_partial)
+            return semantic
 
         cap = self.root_capability
         assert cap is not None, 'validate_output_tool_call requires root_capability'
@@ -544,12 +556,19 @@ class ToolManager(Generic[AgentDepsT]):
         validated: ValidatedToolCall[AgentDepsT],
         *,
         wrap_validation_errors: bool = True,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> Any:
         """Execute output tool through output process hooks (skipping tool hooks).
 
         Output validators run inside process hooks (inside wrap_output_process), ensuring
         the complete output pipeline is wrapped. Validators see the global output retry
         context (from self.ctx), not the per-tool context, matching the text output path.
+
+        `allows_text`/`allows_image`/`allows_deferred_tools` are forwarded to
+        [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
+        of what the schema accepts.
 
         Raises:
             ToolRetryError: If execution or output validation fails.
@@ -567,18 +586,26 @@ class ToolManager(Generic[AgentDepsT]):
 
         tool = validated.tool
         processor = toolset.processors[name]
-        output_context = processor.get_output_context('tool', tool_call=validated.call, tool_def=tool.tool_def)
-        # Hooks see the semantic value; re-wrap to the internal dict form before processor.call()
-        unwrap_key = _get_unwrap_key(processor)
+        output_context = processor.get_output_context(
+            'tool',
+            tool_call=validated.call,
+            tool_def=tool.tool_def,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
+        )
 
         # Use the global output retry context for validators, matching the text output path.
         validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
 
         async def do_process(output: Any) -> Any:
-            # Re-wrap the semantic value into the dict shape processor.call() expects
-            wrapped = _rewrap_internal_value(output, unwrap_key)
+            # `processor.hook_execute` re-wraps the semantic value into the dict shape
+            # `processor.call()` expects, then runs the output function (if any).
+            # Output tools are always `ObjectOutputProcessor` (never union), so `state` is `None`.
             try:
-                result = await processor.call(wrapped, validated.ctx, wrap_validation_errors=False)
+                result = await processor.hook_execute(
+                    output, None, run_context=validated.ctx, wrap_validation_errors=False
+                )
             except ModelRetry as e:
                 # Wrap as ToolRetryError; retry tracking is done by the outer handler
                 raise self._wrap_error_as_retry(name, validated.call, e) from e
@@ -614,6 +641,9 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> Any:
         """Handle an output tool call using output hooks (not tool hooks).
 
@@ -621,12 +651,23 @@ class ToolManager(Generic[AgentDepsT]):
         Used by the streaming path in result.py.
         """
         validated = await self.validate_output_tool_call(
-            call, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            call,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
         )
         if not validated.args_valid:  # pragma: no cover — caller (result.py) uses wrap_validation_errors=False
             assert validated.validation_error is not None
             raise validated.validation_error
-        return await self.execute_output_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
+        return await self.execute_output_tool_call(
+            validated,
+            wrap_validation_errors=wrap_validation_errors,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
+        )
 
     async def _execute_tool_call_impl(
         self,

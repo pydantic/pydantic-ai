@@ -74,70 +74,6 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
-def _unwrap_semantic_value(validated: Any, unwrap_key: str | None) -> Any:
-    """Unwrap the validator's dict-wrapped form to the semantic value, for hooks to see.
-
-    When `unwrap_key` is set, the validator always produces a dict keyed by that name
-    (enforced by the schema), so we can unwrap unconditionally.
-    """
-    if unwrap_key is None:
-        return validated
-    return cast(dict[str, Any], validated)[unwrap_key]
-
-
-def _rewrap_internal_value(semantic: Any, unwrap_key: str | None) -> Any:
-    """Re-wrap a semantic value into the internal dict shape `processor.call()` expects.
-
-    Callers always pass the unwrapped semantic value (after hooks), so we always wrap.
-    An idempotency check via dict-key inspection would be unsafe for `output_type=dict[...]`
-    where the semantic value itself can be a dict that legitimately contains `unwrap_key`.
-    """
-    if unwrap_key is None:
-        return semantic
-    return {unwrap_key: semantic}
-
-
-def _get_unwrap_key(processor: BaseOutputProcessor[Any]) -> str | None:
-    """Return the dict key used to wrap a single semantic value, or None.
-
-    Output hooks see the **semantic value** the model was asked to produce (e.g., a
-    `MyModel` instance or an `int`), not the internal dict shape used by Pydantic
-    schema validation. This differs from *tool* hooks, which always see `dict[str, Any]`
-    tool arguments — that's the schema contract the model satisfies.
-
-    For single-value outputs (bare primitive, single-arg function), the validator
-    produces a dict like `{'response': 42}` or `{'data': my_model}`. We unwrap by
-    this key at the hook boundary and re-wrap before `processor.call()` so the
-    internal pipeline continues to operate on dicts.
-
-    Returns the key name for:
-    - Bare primitive output (`outer_typed_dict_key`, e.g. `'response'` for `int`)
-    - Single model-like arg function (`single_arg_name`, e.g. `'data'` for `def f(data: MyModel)`)
-    - Single primitive arg function (e.g. `'data'` for `def f(data: int)`)
-
-    Returns None for:
-    - Bare BaseModel output (validator already returns the model instance)
-    - Multi-arg function (the dict of arguments IS the semantic value)
-    - Non-`ObjectOutputProcessor` processors (e.g., `TextFunctionOutputProcessor`)
-    """
-    if not isinstance(processor, ObjectOutputProcessor):
-        return None
-    if processor.outer_typed_dict_key is not None:
-        return processor.outer_typed_dict_key
-    fs = processor._function_schema  # pyright: ignore[reportPrivateUsage]
-    if fs is None:
-        return None
-    if fs.single_arg_name is not None:
-        # Model-like single arg: validator wraps as `{name: model}` via _validate_single_arg
-        return fs.single_arg_name
-    # Non-model single arg: validator returns `{name: value}` as a regular TypedDict.
-    # Detect via json_schema having exactly one property.
-    properties = fs.json_schema.get('properties', {})
-    if len(properties) == 1:
-        return next(iter(properties))
-    return None
-
-
 def _build_output_handlers(
     processor: BaseOutputProcessor[OutputDataT],
     *,
@@ -148,59 +84,24 @@ def _build_output_handlers(
     Callable[[RawOutput], Awaitable[Any]],
     Callable[[Any], Awaitable[Any]],
 ]:
-    """Build validate and execute handler functions using processor's validate/call methods.
+    """Build validate and process handlers that delegate to `processor.hook_validate`/`hook_execute`.
 
-    Output hooks see the **semantic value** (what the model was asked to produce),
-    not the internal dict-wrapped shape. The validate handler unwraps before returning
-    to hooks; the execute handler re-wraps before calling `processor.call()`.
-    See `_get_unwrap_key` for which cases get unwrapped.
-
-    For UnionOutputProcessor, the validate handler unwraps _UnionValidatedOutput so hooks
-    see clean inner data, and the execute handler re-wraps it so call() can resolve the
-    correct inner processor. The kind is stored per-invocation in closure state, avoiding
-    the race condition of shared instance state. The inner processor's unwrap key is
-    resolved dynamically once the union member is known.
+    Output hooks see the **semantic value** (what the model was asked to produce), not the
+    internal dict-wrapped shape used by Pydantic validation. Each processor decides what its
+    semantic value looks like via its `hook_validate`/`hook_execute` methods, and opaque
+    per-invocation state (e.g. the resolved union member) flows through the closure.
     """
-    _union_kind: str | None = None
-    # For non-union processors, the unwrap key is fixed upfront.
-    # For unions, it's resolved dynamically in do_validate once the member is known.
-    _unwrap_key: str | None = None if isinstance(processor, UnionOutputProcessor) else _get_unwrap_key(processor)
+    state: Any = None
 
     async def do_validate(data: RawOutput) -> Any:
-        nonlocal _union_kind, _unwrap_key
-        result: Any = processor.validate(
-            data,
-            allow_partial=allow_partial,
-            validation_context=run_context.validation_context,
-        )
-        if isinstance(result, _UnionValidatedOutput):
-            _union_kind = result.kind
-            # Now that we know the selected union member, resolve its unwrap key
-            assert isinstance(processor, UnionOutputProcessor)
-            inner = processor._processors[_union_kind]  # pyright: ignore[reportPrivateUsage]
-            _unwrap_key = _get_unwrap_key(inner)
-            result = result.data
-        return _unwrap_semantic_value(result, _unwrap_key)
+        nonlocal state
+        semantic, state = processor.hook_validate(data, run_context=run_context, allow_partial=allow_partial)
+        return semantic
 
     async def do_process(output: Any) -> Any:
-        # Re-wrap the semantic value into the internal dict shape `processor.call()` expects.
-        output = _rewrap_internal_value(output, _unwrap_key)
-
-        if _union_kind is not None:
-            # Normal path: re-wrap with the kind resolved during validation
-            return await processor.call(
-                _UnionValidatedOutput(kind=_union_kind, data=output), run_context, wrap_validation_errors
-            )
-        if isinstance(processor, UnionOutputProcessor):
-            # Error recovery path: validation failed and on_output_validate_error returned
-            # data directly. Try to match against inner processors by type so the output
-            # function still runs.
-            match = processor.resolve_processor_for_recovered_output(output)
-            if match is not None:
-                inner, args = match
-                return await inner.call(args, run_context, wrap_validation_errors)
-            return output  # pragma: no cover — no inner processor type matched the recovered data
-        return await processor.call(output, run_context, wrap_validation_errors)
+        return await processor.hook_execute(
+            output, state, run_context=run_context, wrap_validation_errors=wrap_validation_errors
+        )
 
     return do_validate, do_process
 
@@ -310,6 +211,46 @@ async def run_output_process_hooks(
         raise
 
 
+async def run_none_process_hooks(
+    *,
+    capability: AbstractCapability[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+    wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+    allows_text: bool = False,
+    allows_image: bool = False,
+    allows_deferred_tools: bool = False,
+) -> Any:
+    """Run output process hooks for a `None` result (empty model response with `allows_none`).
+
+    Output validators run inside process hooks, matching the text/structured/image paths.
+    """
+    output_context = OutputContext(
+        mode='text',
+        output_type=type(None),
+        object_def=None,
+        has_function=False,
+        allows_text=allows_text,
+        allows_image=allows_image,
+        allows_deferred_tools=allows_deferred_tools,
+    )
+
+    async def do_process(output: Any) -> Any:
+        result = output
+        for validator in output_validators:
+            result = await validator.validate(result, run_context, wrap_validation_errors=False)
+        return result
+
+    return await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=None,
+        do_process=do_process,
+        wrap_validation_errors=wrap_validation_errors,
+    )
+
+
 async def run_image_process_hooks(
     image: _messages.BinaryImage,
     *,
@@ -317,6 +258,8 @@ async def run_image_process_hooks(
     run_context: RunContext[AgentDepsT],
     wrap_validation_errors: bool = True,
     output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+    allows_text: bool = False,
+    allows_deferred_tools: bool = False,
 ) -> Any:
     """Run output process hooks for image output (no validate hooks — nothing to parse).
 
@@ -327,6 +270,9 @@ async def run_image_process_hooks(
         output_type=_messages.BinaryImage,
         object_def=None,
         has_function=False,
+        allows_text=allows_text,
+        allows_image=True,
+        allows_deferred_tools=allows_deferred_tools,
     )
 
     async def do_process(output: Any) -> Any:
@@ -355,6 +301,9 @@ async def run_output_with_hooks(
     allow_partial: bool = False,
     wrap_validation_errors: bool = True,
     output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+    allows_text: bool = False,
+    allows_image: bool = False,
+    allows_deferred_tools: bool = False,
 ) -> OutputDataT:
     """Process output text through the processor with capability output hooks.
 
@@ -374,7 +323,12 @@ async def run_output_with_hooks(
             )  # pragma: no cover
         return result
 
-    output_context = processor.get_output_context(output_mode)
+    output_context = processor.get_output_context(
+        output_mode,
+        allows_text=allows_text,
+        allows_image=allows_image,
+        allows_deferred_tools=allows_deferred_tools,
+    )
     do_validate, base_do_process = _build_output_handlers(
         processor, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
     )
@@ -915,14 +869,56 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         """Execute output function on validated output. Default: identity (returns output as-is)."""
         return output
 
+    def hook_validate(
+        self,
+        data: str | dict[str, Any] | None,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        """Validate raw data and return `(semantic_value, state)`.
+
+        `semantic_value` is what output hooks see — the logical value the model was asked to
+        produce (e.g., `MyModel(...)`, `42`, the input to a single-arg output function).
+        `state` is opaque per-invocation data that `hook_execute` needs to complete processing
+        (e.g., the resolved union member), or `None` if unused.
+
+        Default: runs `self.validate()` and returns the result as the semantic value.
+        """
+        validated = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
+        return validated, None
+
+    async def hook_execute(
+        self,
+        semantic: Any,
+        state: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Execute the post-validation stage on a (possibly hook-modified) semantic value.
+
+        `state` is the second element of the tuple returned by `hook_validate`.
+        Default: calls `self.call()` with the semantic value.
+        """
+        return await self.call(semantic, run_context, wrap_validation_errors)
+
     @abstractmethod
     def get_output_context(
         self,
         mode: OutputMode,
+        *,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> OutputContext:
-        """Return context information about this processor for output hooks."""
+        """Return context information about this processor for output hooks.
+
+        `allows_text`/`allows_image`/`allows_deferred_tools` come from the schema and are
+        passed through so hooks can see the full shape of what the schema accepts.
+        """
         raise NotImplementedError()
 
 
@@ -1043,8 +1039,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     content=e.errors(include_url=False),
                 )
                 raise ToolRetryError(m) from e
-            else:  # pragma: no cover — wrap_validation_errors is always True in process() callers
-                raise
+            raise
 
         output = await self.call(output, run_context, wrap_validation_errors)
 
@@ -1076,9 +1071,19 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> Any:
         if k := self.outer_typed_dict_key:
+            assert isinstance(output, dict), (
+                f'ObjectOutputProcessor.call expects a dict with key {k!r}; got {type(output).__name__}. '
+                'Output hooks that modify the semantic value must preserve the type; '
+                'to transform the output shape, use `before_output_process` (which operates on the '
+                'semantic value) rather than mutating the internal dict.'
+            )
             output = output[k]
 
         if self._function_schema:
+            assert isinstance(output, dict), (
+                f'ObjectOutputProcessor.call expects a dict of function arguments; got {type(output).__name__}. '
+                'Output hooks that modify function arguments must preserve the dict shape.'
+            )
             output = await execute_traced_output_function(
                 self._function_schema,
                 run_context=run_context,
@@ -1088,11 +1093,70 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         return output
 
+    @property
+    def _hook_unwrap_key(self) -> str | None:
+        """The dict key used to wrap a single semantic value, or `None`.
+
+        Output hooks see the **semantic value** the model was asked to produce (e.g., a
+        `MyModel` instance, `42`), not the internal dict shape from Pydantic validation.
+        For single-value outputs, the validator produces a dict like `{'response': 42}` or
+        `{'data': my_model}` — this is the key to unwrap by at the hook boundary.
+
+        Returns the key name for bare primitives (`outer_typed_dict_key`), single model-like
+        arg functions (`single_arg_name`), and single primitive arg functions. Returns
+        `None` for bare `BaseModel` outputs and multi-arg functions.
+        """
+        if self.outer_typed_dict_key is not None:
+            return self.outer_typed_dict_key
+        fs = self._function_schema
+        if fs is None:
+            return None
+        if fs.single_arg_name is not None:
+            # Model-like single arg: validator wraps as `{name: model}` via _validate_single_arg
+            return fs.single_arg_name
+        # Non-model single arg: validator returns `{name: value}` as a regular TypedDict.
+        # Detect via json_schema having exactly one property.
+        properties = fs.json_schema.get('properties', {})
+        if len(properties) == 1:
+            return next(iter(properties))
+        return None
+
+    def hook_validate(
+        self,
+        data: str | dict[str, Any] | None,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        validated = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
+        if (k := self._hook_unwrap_key) is None:
+            return validated, None
+        return validated[k], None
+
+    async def hook_execute(
+        self,
+        semantic: Any,
+        state: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        # Re-wrap the (possibly hook-modified) semantic value into the internal dict shape `call()` expects.
+        # No idempotency check: for `output_type=dict[...]`, the semantic value can itself be a dict
+        # that happens to contain the unwrap key.
+        if (k := self._hook_unwrap_key) is not None:
+            semantic = {k: semantic}
+        return await self.call(semantic, run_context, wrap_validation_errors)
+
     def get_output_context(
         self,
         mode: OutputMode,
+        *,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
             mode=mode,
@@ -1101,6 +1165,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             has_function=self._function_schema is not None,
             tool_call=tool_call,
             tool_def=tool_def,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
         )
 
 
@@ -1242,17 +1309,65 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         )
         return _UnionValidatedOutput(kind=kind, data=inner_validated)
 
-    def resolve_processor_for_recovered_output(
+    async def call(
+        self,
+        output: _UnionValidatedOutput,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Delegate to the inner processor resolved by the kind key in the wrapper."""
+        processor = self._processors[output.kind]
+        return await processor.call(output.data, run_context, wrap_validation_errors)
+
+    def hook_validate(
+        self,
+        data: str | dict[str, Any] | None,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        union_validated = self.validate(
+            data, allow_partial=allow_partial, validation_context=run_context.validation_context
+        )
+        inner = self._processors[union_validated.kind]
+        # Delegate unwrapping to the inner processor so the output function is still wrapped
+        # in `hook_execute` below (which matches the inner processor by kind).
+        if (k := inner._hook_unwrap_key) is None:  # pyright: ignore[reportPrivateUsage]
+            return union_validated.data, union_validated.kind
+        return union_validated.data[k], union_validated.kind
+
+    async def hook_execute(
+        self,
+        semantic: Any,
+        state: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        kind: str | None = state
+        if kind is not None:
+            # Normal path: rewrap using the inner processor that matched during validation.
+            inner = self._processors[kind]
+            if (k := inner._hook_unwrap_key) is not None:  # pyright: ignore[reportPrivateUsage]
+                semantic = {k: semantic}
+            return await inner.call(semantic, run_context, wrap_validation_errors)
+        # Error recovery path: validation failed and `on_output_validate_error` returned a
+        # value directly without kind context. Resolve by isinstance so the output function
+        # still runs.
+        match = self._resolve_processor_for_recovered_output(semantic)
+        if match is not None:
+            inner, args = match
+            return await inner.call(args, run_context, wrap_validation_errors)
+        return semantic  # pragma: no cover — hook returned a type not in the union
+
+    def _resolve_processor_for_recovered_output(
         self, output: Any
     ) -> tuple[ObjectOutputProcessor[OutputDataT], Any] | None:
         """Match a recovered output value to the correct inner processor by type.
 
-        Used by the error recovery path in output hooks: when ``on_output_validate_error``
-        returns data directly (bypassing normal union validation), this method finds which
-        inner processor can handle the recovered value so the output function still runs.
-
-        Returns ``(processor, args)`` where ``args`` is the value to pass to ``processor.call()``
-        (potentially wrapped in a dict for non-model-like types), or ``None`` if no match is found.
+        Used by the error recovery path in `hook_execute`: when ``on_output_validate_error``
+        returns data directly (bypassing normal union validation), this finds which inner
+        processor can handle the recovered value so the output function still runs.
         """
         for inner in self._processors.values():
             if inner._output_type is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
@@ -1265,16 +1380,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 except TypeError:  # pragma: no cover — generic types (e.g. list[str]) can't be used with isinstance
                     pass
         return None  # pragma: no cover — hook returned a type not in the union
-
-    async def call(
-        self,
-        output: _UnionValidatedOutput,
-        run_context: RunContext[AgentDepsT],
-        wrap_validation_errors: bool = True,
-    ) -> Any:
-        """Delegate to the inner processor resolved by the kind key in the wrapper."""
-        processor = self._processors[output.kind]
-        return await processor.call(output.data, run_context, wrap_validation_errors)
 
     async def process(
         self,
@@ -1296,16 +1401,19 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     content=e.errors(include_url=False),
                 )
                 raise ToolRetryError(m) from e
-            else:  # pragma: no cover — wrap_validation_errors is always True in process() callers
-                raise
+            raise
 
         return await self.call(wrapper, run_context, wrap_validation_errors)
 
     def get_output_context(
         self,
         mode: OutputMode,
+        *,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
             mode=mode,
@@ -1314,6 +1422,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             has_function=any(p._function_schema is not None for p in self._processors.values()),  # pyright: ignore[reportPrivateUsage]
             tool_call=tool_call,
             tool_def=tool_def,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
         )
 
 
@@ -1332,11 +1443,23 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
     def get_output_context(
         self,
         mode: OutputMode,
+        *,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
-            mode=mode, output_type=str, object_def=None, has_function=False, tool_call=tool_call, tool_def=tool_def
+            mode=mode,
+            output_type=str,
+            object_def=None,
+            has_function=False,
+            tool_call=tool_call,
+            tool_def=tool_def,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
         )
 
 
@@ -1389,8 +1512,12 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     def get_output_context(
         self,
         mode: OutputMode,
+        *,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
+        allows_text: bool = False,
+        allows_image: bool = False,
+        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
             mode=mode,
@@ -1399,6 +1526,9 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
             has_function=True,
             tool_call=tool_call,
             tool_def=tool_def,
+            allows_text=allows_text,
+            allows_image=allows_image,
+            allows_deferred_tools=allows_deferred_tools,
         )
 
 

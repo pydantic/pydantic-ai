@@ -211,7 +211,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
                 return await self._tool_manager.handle_output_tool_call(
-                    tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                    tool_call,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
+                    allows_text=self._output_schema.allows_text,
+                    allows_image=self._output_schema.allows_image,
+                    allows_deferred_tools=self._output_schema.allows_deferred_tools,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -241,6 +246,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
                     output_validators=self._output_validators,
+                    allows_text=self._output_schema.allows_text,
+                    allows_image=self._output_schema.allows_image,
+                    allows_deferred_tools=self._output_schema.allows_deferred_tools,
                 )
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -266,6 +274,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     run_context=run_ctx,
                     wrap_validation_errors=False,
                     output_validators=self._output_validators,
+                    allows_text=self._output_schema.allows_text,
+                    allows_deferred_tools=self._output_schema.allows_deferred_tools,
                 ),
             )
         else:  # pragma: no cover — agents always have root_capability
