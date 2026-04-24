@@ -245,7 +245,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                 request_context.model_request_parameters,
                 ctx,
             )
-            request_context.capabilities_applied_to_stream = True
+            request_context.capabilities_already_applied = True
             return response
 
         return await self._request_step(

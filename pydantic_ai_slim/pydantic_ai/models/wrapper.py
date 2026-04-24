@@ -93,9 +93,6 @@ class ReplayStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self.capabilities_already_applied = capabilities_already_applied
-        """When `True`, the capability chain's `wrap_run_event_stream` hooks already
-        ran against the live stream (e.g. inside a durable execution activity) and
-        the outer agent loop should not re-wrap this replayed stream."""
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for part in self.response.parts:

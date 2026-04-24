@@ -671,7 +671,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             replay_sr = ReplayStreamedResponse(
                 model_request_parameters,
                 model_response,
-                capabilities_already_applied=wrap_request_context.capabilities_applied_to_stream,
+                capabilities_already_applied=wrap_request_context.capabilities_already_applied,
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream

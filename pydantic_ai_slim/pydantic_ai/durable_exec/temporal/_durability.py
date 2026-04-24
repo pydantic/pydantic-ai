@@ -454,7 +454,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             # Signal to the outer agent loop that the capability chain already ran
             # against the live stream inside the activity; do not re-fire it on the
             # replayed response.
-            request_context.capabilities_applied_to_stream = True
+            request_context.capabilities_already_applied = True
             return response
 
         activity_config = {'summary': f'request model: {model_name}', **self._model_activity_config}

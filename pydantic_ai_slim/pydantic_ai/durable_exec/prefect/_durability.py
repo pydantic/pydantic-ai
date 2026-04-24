@@ -232,7 +232,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 request_context.model_request_parameters,
                 ctx,
             )
-            request_context.capabilities_applied_to_stream = True
+            request_context.capabilities_already_applied = True
             return response
 
         return await self._request_task.with_options(name=f'Model Request: {model_name}', **self._model_task_config)(
