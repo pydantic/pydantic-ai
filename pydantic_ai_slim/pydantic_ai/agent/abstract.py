@@ -78,7 +78,7 @@ EventStreamProcessor: TypeAlias = Callable[
 ]
 """An async generator that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events and yields a potentially modified stream.
 
-Used with the [`HandleEventStream`][pydantic_ai.capabilities.HandleEventStream] capability to modify, drop, or add events visible to the rest of the capability chain."""
+Used with the [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability to modify, drop, or add events visible to the rest of the capability chain."""
 
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
@@ -148,7 +148,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
 
     @property
-    @abstractmethod
     def root_capability(self) -> CombinedCapability[AgentDepsT]:
         """The root capability of the agent, containing all registered capabilities."""
         raise NotImplementedError

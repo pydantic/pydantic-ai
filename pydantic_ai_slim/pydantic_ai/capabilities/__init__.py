@@ -18,7 +18,7 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
-from .event_stream_handler import HandleEventStream
+from .process_event_stream import ProcessEventStream
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -76,7 +76,7 @@ __all__ = [
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
-    'HandleEventStream',
+    'ProcessEventStream',
     'ImageGeneration',
     'HistoryProcessor',
     'IncludeToolReturnSchemas',

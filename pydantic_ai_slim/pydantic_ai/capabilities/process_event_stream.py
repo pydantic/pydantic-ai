@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class HandleEventStream(AbstractCapability[AgentDepsT]):
+class ProcessEventStream(AbstractCapability[AgentDepsT]):
     """A capability that forwards the agent's event stream to a user-provided async handler.
 
     The handler receives the stream of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s
@@ -52,9 +52,9 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
         `wrap_run_event_stream` hook fires for tool-call events and the final post-streaming
         batch, but it does **not** see individual model-response events live — the underlying
         durable model consumes those inside the activity before returning. The in-flight
-        `event_stream_handler` parameter does still observe the live events, and a future
-        refactor threading the capability chain through the activity boundary is tracked
-        separately.
+        `event_stream_handler` parameter does still observe the live events; a future
+        refactor threading the capability chain through the activity boundary is being
+        explored in [#4977](https://github.com/pydantic/pydantic-ai/pull/4977).
     """
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]

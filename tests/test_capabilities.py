@@ -31,7 +31,7 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     CapabilityOrdering,
-    HandleEventStream,
+    ProcessEventStream,
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
@@ -3637,8 +3637,8 @@ class TestWrapRunEventStream:
         assert any(isinstance(e, PartStartEvent) for e in observed_events)
 
 
-class TestHandleEventStream:
-    """Tests for the HandleEventStream capability."""
+class TestProcessEventStream:
+    """Tests for the ProcessEventStream capability."""
 
     async def test_handler_receives_events(self):
         """Handler registered via capability receives events from model streaming."""
@@ -3650,7 +3650,7 @@ class TestHandleEventStream:
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[HandleEventStream(handler=handler)],
+            capabilities=[ProcessEventStream(handler=handler)],
         )
 
         # No event_stream_handler arg — capability should drive streaming
@@ -3659,7 +3659,7 @@ class TestHandleEventStream:
         assert any(isinstance(e, PartStartEvent) for e in handler_events)
 
     async def test_multiple_handlers_and_param_all_observe(self):
-        """Multiple HandleEventStream capabilities and an explicit event_stream_handler all see the same events."""
+        """Multiple ProcessEventStream capabilities and an explicit event_stream_handler all see the same events."""
         cap1_events: list[AgentStreamEvent] = []
         cap2_events: list[AgentStreamEvent] = []
         param_events: list[AgentStreamEvent] = []
@@ -3678,7 +3678,7 @@ class TestHandleEventStream:
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[HandleEventStream(handler=cap1_handler), HandleEventStream(handler=cap2_handler)],
+            capabilities=[ProcessEventStream(handler=cap1_handler), ProcessEventStream(handler=cap2_handler)],
         )
 
         await agent.run('hello', event_stream_handler=param_handler)
@@ -3708,7 +3708,7 @@ class TestHandleEventStream:
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[HandleEventStream(handler=handler), InnerWrapper()],
+            capabilities=[ProcessEventStream(handler=handler), InnerWrapper()],
         )
 
         await agent.run('hello')
@@ -3734,7 +3734,7 @@ class TestHandleEventStream:
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[HandleEventStream(handler=transformer)],
+            capabilities=[ProcessEventStream(handler=transformer)],
         )
 
         await agent.run('hello', event_stream_handler=param_handler)
@@ -3755,7 +3755,7 @@ class TestHandleEventStream:
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[HandleEventStream(handler=Transformer())],
+            capabilities=[ProcessEventStream(handler=Transformer())],
         )
         await agent.run('hello')
         assert any(isinstance(e, PartStartEvent) for e in captured)
@@ -3776,15 +3776,15 @@ class TestHandleEventStream:
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[HandleEventStream(handler=bail_after_first)],
+            capabilities=[ProcessEventStream(handler=bail_after_first)],
         )
         await agent.run('hello', event_stream_handler=downstream)
         assert len(received_by_observer) == 1
         assert len(received_downstream) > 1
 
     async def test_not_spec_serializable(self):
-        """HandleEventStream holds a callable so it cannot participate in spec-based construction."""
-        assert HandleEventStream.get_serialization_name() is None
+        """ProcessEventStream holds a callable so it cannot participate in spec-based construction."""
+        assert ProcessEventStream.get_serialization_name() is None
 
 
 class TestWrapRunShortCircuit:
