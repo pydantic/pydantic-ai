@@ -32,8 +32,8 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._tool_search import (
-    _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
+    DISCOVERED_TOOLS_METADATA_KEY,
     ToolSearchToolset,
 )
 from pydantic_ai.usage import RunUsage
@@ -675,7 +675,7 @@ async def test_tool_search_toolset_discovered_tools_available():
                         'message': "Found 1 tool(s) matching 'mortgage'",
                         'tools': [{'name': 'calculate_mortgage'}],
                     },
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 ),
             ]
         )
@@ -699,7 +699,7 @@ async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'message': 'Found all deferred tools.', 'tools': []},
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage', 'stock_price', 'crypto_price']},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage', 'stock_price', 'crypto_price']},
                 )
             ]
         )
@@ -882,7 +882,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
                         'message': "Found 1 tool(s) matching 'mortgage'",
                         'tools': [{'name': 'calculate_mortgage'}],
                     },
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 ),
             ]
         ),
@@ -891,7 +891,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'message': "Found 1 tool(s) matching 'stock'", 'tools': [{'name': 'stock_price'}]},
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['stock_price']},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['stock_price']},
                 ),
             ]
         ),
@@ -949,7 +949,7 @@ async def test_tool_search_toolset_ignores_non_metadata_history():
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'tools': []},
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: 'not a list'},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: 'not a list'},
                 )
             ]
         ),
@@ -959,7 +959,7 @@ async def test_tool_search_toolset_ignores_non_metadata_history():
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'tools': []},
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: [123, None]},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: [123, None]},
                 )
             ]
         ),
@@ -969,7 +969,7 @@ async def test_tool_search_toolset_ignores_non_metadata_history():
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'message': 'found', 'tools': [{'name': 'calculate_mortgage'}]},
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 ),
             ]
         ),
@@ -2097,7 +2097,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
                 BuiltinToolReturnPart(
                     tool_name='tool_search',
                     content={'discovered_tools': ['calculate_mortgage']},
-                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
+                    metadata={DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 )
             ]
         )

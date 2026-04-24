@@ -60,6 +60,7 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
+from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_discovered_tool_names
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -1953,8 +1954,7 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     """
     if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
         return None
-    metadata: dict[str, Any] = part.metadata or {}
-    return cast('list[str] | None', metadata.get('discovered_tools'))
+    return extract_discovered_tool_names(part.metadata)
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
@@ -2018,7 +2018,7 @@ def _map_tool_search_tool_result_block(
         tool_name=ToolSearchTool.kind,
         content=content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
-        metadata={'discovered_tools': discovered_tools} if discovered_tools else None,
+        metadata={DISCOVERED_TOOLS_METADATA_KEY: discovered_tools} if discovered_tools else None,
     )
 
 

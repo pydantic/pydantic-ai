@@ -77,11 +77,38 @@ ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNa
   tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
 """
 
+DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+"""Key on ``ToolReturnPart.metadata`` / ``BuiltinToolReturnPart.metadata`` that carries
+the list of tool names discovered by a tool-search turn.
+
+This is the contract between the tool-search toolset and the provider adapters. The
+toolset writes it when the local ``search_tools`` function runs; adapters write it when
+mapping the provider's native tool-search result block (Anthropic) or output item
+(OpenAI). Replay reads it via :func:`extract_discovered_tool_names` to shape the
+provider-specific tool-search round-trip format. Stored on the return part (not on the
+call part) because the result of the discovery — not the request for it — is what the
+next turn needs to act on.
+"""
+
+
+def extract_discovered_tool_names(metadata: Any) -> list[str] | None:
+    """Read the discovered-tool-names list off of a tool return's metadata.
+
+    Returns ``None`` when the metadata doesn't carry the convention (not a dict, key
+    absent, or value isn't a list of strings). Callers should treat ``None`` as
+    "no discovery data"; an empty list means "search ran, nothing matched".
+    """
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    if not isinstance(value, list):
+        return None
+    return [item for item in value if isinstance(item, str)]  # pyright: ignore[reportUnknownVariableType]
+
+
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = 'tool_search'
 _MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
-
-_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
 
 def _managed_key(name: str) -> str:
@@ -295,7 +322,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     def _collect_discovered_from_metadata(metadata: Any, discovered: set[str]) -> None:
         if not isinstance(metadata, dict):
             return
-        tool_names = metadata.get(_DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        tool_names = metadata.get(DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if not isinstance(tool_names, list):
             return
         discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]
@@ -345,7 +372,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not scored_matches:
             return ToolReturn(
                 return_value='No matching tools found. The tools you need may not be available.',
-                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
+                metadata={DISCOVERED_TOOLS_METADATA_KEY: []},
             )
 
         scored_matches.sort(key=lambda item: item[0], reverse=True)
@@ -354,7 +381,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         return ToolReturn(
             return_value=matches,
-            metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+            metadata={DISCOVERED_TOOLS_METADATA_KEY: tool_names},
         )
 
     def _run_search_fn(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
@@ -376,10 +403,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not matches:
             return ToolReturn(
                 return_value='No matching tools found. The tools you need may not be available.',
-                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
+                metadata={DISCOVERED_TOOLS_METADATA_KEY: []},
             )
 
         return ToolReturn(
             return_value=matches,
-            metadata={_DISCOVERED_TOOLS_METADATA_KEY: [m['name'] for m in matches]},
+            metadata={DISCOVERED_TOOLS_METADATA_KEY: [m['name'] for m in matches]},
         )

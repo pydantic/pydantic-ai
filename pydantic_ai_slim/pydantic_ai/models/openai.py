@@ -75,6 +75,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, Open
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
+from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_discovered_tool_names
 from . import (
     Model,
     ModelRequestContext,
@@ -3870,8 +3871,7 @@ def _build_client_tool_search_output_param(
     ``FunctionToolParam`` so OpenAI sees the same ``Tool`` definitions it originally
     loaded in the prior turn — the shape of :class:`ResponseToolSearchOutputItemParamParam`.
     """
-    metadata: dict[str, Any] = part.metadata or {}
-    discovered = cast('list[str]', metadata.get('discovered_tools') or [])
+    discovered = extract_discovered_tool_names(part.metadata) or []
 
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
     # `strict` is profile-dependent at initial send-time (`_map_tool_definition`
@@ -3954,9 +3954,9 @@ def _build_tool_search_return_part(
     return BuiltinToolReturnPart(
         provider_name=provider_name,
         tool_name=ToolSearchTool.kind,
-        content={'status': status, 'discovered_tools': tool_names},
+        content={'status': status, DISCOVERED_TOOLS_METADATA_KEY: tool_names},
         tool_call_id=call_id,
-        metadata={'discovered_tools': tool_names} if tool_names else None,
+        metadata={DISCOVERED_TOOLS_METADATA_KEY: tool_names} if tool_names else None,
     )
 
 
