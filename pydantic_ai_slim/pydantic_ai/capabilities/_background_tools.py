@@ -28,8 +28,10 @@ class BackgroundToolCapability(AbstractCapability[Any]):
     4. Prevents the agent from ending while tasks are pending
     5. Cancels remaining tasks on run cleanup
 
-    This capability is auto-injected when any tool has `background=True`
-    and is prepended after `_PendingMessageDrainCapability`.
+    This capability is auto-injected for all agents and placed outermost via
+    [`CapabilityOrdering`][pydantic_ai.capabilities.abstract.CapabilityOrdering]
+    so it wraps around other capabilities. When no tool has `background=True`,
+    it's a no-op.
     """
 
     _tasks: dict[str, asyncio.Task[None]] = field(default_factory=lambda: {})
@@ -71,6 +73,10 @@ class BackgroundToolCapability(AbstractCapability[Any]):
                     SystemPromptPart(f"Background tool '{tool_name}' (task {task_id}) completed.\nResult: {result}"),
                     priority='follow_up',
                 )
+            except asyncio.CancelledError:
+                # Task cancelled during run cleanup — don't enqueue a follow-up;
+                # the event is still set via finally so a waiter can proceed.
+                raise
             except Exception as e:
                 ctx.enqueue_message(
                     SystemPromptPart(f"Background tool '{tool_name}' (task {task_id}) failed: {e}"),

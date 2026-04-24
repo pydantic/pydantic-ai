@@ -78,6 +78,7 @@ def test_model_request_parameters_are_serializable():
                     'prefer_builtin': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'background': False,
                 }
             ],
             'builtin_tools': [
@@ -147,6 +148,7 @@ def test_model_request_parameters_are_serializable():
                     'prefer_builtin': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'background': False,
                 }
             ],
             'prompted_output_template': None,

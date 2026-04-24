@@ -40,9 +40,11 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     - Follow-up messages are injected when the agent would otherwise end,
       redirecting to a new ModelRequestNode to continue the conversation.
 
-    This capability is always auto-injected and prepended to the capabilities
-    list so that steering messages are drained first (before user capabilities
-    see them) and follow-up drain runs last (after all other after_node_run hooks).
+    This capability is always auto-injected and placed outermost via
+    [`CapabilityOrdering`][pydantic_ai.capabilities.abstract.CapabilityOrdering]
+    so it wraps around other capabilities. This ensures steering messages are
+    drained into the model request before user capabilities see it, and follow-up
+    redirection runs after all other `after_node_run` hooks (which run in reverse).
     """
 
     @classmethod
@@ -60,11 +62,17 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         ctx: RunContext[Any],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Drain steering messages into the model request."""
+        """Drain steering messages into the model request.
+
+        Appends to both `request_context.messages` (so the model sees them in this
+        request) and `ctx.messages` (so they persist in the agent's message history).
+        """
         drained = _drain_by_priority(ctx.pending_messages, 'steering')
         if drained:
             parts = [part for msg in drained for part in msg.parts]
-            request_context.messages.append(ModelRequest(parts=parts))
+            steering_request = ModelRequest(parts=parts)
+            request_context.messages.append(steering_request)
+            ctx.messages.append(steering_request)
         return request_context
 
     async def after_node_run(
