@@ -454,6 +454,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See the [OpenAI Prompt Caching documentation](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) for more information.
     """
 
+    openai_max_completion_tokens: int
+    """An upper bound for the number of tokens that can be generated for a completion, including visible output tokens and reasoning tokens.
+
+    This is the OpenAI-specific `max_completion_tokens` parameter, which is distinct from `max_tokens`.
+    Use this for OpenAI reasoning models (o-series) where `max_completion_tokens` controls the combined
+    limit of output tokens plus reasoning tokens. For most providers and models, use `max_tokens` instead.
+
+    See the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-max_completion_tokens) for more details.
+    """
+
     openai_continuous_usage_stats: bool
     """When True, enables continuous usage statistics in streaming responses.
 
@@ -848,7 +858,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stream=stream,
                     stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                     stop=model_settings.get('stop_sequences', OMIT),
-                    max_completion_tokens=model_settings.get('max_tokens', OMIT),
+                    max_tokens=model_settings.get('max_tokens', OMIT),
+                    max_completion_tokens=model_settings.get('openai_max_completion_tokens', OMIT),
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
