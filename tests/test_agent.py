@@ -7788,6 +7788,7 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.root_capability is agent.root_capability
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',

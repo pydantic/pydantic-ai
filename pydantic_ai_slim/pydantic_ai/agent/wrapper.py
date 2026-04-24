@@ -28,6 +28,7 @@ from ..toolsets import AbstractToolset
 from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, EventStreamHandler, RunOutputDataT
 
 if TYPE_CHECKING:
+    from ..capabilities import CombinedCapability
     from .spec import AgentSpec
 
 
@@ -71,6 +72,10 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         return self.wrapped.event_stream_handler
+
+    @property
+    def root_capability(self) -> CombinedCapability[AgentDepsT]:
+        return self.wrapped.root_capability
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
