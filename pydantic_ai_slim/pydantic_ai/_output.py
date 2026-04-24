@@ -74,18 +74,15 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
-def _is_wrapped_as(value: Any, key: str) -> bool:
-    """Return True if value is a dict containing the given key."""
-    if not isinstance(value, dict):
-        return False
-    return key in cast(dict[str, Any], value)
-
-
 def _unwrap_semantic_value(validated: Any, unwrap_key: str | None) -> Any:
-    """Unwrap the validator's dict-wrapped form to the semantic value, for hooks to see."""
-    if unwrap_key is not None and _is_wrapped_as(validated, unwrap_key):
-        return cast(dict[str, Any], validated)[unwrap_key]
-    return validated
+    """Unwrap the validator's dict-wrapped form to the semantic value, for hooks to see.
+
+    When `unwrap_key` is set, the validator always produces a dict keyed by that name
+    (enforced by the schema), so we can unwrap unconditionally.
+    """
+    if unwrap_key is None:
+        return validated
+    return cast(dict[str, Any], validated)[unwrap_key]
 
 
 def _rewrap_internal_value(semantic: Any, unwrap_key: str | None) -> Any:
