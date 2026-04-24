@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -84,6 +84,8 @@ from . import (
     download_item,
     get_user_agent,
 )
+
+_StreamCloser = Callable[[], Awaitable[None]]
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -1035,7 +1037,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _stream=response,
+            _close_stream=response.close,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
@@ -1874,7 +1876,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _model_name=first_chunk.response.model,
             _model_settings=model_settings,
             _response=peekable_response,
-            _stream=response,
+            _close_stream=response.close,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
@@ -2618,7 +2620,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
-    _stream: AsyncStream[ChatCompletionChunk]
+    _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2628,7 +2630,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
-        await self._stream.close()
+        await self._close_stream()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name), self._stream_cancel_guard():
@@ -2820,7 +2822,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
     _response: AsyncIterable[responses.ResponseStreamEvent]
-    _stream: AsyncStream[responses.ResponseStreamEvent]
+    _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2829,7 +2831,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
-        await self._stream.close()
+        await self._close_stream()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name), self._stream_cancel_guard():

@@ -110,6 +110,8 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 XaiModelName = str | ChatModel
 """Possible xAI model names."""
 
+_StreamCloser = Callable[[], Awaitable[None]]
+
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'stop': 'stop',
     'length': 'length',
@@ -878,11 +880,17 @@ class XaiModel(Model[AsyncClient]):
 
         first_response, _ = first_item
 
+        # xai-sdk types streaming responses as AsyncIterator, but chat.stream()
+        # returns an async generator at runtime.
+        close_stream = cast(
+            _StreamCloser, response.aclose  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        )
+
         return XaiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=peekable_response,
-            _stream=response,
+            _close_stream=close_stream,
             _timestamp=first_response.created,
             _provider=self._provider,
         )
@@ -894,7 +902,7 @@ class XaiStreamedResponse(StreamedResponse):
 
     _model_name: str
     _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]
-    _stream: AsyncIterator[tuple[chat_types.Response, Any]]
+    _close_stream: _StreamCloser
     _timestamp: datetime
     _provider: Provider[AsyncClient]
 
@@ -910,7 +918,7 @@ class XaiStreamedResponse(StreamedResponse):
         # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
         # RPC cancellation hook.
         try:
-            await self._stream.aclose()  # type: ignore[union-attr]
+            await self._close_stream()
         except RuntimeError as exc:
             if not _utils.is_async_generator_already_running(exc):
                 raise

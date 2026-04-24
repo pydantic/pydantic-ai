@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -142,6 +142,8 @@ Since Gemini supports a variety of date-stamped models, we explicitly list the l
 allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
+
+_StreamCloser = Callable[[], Awaitable[None]]
 
 _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
@@ -756,11 +758,17 @@ class GoogleModel(Model[Client]):
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
+        # google.genai types streaming responses as AsyncIterator, but the stream=True
+        # response is an async generator at runtime.
+        close_stream = cast(
+            _StreamCloser, response.aclose  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        )
+
         return GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
-            _stream=response,
+            _close_stream=close_stream,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
@@ -998,7 +1006,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
-    _stream: AsyncIterator[GenerateContentResponse]
+    _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -1008,14 +1016,8 @@ class GeminiStreamedResponse(StreamedResponse):
     _has_content_filter: bool = field(default=False, init=False)
 
     async def close_stream(self) -> None:
-        # google.genai types _stream as AsyncIterator but it is an AsyncGenerator
-        # at runtime. If close_stream() is called while another task is awaiting
-        # __anext__ on the same generator, aclose() raises RuntimeError
-        # ("asynchronous generator is already running"). Safe to suppress:
-        # _cancelled is already set by the base cancel(), and the generator will
-        # be cleaned up when request_stream's ACM exits.
         try:
-            await self._stream.aclose()  # type: ignore[union-attr]
+            await self._close_stream()
         except RuntimeError as exc:
             if not _utils.is_async_generator_already_running(exc):
                 raise

@@ -354,7 +354,7 @@ async def test_google_close_stream_only_suppresses_async_generator_race(error_me
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-2.0-flash',
         _response=cast(Any, stream),
-        _stream=cast(Any, stream),
+        _close_stream=stream.aclose,
         _provider_name='google-gla',
         _provider_url='https://generativelanguage.googleapis.com',
     )
@@ -4481,11 +4481,15 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
         yield chunk
 
+    async def close_stream() -> None:
+        pass
+
+    response = response_iterator()
     streamed_response = GeminiStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
-        _response=response_iterator(),
-        _stream=response_iterator(),
+        _response=response,
+        _close_stream=close_stream,
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',

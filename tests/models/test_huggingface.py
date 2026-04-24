@@ -1193,7 +1193,7 @@ async def test_huggingface_close_stream_only_suppresses_async_generator_race(err
         _model_name='hf-model',
         _model_profile=cast(Any, object()),
         _response=cast(Any, stream),
-        _stream=cast(Any, stream),
+        _close_stream=stream.aclose,
         _provider_name='huggingface',
         _provider_url='https://api-inference.huggingface.co',
     )

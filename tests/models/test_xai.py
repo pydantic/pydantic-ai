@@ -5541,7 +5541,7 @@ async def test_xai_close_stream_only_suppresses_async_generator_race(error_messa
         model_request_parameters=ModelRequestParameters(),
         _model_name='grok-4-fast-non-reasoning',
         _response=cast(Any, stream),
-        _stream=cast(Any, stream),
+        _close_stream=stream.aclose,
         _timestamp=datetime.now(timezone.utc),
         _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
     )

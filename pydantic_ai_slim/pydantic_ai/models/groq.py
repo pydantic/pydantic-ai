@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,6 +58,8 @@ from . import (
     download_item,
     get_user_agent,
 )
+
+_StreamCloser = Callable[[], Awaitable[None]]
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
@@ -401,7 +403,7 @@ class GroqModel(Model[AsyncGroq]):
         return GroqStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
-            _stream=response,
+            _close_stream=response.close,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _provider_name=self._provider.name,
@@ -581,14 +583,14 @@ class GroqStreamedResponse(StreamedResponse):
     _model_name: GroqModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
-    _stream: AsyncStream[chat.ChatCompletionChunk]
+    _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def close_stream(self) -> None:
-        await self._stream.close()
+        await self._close_stream()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name), self._stream_cancel_guard():

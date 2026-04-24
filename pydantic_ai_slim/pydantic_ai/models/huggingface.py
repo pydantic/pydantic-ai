@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -120,6 +120,9 @@ _FINISH_REASON_MAP: dict[HuggingFaceFinishReason, FinishReason] = {
     'stop': 'stop',
     'tool_calls': 'tool_call',
 }
+
+
+_StreamCloser = Callable[[], Awaitable[None]]
 
 
 class HuggingFaceModelSettings(ModelSettings, total=False):
@@ -318,12 +321,18 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 'Streamed response ended without content or tool calls'
             )
 
+        # huggingface_hub types streaming responses as AsyncIterable, but the stream=True
+        # response is an async generator at runtime.
+        close_stream = cast(
+            _StreamCloser, response.aclose  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        )
+
         return HuggingFaceStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
-            _stream=response,
+            _close_stream=close_stream,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
@@ -484,21 +493,15 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
-    _stream: AsyncIterable[ChatCompletionStreamOutput]
+    _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def close_stream(self) -> None:
-        # huggingface_hub types _stream as AsyncIterable but it is an
-        # AsyncGenerator at runtime. If close_stream() is called while another
-        # task is awaiting __anext__ on the same generator, aclose() raises
-        # RuntimeError("asynchronous generator is already running"). Safe to
-        # suppress: _cancelled is already set by the base cancel(), and the
-        # generator will be cleaned up when request_stream's ACM exits.
         try:
-            await self._stream.aclose()  # type: ignore[union-attr]
+            await self._close_stream()
         except RuntimeError as exc:
             if not _utils.is_async_generator_already_running(exc):
                 raise

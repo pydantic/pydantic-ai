@@ -183,7 +183,7 @@ async def test_anthropic_cancelled_read_error_is_suppressed():
         _response=cast(AsyncIterable[BetaRawMessageStreamEvent], _BrokenReadResponse()),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
-        _stream=cast(Any, stream),
+        _close_stream=stream.close,
     )
 
     await response.cancel()
@@ -201,7 +201,7 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _response=cast(AsyncIterable[BetaRawMessageStreamEvent], _BrokenReadResponse()),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
-        _stream=cast(Any, _ClosableStream()),
+        _close_stream=_ClosableStream().close,
     )
 
     with pytest.raises(httpx.ReadError):
