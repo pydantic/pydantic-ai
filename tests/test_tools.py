@@ -1269,7 +1269,7 @@ def test_dynamic_tools_agent_wide():
     result = agent.run_sync('', deps=42)
     assert result.output == snapshot('success (no tool calls)')
 
-    with pytest.warns(UserWarning, match=r'prepare callback .*returned None'):
+    with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
         result = agent.run_sync('', deps=43)
     assert result.output == snapshot('success (no tool calls)')
 
