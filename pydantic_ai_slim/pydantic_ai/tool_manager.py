@@ -62,13 +62,13 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """The run context for this tool call."""
     args_valid: bool
     """Whether argument validation (schema + custom validator) passed."""
-    validated_args: Any = None
-    """The validated arguments if validation passed, None otherwise.
+    validated_args: dict[str, Any] | None = None
+    """The validated arguments if validation passed, `None` otherwise.
 
-    For tool calls: `dict[str, Any]` matching the tool's schema.
-    For output tools: the **semantic value** (what the model was asked to produce) — e.g.,
-    `MyModel(...)`, `42`, or a dict for multi-arg output functions. This is what output hooks
-    see; `execute_output_tool_call` re-wraps it to dict form before `processor.call()`.
+    Always a `dict[str, Any]` matching the tool schema that the model satisfied — for both
+    regular tool calls and output tool calls. Output-tool-specific semantic unwrapping
+    (e.g. `{'response': 42}` → `42`) happens inside `execute_output_tool_call` at the
+    output hook boundary, not here.
     """
     validation_error: ToolRetryError | None = None
     """The validation error if validation failed, None otherwise."""
@@ -372,17 +372,18 @@ class ToolManager(Generic[AgentDepsT]):
         tool: ToolsetTool[AgentDepsT] | None,
         ctx: RunContext[AgentDepsT],
         error: ToolRetryError | ValidationError | ModelRetry,
-        *,
-        allow_partial: bool = False,
     ) -> ValidatedToolCall[AgentDepsT]:
-        """Handle validation failure: check retries, mark failed, wrap error."""
+        """Handle validation failure: check retries, mark failed, wrap error.
+
+        Only called on the non-streaming path (`wrap_validation_errors=True`); streaming
+        lets errors propagate without going through this helper.
+        """
         max_retries = tool.max_retries if tool is not None else self.default_max_retries
         cause = (
             error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
         )
         self._check_max_retries(name, max_retries, cause)
-        if not allow_partial:  # pragma: no branch — allow_partial only used in streaming
-            self.failed_tools.add(name)
+        self.failed_tools.add(name)
         validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
         return ValidatedToolCall(
             call=call,
@@ -537,19 +538,29 @@ class ToolManager(Generic[AgentDepsT]):
                 allow_partial=allow_partial,
                 wrap_validation_errors=wrap_validation_errors,
             )
-            # Store the semantic value directly; execute_output_tool_call re-wraps before processor.call()
+            # Rewrap the (possibly hook-modified) semantic value into the dict shape that
+            # matches the tool's schema — `ValidatedToolCall.validated_args` is the
+            # schema-contract form, consistent with regular tool calls. The semantic
+            # unwrap happens again in `execute_output_tool_call` at the output hook boundary.
+            if (k := processor.hook_unwrap_key) is not None:
+                validated_args: dict[str, Any] | None = {k: semantic_value}
+            else:
+                # No unwrap key: `validated_args` holds the validated object itself
+                # (e.g. a `BaseModel` instance). Typed as `dict[str, Any] | None` for
+                # consistency with tool calls, matching pre-refactor behavior.
+                validated_args = semantic_value
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
                 ctx=ctx,
                 args_valid=True,
-                validated_args=semantic_value,
+                validated_args=validated_args,
                 validation_error=None,
             )
         except (ToolRetryError, ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
-            return self._make_validation_failure(name, call, tool, ctx, e, allow_partial=allow_partial)
+            return self._make_validation_failure(name, call, tool, ctx, e)
 
     async def execute_output_tool_call(
         self,
@@ -595,6 +606,15 @@ class ToolManager(Generic[AgentDepsT]):
             allows_deferred_tools=allows_deferred_tools,
         )
 
+        # Unwrap the dict-shaped `validated_args` back to the semantic value that output hooks
+        # see. Inverse of the rewrap in `validate_output_tool_call`. For `BaseModel` outputs,
+        # `validated_args` already holds the instance (no unwrap key), so this is a passthrough.
+        if (k := processor.hook_unwrap_key) is not None:
+            assert isinstance(validated.validated_args, dict)
+            semantic_value: Any = validated.validated_args[k]
+        else:
+            semantic_value = validated.validated_args
+
         # Use the global output retry context for validators, matching the text output path.
         validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
 
@@ -623,7 +643,7 @@ class ToolManager(Generic[AgentDepsT]):
                 cap,
                 run_context=validated.ctx,
                 output_context=output_context,
-                output=validated.validated_args,
+                output=semantic_value,
                 do_process=do_process,
                 wrap_validation_errors=wrap_validation_errors,
             )

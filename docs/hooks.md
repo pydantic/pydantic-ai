@@ -150,12 +150,7 @@ To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.Sk
 | `output_validate` | `output_validate=` | `wrap_output_validate` |
 | `output_validate_error` | `output_validate_error=` | `on_output_validate_error` |
 
-Output validation hooks fire when structured output is parsed and validated — for prompted/native structured output, this wraps Pydantic validation of the raw text; for tool output, this wraps Pydantic validation of the tool arguments. These hooks only fire for output types that require parsing; they do **not** fire for plain text or image output. All output hooks receive an `output_context` ([`OutputContext`][pydantic_ai.capabilities.OutputContext]) parameter.
-
-The primary use case is **pre-parse normalization**: `before_output_validate` lets you fix malformed model output before it reaches the parser.
-
-!!! note
-    For output tools, only output hooks fire — tool hooks (`before_tool_validate`, `before_tool_execute`, etc.) are skipped. Output hooks are the proper interception point for output processing.
+Output validation hooks fire when structured output is parsed against the output schema. They do **not** fire for plain text or image output. All output hooks receive an `output_context` ([`OutputContext`][pydantic_ai.capabilities.OutputContext]) parameter.
 
 !!! note
     During streaming, output **validation** hooks fire on every partial validation attempt as well as the final result. Output **processing** hooks fire only when partial validation succeeds, and on the final result. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
@@ -169,17 +164,9 @@ The primary use case is **pre-parse normalization**: `before_output_validate` le
 | `output_process` | `output_process=` | `wrap_output_process` |
 | `output_process_error` | `output_process_error=` | `on_output_process_error` |
 
-Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators. These hooks fire for **all** output types (text, structured, tool, image). Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run inside the processing pipeline (within `wrap_output_process`), so `after_output_process` sees the fully validated result.
+Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators.
 
-!!! note "Output hooks see the semantic value, not the internal dict form"
-    Unlike *tool* hooks (which see `dict[str, Any]` tool args matching the schema), output hooks see the **semantic value** the model was asked to produce:
-
-    - `Agent(output_type=MyModel)` → hooks see `MyModel(...)`
-    - `Agent(output_type=int)` → hooks see `42`, not `{'response': 42}`
-    - `Agent(output_type=func)` where `func(data: MyModel) -> X` → hooks see `MyModel(...)`, not `{'data': MyModel(...)}`
-    - `Agent(output_type=func)` where `func(data: int, other: str) -> X` → hooks see the full `dict` of args (genuine multi-value input)
-
-    This mirrors how you think about output types: `output_type=T` means "the model produces T", so hooks see T. This applies to all output modes (tool, native, prompted).
+See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
 
 ### Tool preparation
 

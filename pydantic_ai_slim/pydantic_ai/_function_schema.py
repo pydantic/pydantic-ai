@@ -58,6 +58,21 @@ class FunctionSchema:
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
 
+    @property
+    def single_field_name(self) -> str | None:
+        """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
+
+        Covers both model-like single args (via `single_arg_name`, which uses a wrap validator
+        to normalize to `{name: value}`) and primitive single args (where the schema is a
+        one-property TypedDict). Returns `None` for multi-arg functions and `**kwargs`-only.
+        """
+        if self.single_arg_name is not None:
+            return self.single_arg_name
+        properties = self.json_schema.get('properties', {})
+        if len(properties) == 1:
+            return next(iter(properties))
+        return None
+
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
         if self.is_async:

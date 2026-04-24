@@ -41,25 +41,25 @@ WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, An
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
 """Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
 
-RawToolArgs: TypeAlias = 'str | dict[str, Any]'
+RawToolArgs: TypeAlias = str | dict[str, Any]
 """Type alias for raw (pre-validation) tool arguments."""
 
-ValidatedToolArgs: TypeAlias = 'dict[str, Any]'
+ValidatedToolArgs: TypeAlias = dict[str, Any]
 """Type alias for validated tool arguments."""
 
-WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]]'
+WrapToolValidateHandler: TypeAlias = Callable[[RawToolArgs], Awaitable[ValidatedToolArgs]]
 """Handler type for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate]."""
 
-WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
+WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]]
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
 
-RawOutput: TypeAlias = 'str | dict[str, Any]'
+RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
-WrapOutputValidateHandler: TypeAlias = 'Callable[[RawOutput], Awaitable[Any]]'
+WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
 
-WrapOutputProcessHandler: TypeAlias = 'Callable[[Any], Awaitable[Any]]'
+WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
 
 
@@ -304,7 +304,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         is skipped and the returned result is used directly.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
-        `iter()` loop), this method receives an :class:`asyncio.CancelledError`.
+        `iter()` loop), this method receives an `asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly.
         """
         return await handler()

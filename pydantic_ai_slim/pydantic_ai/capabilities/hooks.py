@@ -94,95 +94,95 @@ class _ToolHookEntry(_HookEntry[_FuncT]):
 
 
 class BeforeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_run` hook functions."""
+    """Protocol for [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /) -> None | Awaitable[None]: ...
 
 class AfterRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_run` hook functions."""
+    """Protocol for [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, result: AgentRunResult[Any]) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 class WrapRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_run` hook functions."""
+    """Protocol for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, handler: WrapRunHandler) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 class OnRunErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_run_error` hook functions."""
+    """Protocol for [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, error: BaseException) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 class BeforeNodeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_node_run` hook functions."""
+    """Protocol for [`before_node_run`][pydantic_ai.capabilities.AbstractCapability.before_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any]) -> AgentNode[Any] | Awaitable[AgentNode[Any]]: ...
 
 class AfterNodeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_node_run` hook functions."""
+    """Protocol for [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], result: NodeResult[Any]) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
 
 class WrapNodeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_node_run` hook functions."""
+    """Protocol for [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
 
 class OnNodeRunErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_node_run_error` hook functions."""
+    """Protocol for [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], error: Exception) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
 
 class WrapRunEventStreamHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_run_event_stream` hook functions."""
+    """Protocol for [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
 
 class OnEventHookFunc(Protocol):
-    """Protocol for per-event hook functions (convenience over wrap_run_event_stream)."""
+    """Protocol for per-event hook functions (convenience over `wrap_run_event_stream`)."""
     def __call__(self, ctx: RunContext[Any], event: AgentStreamEvent, /) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_model_request` hook functions."""
+    """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
 
 class AfterModelRequestHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_model_request` hook functions."""
+    """Protocol for [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse | Awaitable[ModelResponse]: ...
 
 class WrapModelRequestHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_model_request` hook functions."""
+    """Protocol for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, handler: WrapModelRequestHandler) -> ModelResponse | Awaitable[ModelResponse]: ...
 
 class OnModelRequestErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_model_request_error` hook functions."""
+    """Protocol for [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, error: Exception) -> ModelResponse | Awaitable[ModelResponse]: ...
 
 class PrepareToolsHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.prepare_tools` hook functions."""
+    """Protocol for [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] hook functions."""
     def __call__(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition], /) -> list[ToolDefinition] | Awaitable[list[ToolDefinition]]: ...
 
 class BeforeToolValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_tool_validate` hook functions."""
+    """Protocol for [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs) -> RawToolArgs | Awaitable[RawToolArgs]: ...
 
 class AfterToolValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_tool_validate` hook functions."""
+    """Protocol for [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class WrapToolValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_tool_validate` hook functions."""
+    """Protocol for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, handler: WrapToolValidateHandler) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class OnToolValidateErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_tool_validate_error` hook functions."""
+    """Protocol for [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, error: ValidationError | ModelRetry) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class BeforeToolExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_tool_execute` hook functions."""
+    """Protocol for [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class AfterToolExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_tool_execute` hook functions."""
+    """Protocol for [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any) -> Any | Awaitable[Any]: ...
 
 class WrapToolExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_tool_execute` hook functions."""
+    """Protocol for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, handler: WrapToolExecuteHandler) -> Any | Awaitable[Any]: ...
 
 class OnToolExecuteErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_tool_execute_error` hook functions."""
+    """Protocol for [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
 
 class BeforeOutputValidateHookFunc(Protocol):
@@ -302,7 +302,7 @@ def _tool_bare_or_parameterized(
 
 
 class _HookRegistration(Generic[AgentDepsT]):
-    """Decorator namespace for registering hooks on a :class:`Hooks` instance.
+    """Decorator namespace for registering hooks on a [`Hooks`][pydantic_ai.capabilities.Hooks] instance.
 
     Accessed via `hooks.on`. Each method corresponds to a lifecycle hook and
     can be used as a bare decorator or a parameterized decorator::
@@ -678,8 +678,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
     """Register hook functions via decorators or constructor kwargs.
 
     For extension developers building reusable capabilities, subclass
-    :class:`AbstractCapability` directly. For application code that needs
-    a few hooks without the ceremony of a subclass, use `Hooks`.
+    [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
+    For application code that needs a few hooks without the ceremony of a subclass,
+    use `Hooks`.
 
     Example using decorators::
 

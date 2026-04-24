@@ -12296,6 +12296,147 @@ class TestUnionOutputWithHooks:
         result = await agent.run('hello')
         assert result.output == TypeB(b_val='recovered')
 
+    async def test_union_error_hook_recovery_with_primitive(self):
+        """Union mixing a BaseModel with a primitive (`Foo | bool | None`).
+
+        `bool` gets an `outer_typed_dict_key='response'` wrapper; recovery must rewrap the
+        primitive into the inner processor's dict shape before calling.
+        """
+
+        class Foo(BaseModel):
+            x: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"bad": "data"}')])
+
+        @dataclass
+        class RecoverPrimitiveCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                return True  # recover with a bool, matching the second union member
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([Foo, bool]),
+            capabilities=[RecoverPrimitiveCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output is True
+
+    async def test_union_error_hook_recovery_with_generic(self):
+        """Union mixing a BaseModel with a generic (`Foo | list[Bar]`).
+
+        `isinstance(x, list[Bar])` raises `TypeError`; resolution must fall back to the
+        generic origin (`list`) so the recovered list-valued output still maps to its
+        inner processor.
+        """
+
+        class Foo(BaseModel):
+            x: int
+
+        class Bar(BaseModel):
+            y: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"bad": "data"}')])
+
+        @dataclass
+        class RecoverListCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                return [Bar(y=1), Bar(y=2)]
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([Foo, list[Bar]]),
+            capabilities=[RecoverListCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == [Bar(y=1), Bar(y=2)]
+
+    async def test_union_after_validate_hook_swaps_union_member(self):
+        """`after_output_validate` can return a value of a different union member.
+
+        If the validated kind was `Foo` but a hook returned a `Bar`, `hook_execute` must
+        fall through to type-based resolution instead of passing a `Bar` to `Foo`'s inner
+        processor.
+        """
+
+        class Foo(BaseModel):
+            kind: str = 'Foo'
+            x: int
+
+        class Bar(BaseModel):
+            kind: str = 'Bar'
+            y: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"result": {"kind": "Foo", "data": {"x": 1}}}')])
+
+        @dataclass
+        class SwapUnionCap(AbstractCapability[Any]):
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                # Model said "Foo", hook swaps to "Bar" — execute must route to Bar's processor.
+                return Bar(y=42)
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([Foo, Bar]),
+            capabilities=[SwapUnionCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == Bar(y=42)
+
+    async def test_union_hook_returns_unknown_type_passes_through(self):
+        """If a hook returns a value matching NO union member, `hook_execute` passes it through.
+
+        The output function (if any) doesn't run, and the value reaches the user as-is —
+        better than silently dropping to `None`.
+        """
+
+        class Foo(BaseModel):
+            x: int
+
+        class Bar(BaseModel):
+            y: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"bad": "data"}')])
+
+        @dataclass
+        class RecoverUnknownCap(AbstractCapability[Any]):
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                return 'not in union'  # str isn't Foo or Bar
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([Foo, Bar]),
+            capabilities=[RecoverUnknownCap()],
+        )
+        result = await agent.run('hello')
+        assert result.output == 'not in union'
+
 
 class TestTextFunctionOutputCallHook:
     """Tests that TextFunctionOutputProcessor.call() is exercised through execute hooks."""
