@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,7 +14,7 @@ from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
-from ..capabilities.builtin_or_local import BuiltinOrLocalTool
+from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -56,8 +56,6 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
-from ..tools import AgentDepsT, Tool
-from ..toolsets import AbstractToolset
 from ..usage import RequestUsage
 
 XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
@@ -196,83 +194,6 @@ class XaiModelSettings(ModelSettings, total=False):
 
     See https://docs.x.ai for details.
     """
-
-
-@dataclass(init=False)
-class XSearch(BuiltinOrLocalTool[AgentDepsT]):
-    """X (Twitter) search capability for xAI models.
-
-    Uses the xAI model's native x_search builtin tool. Only works with xAI models.
-    """
-
-    allowed_x_handles: list[str] | None
-    """If provided, only posts from these X handles will be included (max 10). Requires builtin support."""
-
-    excluded_x_handles: list[str] | None
-    """If provided, posts from these X handles will be excluded (max 10). Requires builtin support."""
-
-    from_date: datetime | None
-    """If provided, only posts created on or after this datetime will be included."""
-
-    to_date: datetime | None
-    """If provided, only posts created on or before this datetime will be included."""
-
-    enable_image_understanding: bool
-    """Enable image analysis from X posts. Defaults to `False`."""
-
-    enable_video_understanding: bool
-    """Enable video analysis from X content. Defaults to `False`."""
-
-    include_output: bool
-    """Include raw X search results in the response as
-    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Defaults to `False`.
-    """
-
-    def __init__(
-        self,
-        *,
-        builtin: XSearchTool
-        | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]
-        | bool = True,
-        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
-        allowed_x_handles: list[str] | None = None,
-        excluded_x_handles: list[str] | None = None,
-        from_date: datetime | None = None,
-        to_date: datetime | None = None,
-        enable_image_understanding: bool = False,
-        enable_video_understanding: bool = False,
-        include_output: bool = False,
-    ) -> None:
-        self.builtin = builtin
-        self.local = local
-        self.allowed_x_handles = allowed_x_handles
-        self.excluded_x_handles = excluded_x_handles
-        self.from_date = from_date
-        self.to_date = to_date
-        self.enable_image_understanding = enable_image_understanding
-        self.enable_video_understanding = enable_video_understanding
-        self.include_output = include_output
-        self.__post_init__()
-
-    def _default_builtin(self) -> XSearchTool:
-        return XSearchTool(
-            allowed_x_handles=self.allowed_x_handles,
-            excluded_x_handles=self.excluded_x_handles,
-            from_date=self.from_date,
-            to_date=self.to_date,
-            enable_image_understanding=self.enable_image_understanding,
-            enable_video_understanding=self.enable_video_understanding,
-            include_output=self.include_output,
-        )
-
-    def _builtin_unique_id(self) -> str:
-        return XSearchTool.kind
-
-    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        return None
-
-    def _requires_builtin(self) -> bool:
-        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.

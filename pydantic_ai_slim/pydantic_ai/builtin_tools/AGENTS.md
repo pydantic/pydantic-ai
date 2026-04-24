@@ -2,9 +2,9 @@
 
 ## Adding a new builtin tool
 
-- Every builtin tool must have a corresponding capability extending `BuiltinOrLocalTool` — capabilities are the primary user-facing API for enabling tool features on agents; a builtin tool without a capability is undiscoverable for users working with the capabilities list
-  - Vendor-specific tools: capability lives in the provider's model file (e.g., `XSearch` in `models/xai.py`)
-  - Cross-provider tools: capability lives in `capabilities/` (e.g., `WebSearch`, `ImageGeneration`)
+- Every builtin tool must have a corresponding capability extending `BuiltinOrLocalTool` in `capabilities/` — capabilities are the primary user-facing API for enabling tool features on agents; a builtin tool without a capability is undiscoverable for users working with the capabilities list
+  - Local fallback (e.g., `WebSearch`, `WebFetch`): capability falls back to a function tool on providers without builtin support
+  - Subagent fallback (e.g., `ImageGeneration`, `XSearch`): capability delegates to a subagent running another provider's model via `fallback_model`
 - When a provider's API has request-level parameters controlling raw tool output inclusion (e.g., xAI `include`, OpenAI `include`), expose the tool-specific ones as fields on the tool class — not just in model settings — users configuring `XSearchTool(...)` should discover all relevant options there; model settings remain as an alternative for backward compat
 - Provider support must be documented in three places: the tool class docstring 'Supported by' list, `docs/builtin-tools.md` provider table, and field-level docstrings for provider-specific semantics
 - When a tool field maps directly to a provider API field name, prefer that name — users may have provider docs open alongside pydantic-ai docs

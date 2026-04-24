@@ -166,6 +166,9 @@ _(This example is complete, it can be run "as is")_
 
 ## X Search Tool
 
+!!! tip
+    For a model-agnostic approach with a subagent fallback, see the [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](capabilities.md#provider-adaptive-tools).
+
 The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
 
 ### Usage
@@ -217,7 +220,7 @@ _(This example is complete, it can be run "as is")_
     You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
 
 !!! note "Including raw search results"
-    By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_x_search_output=True` on [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] exposed via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
+    By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_output=True` on [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] exposed via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
 
 ## Code Execution Tool
 
