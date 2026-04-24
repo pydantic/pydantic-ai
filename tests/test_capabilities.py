@@ -10698,8 +10698,7 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
 
 
 async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
-    """When a handler denies via `approvals[id] = False`, handle_call raises `ToolDeniedError` with the default denial message."""
-    from pydantic_ai.exceptions import ToolDeniedError
+    """When a handler denies via `approvals[id] = False`, handle_call returns `ToolDenied()` with the default denial message."""
     from pydantic_ai.toolsets import FunctionToolset
 
     inner_toolset = FunctionToolset()
@@ -10724,25 +10723,20 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
         capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
     )
 
-    caught: ToolDeniedError | None = None
+    captured: Any = None
 
     @agent.tool
     async def caller_tool(ctx: RunContext[None]) -> str:
-        nonlocal caught
+        nonlocal captured
         assert ctx.tool_manager is not None
-        try:
-            await ctx.tool_manager.handle_call(
-                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
-            )
-            return 'no raise'  # pragma: no cover
-        except ToolDeniedError as e:
-            caught = e
-            return 'caught'
+        captured = await ctx.tool_manager.handle_call(
+            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+        )
+        return 'caught' if isinstance(captured, ToolDenied) else 'no denial'
 
     await agent.run('go')
-    assert caught is not None
-    assert caught.tool_denied == ToolDenied()
-    assert str(caught) == ToolDenied().message
+    assert isinstance(captured, ToolDenied)
+    assert captured == ToolDenied()
 
 
 async def test_deferred_tool_handler_via_handle_call_override_args():
@@ -10930,8 +10924,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
 
 
 async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
-    """When a handler denies a deferred call, handle_call raises `ToolDeniedError` carrying the custom `ToolDenied`."""
-    from pydantic_ai.exceptions import ToolDeniedError
+    """When a handler denies a deferred call, handle_call returns the custom `ToolDenied` value verbatim."""
     from pydantic_ai.toolsets import FunctionToolset
 
     inner_toolset = FunctionToolset()
@@ -10958,25 +10951,20 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
         capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
     )
 
-    caught: ToolDeniedError | None = None
+    captured: Any = None
 
     @agent.tool
     async def caller_tool(ctx: RunContext[None]) -> str:
-        nonlocal caught
+        nonlocal captured
         assert ctx.tool_manager is not None
-        try:
-            await ctx.tool_manager.handle_call(
-                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
-            )
-            return 'no raise'  # pragma: no cover
-        except ToolDeniedError as e:
-            caught = e
-            return 'caught'
+        captured = await ctx.tool_manager.handle_call(
+            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+        )
+        return 'caught' if isinstance(captured, ToolDenied) else 'no denial'
 
     await agent.run('go')
-    assert caught is not None
-    assert caught.tool_denied == ToolDenied(message='not today')
-    assert str(caught) == 'not today'
+    assert isinstance(captured, ToolDenied)
+    assert captured == ToolDenied(message='not today')
 
 
 async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():

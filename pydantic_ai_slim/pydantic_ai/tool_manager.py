@@ -21,7 +21,6 @@ from .exceptions import (
     ModelRetry,
     SkipToolExecution,
     SkipToolValidation,
-    ToolDeniedError,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -610,7 +609,7 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         approved: bool = False,
         metadata: Any = None,
-    ) -> Any:
+    ) -> Any | ToolDenied:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
         This is a convenience method that combines validate_tool_call() and execute_tool_call().
@@ -625,6 +624,25 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
+
+        Returns:
+            The tool's return value on success — possibly a [`ToolReturn`][pydantic_ai.messages.ToolReturn]
+            wrapper if the tool or handler supplied one.
+
+            A [`ToolDenied`][pydantic_ai.tools.ToolDenied] instance if a
+            [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+            handler denied the call. **Callers must `isinstance`-check the result**
+            before treating it as a successful tool return — `ToolDenied` is *not* a
+            valid tool result and the message string alone is indistinguishable from
+            a real return value. Surfacing the denial (e.g. recording
+            `ToolReturnPart(outcome='denied')` in message history, or raising inside
+            a sandbox) is the caller's responsibility.
+
+        Raises:
+            ToolRetryError: The handler requested a retry, or the (re-)executed tool
+                raised `ModelRetry`.
+            CallDeferred / ApprovalRequired: No handler resolved the call, or the
+                approved tool re-raised a deferral.
         """
         validated = await self.validate_tool_call(
             call,
@@ -659,7 +677,7 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
-    ) -> Any:
+    ) -> Any | ToolDenied:
         """Resolve a single deferred tool call inline using the capability handler.
 
         Dispatches the handler's result for `call` on the same set of
@@ -675,11 +693,11 @@ class ToolManager(Generic[AgentDepsT]):
             For approved calls, the raw tool return (possibly a `ToolReturn` wrapper).
             For external-call results, the value the handler supplied verbatim (plain
             value or `ToolReturn`).
+            For denied calls, the [`ToolDenied`][pydantic_ai.tools.ToolDenied] instance
+            from the handler — callers must `isinstance`-check before treating the
+            return value as a successful tool result.
 
         Raises:
-            ToolDeniedError: Handler denied the call (caller should record a
-                `ToolReturnPart(outcome='denied')` in message history if relevant — the
-                denial message alone is *not* a successful tool result).
             ToolRetryError: Handler requested a retry via `ModelRetry` or `RetryPromptPart`,
                 or the approved tool re-raised `ModelRetry`.
             CallDeferred / ApprovalRequired: Handler couldn't resolve the call, or the
@@ -701,7 +719,10 @@ class ToolManager(Generic[AgentDepsT]):
             raise exc
 
         if isinstance(tool_call_result, ToolDenied):
-            raise ToolDeniedError(tool_call_result)
+            # Surface the denial as a return value, not an exception. Callers must
+            # `isinstance`-check the result of `handle_call` to distinguish a denial
+            # from a successful tool return.
+            return tool_call_result
         if isinstance(tool_call_result, ToolApproved):
             validate_call = call
             if tool_call_result.override_args is not None:
