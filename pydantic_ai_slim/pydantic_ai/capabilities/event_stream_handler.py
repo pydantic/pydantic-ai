@@ -30,7 +30,9 @@ class HandleEventStream(AbstractCapability[AgentDepsT]):
       returning `None`. Events are forwarded to the handler while also being passed
       through unchanged to the rest of the capability chain, so multiple handlers (and
       the top-level `event_stream_handler` argument) can all see the same stream without
-      interfering.
+      interfering. A handler that returns early stops receiving events but does not
+      affect downstream consumers; a handler that raises propagates the exception to
+      the rest of the run.
     - An [`EventStreamProcessor`][pydantic_ai.agent.EventStreamProcessor] — an async
       generator yielding [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
       The events it yields replace the inner stream for downstream wrappers and consumers,

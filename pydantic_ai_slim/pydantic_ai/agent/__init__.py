@@ -87,6 +87,7 @@ from .abstract import (
     AgentMetadata,
     AgentModelSettings,
     EventStreamHandler,
+    EventStreamProcessor,
     RunOutputDataT,
 )
 from .spec import AgentSpec, get_capability_registry
@@ -111,6 +112,7 @@ __all__ = (
     'CallToolsNode',
     'EndStrategy',
     'EventStreamHandler',
+    'EventStreamProcessor',
     'InstrumentationSettings',
     'ModelRequestNode',
     'ParallelExecutionMode',
