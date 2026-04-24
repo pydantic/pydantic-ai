@@ -9,10 +9,13 @@
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
 <!-- See: https://ai.pydantic.dev/harness/overview/#what-goes-where -->
 
+<!-- Please write the description and review replies in your own words. -->
+<!-- See: https://github.com/pydantic/pydantic-ai/blob/main/AI_POLICY.md -->
+
 - Closes #<issue>
 
 ### Checklist
 
-- [ ] Any **AI generated code** has been reviewed line-by-line by the human PR author, who stands by it.
+- [ ] Any **AI generated code** has been reviewed line-by-line by the human PR author, who stands by it. See the [AI Policy](https://github.com/pydantic/pydantic-ai/blob/main/AI_POLICY.md).
 - [ ] No **breaking changes** in accordance with the [version policy](https://github.com/pydantic/pydantic-ai/blob/main/docs/version-policy.md).
 - [ ] **PR title** is fit for the [release changelog](https://github.com/pydantic/pydantic-ai/releases).

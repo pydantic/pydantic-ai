@@ -5,7 +5,10 @@ labels: ["feature"]
 body:
   - type: markdown
     attributes:
-      value: Thank you for contributing to Pydantic AI! ✊
+      value: |
+        Thank you for contributing to Pydantic AI! ✊
+
+        Please describe the feature and your use case in your own words — see our [AI Policy](https://github.com/pydantic/pydantic-ai/blob/main/AI_POLICY.md).
 
   - type: textarea
     id: description
