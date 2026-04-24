@@ -18,7 +18,6 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
-from .process_event_stream import ProcessEventStream
 from .history_processor import HistoryProcessor
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -26,6 +25,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .process_event_stream import ProcessEventStream
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
