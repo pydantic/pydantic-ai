@@ -51,7 +51,7 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
-from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
+from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -87,6 +87,7 @@ from .abstract import (
     AgentMetadata,
     AgentModelSettings,
     EventStreamHandler,
+    EventStreamProcessor,
     RunOutputDataT,
 )
 from .spec import AgentSpec, get_capability_registry
@@ -111,6 +112,7 @@ __all__ = (
     'CallToolsNode',
     'EndStrategy',
     'EventStreamHandler',
+    'EventStreamProcessor',
     'InstrumentationSettings',
     'ModelRequestNode',
     'ParallelExecutionMode',
@@ -401,7 +403,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         capabilities = list(capabilities or [])
         for history_processor in self.history_processors:
-            capabilities.append(HistoryProcessorCap(history_processor))
+            capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
 
@@ -2763,10 +2765,3 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         return 'the agent'
-
-    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
-        if tool.requires_approval and not self.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
-        super().add_tool(tool)

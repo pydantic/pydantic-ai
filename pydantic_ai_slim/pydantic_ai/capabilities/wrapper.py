@@ -9,7 +9,14 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentBuiltinTool,
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
@@ -382,3 +389,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return await self.wrapped.on_output_process_error(
             ctx, output_context=output_context, output=output, error=error
         )
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        return await self.wrapped.handle_deferred_tool_calls(ctx, requests=requests)

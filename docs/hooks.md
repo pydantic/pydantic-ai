@@ -176,6 +176,38 @@ See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatu
 
 Filters or modifies tool definitions the model sees on each step. Controls visibility, not execution.
 
+### Deferred tool call hook
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `deferred_tool_calls` | `deferred_tool_calls=` | `handle_deferred_tool_calls` |
+
+Resolves [deferred tool calls](deferred-tools.md) (approval-required or externally-executed) inline during a run. The hook receives a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and returns a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] (or `None` to decline). Multiple registered hooks accumulate: each receives the still-unresolved requests and can resolve some or all of them.
+
+```python {title="hooks_deferred_tool_calls.py"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+
+
+@hooks.on.deferred_tool_calls
+async def auto_approve(
+    ctx: RunContext[None], *, requests: DeferredToolRequests
+) -> DeferredToolResults:
+    return requests.build_results(approve_all=True)
+
+
+agent = Agent('test', capabilities=[hooks])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    return f'File {path!r} deleted'
+```
+
+For pure application-level handler registration without other hooks, the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability is more concise — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
+
 ### Event stream hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |

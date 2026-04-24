@@ -29,7 +29,9 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
-| [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](deferred-tools.md#resolving-deferred-calls-with-a-handler) inline with a handler function | — |
+| [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards agent stream events to a handler function | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
@@ -865,6 +867,18 @@ class ErrorLogger(AbstractCapability[Any]):
         self.errors.append(f'Tool {call.tool_name} failed: {error}')
         raise error  # Re-raise to let the normal retry flow handle it
 ```
+
+#### Deferred tool calls
+
+Capabilities can resolve [deferred tool calls](deferred-tools.md) — calls that require approval, or that are executed externally — directly from the agent run, without ending the run and waiting for a follow-up:
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] | `(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults \| None` | Resolve some or all pending approval/external calls inline |
+
+Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output for the caller to handle.
+
+For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
 ### Wrapping capabilities
 

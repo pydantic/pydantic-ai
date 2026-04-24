@@ -10,7 +10,14 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentBuiltinTool,
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
@@ -787,6 +794,34 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
         """
         raise error
+
+    # --- Deferred tool call hooks ---
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        """Handle deferred tool calls (approval-required or externally-executed) inline during an agent run.
+
+        Called by [`ToolManager`][pydantic_ai.tool_manager.ToolManager] when:
+
+        - a tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+          [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] during execution, or
+        - the model calls a tool registered with `requires_approval=True` (see
+          [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval))
+          or a tool backed by [external execution](../deferred-tools.md#external-tool-execution).
+
+        Uses accumulation dispatch: each capability in the chain receives remaining
+        unresolved requests and can resolve some or all of them. Results are merged
+        and unresolved calls are passed to the next capability.
+
+        **Return** a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] to resolve
+        some or all calls.
+        **Return** `None` to leave all calls unresolved.
+        """
+        return None
 
     # --- Convenience methods ---
 

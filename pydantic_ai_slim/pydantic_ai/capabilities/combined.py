@@ -12,7 +12,14 @@ from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentBuiltinTool,
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -517,6 +524,27 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             except Exception as new_error:
                 error = new_error
         raise error
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        accumulated = DeferredToolResults()
+        remaining = requests
+        any_handled = False
+        for capability in self.capabilities:
+            result = await capability.handle_deferred_tool_calls(ctx, requests=remaining)
+            if result is None or not (result.approvals or result.calls):
+                continue
+            any_handled = True
+            accumulated.update(result)
+            remaining_or_none = remaining.remaining(result)
+            if remaining_or_none is None:
+                break
+            remaining = remaining_or_none
+        return accumulated if any_handled else None
 
 
 # --- Composition helpers ---
