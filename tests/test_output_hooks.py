@@ -3120,3 +3120,90 @@ class TestHookSemanticValue:
         agent = Agent(FunctionModel(model_fn), output_type=int, capabilities=[DoubleCap()])
         result = await agent.run('hello')
         assert result.output == 20
+
+
+class TestHookExceptionHandling:
+    """ValidationError/ModelRetry raised from before_* and after_* hooks should trigger retry,
+    matching the behavior when raised from wrap_output_validate/wrap_output_process.
+    """
+
+    async def test_validation_error_from_after_output_validate_triggers_retry(self):
+        """ValidationError from after_output_validate should be caught and trigger model retry."""
+        from pydantic import TypeAdapter
+
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": -1}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        @dataclass
+        class StricterCap(AbstractCapability[Any]):
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                # Additional Pydantic validation: reject negative values
+                if isinstance(output, MyOutput) and output.value < 0:
+                    # Simulate Pydantic validation failing
+                    TypeAdapter(int).validate_python('not_an_int')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[StricterCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=5)
+        assert call_count == 2  # retry happened
+
+    async def test_validation_error_from_after_output_process_triggers_retry(self):
+        """ValidationError from after_output_process should be caught and trigger model retry."""
+        from pydantic import TypeAdapter
+
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": -1}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        @dataclass
+        class StricterCap(AbstractCapability[Any]):
+            async def after_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, MyOutput) and output.value < 0:
+                    TypeAdapter(int).validate_python('not_an_int')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[StricterCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=5)
+        assert call_count == 2
+
+    async def test_model_retry_from_before_output_process_triggers_retry(self):
+        """ModelRetry from before_output_process should trigger model retry."""
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[TextPart(content='{"value": -1}')])
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        @dataclass
+        class RejectCap(AbstractCapability[Any]):
+            async def before_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                if isinstance(output, MyOutput) and output.value < 0:
+                    raise ModelRetry('Value must be non-negative')
+                return output
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[RejectCap()])
+        result = await agent.run('hello')
+        assert result.output == MyOutput(value=5)
+        assert call_count == 2

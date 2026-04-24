@@ -231,9 +231,9 @@ async def run_output_validate_hooks(
 
     Validate hooks only fire for structured output that needs parsing.
 
-    ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
-    and converted to ToolRetryError when `wrap_validation_errors` is True.
-    When False (streaming), errors propagate as-is.
+    ValidationError and ModelRetry from any hook (before, after, wrap, on_error) are
+    caught by the outer handler and converted to ToolRetryError when
+    `wrap_validation_errors` is True. When False (streaming), errors propagate as-is.
     """
     try:
         output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
@@ -259,8 +259,9 @@ async def run_output_validate_hooks(
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
     except ToolRetryError:
         raise  # Already wrapped, propagate
-    except ModelRetry as e:
-        # ModelRetry from before_output_validate or after_output_validate
+    except (ValidationError, ModelRetry) as e:
+        # ValidationError or ModelRetry from before_output_validate or after_output_validate
+        # (e.g. a user hook that does additional Pydantic validation on the validated output)
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
         raise  # pragma: no cover — wrap_validation_errors=False only in streaming partial validation
@@ -279,9 +280,9 @@ async def run_output_process_hooks(
 
     Process hooks fire for ALL output types (text, structured, tool, image).
 
-    ModelRetry from any hook (before, after, wrap, on_error) is caught by the outer handler
-    and converted to ToolRetryError when wrap_validation_errors is True.
-    When False (streaming), ModelRetry propagates as-is.
+    ValidationError and ModelRetry from any hook (before, after, wrap, on_error) are caught
+    by the outer handler and converted to ToolRetryError when wrap_validation_errors is True.
+    When False (streaming), errors propagate as-is.
     """
     try:
         output = await capability.before_output_process(run_context, output_context=output_context, output=output)
@@ -302,7 +303,9 @@ async def run_output_process_hooks(
         return await capability.after_output_process(run_context, output_context=output_context, output=result)
     except ToolRetryError:
         raise  # Already wrapped, propagate
-    except ModelRetry as e:
+    except (ValidationError, ModelRetry) as e:
+        # ValidationError or ModelRetry from before_output_process or after_output_process
+        # (e.g. a user hook that does additional Pydantic validation on the processed output)
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
         raise
