@@ -98,6 +98,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 dict[str, ActivityConfig | Literal[False]],
                 type[AgentDepsT],
                 type[TemporalRunContext[AgentDepsT]],
+                AbstractAgent[AgentDepsT, Any] | None,
             ],
             AbstractToolset[AgentDepsT],
         ] = _default_temporalize_toolset,
@@ -347,6 +348,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 {},  # per-tool config comes from tool metadata on the capability path
                 self._deps_type,
                 self.run_context_type,
+                self._agent,
             )
             if isinstance(wrapped, TemporalWrapperToolset):
                 activities.extend(wrapped.temporal_activities)

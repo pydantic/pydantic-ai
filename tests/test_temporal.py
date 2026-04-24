@@ -4372,7 +4372,7 @@ def test_durability_get_wrapper_toolset_returns_none():
         name='no_wrap_test',
         capabilities=[
             TemporalDurability(
-                temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type: ts,
+                temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type, agent: ts,
             )
         ],
     )
