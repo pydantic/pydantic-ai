@@ -340,8 +340,10 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_result = await cap.after_tool_execute(
                     ctx, call=call, tool_def=tool_def, args=args, result=tool_result
                 )
-            except ModelRetry as e:
-                # Hook raised ModelRetry — convert to ToolRetryError for retry handling
+            except (ValidationError, ModelRetry) as e:
+                # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
+                # doing additional Pydantic validation on args/result) — convert to
+                # ToolRetryError for retry handling.
                 name = call.tool_name
                 self._check_max_retries(name, validated.tool.max_retries, e)
                 self.failed_tools.add(name)

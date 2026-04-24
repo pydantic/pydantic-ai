@@ -8332,6 +8332,98 @@ class TestModelRetryFromHooks:
             ]
         )
 
+    async def test_after_tool_execute_validation_error(self):
+        """after_tool_execute raises ValidationError — converted to ToolRetryError for retry."""
+        from pydantic import TypeAdapter
+
+        tool_call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if info.function_tools:
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class ValErrCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                if not self.retried:
+                    self.retried = True
+                    # Simulate a user hook doing additional Pydantic validation
+                    TypeAdapter(int).validate_python('not_an_int')
+                return result
+
+        cap = ValErrCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert result.output == 'got: tool result'
+        assert tool_call_count == 2  # Retried after ValidationError
+
+    async def test_before_tool_execute_validation_error(self):
+        """before_tool_execute raises ValidationError — converted to ToolRetryError for retry."""
+        from pydantic import TypeAdapter
+
+        tool_call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if info.function_tools:
+                for msg in messages:
+                    for part in msg.parts:
+                        if isinstance(part, ToolReturnPart):
+                            return make_text_response(f'got: {part.content}')
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
+                )
+            return make_text_response('no tools')  # pragma: no cover
+
+        @dataclass
+        class ValErrCap(AbstractCapability[Any]):
+            retried: bool = False
+
+            async def before_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+            ) -> dict[str, Any]:
+                if not self.retried:
+                    self.retried = True
+                    TypeAdapter(int).validate_python('not_an_int')
+                return args
+
+        cap = ValErrCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_call_count
+            tool_call_count += 1
+            return 'tool result'
+
+        result = await agent.run('call tool')
+        assert result.output == 'got: tool result'
+        # Tool only called once — before_tool_execute ValidationError prevented first call
+        assert tool_call_count == 1
+
     async def test_wrap_tool_execute_model_retry_skips_on_error(self):
         """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
         on_error_called = False
