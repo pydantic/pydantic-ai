@@ -109,6 +109,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # Explicit named native strategy (``'bm25'`` / ``'regex'``). The user committed
         # to a specific algorithm, so ``optional=False``: if the model can't honor it,
         # the request must error rather than silently substitute a different algorithm.
+        #
+        # Assumes no local implementation of bm25/regex exists — if we ever port either
+        # to Python, ``optional`` should flip to ``True`` for that strategy and
+        # ``ToolSearchToolset`` should gain a matching branch, so models without native
+        # support can still honor the choice via the local path.
         named: ToolSearchNativeStrategy = self.strategy
         return [ToolSearchTool(strategy=named, optional=False)]
 
