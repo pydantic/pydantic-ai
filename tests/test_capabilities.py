@@ -11076,4 +11076,124 @@ async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id()
     assert result.output == 'final'
 
 
+async def test_deferred_tool_handler_via_hooks_decorator():
+    """`@hooks.on.handle_deferred_tool_calls` resolves deferred calls inline."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    hooks = Hooks[None]()
+
+    @hooks.on.handle_deferred_tool_calls
+    async def handler(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[hooks])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 10
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done!'
+
+
+async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulation():
+    """`Hooks(handle_deferred_tool_calls=...)` accumulates results across registered handlers."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {}, tool_call_id='a1'),
+                    ToolCallPart('tool_b', {}, tool_call_id='b1'),
+                    ToolCallPart('tool_c', {}, tool_call_id='c1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    def handle_a(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+        results = DeferredToolResults()
+        for call in requests.approvals:
+            if call.tool_name == 'tool_a':
+                results.approvals[call.tool_call_id] = True
+        return results
+
+    hooks = Hooks[None](handle_deferred_tool_calls=handle_a)
+
+    @hooks.on.handle_deferred_tool_calls
+    async def handle_rest(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+        # tool_a was already resolved by handle_a; this handler sees only tool_b and tool_c
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    @hooks.on.handle_deferred_tool_calls
+    async def never_called(  # pragma: no cover
+        ctx: RunContext[None], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        # All calls should already be resolved by the previous handler — this is the early-break path
+        raise AssertionError('Should not be called: all requests already resolved')
+
+    agent = Agent(FunctionModel(llm), capabilities=[hooks])
+
+    @agent.tool
+    def tool_a(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'a'
+
+    @agent.tool
+    def tool_b(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'b'
+
+    @agent.tool
+    def tool_c(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'c'
+
+    result = await agent.run('Hello')
+    assert result.output == 'All done.'
+
+
+async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
+    """`Hooks` returns None from `handle_deferred_tool_calls` when no registered handler resolves anything."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
+
+    hooks = Hooks[None]()
+
+    @hooks.on.handle_deferred_tool_calls
+    async def declines(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+        return None
+
+    @hooks.on.handle_deferred_tool_calls
+    async def empty(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+        # Empty results count as "didn't handle"
+        return DeferredToolResults()
+
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[hooks],
+    )
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return 'done'  # pragma: no cover
+
+    result = await agent.run('Hello')
+    # Falls through to bubble-up since no handler resolved anything
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+
+
 # endregion

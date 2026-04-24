@@ -29,7 +29,7 @@ from pydantic import ValidationError
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
 from .abstract import (
     AbstractCapability,
@@ -180,6 +180,10 @@ class WrapToolExecuteHookFunc(Protocol):
 class OnToolExecuteErrorHookFunc(Protocol):
     """Protocol for :meth:`~AbstractCapability.on_tool_execute_error` hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
+
+class HandleDeferredToolCallsHookFunc(Protocol):
+    """Protocol for :meth:`~AbstractCapability.handle_deferred_tool_calls` hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, requests: DeferredToolRequests) -> DeferredToolResults | None | Awaitable[DeferredToolResults | None]: ...
 # fmt: on
 
 
@@ -546,6 +550,21 @@ class _HookRegistration(Generic[AgentDepsT]):
     ) -> Any:
         return _tool_bare_or_parameterized(self._r, 'on_tool_execute_error', func, tools=tools, timeout=timeout)
 
+    # --- Deferred tool calls ---
+
+    @overload
+    def handle_deferred_tool_calls(
+        self, func: HandleDeferredToolCallsHookFunc, /
+    ) -> HandleDeferredToolCallsHookFunc: ...
+    @overload
+    def handle_deferred_tool_calls(
+        self, *, timeout: float | None = None
+    ) -> Callable[[HandleDeferredToolCallsHookFunc], HandleDeferredToolCallsHookFunc]: ...
+    def handle_deferred_tool_calls(
+        self, func: HandleDeferredToolCallsHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'handle_deferred_tool_calls', func, timeout=timeout)
+
 
 # --- The Hooks capability ---
 
@@ -610,6 +629,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         after_tool_execute: AfterToolExecuteHookFunc | None = None,
         tool_execute: WrapToolExecuteHookFunc | None = None,
         tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
+        # Deferred tool calls
+        handle_deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
         # Ordering
         ordering: CapabilityOrdering | None = None,
     ):
@@ -640,6 +661,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_tool_execute': after_tool_execute,
             'wrap_tool_execute': tool_execute,
             'on_tool_execute_error': tool_execute_error,
+            'handle_deferred_tool_calls': handle_deferred_tool_calls,
         }
         for key, func in _kwargs.items():
             if func is not None:
@@ -918,6 +940,27 @@ class Hooks(AbstractCapability[AgentDepsT]):
             except Exception as new_error:
                 error = new_error
         raise error
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        accumulated = DeferredToolResults()
+        remaining = requests
+        any_handled = False
+        for entry in self._get('handle_deferred_tool_calls'):
+            result = await _call_entry(entry, 'handle_deferred_tool_calls', ctx, requests=remaining)
+            if result is None or not (result.approvals or result.calls):
+                continue
+            any_handled = True
+            accumulated.update(result)
+            remaining_or_none = remaining.remaining(result)
+            if remaining_or_none is None:
+                break
+            remaining = remaining_or_none
+        return accumulated if any_handled else None
 
 
 # --- Wrap chain helper ---
