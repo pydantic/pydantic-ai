@@ -466,9 +466,11 @@ async def test_tool_search_toolset_search_returns_matching_tools():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value=[
-                {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
-            ],
+            return_value={
+                'tools': [
+                    {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
+                ]
+            },
             metadata={'discovered_tools': ['calculate_mortgage']},
         )
     )
@@ -485,9 +487,9 @@ async def test_tool_search_toolset_search_is_case_insensitive():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'STOCK'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv) == 1
-    assert rv[0]['name'] == 'stock_price'
+    rv = cast('dict[str, Any]', result.return_value)
+    assert len(rv['tools']) == 1
+    assert rv['tools'][0]['name'] == 'stock_price'
 
 
 async def test_tool_search_toolset_search_matches_description():
@@ -501,9 +503,9 @@ async def test_tool_search_toolset_search_matches_description():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'cryptocurrency'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv) == 1
-    assert rv[0]['name'] == 'crypto_price'
+    rv = cast('dict[str, Any]', result.return_value)
+    assert len(rv['tools']) == 1
+    assert rv['tools'][0]['name'] == 'crypto_price'
 
 
 async def test_tool_search_toolset_prefers_specific_term_matches():
@@ -528,10 +530,12 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'github profile'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value=[
-                {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
-                {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
-            ],
+            return_value={
+                'tools': [
+                    {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
+                    {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
+                ]
+            },
             metadata={'discovered_tools': ['github_get_me', 'github_create_gist']},
         )
     )
@@ -559,10 +563,12 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'stock price'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value=[
-                {'name': 'stock_price', 'description': 'Get the current stock price.'},
-                {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
-            ],
+            return_value={
+                'tools': [
+                    {'name': 'stock_price', 'description': 'Get the current stock price.'},
+                    {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
+                ]
+            },
             metadata={'discovered_tools': ['stock_price', 'crypto_price']},
         )
     )
@@ -590,7 +596,7 @@ async def test_tool_search_toolset_does_not_match_substrings_inside_words():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value=[{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}],
+            return_value={'tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]},
             metadata={'discovered_tools': ['github_get_me']},
         )
     )
@@ -607,7 +613,7 @@ async def test_tool_search_toolset_search_returns_no_matches():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'nonexistent'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot('No matching tools found. The tools you need may not be available.')
+    assert result.return_value == snapshot({'tools': []})
     assert result.metadata == snapshot({'discovered_tools': []})
 
 
@@ -657,8 +663,8 @@ async def test_tool_search_toolset_max_results():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'tool'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv) == 10
+    rv = cast('dict[str, Any]', result.return_value)
+    assert len(rv['tools']) == 10
 
 
 async def test_tool_search_toolset_discovered_tools_available():
@@ -865,7 +871,7 @@ async def test_tool_search_toolset_tool_with_none_description():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'no_desc'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot([{'name': 'no_desc_tool', 'description': None}])
+    assert result.return_value == snapshot({'tools': [{'name': 'no_desc_tool', 'description': None}]})
 
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
@@ -2138,7 +2144,8 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
-    assert result.return_value == 'No matching tools found. The tools you need may not be available.'
+    assert result.return_value == {'tools': []}
+    assert result.content == 'No matching tools found. The tools you need may not be available.'
     assert result.metadata == {'discovered_tools': []}
 
 

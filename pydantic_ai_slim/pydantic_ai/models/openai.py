@@ -75,7 +75,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, Open
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
-from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_discovered_tool_names
+from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_search_tools_return
 from . import (
     Model,
     ModelRequestContext,
@@ -3870,8 +3870,11 @@ def _build_client_tool_search_output_param(
     Looks up each discovered tool name in ``function_tools`` and emits a
     ``FunctionToolParam`` so OpenAI sees the same ``Tool`` definitions it originally
     loaded in the prior turn — the shape of :class:`ResponseToolSearchOutputItemParamParam`.
+    Reads the typed :class:`SearchToolsReturn` off of ``part.content`` rather than the
+    sideband metadata; the tool-return value is the contract.
     """
-    discovered = extract_discovered_tool_names(part.metadata) or []
+    parsed = extract_search_tools_return(part.content)
+    discovered = [match['name'] for match in parsed['tools']] if parsed else []
 
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
     # `strict` is profile-dependent at initial send-time (`_map_tool_definition`

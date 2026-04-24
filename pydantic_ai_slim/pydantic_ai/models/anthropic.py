@@ -60,7 +60,7 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
-from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_discovered_tool_names
+from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_search_tools_return
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -1947,14 +1947,18 @@ class AnthropicStreamedResponse(StreamedResponse):
 def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_active: bool) -> list[str] | None:
     """Return discovered tool names to render as Anthropic `tool_reference` blocks.
 
-    Returns the list when ``part`` is a custom-callable `search_tools` result whose
-    metadata carries ``discovered_tools`` (the shape produced by
-    [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset]). Returns
-    ``None`` when the default text/document formatting should be used.
+    Reads the typed :class:`SearchToolsReturn` off of ``part.content`` — the
+    tool-return value is the contract here, not the sideband metadata. Returns
+    ``None`` when this isn't a custom-callable tool-search return (wrong tool, or
+    content doesn't parse as a ``SearchToolsReturn``), letting the caller fall
+    through to the default text-formatting path.
     """
     if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
         return None
-    return extract_discovered_tool_names(part.metadata)
+    parsed = extract_search_tools_return(part.content)
+    if parsed is None:
+        return None
+    return [match['name'] for match in parsed['tools']]
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:

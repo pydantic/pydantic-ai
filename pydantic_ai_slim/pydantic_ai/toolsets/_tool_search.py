@@ -77,22 +77,74 @@ ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNa
   tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
 """
 
-DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
-"""Key on ``ToolReturnPart.metadata`` / ``BuiltinToolReturnPart.metadata`` that carries
-the list of tool names discovered by a tool-search turn.
 
-This is the contract between the tool-search toolset and the provider adapters. The
-toolset writes it when the local ``search_tools`` function runs; adapters write it when
-mapping the provider's native tool-search result block (Anthropic) or output item
-(OpenAI). Replay reads it via :func:`extract_discovered_tool_names` to shape the
-provider-specific tool-search round-trip format. Stored on the return part (not on the
-call part) because the result of the discovery — not the request for it — is what the
-next turn needs to act on.
+class SearchToolsMatch(TypedDict):
+    """A single match produced by the local ``search_tools`` function."""
+
+    name: str
+    """Name of the discovered tool, as the model will call it."""
+
+    description: str | None
+    """Human-readable description, if the tool provided one."""
+
+
+class SearchToolsReturn(TypedDict):
+    """Typed return value of the local ``search_tools`` function.
+
+    This is the contract between the tool-search toolset and the provider adapters on
+    the custom-callable native path (Anthropic tool-reference blocks; OpenAI
+    ``execution='client'``). Adapters read ``ToolReturnPart.content`` via
+    :func:`extract_search_tools_return` to shape the provider-specific round-trip
+    format — the metadata sideband is not a contract.
+    """
+
+    tools: list[SearchToolsMatch]
+    """Matches ordered by relevance. An empty list means "search ran, nothing matched"
+    and the adapter should fall through to the default text-formatting path (Anthropic
+    rejects an empty ``tool_result`` content list)."""
+
+
+def extract_search_tools_return(content: Any) -> SearchToolsReturn | None:
+    """Read a typed :class:`SearchToolsReturn` off of a ``ToolReturnPart.content`` value.
+
+    Returns ``None`` when ``content`` doesn't carry the expected shape — not a dict, or
+    ``tools`` is missing / not a list of ``{name, description}`` entries. Callers should
+    treat ``None`` as "not a tool-search return"; ``SearchToolsReturn(tools=[])`` means
+    "search ran, nothing matched".
+    """
+    if not isinstance(content, dict):
+        return None
+    tools = content.get('tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    if not isinstance(tools, list):
+        return None
+    matches: list[SearchToolsMatch] = []
+    for entry in tools:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if not isinstance(name, str):
+            continue
+        description = entry.get('description')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        matches.append({'name': name, 'description': description if isinstance(description, str) else None})
+    return {'tools': matches}
+
+
+DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+"""Cross-path normalized index on ``ToolReturnPart.metadata`` /
+``BuiltinToolReturnPart.metadata`` that carries the list of tool names discovered by a
+tool-search turn.
+
+Written by the local ``search_tools`` tool (toolset) and by each provider adapter when
+mapping a native tool-search result, so
+:meth:`ToolSearchToolset._parse_discovered_tools` can scan message history for
+previously-unlocked tools without knowing each path's native return shape. This is an
+*index*, not a typed contract — provider adapters on the replay path read the typed
+``SearchToolsReturn`` off of :class:`ToolReturnPart.content` instead.
 """
 
 
 def extract_discovered_tool_names(metadata: Any) -> list[str] | None:
-    """Read the discovered-tool-names list off of a tool return's metadata.
+    """Read the normalized discovered-names index off of a return part's metadata.
 
     Returns ``None`` when the metadata doesn't carry the convention (not a dict, key
     absent, or value isn't a list of strings). Callers should treat ``None`` as
@@ -362,7 +414,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide search keywords.')
 
-        scored_matches: list[tuple[int, dict[str, str | None]]] = []
+        scored_matches: list[tuple[int, SearchToolsMatch]] = []
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
             if score == 0:
@@ -370,22 +422,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
         if not scored_matches:
-            return ToolReturn(
-                return_value='No matching tools found. The tools you need may not be available.',
-                metadata={DISCOVERED_TOOLS_METADATA_KEY: []},
-            )
+            return self._empty_return()
 
         scored_matches.sort(key=lambda item: item[0], reverse=True)
         matches = [match for _, match in scored_matches[: self.max_results]]
-        tool_names = [match['name'] for match in matches]
-
-        return ToolReturn(
-            return_value=matches,
-            metadata={DISCOVERED_TOOLS_METADATA_KEY: tool_names},
-        )
+        return self._build_return(matches)
 
     def _run_search_fn(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Invoke a user-provided strategy and normalize its return to the metadata shape."""
+        """Invoke a user-provided strategy, validating that the returned names are known."""
         assert self.search_fn is not None
 
         tool_defs_by_name = {entry.name: entry for entry in search_tool.search_index}
@@ -395,18 +439,36 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         matched = list(self.search_fn(keywords, tool_defs))[: self.max_results]
 
-        matches: list[dict[str, str | None]] = []
+        matches: list[SearchToolsMatch] = []
         for name in matched:
             if entry := tool_defs_by_name.get(name):
                 matches.append({'name': entry.name, 'description': entry.description})
 
         if not matches:
-            return ToolReturn(
-                return_value='No matching tools found. The tools you need may not be available.',
-                metadata={DISCOVERED_TOOLS_METADATA_KEY: []},
-            )
+            return self._empty_return()
+        return self._build_return(matches)
 
+    @staticmethod
+    def _empty_return() -> ToolReturn:
+        """Shaped "no matches" return: empty ``tools`` list + a user-visible note.
+
+        The note is sent to the model as separate content (``ToolReturn.content``) so
+        the model doesn't retry searching with the same keywords, while
+        ``return_value`` stays as a typed :class:`SearchToolsReturn` the adapter can
+        cast cleanly.
+        """
+        return_value: SearchToolsReturn = {'tools': []}
         return ToolReturn(
-            return_value=matches,
+            return_value=return_value,
+            content='No matching tools found. The tools you need may not be available.',
+            metadata={DISCOVERED_TOOLS_METADATA_KEY: []},
+        )
+
+    @staticmethod
+    def _build_return(matches: list[SearchToolsMatch]) -> ToolReturn:
+        """Shaped matches return: typed ``SearchToolsReturn`` + discovery index."""
+        return_value: SearchToolsReturn = {'tools': matches}
+        return ToolReturn(
+            return_value=return_value,
             metadata={DISCOVERED_TOOLS_METADATA_KEY: [m['name'] for m in matches]},
         )
