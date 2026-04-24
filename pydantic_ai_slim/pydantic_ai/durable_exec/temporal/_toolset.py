@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
@@ -166,6 +166,27 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         toolset = toolset or self.wrapped
         args_dict = tool.args_validator.validate_python(tool_args)
         return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
+
+
+def resolve_tool_activity_config(
+    tool: ToolsetTool[Any] | None,
+    tool_name: str,
+    tool_activity_config: Mapping[str, ActivityConfig | Literal[False]],
+) -> ActivityConfig | Literal[False]:
+    """Resolve per-tool Temporal activity config.
+
+    Reads `tool.tool_def.metadata['temporal']` first, then falls back to the explicit
+    `tool_activity_config` dict keyed by tool name. Returns an `ActivityConfig` dict
+    (possibly empty), or `False` to skip activity wrapping.
+    """
+    # Metadata set on the tool (via @toolset.tool(metadata={'temporal': ...}), with_metadata, or
+    # SetToolMetadata capability) is the primary path.
+    if tool is not None and tool.tool_def.metadata is not None:
+        metadata_config = tool.tool_def.metadata.get('temporal')
+        if metadata_config is not None:
+            return cast('ActivityConfig | Literal[False]', metadata_config)
+    # Fallback: per-tool dict passed to the durability capability / temporal agent.
+    return tool_activity_config.get(tool_name, {})
 
 
 def temporalize_toolset(

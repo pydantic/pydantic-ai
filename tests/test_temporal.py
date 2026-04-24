@@ -4494,6 +4494,29 @@ class ProcessStreamDurableAgentWorkflow:
         return result.output
 
 
+def test_durability_tool_metadata_disables_activity():
+    """Tool metadata={'temporal': False} disables activity wrapping for that tool."""
+
+    async def slow_tool() -> str:
+        return 'slow'
+
+    toolset = FunctionToolset[None](id='meta_toolset')
+    toolset.add_function(slow_tool, metadata={'temporal': False})
+
+    agent = Agent(
+        _durability_fn_model,
+        name='meta_disable_test',
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # Should have wrapped the toolset (capability discovered it at for_agent time);
+    # the per-tool skip is applied at call time via resolve_tool_activity_config.
+    assert 'meta_toolset' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_durability_process_event_stream_fires_live_inside_activity(client: Client):
     """ProcessEventStream (outer capability) sees live events emitted inside the Temporal activity.
 

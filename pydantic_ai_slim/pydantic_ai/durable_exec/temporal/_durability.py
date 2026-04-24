@@ -89,7 +89,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
-        tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         temporalize_toolset_func: Callable[
             [
@@ -125,13 +124,23 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model request activities.
             toolset_activity_config: Per-toolset activity configs keyed by toolset ID,
                 merged on top of the base config.
-            tool_activity_config: Per-tool activity configs keyed by toolset ID then
-                tool name. Set a tool's config to ``False`` to skip activity wrapping
-                (only valid for async tool functions).
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
             temporalize_toolset_func: Custom function for wrapping leaf toolsets.
                 Defaults to the built-in ``temporalize_toolset``.
+
+        Note:
+            Per-tool activity config (custom timeouts, retry policies, or disabling
+            activity wrapping entirely) is configured via tool metadata:
+
+            ```python
+            @my_toolset.tool(metadata={'temporal': ActivityConfig(...)})
+            async def my_slow_tool(...): ...
+            ```
+
+            or via the ``SetToolMetadata`` capability for selector-based config.
+            Setting the ``'temporal'`` key to ``False`` skips activity wrapping
+            (only valid for async tool functions).
         """
         self.run_context_type = run_context_type
         self._provider_factory = provider_factory
@@ -152,7 +161,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self.activity_config = activity_config
         self._model_activity_config: ActivityConfig = {**activity_config, **(model_activity_config or {})}
         self._toolset_activity_config = toolset_activity_config or {}
-        self._tool_activity_config = tool_activity_config or {}
 
         # These are populated by for_agent()
         self.name = ''
@@ -336,7 +344,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 ts,
                 activity_name_prefix,
                 {**self.activity_config, **self._toolset_activity_config.get(ts_id, {})},
-                self._tool_activity_config.get(ts_id, {}),
+                {},  # per-tool config comes from tool metadata on the capability path
                 self._deps_type,
                 self.run_context_type,
             )
