@@ -65,10 +65,12 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     validated_args: dict[str, Any] | None = None
     """The validated arguments if validation passed, `None` otherwise.
 
-    Always a `dict[str, Any]` matching the tool schema that the model satisfied — for both
-    regular tool calls and output tool calls. Output-tool-specific semantic unwrapping
-    (e.g. `{'response': 42}` → `42`) happens inside `execute_output_tool_call` at the
-    output hook boundary, not here.
+    For regular tool calls, always a `dict[str, Any]` matching the tool schema. For
+    output tool calls, this holds what the tool's `args_validator` produced — a dict
+    for primitive / multi-arg outputs (e.g. `{'response': 42}`), or the model instance
+    for bare `BaseModel` outputs (the dict typing is a mild lie in that case, preserved
+    for consistency with regular tool calls). Output-tool semantic unwrapping happens
+    inside `execute_output_tool_call` at the output hook boundary, not here.
     """
     validation_error: ToolRetryError | None = None
     """The validation error if validation failed, None otherwise."""

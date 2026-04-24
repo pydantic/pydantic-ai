@@ -192,7 +192,8 @@ async def run_output_process_hooks(
 ) -> Any:
     """Run the output process hooks around `do_process`.
 
-    Process hooks fire for ALL output types (text, structured, tool, image).
+    Process hooks fire for all output types (text, structured, image) — in every mode,
+    including tool output.
 
     `ValidationError` and `ModelRetry` from any hook (before, after, wrap, on_error) are caught
     by the outer handler and converted to `ToolRetryError` when `wrap_validation_errors` is True.
