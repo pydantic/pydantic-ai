@@ -48,7 +48,7 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..output import OutputMode
+from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
@@ -65,23 +65,18 @@ See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.p
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-3-5-haiku-20241022',
-        'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-7-sonnet-20250219',
-        'anthropic:claude-3-7-sonnet-latest',
         'anthropic:claude-3-haiku-20240307',
-        'anthropic:claude-3-opus-20240229',
-        'anthropic:claude-3-opus-latest',
-        'anthropic:claude-4-opus-20250514',
-        'anthropic:claude-4-sonnet-20250514',
         'anthropic:claude-haiku-4-5-20251001',
+        'anthropic:claude-mythos-preview',
         'anthropic:claude-haiku-4-5',
         'anthropic:claude-opus-4-0',
+        'anthropic:claude-opus-4-1',
         'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-opus-4-5',
         'anthropic:claude-opus-4-6',
+        'anthropic:claude-opus-4-7',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
@@ -159,16 +154,17 @@ KnownModelName = TypeAliasType(
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
         'gateway/anthropic:claude-3-haiku-20240307',
-        'gateway/anthropic:claude-4-opus-20250514',
-        'gateway/anthropic:claude-4-sonnet-20250514',
         'gateway/anthropic:claude-haiku-4-5-20251001',
+        'gateway/anthropic:claude-mythos-preview',
         'gateway/anthropic:claude-haiku-4-5',
         'gateway/anthropic:claude-opus-4-0',
+        'gateway/anthropic:claude-opus-4-1',
         'gateway/anthropic:claude-opus-4-1-20250805',
         'gateway/anthropic:claude-opus-4-20250514',
         'gateway/anthropic:claude-opus-4-5-20251101',
         'gateway/anthropic:claude-opus-4-5',
         'gateway/anthropic:claude-opus-4-6',
+        'gateway/anthropic:claude-opus-4-7',
         'gateway/anthropic:claude-sonnet-4-0',
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -543,6 +539,17 @@ class ModelRequestParameters:
             return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
+    def with_default_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
+        """Set the default output mode if the current mode is 'auto', atomically updating allow_text_output.
+
+        No-op if the current output_mode is not 'auto'. This ensures the two fields stay in sync —
+        output_mode='tool' implies allow_text_output=False, while 'native' and 'prompted' imply
+        allow_text_output=True.
+        """
+        if self.output_mode != 'auto':
+            return self
+        return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -681,7 +688,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
         return model_request_parameters
 
-    def prepare_request(  # noqa: C901
+    def prepare_request(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -715,13 +722,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        if params.output_mode == 'auto':
-            output_mode = self.profile.default_structured_output_mode
-            params = replace(
-                params,
-                output_mode=output_mode,
-                allow_text_output=output_mode in ('native', 'prompted'),
-            )
+        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -1271,7 +1272,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter and Cerebras need to be checked before OpenAI,
+    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1281,6 +1282,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'ollama':
+        from .ollama import OllamaModel
+
+        return OllamaModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 

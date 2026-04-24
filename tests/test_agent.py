@@ -400,7 +400,8 @@ def test_result_pydantic_model_validation_error():
 ]
 ```
 
-Fix the errors and try again.""")
+Fix the errors and try again.\
+""")
 
 
 def test_output_validator():
@@ -2668,7 +2669,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=87, output_tokens=12),
+                usage=RequestUsage(input_tokens=81, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3142,7 +3143,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -4499,6 +4500,338 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_executes_function_tools_but_skips_output_tools(self):
+        """Test that 'graceful' strategy executes function tools but skips remaining output tools."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('regular_tool', {'x': 42}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        result = agent.run_sync('test graceful strategy')
+
+        # Verify the result came from the output tool
+        assert result.output.value == 'first'
+
+        # Verify all function tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 42}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=53, output_tokens=13),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=42,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_does_not_call_additional_output_tools(self):
+        """Test that 'graceful' strategy does not execute additional output tool functions."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            """Process first output."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputType) -> OutputType:  # pragma: no cover
+            """Process second output."""
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'first'}),
+                    ToolCallPart('second_output', {'value': 'second'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        result = agent.run_sync('test graceful output tools')
+
+        # Verify the result came from the first output tool
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'first'
+
+        # Verify only the first output tool was called
+        assert output_tools_called == ['first']
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args={'value': 'second'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='first_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='second_output',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_uses_first_final_result(self):
+        """Test that 'graceful' strategy uses the first final result and ignores subsequent ones."""
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('final_result', {'value': 'second'}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+        result = agent.run_sync('test multiple final results')
+        messages = result.all_messages()
+
+        # Verify the result came from the first final tool
+        assert result.output.value == 'first'
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=54, output_tokens=10),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_with_final_result_in_middle(self):
+        """Test that 'graceful' strategy executes function tools but skips output and deferred tools."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 1}),
+                    ToolCallPart('final_result', {'value': 'final'}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 5}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('deferred_tool')
+            return x + 1
+
+        result = agent.run_sync('test graceful strategy with final result in middle')
+
+        # Verify function tools were called but deferred tools were not
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got the correct final result
+        assert result.output.value == 'final'
+
+        # Verify we got appropriate tool returns
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test graceful strategy with final result in middle',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='regular_tool', args={'x': 1}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=58, output_tokens=22),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=1,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
@@ -6890,7 +7223,9 @@ def test_deprecated_kwargs_still_work():
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
 
-            Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
+            Agent(  # pyright: ignore[reportDeprecated]
+                'test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])]
+            )
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert '`mcp_servers` is deprecated' in str(w[0].message)
@@ -7453,8 +7788,15 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(test_model, toolsets=[foo_toolset], output_type=Foo, event_stream_handler=event_stream_handler)
+    agent = Agent(
+        test_model,
+        system_prompt='You are a wrapped agent',
+        toolsets=[foo_toolset],
+        output_type=Foo,
+        event_stream_handler=event_stream_handler,
+    )
     wrapper_agent = WrapperAgent(agent)
+    assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
     assert wrapper_agent.name == agent.name
@@ -7465,6 +7807,7 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.root_capability is agent.root_capability
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',
@@ -8735,11 +9078,6 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -8749,7 +9087,7 @@ async def test_message_history():
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -8924,6 +9262,304 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_agent_allows_none_output_empty_response():
+    """Test that Agent(output_type=str | None) succeeds on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_after_tool():
+    """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
+    call_count = 0
+
+    async def tool_then_empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=tool_then_empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='noop',
+                        content='done',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_validator_called():
+    """Test that output validators are called when returning None on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    validator_called = False
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[None], output: str | None) -> str | None:
+        nonlocal validator_called
+        validator_called = True
+        assert output is None
+        return output
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_validator_retry():
+    """Test that output validator raising ModelRetry triggers a retry when output is None."""
+
+    async def model_then_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[])
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    model = FunctionModel(function=model_then_text)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def reject_none(ctx: RunContext[None], output: str | None) -> str | None:
+        if output is None:
+            raise ModelRetry('None not acceptable, please respond')
+        return output
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:model_then_text:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='None not acceptable, please respond',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello')],
+                usage=RequestUsage(input_tokens=65, output_tokens=1),
+                model_name='function:model_then_text:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_still_fails_if_none_not_allowed():
+    """Test that Agent(output_type=str) still fails on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        await agent.run('hello')
+
+
+def test_agent_output_type_bare_none_error():
+    """Test that Agent(output_type=None) raises a clear error."""
+    with pytest.raises(UserError, match='At least one output type must be provided other than `None`'):
+        Agent('test', output_type=None)  # type: ignore[arg-type]
+
+
+async def test_agent_allows_none_output_tool_mode_none_via_tool():
+    """Test that `int | None` exposes a separate `final_result_NoneType` tool the model can call."""
+    seen_tool_names: list[str] = []
+
+    async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        seen_tool_names[:] = [t.name for t in info.output_tools]
+        none_tool = next(t for t in info.output_tools if 'NoneType' in t.name)
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=none_tool.name, args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_none_tool), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output is None
+    assert seen_tool_names == snapshot(['final_result_int', 'final_result_NoneType'])
+
+
+async def test_agent_allows_none_output_tool_mode_int_via_tool():
+    """Test that `int | None` still resolves the int branch via the int tool."""
+
+    async def call_int_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        int_tool = next(t for t in info.output_tools if t.name == 'final_result_int')
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=int_tool.name, args={'response': 42}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_int_tool), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output == 42
+
+
+async def test_agent_allows_none_output_tool_mode_empty_response():
+    """Test that `int | None` still falls back to `None` on an empty response."""
+
+    async def empty(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    agent = Agent(FunctionModel(function=empty), output_type=int | None)
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_native_structured_none():
+    """Test that `NativeOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+
+    async def native_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+        )
+
+    agent = Agent(FunctionModel(function=native_none), output_type=NativeOutput([int, type(None)]))
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_prompted_structured_none():
+    """Test that `PromptedOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+
+    async def prompted_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+        )
+
+    agent = Agent(FunctionModel(function=prompted_none), output_type=PromptedOutput([int, type(None)]))
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_tool_output_union_null():
+    """Test that `ToolOutput(int | None)` accepts a JSON `null` via the tool's `anyOf` schema."""
+
+    async def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))  # type: ignore[arg-type]
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_explicit_none_tool():
+    """Test that `[ToolOutput(int), ToolOutput(type(None))]` surfaces one tool per type."""
+
+    async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result_NoneType', args={'response': None}, tool_call_id='pyd_ai_id')]
+        )
+
+    agent = Agent(
+        FunctionModel(function=call_none_tool),
+        output_type=[ToolOutput(int), ToolOutput(type(None))],
+    )
+    result = await agent.run('hello')
+    assert result.output is None
 
 
 # region Dynamic model_settings
@@ -9166,6 +9802,225 @@ class TestOverrideWithModelSettings:
 
         result = agent.run_sync('Hello')
         assert result.output == 'max_tokens=100 temperature=None'
+
+
+def test_output_validator_retry_consistency_across_paths():
+    """Output validators should see global retry info, matching the text-output path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
+    the text path sets ctx.retry/max_retries to the global output retry counter,
+    but the tool-output path was using the per-tool counter, causing inconsistent
+    ctx.retry and ctx.max_retries values in @agent.output_validator.
+
+    Using ToolOutput(max_retries=5) with output_retries=2 exposes the bug:
+    without the fix, the validator would see max_retries=5 (per-tool value)
+    instead of max_retries=2 (global output_retries, matching the text path).
+    """
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo, max_retries=5),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == 2:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    assert retries_log == [0, 1, 2]
+    assert max_retries_log == [2, 2, 2]
+
+
+def test_output_validator_exceeds_output_retries():
+    """Output validator that never succeeds should respect output_retries limit.
+
+    When the output_validator always raises ModelRetry, the agent should stop
+    after output_retries attempts. The per-tool limit from ToolManager enforces
+    this via output_retries flowing into ToolsetTool.max_retries.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(2\\) for output validation'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2]
+
+
+async def test_concurrent_runs_output_retry_isolation():
+    """Concurrent runs on the same agent must not share output retry state.
+
+    OutputToolset.for_run_step returns a shallow copy so each run gets
+    isolated _output_retry/_output_max_retries values across await points.
+    """
+    retries_by_run: dict[str, list[int]] = {'fast': [], 'slow': []}
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        output_retries=3,
+    )
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        # Use the prompt to identify which run this is
+        run_id = 'slow' if 'slow' in (ctx.prompt or '') else 'fast'
+        retries_by_run[run_id].append(ctx.retry)
+        if ctx.retry < 2:
+            if run_id == 'slow':
+                await asyncio.sleep(0.05)
+            raise ModelRetry(f'{run_id} retry {ctx.retry}')
+        return o
+
+    result_fast, result_slow = await asyncio.gather(
+        agent.run('fast'),
+        agent.run('slow'),
+    )
+
+    assert isinstance(result_fast.output, Foo)
+    assert isinstance(result_slow.output, Foo)
+    assert retries_by_run['fast'] == [0, 1, 2]
+    assert retries_by_run['slow'] == [0, 1, 2]
+
+
+def test_output_validator_retry_counter_with_tool_switch():
+    """Global retry counter tracks across output tool switches.
+
+    When the model switches from one output tool to another, the global
+    retry counter (visible to output validators via ctx.retry) keeps
+    incrementing. Each tool's per-tool counter is independent.
+    """
+    validator_retries: list[int] = []
+    validator_max_retries: list[int] = []
+
+    def output_a(value: str) -> str:
+        return value
+
+    def output_b(value: str) -> str:
+        return value
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        assert info.output_tools is not None
+        tool_names: dict[str, str] = {}
+        tool_names.update({t.name: t.name for t in info.output_tools})
+
+        name_a = next(n for n in tool_names if 'output_a' in n)
+        name_b = next(n for n in tool_names if 'output_b' in n)
+
+        call_count += 1
+        # First call: output_b (will fail validation), second+: output_a
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(name_b, '{"value": "x"}')])
+        return ModelResponse(parts=[ToolCallPart(name_a, '{"value": "hello"}')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=[
+            ToolOutput(output_a, max_retries=3),
+            ToolOutput(output_b, max_retries=1),
+        ],
+        retries=0,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: str) -> str:
+        validator_retries.append(ctx.retry)
+        validator_max_retries.append(ctx.max_retries)
+        if ctx.retry < 2:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return o
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'hello'
+
+    # Global retry counter increments across tool switches
+    assert validator_retries == [0, 1, 2]
+    # max_retries reflects the agent-level default (0) since output_retries not set
+    assert validator_max_retries == [0, 0, 0]
+
+
+def test_output_tool_validation_vs_execution_retry_counting():
+    """Both validation failures and execution failures increment the global retry counter.
+
+    Validation failure (bad args from model) and execution failure (ModelRetry from
+    output function) both go through process_tool_calls and should both increment
+    ctx.state.retries for output validator context tracking.
+    """
+    validator_retries: list[int] = []
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        assert info.output_tools is not None
+        call_count += 1
+        tool_name = info.output_tools[0].name
+        # First call: send invalid args (validation failure path)
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, '{"bad_field": 1}')])
+        # Subsequent calls: send valid args (execution path)
+        return ModelResponse(parts=[ToolCallPart(tool_name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(Foo),
+        output_retries=5,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        validator_retries.append(ctx.retry)
+        if ctx.retry < 2:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return o
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # retry 0: never reached validator (validation failure from bad args)
+    # retry 1: reached validator, raised ModelRetry (execution failure)
+    # retry 2: reached validator, succeeded
+    assert validator_retries == [1, 2]
 
 
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():

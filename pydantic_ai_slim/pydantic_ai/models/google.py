@@ -4,7 +4,7 @@ import base64
 import re
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
@@ -112,7 +112,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+_FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
 
 LatestGoogleModelNames = Literal[
@@ -278,8 +278,6 @@ class GoogleModel(Model[Client]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: Client = field(repr=False)
-
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
 
@@ -306,9 +304,12 @@ class GoogleModel(Model[Client]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> Client:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -336,13 +337,14 @@ class GoogleModel(Model[Client]):
             self.profile
         ).google_supports_native_output_with_builtin_tools
         if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            else:
-                output_mode = 'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+            default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
+            model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
+            if model_request_parameters.output_mode not in ('native', 'prompted'):
+                suggested_output_type = (
+                    'NativeOutput' if supports_native_output_with_builtin_tools else 'PromptedOutput'
+                )
                 raise UserError(
-                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
+                    f'Google does not support output tools and built-in tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
 

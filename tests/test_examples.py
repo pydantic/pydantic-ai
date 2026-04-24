@@ -596,6 +596,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was the mass of the largest meteorite found this year?': (
         'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
+    'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
+    'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -625,11 +627,21 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name in ('_add', 'add'):
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
+        return ModelResponse(parts=[])
     elif isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
-        if m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
+        if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
+            t.name == 'mark_task_done' for t in info.function_tools
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='mark_task_done', args={'task_id': 1}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        elif m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=add_name, args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
@@ -1092,6 +1104,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'embed-v4.0': 1024,
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
+        'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
     }

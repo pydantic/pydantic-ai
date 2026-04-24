@@ -123,6 +123,9 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 
 Validation hooks fire when the model's JSON arguments are parsed and validated. All tool hooks receive `call` ([`ToolCallPart`][pydantic_ai.messages.ToolCallPart]) and `tool_def` ([`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) parameters.
 
+!!! note
+    Tool validation and execution hooks only fire for function tools. Internal output tools (used to deliver structured output) are not user-facing and are skipped.
+
 To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `tool_validate` (wrap).
 
 ### Tool execution hooks

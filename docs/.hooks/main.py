@@ -127,7 +127,7 @@ def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
     # The closing fence must match the same indentation via backreference \1.
     # Annotation definitions are numbered list items like "1. Some text" that follow the code block.
     return re.sub(
-        r'^( *)```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n\1```(\n\n(?:[ \t]*\d+\..+?\n)+?\n)?',
+        r'^( *)```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n\1```(\n\n(?:[ \t]*\d+\.[^\n]+\n)+\n)?',
         lambda m: transform_gateway_code_block(m, relative_path),
         markdown,
         flags=re.MULTILINE | re.DOTALL,

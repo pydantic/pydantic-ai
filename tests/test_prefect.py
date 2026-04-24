@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -45,6 +46,7 @@ try:
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
+        TaskConfig,
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 except ImportError:  # pragma: lax no cover
@@ -1154,6 +1156,35 @@ async def test_cache_policy_empty_inputs():
     )
 
     assert result is None
+
+
+async def test_repeated_run_hits_cache():
+    """Same prompt across two separate flow runs must only call the model once.
+
+    `PrefectAgent.run()` wraps each call in its own Prefect flow, so a cross-flow
+    cache hit requires the Model Request task's cache key to be stable across flow
+    runs. This is a field-agnostic regression guard: any per-run field that leaks
+    into the hashed inputs (today `run_id`/`timestamp`, or anything added to
+    `ModelMessage` in the future) will make the two keys differ, miss the cache,
+    and fail this test with `call_count == 2`. The UUID in the prompt keeps the
+    test isolated from any other run in the session-scoped Prefect test harness.
+    """
+    call_count = 0
+
+    def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    prefect_agent = PrefectAgent(
+        Agent(FunctionModel(counting_model), name='cache_test_agent'),
+        model_task_config=TaskConfig(cache_policy=PrefectAgentInputs()),
+    )
+
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    await prefect_agent.run(prompt)
+    await prefect_agent.run(prompt)
+    assert call_count == 1
 
 
 # Test custom model settings

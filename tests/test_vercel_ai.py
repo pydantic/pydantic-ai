@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
@@ -8,9 +9,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -27,6 +30,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -53,7 +57,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
@@ -77,6 +80,7 @@ with try_import() as starlette_import_successful:
         DynamicToolOutputDeniedPart,
         FileUIPart,
         ReasoningUIPart,
+        RegenerateMessage,
         SubmitMessage,
         TextUIPart,
         ToolApprovalRequested,
@@ -113,6 +117,25 @@ pytestmark = [
         'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
+
+
+def test_build_run_input_allows_regenerate_without_message_id():
+    data = {
+        'trigger': 'regenerate-message',
+        'id': 'req_123',
+        'messages': [
+            {
+                'id': 'msg_1',
+                'role': 'assistant',
+                'parts': [{'type': 'text', 'text': 'Hello'}],
+            }
+        ],
+    }
+
+    run_input = VercelAIAdapter.build_run_input(json.dumps(data).encode())
+
+    assert isinstance(run_input, RegenerateMessage)
+    assert run_input.message_id is None
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
@@ -2261,6 +2284,11 @@ Fix the errors and try again.\
                 'toolName': 'unknown_tool',
             },
             {'type': 'tool-input-available', 'toolCallId': IsStr(), 'toolName': 'unknown_tool', 'input': {}},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': IsStr(),
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
             {'type': 'error', 'errorText': "Tool 'unknown_tool' exceeded max retries count of 1"},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
@@ -2304,9 +2332,123 @@ async def test_run_stream_request_error():
                 'toolName': 'tool',
                 'input': {'query': 'a'},
             },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'pyd_ai_tool_call_id__tool',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
             {'type': 'error', 'errorText': 'Unknown tool'},
             {'type': 'finish-step'},
             {'type': 'finish', 'finishReason': 'error'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_tool_retry_exhaustion():
+    """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
+    agent = Agent(model=TestModel(), retries=1)
+
+    @agent.tool_plain(retries=1)
+    async def flaky_tool(query: str) -> str:
+        raise ModelRetry('Service unavailable')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Every tool-input-start must have a corresponding tool-output-error — no dangling calls
+    tool_starts = [e for e in events if is_str_dict(e) and e['type'] == 'tool-input-start']
+    tool_outputs = [e for e in events if is_str_dict(e) and e['type'] == 'tool-output-error']
+    started_ids = {e['toolCallId'] for e in tool_starts}
+    closed_ids = {e['toolCallId'] for e in tool_outputs}
+    assert started_ids == closed_ids, f'Dangling tool calls: {started_ids - closed_ids}'
+
+    # Verify the event type sequence: each attempt gets start→delta→available→error,
+    # and the final exhaustion gets an additional stream-level error
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'finish-step',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_output_tool_error():
+    """When an output tool fails, the pending tool call (tracked via FinalResultEvent) should be closed."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='final_result',
+                json_args='{"value": "bad"}',
+                tool_call_id='out_1',
+            )
+        }
+
+    def bad_output(value: str) -> str:
+        raise ValueError('Output validation failed')
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # The output tool call must be closed with tool-output-error before the stream error
+    event_types = [e if isinstance(e, str) else e['type'] for e in events]
+    assert event_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'tool-input-start',
+            'tool-input-delta',
+            'tool-input-available',
+            'tool-output-error',
+            'error',
+            'finish-step',
+            'finish',
             '[DONE]',
         ]
     )
@@ -2484,7 +2626,7 @@ async def test_tool_approval_request_emission():
                 'toolName': 'delete_file',
                 'input': {'path': 'test.txt'},
             },
-            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': IsStr()},
+            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': 'delete_1'},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -3065,6 +3207,16 @@ async def test_adapter_dispatch_request():
     )
 
 
+def test_manage_system_prompt_visible_in_vercel_adapter_signatures():
+    from_request_parameters = inspect.signature(VercelAIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(VercelAIAdapter.dispatch_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
+    assert 'manage_system_prompt' in dispatch_request_parameters
+    assert dispatch_request_parameters['manage_system_prompt'].default == 'server'
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_dispatch_request_with_tool_approval():
     """Test that dispatch_request with sdk_version=6 enables tool approval."""
@@ -3142,7 +3294,7 @@ async def test_dispatch_request_with_tool_approval():
                 'toolName': 'delete_file',
                 'input': {'path': 'test.txt'},
             },
-            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': IsStr()},
+            {'type': 'tool-approval-request', 'toolCallId': 'delete_1', 'approvalId': 'delete_1'},
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -4752,6 +4904,118 @@ async def test_adapter_dump_messages_tool_call_without_return():
             }
         ]
     )
+
+
+async def test_adapter_dump_messages_deferred_tool_approval():
+    """Test that dump_messages emits approval-requested for tool calls without results on v6."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    assert tool_part == snapshot(
+        {
+            'type': 'tool-dangerous_action',
+            'tool_call_id': 'deferred_tc1',
+            'state': 'approval-requested',
+            'input': {'target': 'production'},
+            'provider_executed': False,
+            'call_provider_metadata': None,
+            'approval': {'id': 'deferred_tc1'},
+        }
+    )
+
+    # Verify roundtrip — load_messages should reconstruct a ToolCallPart without a result
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert len(reloaded) == 2
+    tool_call_part = reloaded[1].parts[0]
+    assert isinstance(tool_call_part, ToolCallPart)
+    assert tool_call_part.tool_name == 'dangerous_action'
+    assert tool_call_part.tool_call_id == 'deferred_tc1'
+
+
+async def test_adapter_dump_messages_deferred_tool_v5_fallback():
+    """Test that on v5 (default), deferred tool calls fall back to input-available."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[0]['parts'][0]
+    assert tool_part['state'] == 'input-available'
+    assert tool_part['approval'] is None
+
+
+async def test_adapter_dump_messages_deferred_tool_with_resolved_result():
+    """Test that tool calls with results are shown as completed, not deferred."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='dangerous_action',
+                    args={'target': 'production'},
+                    tool_call_id='resolved_tc1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='dangerous_action',
+                    content='Action completed',
+                    tool_call_id='resolved_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[1]['parts'][0]
+    assert tool_part['state'] == 'output-available'
+    assert tool_part['output'] == 'Action completed'
+
+
+async def test_adapter_dump_messages_deferred_builtin_tool():
+    """Test that on v6, builtin tool calls without results are detected as deferred."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='builtin_deferred_tc1',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dicts = [msg.model_dump() for msg in ui_messages]
+    tool_part = dicts[0]['parts'][0]
+    assert tool_part['state'] == 'approval-requested'
+    assert tool_part['approval'] == {'id': 'builtin_deferred_tc1'}
 
 
 async def test_adapter_dump_messages_assistant_starts_with_tool():
@@ -6575,6 +6839,395 @@ class TestLoadProviderMetadata:
         provider_metadata = {'test': {'id': 'test_id'}}
         result = load_provider_metadata(provider_metadata)
         assert result == {}
+
+
+async def test_system_prompt_with_vercel_adapter():
+    """Test that system prompts are included when using VercelAIAdapter on first message."""
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_dynamic_system_prompt_with_vercel_adapter():
+    """Test that dynamic system prompts work with VercelAIAdapter."""
+    agent = Agent(model=TestModel())
+
+    @agent.system_prompt
+    def dynamic_prompt(ctx: RunContext[None]) -> str:
+        return 'Dynamic system prompt from Vercel'
+
+    request = SubmitMessage(
+        id='test-request-2',
+        messages=[
+            UIMessage(
+                id='msg-2',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Dynamic system prompt from Vercel', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_system_prompt_reinjected_with_vercel_history():
+    """Test that system prompts ARE reinjected on followup messages via UI adapters."""
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    request = SubmitMessage(
+        id='test-request-3',
+        messages=[
+            UIMessage(
+                id='msg-3',
+                role='user',
+                parts=[TextUIPart(text='First message')],
+            ),
+            UIMessage(
+                id='msg-4',
+                role='assistant',
+                parts=[TextUIPart(text='First response')],
+            ),
+            UIMessage(
+                id='msg-5',
+                role='user',
+                parts=[TextUIPart(text='Second message')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_by_default():
+    """Test that frontend system prompts are stripped and a warning emitted when `manage_system_prompt='server'`."""
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Agent system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_no_agent_prompt():
+    """Test that frontend system prompts are stripped even when there's no agent system prompt."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt():
+    """Test that frontend system prompts are kept and agent prompt skipped when `manage_system_prompt='client'`."""
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
+    """Test that frontend system prompts are used when `manage_system_prompt='client'` and agent has no system_prompt."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_does_not_reinject_agent_system_prompt():
+    """In `manage_system_prompt='client'`, the agent's configured prompt is not injected when
+    the frontend sends none — frontend ownership means the frontend is responsible for any
+    system prompt. To get fallback-to-configured behavior anyway, callers can add the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to the
+    agent.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 class TestSdkVersion:

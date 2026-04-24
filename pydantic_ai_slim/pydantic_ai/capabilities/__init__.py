@@ -25,6 +25,8 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareTools
+from .process_event_stream import ProcessEventStream
+from .reinject_system_prompt import ReinjectSystemPrompt
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -43,6 +45,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         MCP,
         PrefixTools,
         PrepareTools,
+        ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
         Toolset,
@@ -79,6 +82,8 @@ __all__ = [
     'MCP',
     'PrefixTools',
     'PrepareTools',
+    'ProcessEventStream',
+    'ReinjectSystemPrompt',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
