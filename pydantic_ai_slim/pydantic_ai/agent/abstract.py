@@ -1099,7 +1099,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 capabilities=capabilities,
-            spec=spec,
+                spec=spec,
             )
         )
 
