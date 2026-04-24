@@ -1168,7 +1168,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
         assert result
         traceparent = get_traceparent(result)
         assert traceparent == get_traceparent(agent_run)
-    assert traceparent == snapshot('')
+    assert traceparent == snapshot('00-00000000000000000000000000000001-0000000000000001-01')
     record_feedback(traceparent, 'factuality', 0.1, comment='the agent lied', extra={'foo': 'bar'})
 
     assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
@@ -1262,8 +1262,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
             },
             {
                 'name': 'feedback: factuality',
-                'context': {'trace_id': 2, 'span_id': 5, 'is_remote': False},
-                'parent': None,
+                'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': True},
                 'start_time': 5000000000,
                 'end_time': 5000000000,
                 'attributes': {
