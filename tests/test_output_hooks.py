@@ -3121,6 +3121,27 @@ class TestHookSemanticValue:
         result = await agent.run('hello')
         assert result.output == 20
 
+    async def test_dict_output_type_contains_unwrap_key(self):
+        """Regression: `output_type=dict[str, Any]` where the dict contains the unwrap key
+        ('response') must not be mistaken for an already-wrapped value during re-wrap.
+        """
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            tool = info.output_tools[0]
+            # The dict itself contains a 'response' key — the same key used as the outer wrapper
+            return ModelResponse(parts=[ToolCallPart(tool.name, '{"response": {"response": "yes", "other": "stuff"}}')])
+
+        output, log = await self._run_and_capture(output_type=dict[str, Any], model_fn=model_fn)
+        # Hook sees the inner dict (unwrapped)
+        assert log == [
+            ('after_validate', {'response': 'yes', 'other': 'stuff'}),
+            ('before_process', {'response': 'yes', 'other': 'stuff'}),
+        ]
+        # Final output is the full inner dict — NOT just "yes" (which would happen if re-wrap
+        # was skipped due to the buggy "already wrapped" check)
+        assert output == {'response': 'yes', 'other': 'stuff'}
+
 
 class TestHookExceptionHandling:
     """ValidationError/ModelRetry raised from before_* and after_* hooks should trigger retry,

@@ -91,9 +91,11 @@ def _unwrap_semantic_value(validated: Any, unwrap_key: str | None) -> Any:
 def _rewrap_internal_value(semantic: Any, unwrap_key: str | None) -> Any:
     """Re-wrap a semantic value into the internal dict shape `processor.call()` expects.
 
-    Idempotent: if the value is already the wrapped form, leave it unchanged.
+    Callers always pass the unwrapped semantic value (after hooks), so we always wrap.
+    An idempotency check via dict-key inspection would be unsafe for `output_type=dict[...]`
+    where the semantic value itself can be a dict that legitimately contains `unwrap_key`.
     """
-    if unwrap_key is None or _is_wrapped_as(semantic, unwrap_key):
+    if unwrap_key is None:
         return semantic
     return {unwrap_key: semantic}
 
@@ -264,7 +266,7 @@ async def run_output_validate_hooks(
         # (e.g. a user hook that does additional Pydantic validation on the validated output)
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
-        raise  # pragma: no cover — wrap_validation_errors=False only in streaming partial validation
+        raise
 
 
 async def run_output_process_hooks(
