@@ -365,6 +365,23 @@ class ToolManager(Generic[AgentDepsT]):
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
         return name, tool
 
+    def _make_validation_success(
+        self,
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT] | None,
+        ctx: RunContext[AgentDepsT],
+        validated_args: dict[str, Any] | None,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Build a successful `ValidatedToolCall`. Counterpart to `_make_validation_failure`."""
+        return ValidatedToolCall(
+            call=call,
+            tool=tool,
+            ctx=ctx,
+            args_valid=True,
+            validated_args=validated_args,
+            validation_error=None,
+        )
+
     def _make_validation_failure(
         self,
         name: str,
@@ -421,30 +438,16 @@ class ToolManager(Generic[AgentDepsT]):
         tool: ToolsetTool[AgentDepsT] | None = None
 
         try:
-            name, tool = self._resolve_tool(call)
+            _name, tool = self._resolve_tool(call)
             ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
             validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=True,
-                validated_args=validated_args,
-                validation_error=None,
-            )
+            return self._make_validation_success(call, tool, ctx, validated_args)
         except SkipToolValidation as e:
             assert tool is not None
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=True,
-                validated_args=e.validated_args,
-                validation_error=None,
-            )
+            # Hook asked us to skip validation entirely; accept the args it provided.
+            return self._make_validation_success(call, tool, ctx, e.validated_args)
         except (ValidationError, ModelRetry) as e:
-            name = call.tool_name
-            return self._make_validation_failure(name, call, tool, ctx, e)
+            return self._make_validation_failure(call.tool_name, call, tool, ctx, e)
 
     async def execute_tool_call(
         self,
@@ -542,21 +545,14 @@ class ToolManager(Generic[AgentDepsT]):
             # matches the tool's schema — `ValidatedToolCall.validated_args` is the
             # schema-contract form, consistent with regular tool calls. The semantic
             # unwrap happens again in `execute_output_tool_call` at the output hook boundary.
+            # No unwrap key → `validated_args` holds the validated object itself (e.g. a
+            # `BaseModel` instance); typed as `dict[str, Any] | None` for consistency with
+            # tool calls, matching pre-refactor behavior.
             if (k := processor.hook_unwrap_key) is not None:
                 validated_args: dict[str, Any] | None = {k: semantic_value}
             else:
-                # No unwrap key: `validated_args` holds the validated object itself
-                # (e.g. a `BaseModel` instance). Typed as `dict[str, Any] | None` for
-                # consistency with tool calls, matching pre-refactor behavior.
                 validated_args = semantic_value
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=True,
-                validated_args=validated_args,
-                validation_error=None,
-            )
+            return self._make_validation_success(call, tool, ctx, validated_args)
         except (ToolRetryError, ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
