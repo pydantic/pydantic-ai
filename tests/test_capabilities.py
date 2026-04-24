@@ -12,6 +12,7 @@ from typing import Any
 
 import anyio
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
@@ -33,6 +34,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     PrefixTools,
+    ReinjectSystemPrompt,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
@@ -62,6 +64,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -96,6 +99,7 @@ def test_capability_types() -> None:
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
+            'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'WebFetch': WebFetch,
@@ -1182,6 +1186,12 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
+                'short_spec_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
+                    'title': 'short_spec_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
                 'short_spec_SetToolMetadata': {
                     'additionalProperties': False,
                     'properties': {
@@ -1352,6 +1362,8 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
+                                {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
@@ -1494,6 +1506,8 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
+                            {'const': 'ReinjectSystemPrompt', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
@@ -1827,6 +1841,26 @@ async def test_capability_returning_toolset_func():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+async def test_runtime_capability_contributions_applied():
+    """Run-time `capabilities=` contributions (tools, instructions, etc.) must be applied.
+
+    Regression guard: the `source_cap` selection previously only checked for `override()`
+    or spec capabilities, so tool contributions from a capability passed only via
+    `Agent.run(capabilities=[...])` were silently dropped.
+    """
+    agent = Agent(TestModel())
+    result = await agent.run('Greet Alice', capabilities=[ToolsetFuncCapability()])
+
+    tool_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [c.tool_name for c in tool_calls] == ['greet']
 
 
 async def test_capability_returning_toolset_func_combined():
@@ -2321,6 +2355,11 @@ async def tool_calling_stream_function(
         return
 
     yield 'no tools available'  # pragma: no cover
+
+
+# Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
+class SingleBaseModelArg(BaseModel):
+    label: str = 'default'
 
 
 def tool_calling_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2996,6 +3035,104 @@ class TestToolExecuteHooks:
 
         await agent.run('call tool')
         assert cap.caught_error == 'tool failed'
+
+    async def test_hooks_receive_dict_args_for_single_base_model_tool(self):
+        """Validate and execute hooks receive dict-shaped args when the tool has a single BaseModel parameter.
+
+        The JSON schema sent to the model unwraps the BaseModel, so the model generates its fields at the
+        top level. Pydantic's validator returns a BaseModel instance directly, but the framework wraps it
+        as `{param_name: model}` so hooks and `call_tool` always see a dict.
+        """
+        captured_args: list[tuple[str, dict[str, Any]]] = []
+
+        @dataclass
+        class CapturingCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+            ) -> dict[str, Any]:
+                captured_args.append(('validate', args))
+                return args
+
+            async def wrap_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                captured_args.append(('execute', args))
+                return await handler(args)
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CapturingCap()])
+
+        @agent.tool_plain
+        def my_tool(payload: SingleBaseModelArg) -> str:
+            return f'got {payload.label}'
+
+        await agent.run('call the tool')
+        assert captured_args == [
+            ('validate', {'payload': SingleBaseModelArg()}),
+            ('execute', {'payload': SingleBaseModelArg()}),
+        ]
+
+    async def test_tool_hooks_skip_output_tools(self):
+        """Tool hooks don't fire for internal output tools (#5111).
+
+        Output tools deliver structured output to the user via `result.output`; they're not
+        user-facing tool calls. Firing hooks on them lets e.g. `after_tool_execute` return a
+        `ToolReturn` that leaks through to `result.output` instead of the typed value.
+        """
+
+        class MyOutput(BaseModel):
+            answer: str
+
+        hooks = Hooks()
+
+        @hooks.on.after_tool_execute
+        async def wrap_result(
+            ctx: RunContext[Any],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, Any],
+            result: Any,
+        ) -> ToolReturn:
+            return ToolReturn(return_value=result, content='extra context')
+
+        cap = LoggingCapability()
+        agent = Agent(
+            TestModel(custom_output_args={'answer': 'hi'}),
+            output_type=MyOutput,
+            capabilities=[cap, hooks],
+        )
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        result = await agent.run('call tool and answer')
+
+        # Function tool still fires every tool hook.
+        assert 'before_tool_validate:my_tool' in cap.log
+        assert 'after_tool_validate:my_tool' in cap.log
+        assert 'wrap_tool_validate:my_tool:before' in cap.log
+        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert 'before_tool_execute:my_tool' in cap.log
+        assert 'after_tool_execute:my_tool' in cap.log
+        assert 'wrap_tool_execute:my_tool:before' in cap.log
+        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        # Output tool does not appear in any hook log entry.
+        assert all('final_result' not in entry for entry in cap.log)
+        # Regression for #5111: the ToolReturn from `after_tool_execute` would have corrupted
+        # `result.output` if output tool hooks still fired.
+        assert result.output == MyOutput(answer='hi')
 
 
 class TestCompositionOrder:

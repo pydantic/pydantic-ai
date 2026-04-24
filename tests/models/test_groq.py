@@ -88,7 +88,9 @@ pytestmark = [
 
 
 def test_init():
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='foobar'))
+    provider = GroqProvider(api_key='foobar')
+    m = GroqModel('llama-3.3-70b-versatile', provider=provider)
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'llama-3.3-70b-versatile'
     assert m.system == 'groq'

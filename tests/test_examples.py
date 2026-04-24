@@ -1112,6 +1112,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'embed-v4.0': 1024,
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
+        'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
     }

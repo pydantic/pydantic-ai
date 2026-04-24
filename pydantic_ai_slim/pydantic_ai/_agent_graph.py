@@ -316,8 +316,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         for tool_call_id, approval in deferred_tool_results.approvals.items():
             if approval is True:
                 approval = ToolApproved()
@@ -376,20 +375,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     if reevaluated_message_parts != msg.parts:
                         msg.parts = reevaluated_message_parts
 
-    async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
-        """Build the initial messages for the conversation."""
-        messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
-        for sys_prompt_runner in self.system_prompt_functions:
-            prompt = await sys_prompt_runner.run(run_context)
-            if sys_prompt_runner.dynamic:
-                # To enable dynamic system prompt refs in future runs, use a placeholder string
-                messages.append(
-                    _messages.SystemPromptPart(prompt or '', dynamic_ref=sys_prompt_runner.function.__qualname__)
-                )
-            elif prompt:
-                # omit empty system prompts
-                messages.append(_messages.SystemPromptPart(prompt))
-        return messages
+    async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
+        """Build the initial system-prompt messages for the conversation."""
+        return await _system_prompt.resolve_system_prompts(
+            self.system_prompts, self.system_prompt_functions, run_context
+        )
 
     __repr__ = dataclasses_no_defaults_repr
 

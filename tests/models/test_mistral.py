@@ -197,7 +197,9 @@ def func_chunk(
 
 
 def test_init():
-    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='foobar'))
+    provider = MistralProvider(api_key='foobar')
+    m = MistralModel('mistral-large-latest', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'mistral-large-latest'
     assert m.base_url == 'https://api.mistral.ai'
 
