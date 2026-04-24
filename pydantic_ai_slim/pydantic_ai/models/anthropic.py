@@ -23,6 +23,7 @@ from ..builtin_tools import (
     ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
+    extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
@@ -60,7 +61,7 @@ from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
-from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_search_tools_return
+from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -1955,7 +1956,7 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     """
     if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
         return None
-    parsed = extract_search_tools_return(part.content)
+    parsed = extract_tool_search_return(part.content)
     if parsed is None:
         return None
     return [match['name'] for match in parsed['tools']]

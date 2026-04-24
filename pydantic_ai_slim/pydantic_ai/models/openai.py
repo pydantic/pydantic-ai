@@ -36,6 +36,7 @@ from ..builtin_tools import (
     MCPServerTool,
     ToolSearchTool,
     WebSearchTool,
+    extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
@@ -75,7 +76,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, Open
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
-from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY, extract_search_tools_return
+from ..toolsets._tool_search import DISCOVERED_TOOLS_METADATA_KEY
 from . import (
     Model,
     ModelRequestContext,
@@ -3873,7 +3874,7 @@ def _build_client_tool_search_output_param(
     Reads the typed :class:`SearchToolsReturn` off of ``part.content`` rather than the
     sideband metadata; the tool-return value is the contract.
     """
-    parsed = extract_search_tools_return(part.content)
+    parsed = extract_tool_search_return(part.content)
     discovered = [match['name'] for match in parsed['tools']] if parsed else []
 
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}

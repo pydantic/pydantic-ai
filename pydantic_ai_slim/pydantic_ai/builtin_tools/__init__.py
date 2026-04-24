@@ -24,6 +24,9 @@ __all__ = (
     'FileSearchTool',
     'ToolSearchTool',
     'ToolSearchNativeStrategy',
+    'ToolSearchMatch',
+    'ToolSearchReturn',
+    'extract_tool_search_return',
     'TOOL_SEARCH_FUNCTION_TOOL_NAME',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
@@ -577,6 +580,59 @@ class FileSearchTool(AbstractBuiltinTool):
 
     kind: str = 'file_search'
     """The kind of tool."""
+
+
+class ToolSearchMatch(TypedDict):
+    """A single match in a tool search result."""
+
+    name: str
+    """Name of the discovered tool, as the model will call it."""
+
+    description: str | None
+    """Human-readable description, if the tool provided one."""
+
+
+class ToolSearchReturn(TypedDict):
+    """Typed return value of [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool].
+
+    Carried on ``ToolReturnPart.content`` when the local ``search_tools`` function runs
+    (custom-callable native paths) — model adapters read this typed value via
+    :func:`extract_tool_search_return` to shape the provider-specific round-trip
+    format. Future provider-native builtins (bash, text editor, apply patch, etc.) are
+    expected to follow the same per-tool TypedDict pattern, with the
+    ``BuiltinToolReturnPart.content`` discrimination converging on
+    [issue #3561](https://github.com/pydantic/pydantic-ai/issues/3561).
+    """
+
+    tools: list[ToolSearchMatch]
+    """Matches ordered by relevance. An empty list means "search ran, nothing matched"
+    and adapters fall through to the default text-formatting path (Anthropic rejects an
+    empty ``tool_result`` content list)."""
+
+
+def extract_tool_search_return(content: Any) -> ToolSearchReturn | None:
+    """Read a typed [`ToolSearchReturn`][pydantic_ai.builtin_tools.ToolSearchReturn] off of a return part's ``content`` value.
+
+    Returns ``None`` when ``content`` doesn't carry the expected shape — not a dict, or
+    ``tools`` is missing / not a list of ``{name, description}`` entries. Callers should
+    treat ``None`` as "not a tool-search return"; ``ToolSearchReturn(tools=[])`` means
+    "search ran, nothing matched".
+    """
+    if not isinstance(content, dict):
+        return None
+    tools = content.get('tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    if not isinstance(tools, list):
+        return None
+    matches: list[ToolSearchMatch] = []
+    for entry in tools:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if not isinstance(name, str):
+            continue
+        description = entry.get('description')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        matches.append({'name': name, 'description': description if isinstance(description, str) else None})
+    return {'tools': matches}
 
 
 ToolSearchNativeStrategy = Literal['bm25', 'regex']
