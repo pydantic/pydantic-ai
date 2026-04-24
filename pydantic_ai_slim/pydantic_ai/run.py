@@ -22,8 +22,6 @@ from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
-    from collections import deque
-
     from ._run_context import RunContext
     from .result import FinalResult
 
@@ -397,7 +395,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.run_id
 
     @property
-    def pending_messages(self) -> deque[_messages.PendingMessage]:
+    def pending_messages(self) -> list[_messages.PendingMessage]:
         """Queue of messages waiting to be injected into the conversation.
 
         Messages are drained automatically: `'steering'` messages before the next model

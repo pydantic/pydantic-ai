@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
 
 
 def _drain_by_priority(
-    queue: deque[PendingMessage],
+    queue: list[PendingMessage],
     priority: PendingMessagePriority,
 ) -> list[PendingMessage]:
     """Remove and return all messages with the given priority from the queue."""
@@ -28,8 +27,7 @@ def _drain_by_priority(
             drained.append(msg)
         else:
             remaining.append(msg)
-    queue.clear()
-    queue.extend(remaining)
+    queue[:] = remaining
     return drained
 
 

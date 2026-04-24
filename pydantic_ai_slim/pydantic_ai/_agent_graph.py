@@ -84,9 +84,7 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
-    pending_messages: deque[_messages.PendingMessage] = dataclasses.field(
-        default_factory=deque[_messages.PendingMessage]
-    )
+    pending_messages: list[_messages.PendingMessage] = dataclasses.field(default_factory=list[_messages.PendingMessage])
     """Queue of messages waiting to be injected into the conversation."""
 
     def check_incomplete_tool_call(self) -> None:

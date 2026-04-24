@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections import deque
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -94,7 +93,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
-    pending_messages: deque[PendingMessage] = field(default_factory=deque[PendingMessage])
+    pending_messages: list[PendingMessage] = field(default_factory=list[PendingMessage])
     """Queue of messages waiting to be injected into the conversation.
 
     Messages are drained automatically: `'steering'` messages before the next model
