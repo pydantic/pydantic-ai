@@ -1583,7 +1583,10 @@ async def process_tool_calls(  # noqa: C901
                     handler_validated_calls[call.tool_call_id] = await tool_manager.validate_tool_call(
                         validate_call, approved=True, metadata=call_metadata
                     )
-                except exceptions.UnexpectedModelBehavior:
+                except exceptions.UnexpectedModelBehavior:  # pragma: no cover
+                    # Defensive: only reached if the handler's override_args fail validation after
+                    # retries were already exhausted in this run step. Mirrors the non-deferred
+                    # validation path above; naturally triggered there, not here.
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
