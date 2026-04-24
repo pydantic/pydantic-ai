@@ -509,7 +509,7 @@ class MistralModel(Model[Mistral]):
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None
-        if isinstance(timeout, float):  # pragma: no cover
+        if isinstance(timeout, (int, float)):  # pragma: no cover
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
