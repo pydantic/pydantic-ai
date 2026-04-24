@@ -27,8 +27,9 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(result):
             result = await result
         if result is None:
+            prepare_func_name = getattr(self.prepare_func, '__name__', repr(self.prepare_func))
             warnings.warn(
-                f'prepare_tools callback {self.prepare_func.__qualname__!r} returned None, '
+                f'prepare_tools callback {prepare_func_name} returned None, '
                 'this disables all tools for this step. Return `[]` for an explicit empty '
                 'tool list, or `tool_defs` to pass the definitions through unchanged.',
                 UserWarning,
