@@ -15,6 +15,7 @@ else:
 
 if TYPE_CHECKING:
     from .messages import ModelResponse, RetryPromptPart
+    from .tools import ToolDenied
 
 __all__ = (
     'ModelRetry',
@@ -23,6 +24,7 @@ __all__ = (
     'SkipModelRequest',
     'SkipToolValidation',
     'SkipToolExecution',
+    'ToolDeniedError',
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
@@ -291,6 +293,25 @@ class ToolRetryError(Exception):
             lines.append(loc)
             lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
         return '\n'.join(lines)
+
+
+class ToolDeniedError(Exception):
+    """Raised when a tool call was denied by a `HandleDeferredToolCalls` handler.
+
+    The batch agent-run path records the denial as a `ToolReturnPart(outcome='denied')` in
+    message history. This exception is the equivalent signal for per-call resolution via
+    [`ToolManager.handle_call`][pydantic_ai.tool_manager.ToolManager.handle_call] — it lets
+    callers (e.g. a sandbox wrapper like CodeMode) distinguish a denied call from a
+    successful tool result, which is otherwise indistinguishable if the denial message is
+    returned verbatim.
+    """
+
+    tool_denied: ToolDenied
+    """The original `ToolDenied` value from the handler, including any custom `message`."""
+
+    def __init__(self, tool_denied: ToolDenied):
+        self.tool_denied = tool_denied
+        super().__init__(tool_denied.message)
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):

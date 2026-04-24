@@ -11,11 +11,78 @@ To support these use cases, Pydantic AI provides the concept of deferred tools, 
 - tools that [require approval](#human-in-the-loop-tool-approval)
 - tools that are [executed externally](#external-tool-execution)
 
-When the model calls a deferred tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls. Once the approvals and/or results are ready, a new agent run can then be started with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object holding results for each tool call in `DeferredToolRequests`, which will continue the original run where it left off.
+When the model calls a deferred tool, there are two ways to resolve it:
 
-Note that handling deferred tool calls requires `DeferredToolRequests` to be in the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. If your agent can also be used in a context where no deferred tools are available and you don't want to deal with that type everywhere you use the agent, you can instead pass the `output_type` argument when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. Note that the run-time `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output type explicitly.
+- **Resolve it inline**, using a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] [capability](capabilities.md) with a handler that returns a result for each pending call. The agent run continues in a single call without needing to end and restart — use this when the resolver (e.g. an approval gate, an external service client) lives in the same process as the agent. See [Resolving deferred calls inline](#resolving-deferred-calls-inline).
+- **End the run** with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls; the caller gathers approvals/results and then starts a new agent run with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object. Use this when the resolver lives outside the agent process — e.g. a UI adapter that surfaces pending calls to a user and starts a follow-up run once it has their response.
 
-As an alternative to returning control to the caller, a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability can resolve deferred calls inline with a handler function, so the agent run continues in one step without needing to end and restart. See [Resolving deferred calls inline](#resolving-deferred-calls-inline).
+The stop-the-world flow requires `DeferredToolRequests` to be in the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. If your agent can also be used in a context where no deferred tools are available and you don't want to deal with that type everywhere you use the agent, you can instead pass the `output_type` argument when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. Note that the run-time `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output type explicitly.
+
+## Resolving deferred calls with a handler
+
+The recommended way to handle deferred tool calls is to register a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] [capability](capabilities.md) whose handler receives the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and returns a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. The tool execution pipeline applies the results inline and the agent run continues in a single call, as if the deferred tools had returned normally.
+
+With a handler in place, `DeferredToolRequests` no longer needs to be declared as an output type.
+
+[`DeferredToolRequests.build_results()`][pydantic_ai.tools.DeferredToolRequests.build_results] is a convenience constructor — it validates that every tool call ID refers to a pending request of the correct kind, and accepts `approve_all=True` to auto-approve any approval requests not otherwise specified.
+
+```python {title="deferred_tool_handler.py"}
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDenied,
+)
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+
+
+async def handle_deferred(
+    ctx: RunContext[None], requests: DeferredToolRequests
+) -> DeferredToolResults:
+    approvals: dict[str, bool | ToolDenied] = {}
+    for call in requests.approvals:
+        if call.tool_name == 'delete_file':
+            approvals[call.tool_call_id] = ToolDenied('Deleting files is not allowed')
+        else:
+            approvals[call.tool_call_id] = True
+
+    calls = {call.tool_call_id: f'(external result for {call.tool_name})' for call in requests.calls}
+
+    return requests.build_results(approvals=approvals, calls=calls)
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    return f'File {path!r} deleted'  # (1)!
+
+
+@agent.tool
+def update_file(ctx: RunContext, path: str) -> str:
+    if path == '.env' and not ctx.tool_call_approved:
+        raise ApprovalRequired
+    return f'File {path!r} updated'
+
+
+@agent.tool_plain
+async def send_to_worker(task: str) -> str:
+    raise CallDeferred  # (2)!
+```
+
+1. Never reached here — the handler denies this call, so the model sees the denial message instead.
+2. The handler supplies the result for this external call, so the tool body just signals the deferral.
+
+If the handler declines to resolve some or all of the calls (by omitting them from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] or returning `None`), those calls bubble up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output, and `DeferredToolRequests` must be in the agent's output type — so you can combine inline handling with the stop-the-world flow when it makes sense.
+
+The sections below describe the two kinds of deferred tools the handler can resolve, as well as the alternative stop-the-world flow for each. See [Capabilities](capabilities.md) for how multiple capabilities compose, including [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] and the `capabilities=[...]` list.
 
 ## Human-in-the-Loop Tool Approval
 
@@ -381,72 +448,6 @@ async def main():
 3. In reality, this would typically happen in a separate process that polls for the task status or is notified when all pending tasks are complete.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-## Resolving deferred calls inline
-
-The flows above end the agent run as soon as a deferred tool is called and require the caller to start a new run with a `DeferredToolResults` object. This is the right pattern when the resolver lives outside the agent process — e.g. a frontend or UI adapter that surfaces the pending calls to a user and starts a follow-up run once it has the approvals or results.
-
-When the resolver can run in the same process as the agent, the [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] [capability](capabilities.md) lets the agent keep going without ending the run. It wraps a handler function that receives the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and returns a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]; the tool execution pipeline then applies the results and continues as if the calls had returned normally. With a handler in place, `DeferredToolRequests` no longer needs to be declared as an output type.
-
-[`DeferredToolRequests.build_results()`][pydantic_ai.tools.DeferredToolRequests.build_results] is a convenience constructor for building the results — it validates that every tool call ID refers to a pending request of the correct kind, and accepts `approve_all=True` to auto-approve any approval requests not otherwise specified.
-
-```python {title="deferred_tool_handler.py"}
-from pydantic_ai import (
-    Agent,
-    ApprovalRequired,
-    CallDeferred,
-    DeferredToolRequests,
-    DeferredToolResults,
-    RunContext,
-    ToolDenied,
-)
-from pydantic_ai.capabilities import HandleDeferredToolCalls
-
-
-async def handle_deferred(
-    ctx: RunContext[None], requests: DeferredToolRequests
-) -> DeferredToolResults:
-    approvals: dict[str, bool | ToolDenied] = {}
-    for call in requests.approvals:
-        if call.tool_name == 'delete_file':
-            approvals[call.tool_call_id] = ToolDenied('Deleting files is not allowed')
-        else:
-            approvals[call.tool_call_id] = True
-
-    calls = {call.tool_call_id: f'(external result for {call.tool_name})' for call in requests.calls}
-
-    return requests.build_results(approvals=approvals, calls=calls)
-
-
-agent = Agent(
-    'openai:gpt-5.2',
-    capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
-)
-
-
-@agent.tool_plain(requires_approval=True)
-def delete_file(path: str) -> str:
-    return f'File {path!r} deleted'  # (1)!
-
-
-@agent.tool
-def update_file(ctx: RunContext, path: str) -> str:
-    if path == '.env' and not ctx.tool_call_approved:
-        raise ApprovalRequired
-    return f'File {path!r} updated'
-
-
-@agent.tool_plain
-async def send_to_worker(task: str) -> str:
-    raise CallDeferred  # (2)!
-```
-
-1. Never reached here — the handler denies this call, so the model sees the denial message instead.
-2. The handler supplies the result for this external call, so the tool body just signals the deferral.
-
-If the handler declines to resolve some or all of the calls (by omitting them from the returned [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] or returning `None`), those calls bubble up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output, and `DeferredToolRequests` must be in the agent's output type — so you can combine inline handling with the stop-the-world flow when it makes sense.
-
-See [Capabilities](capabilities.md) for how capabilities compose, including [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] and multi-capability composition via `capabilities=[...]`.
 
 ## See Also
 

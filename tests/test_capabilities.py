@@ -51,6 +51,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     ApprovalRequired,
+    CallDeferred,
     ModelRetry,
     SkipModelRequest,
     SkipToolExecution,
@@ -9621,7 +9622,7 @@ async def test_deferred_tool_handler_approve():
 
 
 async def test_deferred_tool_handler_deny():
-    """HandleDeferredToolCalls capability denies a requires_approval tool inline."""
+    """HandleDeferredToolCalls capability denies a requires_approval tool inline, producing a `ToolReturnPart(outcome='denied')`."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -9646,6 +9647,12 @@ async def test_deferred_tool_handler_deny():
 
     result = await agent.run('Hello')
     assert result.output == 'Understood, denied.'
+    # The denial must surface in message history as outcome='denied', not a successful return.
+    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].tool_call_id == 'call1'
+    assert tool_returns[0].outcome == 'denied'
+    assert tool_returns[0].content == 'Not allowed.'
 
 
 async def test_deferred_tool_handler_no_output_type_needed():
@@ -10085,7 +10092,7 @@ async def test_deferred_tool_handler_re_deferred_with_metadata():
 
 
 async def test_deferred_tool_handler_denied_via_batch():
-    """Batch path deny through execute_deferred_tool_results."""
+    """Batch path deny via handler produces a `ToolReturnPart(outcome='denied')` in message history."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -10107,6 +10114,226 @@ async def test_deferred_tool_handler_denied_via_batch():
 
     result = await agent.run('Hello')
     assert result.output == 'Understood.'
+    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].outcome == 'denied'
+    assert tool_returns[0].content == 'Policy denied.'
+
+
+async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
+    """Batch path: covers `approvals[id] = False` AND default `ToolDenied()` as separate calls."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('needs_approval', {'x': 1}, tool_call_id='bool_false'),
+                    ToolCallPart('needs_approval', {'x': 2}, tool_call_id='default_denied'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            approvals={
+                'bool_false': False,
+                'default_denied': ToolDenied(),  # no custom message
+            }
+        )
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def needs_approval(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x  # pragma: no cover
+
+    result = await agent.run('go')
+    assert result.output == 'ok'
+    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert tool_returns['bool_false'].outcome == 'denied'
+    assert tool_returns['bool_false'].content == ToolDenied().message
+    assert tool_returns['default_denied'].outcome == 'denied'
+    assert tool_returns['default_denied'].content == ToolDenied().message
+
+
+async def test_deferred_tool_handler_batch_approve_via_tool_approved_default():
+    """Batch path: covers `approvals[id] = ToolApproved()` (default, no override_args)."""
+    from pydantic_ai.tools import ToolApproved
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('needs_approval', {'x': 7}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def needs_approval(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 2
+
+    result = await agent.run('go')
+    assert result.output == 'done'
+    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].outcome != 'denied'
+    assert tool_returns[0].content == 14
+
+
+async def test_deferred_tool_handler_batch_external_tool_return_metadata():
+    """Batch path: handler-supplied external `ToolReturn(value, metadata)` lands on the return part."""
+    from pydantic_ai.messages import ToolReturn as _ToolReturn
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={
+                call.tool_call_id: _ToolReturn(
+                    return_value='computed', metadata={'source': 'external'}, content='user extra'
+                )
+                for call in requests.calls
+            }
+        )
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def external_tool(ctx: RunContext[None]) -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+    assert result.output == 'done'
+    messages = result.all_messages()
+    tool_returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == 'computed'
+    assert tool_returns[0].metadata == {'source': 'external'}
+    # The `content` field on ToolReturn becomes a UserPromptPart.
+    from pydantic_ai.messages import UserPromptPart
+
+    user_extras = [p for m in messages for p in m.parts if isinstance(p, UserPromptPart) and p.content == 'user extra']
+    assert len(user_extras) == 1
+
+
+async def test_deferred_tool_handler_batch_external_model_retry():
+    """Batch path: handler-supplied `ModelRetry` in `calls` surfaces as a `RetryPromptPart`, not a tool return."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('retried')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(calls={call.tool_call_id: ModelRetry('try again') for call in requests.calls})
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def external_tool(ctx: RunContext[None]) -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+    assert result.output == 'retried'
+    messages = result.all_messages()
+    retry_parts = [p for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_call_id == 'c1'
+    assert retry_parts[0].content == 'try again'
+    tool_returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_call_id == 'c1']
+    assert tool_returns == []
+
+
+async def test_deferred_tool_handler_batch_external_retry_prompt_part():
+    """Batch path: handler-supplied `RetryPromptPart` in `calls` surfaces as a retry (names stamped from the deferred call)."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('retried')])
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={
+                call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
+                for call in requests.calls
+            }
+        )
+
+    agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool
+    def external_tool(ctx: RunContext[None]) -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+    assert result.output == 'retried'
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_call_id == 'c1'
+    assert retry_parts[0].tool_name == 'external_tool'
+    assert retry_parts[0].content == 'retry via part'
+
+
+async def test_deferred_tool_handler_via_handle_call_external_tool_return():
+    """Per-call path: handler-supplied external `ToolReturn(value, metadata)` is returned verbatim from handle_call."""
+    from pydantic_ai.exceptions import CallDeferred
+    from pydantic_ai.messages import ToolReturn as _ToolReturn
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool_plain
+    def inner_tool() -> str:
+        raise CallDeferred
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={call.tool_call_id: _ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
+        )
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_result: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        nonlocal captured_result
+        assert ctx.tool_manager is not None
+        captured_result = await ctx.tool_manager.handle_call(
+            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+        )
+        return 'done'
+
+    await agent.run('go')
+    # Per-call path returns whatever the handler supplied verbatim — full ToolReturn wrapper preserved.
+    assert isinstance(captured_result, _ToolReturn)
+    assert captured_result.return_value == 'ext'
+    assert captured_result.metadata == {'k': 'v'}
 
 
 def test_deferred_tool_handler_serialization_name():
@@ -10471,7 +10698,8 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
 
 
 async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
-    """When a handler denies via `approvals[id] = False`, handle_call returns the default denial message."""
+    """When a handler denies via `approvals[id] = False`, handle_call raises `ToolDeniedError` with the default denial message."""
+    from pydantic_ai.exceptions import ToolDeniedError
     from pydantic_ai.toolsets import FunctionToolset
 
     inner_toolset = FunctionToolset()
@@ -10496,19 +10724,25 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
         capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
     )
 
-    captured_result: Any = None
+    caught: ToolDeniedError | None = None
 
     @agent.tool
     async def caller_tool(ctx: RunContext[None]) -> str:
-        nonlocal captured_result
+        nonlocal caught
         assert ctx.tool_manager is not None
-        captured_result = await ctx.tool_manager.handle_call(
-            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
-        )
-        return 'done'
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+            return 'no raise'  # pragma: no cover
+        except ToolDeniedError as e:
+            caught = e
+            return 'caught'
 
     await agent.run('go')
-    assert captured_result == ToolDenied().message
+    assert caught is not None
+    assert caught.tool_denied == ToolDenied()
+    assert str(caught) == ToolDenied().message
 
 
 async def test_deferred_tool_handler_via_handle_call_override_args():
@@ -10696,7 +10930,8 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
 
 
 async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
-    """When a handler denies a deferred call, handle_call returns the denial message."""
+    """When a handler denies a deferred call, handle_call raises `ToolDeniedError` carrying the custom `ToolDenied`."""
+    from pydantic_ai.exceptions import ToolDeniedError
     from pydantic_ai.toolsets import FunctionToolset
 
     inner_toolset = FunctionToolset()
@@ -10723,19 +10958,25 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
         capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
     )
 
-    captured_result: Any = None
+    caught: ToolDeniedError | None = None
 
     @agent.tool
     async def caller_tool(ctx: RunContext[None]) -> str:
-        nonlocal captured_result
+        nonlocal caught
         assert ctx.tool_manager is not None
-        captured_result = await ctx.tool_manager.handle_call(
-            ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
-        )
-        return 'done'
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+            return 'no raise'  # pragma: no cover
+        except ToolDeniedError as e:
+            caught = e
+            return 'caught'
 
     await agent.run('go')
-    assert captured_result == 'not today'
+    assert caught is not None
+    assert caught.tool_denied == ToolDenied(message='not today')
+    assert str(caught) == 'not today'
 
 
 async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():

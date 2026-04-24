@@ -21,6 +21,7 @@ from .exceptions import (
     ModelRetry,
     SkipToolExecution,
     SkipToolValidation,
+    ToolDeniedError,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -661,15 +662,28 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
-        Returns the tool result verbatim (a raw value, or a `ToolReturn` if the tool or
-        handler returned one — preserved so callers like CodeMode can unwrap metadata
-        themselves). Denials surface as the denial message, matching how they appear in
-        message history.
+        Dispatches the handler's result for `call` on the same set of
+        [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] variants as the
+        batch path in `_agent_graph._call_tool`, but returns a raw tool-like value
+        (what the tool "would have returned") rather than a message-history part.
+
+        NOTE: keep the dispatch branches here in sync with
+        [`_call_tool`][pydantic_ai._agent_graph._call_tool] — both paths must accept the
+        full [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] surface.
+
+        Returns:
+            For approved calls, the raw tool return (possibly a `ToolReturn` wrapper).
+            For external-call results, the value the handler supplied verbatim (plain
+            value or `ToolReturn`).
 
         Raises:
-            ToolRetryError: If the approved execution raised `ModelRetry`.
-            CallDeferred / ApprovalRequired: If the handler couldn't resolve the call, or
-                the approved tool re-raised a deferral.
+            ToolDeniedError: Handler denied the call (caller should record a
+                `ToolReturnPart(outcome='denied')` in message history if relevant — the
+                denial message alone is *not* a successful tool result).
+            ToolRetryError: Handler requested a retry via `ModelRetry` or `RetryPromptPart`,
+                or the approved tool re-raised `ModelRetry`.
+            CallDeferred / ApprovalRequired: Handler couldn't resolve the call, or the
+                approved tool re-raised a deferral.
         """
         requests = DeferredToolRequests(
             approvals=[call] if isinstance(exc, ApprovalRequired) else [],
@@ -680,35 +694,34 @@ class ToolManager(Generic[AgentDepsT]):
         if deferred_results is None:
             raise exc
 
-        if call.tool_call_id in deferred_results.approvals:
-            approval = deferred_results.approvals[call.tool_call_id]
-            if approval is True:
-                approval = ToolApproved()
-            elif approval is False:
-                approval = ToolDenied()
-            if isinstance(approval, ToolDenied):
-                return approval.message
+        # Normalize via to_tool_call_results(): bool → ToolApproved/ToolDenied,
+        # plain external values → ToolReturn(value).
+        tool_call_result = deferred_results.to_tool_call_results().get(call.tool_call_id)
+        if tool_call_result is None:
+            raise exc
+
+        if isinstance(tool_call_result, ToolDenied):
+            raise ToolDeniedError(tool_call_result)
+        if isinstance(tool_call_result, ToolApproved):
             validate_call = call
-            if approval.override_args is not None:
-                validate_call = replace(call, args=approval.override_args)
+            if tool_call_result.override_args is not None:
+                validate_call = replace(call, args=tool_call_result.override_args)
             call_metadata = deferred_results.metadata.get(call.tool_call_id)
             validated = await self.validate_tool_call(validate_call, approved=True, metadata=call_metadata)
             return await self.execute_tool_call(validated)
-
-        if call.tool_call_id in deferred_results.calls:
-            call_result = deferred_results.calls[call.tool_call_id]
-            if isinstance(call_result, ModelRetry):
-                raise ToolRetryError(
-                    _messages.RetryPromptPart(
-                        content=call_result.message,
-                        tool_name=call.tool_name,
-                        tool_call_id=call.tool_call_id,
-                    )
+        if isinstance(tool_call_result, ModelRetry):
+            raise ToolRetryError(
+                _messages.RetryPromptPart(
+                    content=tool_call_result.message,
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
                 )
-            if isinstance(call_result, _messages.RetryPromptPart):
-                call_result.tool_name = call.tool_name
-                call_result.tool_call_id = call.tool_call_id
-                raise ToolRetryError(call_result)
-            return call_result
-
-        raise exc
+            )
+        if isinstance(tool_call_result, _messages.RetryPromptPart):
+            tool_call_result.tool_name = call.tool_name
+            tool_call_result.tool_call_id = call.tool_call_id
+            raise ToolRetryError(tool_call_result)
+        # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
+        # the handler's original value verbatim so handle_call's contract — "what the
+        # tool would have returned" — is preserved for plain-vs-wrapped inputs.
+        return deferred_results.calls[call.tool_call_id]
