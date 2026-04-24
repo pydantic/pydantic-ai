@@ -115,8 +115,17 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             messages: list[_messages.ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any],
         ) -> ModelResponse:
-            return await model.request(messages, model_settings, model_request_parameters)
+            from pydantic_ai._agent_graph import call_model
+
+            request_context = ModelRequestContext(
+                model=model,
+                messages=messages,
+                model_settings=model_settings,
+                model_request_parameters=model_request_parameters,
+            )
+            return await call_model(model, request_context, run_context)
 
         self._request_task = request_task
 
@@ -125,14 +134,19 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             messages: list[_messages.ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
-            run_context: RunContext[Any] | None = None,
+            run_context: RunContext[Any],
         ) -> ModelResponse:
-            async with model.request_stream(
-                messages, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
+            from pydantic_ai._agent_graph import open_model_stream
+
+            request_context = ModelRequestContext(
+                model=model,
+                messages=messages,
+                model_settings=model_settings,
+                model_request_parameters=model_request_parameters,
+            )
+            async with open_model_stream(model, request_context, run_context) as streamed_response:
                 # Fire the full capability chain's wrap_run_event_stream hooks against
                 # the live stream inside the Prefect task.
-                assert run_context is not None
                 wrapped_stream = agent.root_capability.wrap_run_event_stream(run_context, stream=streamed_response)
                 if event_stream_handler is not None:
                     await event_stream_handler(run_context, wrapped_stream)
@@ -203,6 +217,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             request_context.messages,
             request_context.model_settings,
             request_context.model_request_parameters,
+            ctx,
         )
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

@@ -206,33 +206,40 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # --- Model request activities ---
 
         async def request_activity(params: RequestParams, deps: Any | None = None) -> ModelResponse:
+            from pydantic_ai._agent_graph import call_model
+
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
-            return await model_for_request.request(
-                params.messages,
-                cast(ModelSettings | None, params.model_settings),
-                params.model_request_parameters,
+            request_context = ModelRequestContext(
+                model=model_for_request,
+                messages=params.messages,
+                model_settings=cast(ModelSettings | None, params.model_settings),
+                model_request_parameters=params.model_request_parameters,
             )
+            return await call_model(model_for_request, request_context, run_context)
 
         request_activity.__annotations__['deps'] = deps_type | None
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: RequestParams, deps: AgentDepsT) -> ModelResponse:
+            from pydantic_ai._agent_graph import open_model_stream
+
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             agent = self._agent
             assert agent is not None
-            async with model_for_request.request_stream(
-                params.messages,
-                cast(ModelSettings | None, params.model_settings),
-                params.model_request_parameters,
-                run_context,
-            ) as streamed_response:
+            request_context = ModelRequestContext(
+                model=model_for_request,
+                messages=params.messages,
+                model_settings=cast(ModelSettings | None, params.model_settings),
+                model_request_parameters=params.model_request_parameters,
+            )
+            async with open_model_stream(model_for_request, request_context, run_context) as streamed_response:
                 # Fire the full capability chain's wrap_run_event_stream hooks against
                 # the live stream — ProcessEventStream and any other outer capability
                 # sees real events here, not synthetic ones replayed in the workflow.

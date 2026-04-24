@@ -502,6 +502,47 @@ class _SkipStreamedResponse(models.StreamedResponse):
         return self._response
 
 
+# --- Innermost model-call helpers ---
+#
+# Both the agent graph (ModelRequestNode) and durable execution capabilities
+# (TemporalDurability/DBOSDurability/PrefectDurability inside their
+# activity/step/task) need to invoke the model as the innermost operation of a
+# request. Routing both call sites through these helpers keeps the innermost
+# logic in one place — any future addition (telemetry, caching, error
+# translation) lands in both paths automatically.
+
+
+async def call_model(
+    model: models.Model,
+    request_context: ModelRequestContext,
+    run_context: RunContext[Any],
+) -> _messages.ModelResponse:
+    """Innermost non-streaming model call."""
+    with set_current_run_context(run_context):
+        return await model.request(
+            request_context.messages,
+            request_context.model_settings,
+            request_context.model_request_parameters,
+        )
+
+
+@asynccontextmanager
+async def open_model_stream(
+    model: models.Model,
+    request_context: ModelRequestContext,
+    run_context: RunContext[Any],
+) -> AsyncIterator[models.StreamedResponse]:
+    """Innermost streaming model call."""
+    with set_current_run_context(run_context):
+        async with model.request_stream(
+            request_context.messages,
+            request_context.model_settings,
+            request_context.model_request_parameters,
+            run_context,
+        ) as sr:
+            yield sr
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -572,16 +613,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
-            with set_current_run_context(run_context):
-                async with req_ctx.model.request_stream(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
-                ) as sr:
-                    self._did_stream = True
-                    ctx.state.usage.requests += 1
-                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                    agent_stream_holder.append(agent_stream)
-                    stream_ready.set()
-                    await stream_done.wait()
+            async with open_model_stream(req_ctx.model, req_ctx, run_context) as sr:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                agent_stream_holder.append(agent_stream)
+                stream_ready.set()
+                await stream_done.wait()
             response = sr.get()
             _handler_response = response
             return response
@@ -723,12 +761,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
-            with set_current_run_context(run_context):
-                response = await req_ctx.model.request(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
-                )
-                _handler_response = response
-                return response
+            response = await call_model(req_ctx.model, req_ctx, run_context)
+            _handler_response = response
+            return response
 
         request_context = ModelRequestContext(
             model=model,
