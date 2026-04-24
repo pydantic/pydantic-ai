@@ -1352,10 +1352,15 @@ class RetryPromptPart:
             else:
                 description = self.content
         else:
-            # Strip input from top-level errors where it duplicates the entire generated output
-            exclude = {
-                i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
-            }
+            # For NativeOutput retries (no `tool_name`) the generated JSON is already in the model's
+            # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
+            # so the model sees what arguments it sent alongside the error.
+            if self.tool_name is None:
+                exclude = {
+                    i: {'ctx', 'input'} if len(e.get('loc', ())) <= 1 else {'ctx'} for i, e in enumerate(self.content)
+                }
+            else:
+                exclude = {'__all__': {'ctx'}}
             json_errors = error_details_ta.dump_json(self.content, exclude=exclude, indent=2)
             plural = isinstance(self.content, list) and len(self.content) != 1
             description = (

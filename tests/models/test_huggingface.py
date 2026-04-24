@@ -120,6 +120,12 @@ class MockHuggingFace:
         return response
 
 
+def test_huggingface_client_property_delegates_to_provider():
+    provider = HuggingFaceProvider(provider_name='nebius', api_key='test-key')
+    model = HuggingFaceModel('Qwen/Qwen2.5-72B-Instruct', provider=provider)
+    assert model.client is provider.client
+
+
 def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dict[str, Any]]:
     if isinstance(hf_client, MockHuggingFace):
         return hf_client.chat_completion_kwargs

@@ -324,7 +324,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=87, output_tokens=14),
+                usage=RequestUsage(input_tokens=89, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -394,12 +394,14 @@ def test_result_pydantic_model_validation_error():
     "loc": [
       "b"
     ],
-    "msg": "Value error, must not be foo"
+    "msg": "Value error, must not be foo",
+    "input": "foo"
   }
 ]
 ```
 
-Fix the errors and try again.""")
+Fix the errors and try again.\
+""")
 
 
 def test_output_validator():
@@ -7767,8 +7769,15 @@ async def test_wrapper_agent():
         return 'Hello from foo'  # pragma: no cover
 
     test_model = TestModel()
-    agent = Agent(test_model, toolsets=[foo_toolset], output_type=Foo, event_stream_handler=event_stream_handler)
+    agent = Agent(
+        test_model,
+        system_prompt='You are a wrapped agent',
+        toolsets=[foo_toolset],
+        output_type=Foo,
+        event_stream_handler=event_stream_handler,
+    )
     wrapper_agent = WrapperAgent(agent)
+    assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
     assert wrapper_agent.name == agent.name
@@ -7779,6 +7788,7 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.root_capability is agent.root_capability
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',

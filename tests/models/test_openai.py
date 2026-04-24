@@ -110,8 +110,10 @@ pytestmark = [
 
 
 def test_init():
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    provider = OpenAIProvider(api_key='foobar')
+    m = OpenAIChatModel('gpt-4o', provider=provider)
     assert m.base_url == 'https://api.openai.com/v1/'
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
 
@@ -827,6 +829,18 @@ async def test_none_delta(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+async def test_none_choices(allow_model_requests: None):
+    # OpenAI-compatible providers can emit malformed chunks with `choices=null`; the openai SDK's
+    # loose constructor lets them through despite the typed-as-list field declaration.
+    bad_chunk = text_chunk('')
+    bad_chunk.choices = None  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client = MockOpenAI.create_mock_stream([bad_chunk, text_chunk('hello '), text_chunk('world')])
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
 
 
 @pytest.mark.filterwarnings('ignore:Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')

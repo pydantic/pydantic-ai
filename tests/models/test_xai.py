@@ -129,6 +129,7 @@ def test_xai_init():
     provider = XaiProvider(api_key='foobar')
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=provider)
 
+    assert m.client is provider.client
     assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
 

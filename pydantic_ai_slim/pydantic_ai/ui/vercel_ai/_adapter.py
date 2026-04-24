@@ -142,11 +142,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         sdk_version: Literal[5, 6] = 5,
         server_message_id: str | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` and `server_message_id` parameters."""
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
         return await super().from_request(
-            request, agent=agent, sdk_version=sdk_version, server_message_id=server_message_id, **kwargs
+            request,
+            agent=agent,
+            sdk_version=sdk_version,
+            server_message_id=server_message_id,
+            manage_system_prompt=manage_system_prompt,
+            **kwargs,
         )
 
     @classmethod
@@ -171,9 +177,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
         **kwargs: Any,
     ) -> Response:
-        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` and `server_message_id` parameters."""
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
         return await super().dispatch_request(
             request,
             agent=agent,
@@ -193,6 +200,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             on_complete=on_complete,
+            manage_system_prompt=manage_system_prompt,
             **kwargs,
         )
 

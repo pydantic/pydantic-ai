@@ -106,10 +106,12 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
 
 def test_openai_responses_model(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
-    model = OpenAIResponsesModel('gpt-4o')
+    provider = OpenAIProvider()
+    model = OpenAIResponsesModel('gpt-4o', provider=provider)
     assert model.model_name == 'gpt-4o'
     assert model.system == 'openai'
     assert model.base_url == 'https://api.openai.com/v1/'
+    assert model.client is provider.client
     assert model.client.api_key == 'test'
 
 
