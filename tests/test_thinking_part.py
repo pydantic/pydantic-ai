@@ -71,6 +71,64 @@ from ._inline_snapshot import snapshot
             'foo bar<think>thinking</think>baz',
             [TextPart(content='foo bar<think>thinking</think>baz')],
         ),
+        # empty start tag cases
+        (
+            ('', '</think>'),
+            'thinking</think>after',
+            [ThinkingPart(content='thinking'), TextPart(content='after')],
+        ),
+        (
+            ('', '</think>'),
+            'text only',
+            [TextPart(content='text only')],
+        ),
+        # empty end tag cases
+        (
+            ('<think>', ''),
+            'before<think>thinking',
+            [TextPart(content='before'), ThinkingPart(content='thinking')],
+        ),
+        (
+            ('<think>', ''),
+            'before<think>',
+            [TextPart(content='before'), ThinkingPart(content='')],
+        ),
+        (
+            ('<think>', ''),
+            '',
+            [],
+        ),
+        # both tags empty
+        (
+            ('', ''),
+            'no thinking tags',
+            [TextPart(content='no thinking tags')],
+        ),
+        (
+            ('', ''),
+            '',
+            [],
+        ),
+        (
+            ('', '</think>'),
+            'thinking</think>',
+            [ThinkingPart(content='thinking')],
+        ),
+        (
+            ('', '</think>'),
+            '',
+            [],
+        ),
+        (
+            ('<think>', ''),
+            '<think>thinking',
+            [ThinkingPart(content='thinking')],
+        ),
+        (
+            ('<think>', ''),
+            'text only',
+            [TextPart(content='text only')],
+        ),
     ],
 )
 def test_split_content(thinking_tags: tuple[str, str], content: str, parts: list[ModelResponsePart]):
