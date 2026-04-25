@@ -55,7 +55,9 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
             # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
             openai_chat_send_back_thinking_parts='field',
             # DeepSeek reasoning models (deepseek-reasoner, deepseek-v4-*) do not support tool_choice=required
-            openai_supports_tool_choice_required=(model_name not in ('deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro')),
+            openai_supports_tool_choice_required=(
+                model_name not in ('deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro')
+            ),
         ).update(profile)
 
     @overload
