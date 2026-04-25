@@ -72,15 +72,16 @@ Pydantic AI pick the best algorithm per provider and may change over time).
 ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNativeStrategy]  # noqa: UP007
 """Strategy value accepted by [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy].
 
-* ``None`` (default, on the capability): let Pydantic AI pick the best strategy for the
-  current provider — native on supporting models, the default local algorithm elsewhere.
-  The choice may change in future versions.
 * ``'substring'``: force the local token-overlap algorithm regardless of provider.
 * ``'bm25'`` / ``'regex'``: force a specific provider-native strategy (Anthropic). The
   request fails on providers that can't honor the choice.
 * Callable ``(query, tools) -> names``: custom search function. Used locally, and also
   by the native "client-executed" surface on providers that support it (Anthropic custom
   tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
+
+``None`` is not part of the union — it's accepted as the default on the
+[`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy] field and means
+"let Pydantic AI pick"; see that field's docstring for details.
 """
 
 

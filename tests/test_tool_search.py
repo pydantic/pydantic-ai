@@ -1383,18 +1383,13 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
     ]
     await agent.run('and again', message_history=history)
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # Inspect the replayed Anthropic request: content blocks are dicts on the request
-    # path (params). Flatten manually since typed iteration over the union is fussy.
-    names: list[str] = []
-    for msg in kwargs['messages']:
-        content: Any = msg.get('content') or []
-        assert isinstance(content, list)
-        blocks = cast('list[dict[str, Any]]', content)
-        for block in blocks:
-            if block.get('type') == 'server_tool_use':
-                name = block.get('name')
-                if isinstance(name, str):
-                    names.append(name)
+    # Inspect the replayed Anthropic request. Content blocks are dicts on the request
+    # path (params); flatten via comprehension so each replayed call's `name` shows up
+    # in `names`.
+    blocks = [
+        cast('dict[str, Any]', block) for msg in kwargs['messages'] for block in cast('list[Any]', msg['content'])
+    ]
+    names = [block['name'] for block in blocks if block.get('type') == 'server_tool_use']
     assert 'tool_search_tool_regex' in names
     assert 'tool_search_tool_bm25' not in names
 
@@ -1515,22 +1510,12 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
     # The Anthropic-generated tool search parts are not echoed back to OpenAI (wrong
     # provider) — the replayed input contains only the user message from the prior turn
     # and the new user prompt, plus no `tool_search_call` items.
-    item_types: list[str] = []
-    for item in kwargs['input']:
-        if isinstance(item, dict):
-            item_type = item.get('type')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            if isinstance(item_type, str):
-                item_types.append(item_type)
+    item_types = [cast('dict[str, Any]', item).get('type') for item in kwargs['input']]
     assert 'tool_search_call' not in item_types
     # `get_weather` is visible on this turn because it was discovered in the prior turn's
     # history — the local ``ToolSearchToolset`` emits its regular variant in the tool
     # list so the OpenAI request carries `get_weather` as a regular function tool.
-    tool_names: list[str] = []
-    for tool in kwargs['tools']:
-        if isinstance(tool, dict):
-            tool_name = tool.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            if isinstance(tool_name, str):
-                tool_names.append(tool_name)
+    tool_names = [cast('dict[str, Any]', tool).get('name') for tool in kwargs['tools']]
     assert 'get_weather' in tool_names
 
 

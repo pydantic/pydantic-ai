@@ -1210,10 +1210,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
                                 # `BetaContentBlockParam` union yet; cast through Any until
                                 # the SDK's union is widened.
+                                inner_param = cast(Any, inner)
                                 tool_search_result_block: Any = BetaToolSearchToolResultBlockParam(
                                     tool_use_id=tool_use_id,
                                     type='tool_search_tool_result',
-                                    content=cast(Any, inner),
+                                    content=inner_param,
                                 )
                                 assistant_content_params.append(tool_search_result_block)
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
@@ -2014,15 +2015,15 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
-        # Preserve the native variant on the call part so history replay re-emits the
-        # same server tool type (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
-        strategy: Literal['bm25', 'regex'] = 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'
+        # Inline the variant lookup into the constructor to keep this elif body a single
+        # statement — matching the other branches keeps Python's line tracing consistent
+        # for the chain (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY` for replay).
         return BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=ToolSearchTool.kind,
             args=tool_args,
             tool_call_id=item.id,
-            provider_details={'strategy': strategy},
+            provider_details={'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'},
         )
     elif item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
