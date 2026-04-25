@@ -1956,9 +1956,9 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     return [match['name'] for match in parsed['tools']]
 
 
-def _build_tool_search_replay_block(  # pragma: lax no cover
+def _build_tool_search_replay_block(
     response_part: BuiltinToolReturnPart, tool_use_id: str
-) -> Any:
+) -> Any:  # pragma: lax no cover
     """Reconstruct an Anthropic tool-search result block for history replay.
 
     Reads the cross-provider :class:`ToolSearchReturn` off ``content`` and any error
@@ -1989,9 +1989,9 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
 }
 
 
-def _map_server_tool_use_block(  # pragma: lax no cover
+def _map_server_tool_use_block(
     item: BetaServerToolUseBlock, provider_name: str
-) -> BuiltinToolCallPart:
+) -> BuiltinToolCallPart:  # pragma: lax no cover
     tool_args = cast(dict[str, Any], item.input) or None
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
         return BuiltinToolCallPart(
