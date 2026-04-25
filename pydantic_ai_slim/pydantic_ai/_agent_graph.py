@@ -517,7 +517,21 @@ async def call_model(
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
 ) -> _messages.ModelResponse:
-    """Innermost non-streaming model call."""
+    """Run the innermost non-streaming model request.
+
+    Re-exported as `pydantic_ai.durable_exec.call_model` for use by capabilities
+    that route the model request through an external durable system (Temporal,
+    DBOS, Prefect, ...). Call this from inside the activity / step / task to
+    perform the actual provider request.
+
+    Args:
+        model: The model to call.
+        request_context: The merged request context (messages, settings, parameters).
+        run_context: The current run context, made available via `get_current_run_context`.
+
+    Returns:
+        The model response.
+    """
     with set_current_run_context(run_context):
         return await model.request(
             request_context.messages,
@@ -532,7 +546,22 @@ async def open_model_stream(
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
 ) -> AsyncIterator[models.StreamedResponse]:
-    """Innermost streaming model call."""
+    """Open the innermost streaming model request.
+
+    Re-exported as `pydantic_ai.durable_exec.open_model_stream` for use by
+    capabilities that route the model stream through an external durable
+    system. Call from inside the activity / step / task to drain the
+    `StreamedResponse` and (optionally) fire `wrap_run_event_stream` hooks
+    against live events before returning the assembled `ModelResponse`.
+
+    Args:
+        model: The model to call.
+        request_context: The merged request context.
+        run_context: The current run context.
+
+    Yields:
+        A `StreamedResponse` to iterate inside the durable boundary.
+    """
     with set_current_run_context(run_context):
         async with model.request_stream(
             request_context.messages,

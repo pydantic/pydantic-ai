@@ -12,7 +12,6 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import _utils
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
@@ -21,6 +20,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec import disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -237,7 +237,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         # --- Model request activities ---
 
         async def request_activity(params: RequestParams, deps: Any | None = None) -> ModelResponse:
-            from pydantic_ai._agent_graph import call_model
+            from pydantic_ai.durable_exec import call_model
 
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
@@ -256,7 +256,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: RequestParams, deps: AgentDepsT) -> ModelResponse:
-            from pydantic_ai._agent_graph import open_model_stream
+            from pydantic_ai.durable_exec import open_model_stream
 
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
@@ -382,7 +382,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         self._validate_per_run_capabilities(ctx)
 
-        with _utils.disable_threads():
+        with disable_threads():
             try:
                 return await handler()
             except PydanticSerializationError as e:  # pragma: lax no cover

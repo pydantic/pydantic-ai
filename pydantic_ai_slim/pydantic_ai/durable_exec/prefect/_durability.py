@@ -140,7 +140,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            from pydantic_ai._agent_graph import call_model
+            from pydantic_ai.durable_exec import call_model
 
             request_context = ModelRequestContext(
                 model=model,
@@ -159,7 +159,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            from pydantic_ai._agent_graph import open_model_stream
+            from pydantic_ai.durable_exec import open_model_stream
 
             request_context = ModelRequestContext(
                 model=model,
