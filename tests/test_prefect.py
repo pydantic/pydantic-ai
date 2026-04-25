@@ -1297,9 +1297,13 @@ async def test_prefect_durability_simple_agent(prefect_harness: None) -> None:
     assert output == 'Echo: Hello Prefect'
 
 
-async def test_prefect_durability_outside_flow() -> None:
-    """PrefectDurability is transparent outside a Prefect flow."""
-    agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[PrefectDurability()])
+async def test_prefect_durability_auto_wraps_run_as_flow(prefect_harness: None) -> None:
+    """`agent.run` outside an active flow auto-wraps in one.
 
-    result = await agent.run('Hello outside')
-    assert result.output == 'Echo: Hello outside'
+    The capability hooks `agent.run` so callers don't need a manual `@flow`. Inside an
+    existing flow the wrapper short-circuits to avoid creating a redundant nested flow.
+    """
+    agent = Agent(_durability_fn_model, name='durability_auto', capabilities=[PrefectDurability()])
+
+    result = await agent.run('Auto-wrapped')
+    assert result.output == 'Echo: Auto-wrapped'

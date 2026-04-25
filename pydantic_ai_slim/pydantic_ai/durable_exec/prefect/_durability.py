@@ -3,10 +3,11 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from prefect import task
+from prefect import flow, task
 from prefect.context import FlowRunContext
+from prefect.utilities.asyncutils import run_coro_as_sync
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
@@ -183,7 +184,44 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         for toolset in agent.toolsets:
             bound._prefectify_leaf_toolsets(toolset)
 
+        # --- Auto-wrap agent.run / run_sync as Prefect flows ---
+        bound._install_flow_wrappers(agent)
+
         return bound
+
+    def _install_flow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Replace ``agent.run`` and ``agent.run_sync`` with Prefect-flow-decorated wrappers.
+
+        When called outside an active flow run, the wrapper enters a new flow so
+        every model and toolset task recorded inside it is observable in the Prefect
+        UI. When already inside a flow, the wrapper passes through to avoid a
+        redundant nested flow.
+        """
+        original_run = agent.run
+        original_run_sync = agent.run_sync
+
+        @flow(name=f'{self.name} Run')
+        async def _auto_run_flow(*args: Any, **kwargs: Any) -> Any:
+            return await original_run(*args, **kwargs)
+
+        @flow(name=f'{self.name} Sync Run')
+        def _auto_run_sync_flow(*args: Any, **kwargs: Any) -> Any:
+            # Prefect's sync flow body must be sync; bridge to the async run() the
+            # same way `PrefectAgent.run_sync` does.
+            return run_coro_as_sync(original_run(*args, **kwargs))
+
+        async def patched_run(*args: Any, **kwargs: Any) -> Any:
+            if FlowRunContext.get() is not None:
+                return await original_run(*args, **kwargs)
+            return cast(Any, await _auto_run_flow(*args, **kwargs))
+
+        def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
+            if FlowRunContext.get() is not None:  # pragma: lax no cover
+                return original_run_sync(*args, **kwargs)
+            return cast(Any, _auto_run_sync_flow(*args, **kwargs))
+
+        agent.run = patched_run
+        agent.run_sync = patched_run_sync
 
     def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap leaf toolsets as Prefect tasks."""
