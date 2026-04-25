@@ -1208,11 +1208,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     }
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
                                 # `BetaContentBlockParam` union yet; emit the equivalent dict
-                                # directly so it can flow through the union as ``Any``.
+                                # directly so it can flow through the union as ``Any``. The lax
+                                # pragmas guard against a CPython line-tracer artifact in this
+                                # construction that flickers across CI matrices.
                                 tool_search_block: dict[str, Any] = dict(  # pragma: lax no cover
                                     tool_use_id=tool_use_id, type='tool_search_tool_result', content=inner
                                 )
-                                assistant_content_params.append(cast(Any, tool_search_block))
+                                assistant_content_params.append(cast(Any, tool_search_block))  # pragma: lax no cover
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
@@ -2001,10 +2003,10 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=tool_args,
             tool_call_id=item.id,
         )
-    if item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
-        raise NotImplementedError(  # pragma: no cover
+    if item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: lax no cover
+        raise NotImplementedError(
             f'Anthropic built-in tool {item.name!r} is not currently supported.'
-        )
+        )  # pragma: lax no cover
     if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
         # Preserve the variant on the call part for replay (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
         return BuiltinToolCallPart(
