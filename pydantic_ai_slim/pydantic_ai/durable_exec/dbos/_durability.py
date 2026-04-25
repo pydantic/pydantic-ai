@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from dbos import DBOS
 
 from pydantic_ai import messages as _messages
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -25,7 +26,11 @@ from pydantic_ai.toolsets import AbstractToolset
 from ._utils import StepConfig
 
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
-"""Parallel execution modes safe for DBOS deterministic replay."""
+"""Parallel execution modes safe for DBOS deterministic replay.
+
+`'parallel'` is excluded because it cannot guarantee deterministic event ordering,
+which DBOS replay requires.
+"""
 
 
 @dataclass(init=False)
@@ -58,6 +63,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         model_step_config: StepConfig | None = None,
         mcp_step_config: StepConfig | None = None,
+        parallel_execution_mode: DBOSParallelExecutionMode = 'parallel_ordered_events',
     ):
         """Create a DBOSDurability capability.
 
@@ -67,16 +73,22 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             event_stream_handler: Optional handler for streaming events.
             model_step_config: DBOS step config for model request steps.
             mcp_step_config: DBOS step config for MCP server steps.
+            parallel_execution_mode: Tool-call execution mode applied for the duration
+                of every run. Defaults to ``'parallel_ordered_events'`` so events
+                replay deterministically. Set to ``'sequential'`` for strict ordering.
         """
         self.name = ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._event_stream_handler = event_stream_handler
         self._model_step_config = model_step_config or {}
         self._mcp_step_config = mcp_step_config or {}
+        self._parallel_execution_mode: ParallelExecutionMode = cast(ParallelExecutionMode, parallel_execution_mode)
         self._dbos_toolsets_by_id: dict[str, AbstractToolset[Any]] = {}
         # Populated by for_agent when the capability is attached to an agent.
         self._request_step: Any = None
         self._request_stream_step: Any = None
+        self._auto_run_workflow: Callable[..., Awaitable[Any]] | None = None
+        self._auto_run_sync_workflow: Callable[..., Any] | None = None
 
     @classmethod
     def from_agent(cls, agent: AbstractAgent[Any, Any]) -> DBOSDurability[Any] | None:
@@ -168,7 +180,54 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         for toolset in agent.toolsets:
             bound._dbosify_leaf_toolsets(toolset)
 
+        # --- Auto-wrap agent.run / run_sync as DBOS workflows ---
+        bound._install_workflow_wrappers(agent)
+
         return bound
+
+    def _install_workflow_wrappers(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+        """Replace ``agent.run`` and ``agent.run_sync`` with DBOS-workflow-decorated wrappers.
+
+        When called outside an active DBOS workflow, the wrapper enters a workflow so
+        all model and toolset steps recorded inside become durable. When already inside a
+        workflow, it skips the redundant wrap and just applies the configured parallel
+        execution mode.
+
+        ``agent.iter`` is wrapped in-place by `wrap_run` instead — its async-generator
+        signature can't be cleanly forwarded through ``@DBOS.workflow``.
+        """
+        original_run = agent.run
+        original_run_sync = agent.run_sync
+        parallel_mode = self._parallel_execution_mode
+
+        @DBOS.workflow(name=f'{self.name}.run')
+        async def _auto_run_workflow(*args: Any, **kwargs: Any) -> Any:
+            with agent.parallel_tool_call_execution_mode(parallel_mode):
+                return await original_run(*args, **kwargs)
+
+        @DBOS.workflow(name=f'{self.name}.run_sync')
+        def _auto_run_sync_workflow(*args: Any, **kwargs: Any) -> Any:
+            with agent.parallel_tool_call_execution_mode(parallel_mode):
+                return original_run_sync(*args, **kwargs)
+
+        self._auto_run_workflow = _auto_run_workflow
+        self._auto_run_sync_workflow = _auto_run_sync_workflow
+
+        async def patched_run(*args: Any, **kwargs: Any) -> Any:
+            if DBOS.workflow_id is not None and DBOS.step_id is None:
+                # Already inside a DBOS workflow — skip the auto-wrap and just apply the mode.
+                with agent.parallel_tool_call_execution_mode(parallel_mode):
+                    return await original_run(*args, **kwargs)
+            return await _auto_run_workflow(*args, **kwargs)
+
+        def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
+            if DBOS.workflow_id is not None and DBOS.step_id is None:  # pragma: lax no cover
+                with agent.parallel_tool_call_execution_mode(parallel_mode):
+                    return original_run_sync(*args, **kwargs)
+            return _auto_run_sync_workflow(*args, **kwargs)
+
+        agent.run = patched_run
+        agent.run_sync = patched_run_sync
 
     def _dbosify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap MCP leaf toolsets as DBOS steps."""
@@ -220,7 +279,18 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        return await handler()
+        """Apply the configured parallel-execution mode for the duration of the run.
+
+        Auto-wrapping into a DBOS workflow is handled by `_install_workflow_wrappers`
+        for ``run``/``run_sync``. This hook is the single chokepoint that applies the
+        execution mode for every entry point — including ``iter``, which the run/sync
+        wrappers don't cover.
+        """
+        agent = self._agent
+        if agent is None:  # pragma: no cover
+            return await handler()
+        with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
+            return await handler()
 
     async def wrap_model_request(
         self,

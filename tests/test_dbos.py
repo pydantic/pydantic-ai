@@ -1674,6 +1674,60 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_auto_wraps_run_as_workflow(dbos: DBOS) -> None:
+    """`agent.run` outside any workflow auto-wraps into a DBOS workflow.
+
+    Without DBOSDurability, calling agent.run() directly wouldn't produce any DBOS
+    workflow record. With it, steps inside the run get recorded under an auto-spawned
+    workflow ID — verified by listing the workflow's steps after the run.
+    """
+    agent = Agent(_durability_fn_model, name='durability_auto', capabilities=[DBOSDurability()])
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await agent.run('Auto-wrapped')
+
+    assert result.output == 'Echo: Auto-wrapped'
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert 'durability_auto__model.request' in step_names
+
+
+def test_dbos_durability_auto_wraps_run_sync_as_workflow(dbos: DBOS) -> None:
+    """`agent.run_sync` outside any workflow auto-wraps into a DBOS workflow."""
+    agent = Agent(_durability_fn_model, name='durability_auto_sync', capabilities=[DBOSDurability()])
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = agent.run_sync('Sync auto-wrapped')
+
+    assert result.output == 'Echo: Sync auto-wrapped'
+    steps = asyncio.get_event_loop().run_until_complete(dbos.list_workflow_steps_async(wfid))
+    step_names = [step['function_name'] for step in steps]
+    assert 'durability_auto_sync__model.request' in step_names
+
+
+async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> None:
+    """The configured parallel-execution mode is active inside the auto-wrapped run."""
+    from pydantic_ai import tool_manager as _tm
+
+    captured: list[str] = []
+
+    def _capture_mode_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.append(_tm._parallel_execution_mode_ctx_var.get())  # pyright: ignore[reportPrivateUsage]
+        return _durability_model_fn(messages, info)
+
+    capture_model = FunctionModel(_capture_mode_fn)
+    agent = Agent(
+        capture_model,
+        name='durability_parallel',
+        capabilities=[DBOSDurability(parallel_execution_mode='sequential')],
+    )
+
+    await agent.run('measure mode')
+    assert captured == ['sequential']
+
+
 async def test_dbos_durability_outside_workflow() -> None:
     """DBOSDurability is transparent outside a DBOS workflow."""
     agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[DBOSDurability()])
