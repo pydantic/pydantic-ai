@@ -2042,7 +2042,7 @@ PendingMessagePriority = Literal['steering', 'follow_up']
 
 - `'steering'`: Drained into the next model request (before the model call).
 - `'follow_up'`: Drained only when the agent would otherwise end, preventing
-    premature termination while background work is pending.
+    premature termination while follow-up work is pending.
 """
 
 
@@ -2050,8 +2050,8 @@ PendingMessagePriority = Literal['steering', 'follow_up']
 class PendingMessage:
     """A message queued for injection into the agent conversation.
 
-    Pending messages are enqueued via [`RunContext.enqueue_message`][pydantic_ai.tools.RunContext.enqueue_message]
-    or [`AgentRun.enqueue_message`][pydantic_ai.run.AgentRun.enqueue_message] and are
+    Pending messages are enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
+    or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and are
     automatically drained at the appropriate time during the agent run.
     """
 

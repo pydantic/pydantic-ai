@@ -334,6 +334,75 @@ print(result2.all_messages())
 """
 ```
 
+## Injecting messages mid-run
+
+Tools, capability hooks, and external code driving an agent run can inject extra
+[`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s into the conversation
+mid-run via a pending message queue. Use this when something happens during a run
+that the agent should know about — a tool wants to add follow-up context, an external
+event needs to redirect the agent's plan, or background work needs to reach the agent
+when it completes.
+
+Enqueued parts are bundled into a [`PendingMessage`][pydantic_ai.messages.PendingMessage]
+and drained automatically based on a `priority`:
+
+- `'steering'` (default): drained into the next [`ModelRequest`][pydantic_ai.messages.ModelRequest] before the model call. Use when the new context should influence the agent's *next* step.
+- `'follow_up'`: drained only when the agent would otherwise end. The agent run continues with a new model request that includes the follow-up parts. Use when the agent shouldn't stop while there's still pending work.
+
+### From inside a tool or hook
+
+Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
+`RunContext` in scope:
+
+```python {title="enqueue_from_tool.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('test')
+
+
+@agent.tool
+def trigger_alert(ctx: RunContext[None]) -> str:
+    ctx.enqueue(SystemPromptPart('Alert: production is degraded, prioritize triage.'))
+    return 'alert raised'
+```
+
+The steering message is appended to the agent's message history and is visible to the
+model on the next request, alongside any tool returns from the same step.
+
+### From external code driving `agent.iter()`
+
+Use [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] when you're driving a run
+from outside (e.g. forwarding events from a webhook, chat platform, or job queue):
+
+```python {title="enqueue_from_agent_run.py"}
+from pydantic_ai import Agent, UserPromptPart
+
+agent = Agent('test')
+
+
+async def main():
+    async with agent.iter('Start drafting the report') as agent_run:
+        agent_run.enqueue(
+            UserPromptPart('Change of plan: focus on Q3 revenue first.'),
+            priority='steering',
+        )
+        async for _ in agent_run:
+            ...
+```
+
+[`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages] exposes the
+current queue for inspection.
+
+!!! info "Limitations"
+    - Follow-up messages need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
+      explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
+      aren't drained inside a bare `async for node in agent_run:` loop. Steering
+      messages work in either case.
+    - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
+      activities and don't share state with the workflow, so `ctx.enqueue` from a
+      tool doesn't currently propagate back to the run. Enqueue from the workflow
+      context (e.g. via `AgentRun.enqueue`) instead.
+
 ## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy

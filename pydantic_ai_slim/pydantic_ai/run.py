@@ -403,7 +403,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         return self._graph_run.state.pending_messages
 
-    def enqueue_message(
+    def enqueue(
         self,
         *parts: _messages.ModelRequestPart,
         priority: _messages.PendingMessagePriority = 'steering',

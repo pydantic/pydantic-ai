@@ -168,7 +168,6 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -208,7 +207,6 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -256,7 +254,6 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -304,7 +301,6 @@ def test_google_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -350,7 +346,6 @@ def test_sphinx_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -402,7 +397,6 @@ def test_numpy_style_with_returns():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -442,7 +436,6 @@ def test_only_returns_type():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -473,7 +466,6 @@ def test_docstring_unknown():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -522,7 +514,6 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -564,7 +555,6 @@ def test_takes_just_model():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -615,7 +605,6 @@ def test_takes_model_and_int():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -1006,7 +995,6 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 
@@ -1084,7 +1072,6 @@ def test_json_schema_required_parameters():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'background': False,
             },
             {
                 'description': None,
@@ -1105,7 +1092,6 @@ def test_json_schema_required_parameters():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'background': False,
             },
         ]
     )
@@ -1199,7 +1185,6 @@ def test_schema_generator():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'background': False,
             },
             {
                 'description': None,
@@ -1219,7 +1204,6 @@ def test_schema_generator():
                 'prefer_builtin': None,
                 'return_schema': None,
                 'include_return_schema': None,
-                'background': False,
             },
         ]
     )
@@ -1262,7 +1246,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'prefer_builtin': None,
             'return_schema': None,
             'include_return_schema': None,
-            'background': False,
         }
     )
 

@@ -99,7 +99,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Messages are drained automatically: `'steering'` messages before the next model
     request, `'follow_up'` messages when the agent would otherwise end.
 
-    Use [`enqueue_message`][pydantic_ai.tools.RunContext.enqueue_message] to add messages.
+    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
@@ -118,7 +118,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
-    def enqueue_message(
+    def enqueue(
         self,
         *parts: _messages.ModelRequestPart,
         priority: PendingMessagePriority = 'steering',
