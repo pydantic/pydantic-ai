@@ -1729,11 +1729,19 @@ async def test_dbos_durability_parallel_mode_applies_inside_run(dbos: DBOS) -> N
 
 
 async def test_dbos_durability_outside_workflow() -> None:
-    """DBOSDurability is transparent outside a DBOS workflow."""
+    """DBOSDurability is transparent outside a DBOS workflow.
+
+    `agent.run` and `agent.run_sync` auto-wrap into a workflow, so to exercise the
+    truly transparent path we go through `iter`, which can't be cleanly decorated
+    with `@DBOS.workflow` and stays as plain code outside any workflow.
+    """
     agent = Agent(_durability_fn_model, name='durability_outside', capabilities=[DBOSDurability()])
 
-    result = await agent.run('Hello outside')
-    assert result.output == 'Echo: Hello outside'
+    async with agent.iter('Hello outside') as run:
+        async for _ in run:
+            pass
+    assert run.result is not None
+    assert run.result.output == 'Echo: Hello outside'
 
 
 async def test_dbos_durability_step_verification(dbos: DBOS) -> None:

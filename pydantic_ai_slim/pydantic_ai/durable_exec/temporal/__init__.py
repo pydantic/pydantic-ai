@@ -125,8 +125,13 @@ class PydanticAIPlugin(SimplePlugin):
                     activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
                 elif isinstance(agent, AbstractAgent):
                     durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
-                    if durability is not None:
-                        activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                    if durability is None:
+                        raise UserError(
+                            f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
+                            '`TemporalDurability` capability; either add one to `capabilities=[...]` '
+                            'or wrap the agent with `TemporalAgent` instead.'
+                        )
+                    activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
                 else:
                     raise TypeError(  # pragma: no cover
                         f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]

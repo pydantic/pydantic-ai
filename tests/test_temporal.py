@@ -4386,6 +4386,71 @@ def test_durability_get_serialization_name():
     assert TemporalDurability.get_serialization_name() is None
 
 
+def test_durability_plugin_requires_durability_capability():
+    """`DurabilityPlugin` raises a clear error when the agent has no `TemporalDurability`."""
+    plain_agent = Agent(_durability_fn_model, name='no_cap_agent')
+    with pytest.raises(UserError, match='no `TemporalDurability` capability'):
+        DurabilityPlugin(plain_agent)
+
+
+_pydantic_ai_agents_durable = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+_pydantic_ai_agents_agent = Agent(
+    _durability_fn_model,
+    name='pydantic_ai_agents_attr_test',
+    capabilities=[_pydantic_ai_agents_durable],
+)
+
+
+@workflow.defn
+class _BareAgentWorkflowViaAttribute:
+    __pydantic_ai_agents__ = [_pydantic_ai_agents_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _pydantic_ai_agents_agent.run(prompt)
+        return result.output
+
+
+async def test_pydantic_ai_plugin_discovers_bare_agent_with_durability(client: Client):
+    """`PydanticAIPlugin` registers activities from a bare `AbstractAgent` listed in `__pydantic_ai_agents__`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[_BareAgentWorkflowViaAttribute],
+    ):
+        output = await client.execute_workflow(
+            _BareAgentWorkflowViaAttribute.run,
+            args=['Discovered'],
+            id=_BareAgentWorkflowViaAttribute.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: Discovered'
+
+
+_missing_cap_agent = Agent(_durability_fn_model, name='no_cap_in_attr')
+
+
+@workflow.defn
+class _MissingCapWorkflow:
+    __pydantic_ai_agents__ = [_missing_cap_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:  # pragma: no cover - configure_worker rejects before exec
+        result = await _missing_cap_agent.run(prompt)
+        return result.output
+
+
+async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: Client):
+    """`PydanticAIPlugin` raises a clear error when an agent in `__pydantic_ai_agents__` lacks `TemporalDurability`."""
+    with pytest.raises(UserError, match='no `TemporalDurability` capability'):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[_MissingCapWorkflow],
+        ):
+            pass  # pragma: no cover - error raised before reaching here
+
+
 # --- Toolset without ID raises UserError ---
 
 
@@ -4575,6 +4640,37 @@ def test_durability_tool_metadata_disables_activity():
     # Should have wrapped the toolset (capability discovered it at for_agent time);
     # the per-tool skip is applied at call time via resolve_tool_activity_config.
     assert 'meta_toolset' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+
+def test_resolve_tool_activity_config_reads_metadata():
+    """Per-tool Temporal config from `tool_def.metadata['temporal']` takes priority."""
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.toolsets import ToolsetTool
+    from pydantic_ai_slim.pydantic_ai.durable_exec.temporal._toolset import resolve_tool_activity_config
+
+    metadata_config = ActivityConfig(start_to_close_timeout=timedelta(seconds=120))
+
+    fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
+
+    async def fn_tool() -> str:
+        return 'ok'
+
+    fn_toolset.add_function(fn_tool, metadata={'temporal': metadata_config})
+    tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': metadata_config})
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=tool_def,
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    # Metadata wins over the per-tool dict.
+    resolved = resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')})
+    assert resolved is metadata_config
+
+    # `False` in metadata also wins.
+    tool.tool_def.metadata = {'temporal': False}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
 
 
 async def test_durability_process_event_stream_fires_live_inside_activity(client: Client):
