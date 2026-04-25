@@ -451,6 +451,22 @@ KnownModelName = TypeAliasType(
         'openai:o4-mini-deep-research',
         'openai:o4-mini',
         'test',
+        'zai:autoglm-phone-multilingual',
+        'zai:glm-4-32b-0414-128k',
+        'zai:glm-4.5',
+        'zai:glm-4.5-air',
+        'zai:glm-4.5-airx',
+        'zai:glm-4.5-flash',
+        'zai:glm-4.5-x',
+        'zai:glm-4.5v',
+        'zai:glm-4.6',
+        'zai:glm-4.6v',
+        'zai:glm-4.6v-flash',
+        'zai:glm-4.6v-flashx',
+        'zai:glm-4.7',
+        'zai:glm-4.7-flash',
+        'zai:glm-4.7-flashx',
+        'zai:glm-5',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
@@ -478,6 +494,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'sambanova',
         'together',
         'vercel',
+        'zai',
     ],
 )
 OpenAIResponsesCompatibleProvider = TypeAliasType(
@@ -1272,7 +1289,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1286,6 +1303,10 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
+    elif model_kind == 'zai':
+        from .zai import ZaiModel
+
+        return ZaiModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
