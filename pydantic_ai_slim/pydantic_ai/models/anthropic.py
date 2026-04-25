@@ -1210,11 +1210,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
                                 # `BetaContentBlockParam` union yet; cast through Any until
                                 # the SDK's union is widened.
-                                inner_param = cast(Any, inner)
+                                tool_search_block_kwargs: dict[str, Any] = {
+                                    'tool_use_id': tool_use_id,
+                                    'type': 'tool_search_tool_result',
+                                    'content': inner,
+                                }
                                 tool_search_result_block: Any = BetaToolSearchToolResultBlockParam(
-                                    tool_use_id=tool_use_id,
-                                    type='tool_search_tool_result',
-                                    content=inner_param,
+                                    **tool_search_block_kwargs
                                 )
                                 assistant_content_params.append(tool_search_result_block)
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
@@ -1988,36 +1990,27 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     return [match['name'] for match in parsed['tools']]
 
 
+_BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
+    'web_search': WebSearchTool.kind,
+    'code_execution': CodeExecutionTool.kind,
+    'web_fetch': WebFetchTool.kind,
+}
+
+
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
 
-    if item.name == 'web_search':
+    if item.name in ('web_search', 'code_execution', 'web_fetch'):
         return BuiltinToolCallPart(
             provider_name=provider_name,
-            tool_name=WebSearchTool.kind,
+            tool_name=_BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME[item.name],
             args=tool_args,
             tool_call_id=item.id,
         )
-    elif item.name == 'code_execution':
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=CodeExecutionTool.kind,
-            args=tool_args,
-            tool_call_id=item.id,
-        )
-    elif item.name == 'web_fetch':
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=WebFetchTool.kind,
-            args=tool_args,
-            tool_call_id=item.id,
-        )
-    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+    if item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
-    elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
-        # Inline the variant lookup into the constructor to keep this elif body a single
-        # statement — matching the other branches keeps Python's line tracing consistent
-        # for the chain (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY` for replay).
+    if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
+        # Preserve the variant on the call part for replay (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
         return BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=ToolSearchTool.kind,
@@ -2025,10 +2018,9 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
             provider_details={'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'},
         )
-    elif item.name == 'advisor':  # pragma: no cover
+    if item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
-    else:
-        assert_never(item.name)
+    assert_never(item.name)
 
 
 def _map_tool_search_tool_result_block(
