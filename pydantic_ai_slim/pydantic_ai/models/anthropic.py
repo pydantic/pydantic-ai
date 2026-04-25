@@ -1209,18 +1209,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     }
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
                                 # `BetaContentBlockParam` union yet; cast through Any until
-                                # the SDK's union is widened. The `lax no cover` keeps the
-                                # last keyword line out of the missing-line list — Python's
-                                # bytecode optimizer drops trace events for the trailing
-                                # entry of a multi-line keyword chain on some matrices.
-                                inner_content = cast(Any, inner)
-                                tool_search_result_block = cast(
-                                    Any,
+                                # the SDK's union is widened. CPython's line tracer
+                                # inconsistently elides trace events from this construction
+                                # across CI matrices — the values are evaluated at runtime
+                                # but the statement-level events go missing on Linux 3.10/3.12.
+                                tool_search_result_block: Any = (  # pragma: lax no cover
                                     BetaToolSearchToolResultBlockParam(
                                         tool_use_id=tool_use_id,
                                         type='tool_search_tool_result',
-                                        content=inner_content,  # pragma: lax no cover
-                                    ),
+                                        content=cast(Any, inner),
+                                    )
                                 )
                                 assistant_content_params.append(tool_search_result_block)
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
