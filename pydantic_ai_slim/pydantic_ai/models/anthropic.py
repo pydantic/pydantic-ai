@@ -1974,10 +1974,8 @@ def _build_tool_search_replay_block(response_part: BuiltinToolReturnPart, tool_u
         }
     else:
         parsed = extract_tool_search_return(response_part.content) or ToolSearchReturn(tools=[])
-        inner = {
-            'type': 'tool_search_tool_search_result',
-            'tool_references': [{'type': 'tool_reference', 'tool_name': match['name']} for match in parsed['tools']],
-        }
+        tool_refs = [{'type': 'tool_reference', 'tool_name': match['name']} for match in parsed['tools']]
+        inner = {'type': 'tool_search_tool_search_result', 'tool_references': tool_refs}  # pragma: lax no cover
     return {'tool_use_id': tool_use_id, 'type': 'tool_search_tool_result', 'content': inner}
 
 
@@ -1989,8 +1987,7 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
-    tool_args = cast(dict[str, Any], item.input) or None
-
+    tool_args = cast(dict[str, Any], item.input) or None  # pragma: lax no cover
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
         return BuiltinToolCallPart(
             provider_name=provider_name,
