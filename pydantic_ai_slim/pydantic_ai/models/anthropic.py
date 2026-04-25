@@ -1182,39 +1182,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif response_part.tool_name == ToolSearchTool.kind and isinstance(
                                 response_part.content, dict
                             ):
-                                # Reconstruct the Anthropic block from the cross-provider typed
-                                # ``ToolSearchReturn`` on ``content`` plus any error fields the
-                                # parse-time mapper stashed on ``provider_details``. The success
-                                # case has no provider-side data beyond the tool names; the error
-                                # case round-trips ``error_code``/``error_message`` from the
-                                # original failure block.
-                                err = response_part.provider_details or {}
-                                if err.get('error_code') is not None:
-                                    inner: dict[str, Any] = {
-                                        'type': 'tool_search_tool_result_error',
-                                        'error_code': err['error_code'],
-                                        'error_message': err.get('error_message', ''),
-                                    }
-                                else:
-                                    parsed = extract_tool_search_return(response_part.content) or ToolSearchReturn(  # pyright: ignore[reportUnknownMemberType]
-                                        tools=[]
-                                    )
-                                    inner = {
-                                        'type': 'tool_search_tool_search_result',
-                                        'tool_references': [
-                                            {'type': 'tool_reference', 'tool_name': match['name']}
-                                            for match in parsed['tools']
-                                        ],
-                                    }
-                                # `BetaToolSearchToolResultBlockParam` isn't in the
-                                # `BetaContentBlockParam` union yet; emit the equivalent dict
-                                # directly so it can flow through the union as ``Any``. The lax
-                                # pragmas guard against a CPython line-tracer artifact in this
-                                # construction that flickers across CI matrices.
-                                tool_search_block: dict[str, Any] = dict(  # pragma: lax no cover
-                                    tool_use_id=tool_use_id, type='tool_search_tool_result', content=inner
+                                assistant_content_params.append(
+                                    _build_tool_search_replay_block(response_part, tool_use_id)
                                 )
-                                assistant_content_params.append(cast(Any, tool_search_block))  # pragma: lax no cover
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
@@ -1986,6 +1956,31 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     return [match['name'] for match in parsed['tools']]
 
 
+def _build_tool_search_replay_block(response_part: BuiltinToolReturnPart, tool_use_id: str) -> Any:
+    """Reconstruct an Anthropic tool-search result block for history replay.
+
+    Reads the cross-provider :class:`ToolSearchReturn` off ``content`` and any error
+    fields the parse-time mapper stashed on ``provider_details``. Returned as a plain
+    dict cast to ``Any`` because ``BetaToolSearchToolResultBlockParam`` isn't in the
+    ``BetaContentBlockParam`` union yet.
+    """
+    err = response_part.provider_details or {}
+    inner: dict[str, Any]
+    if err.get('error_code') is not None:
+        inner = {
+            'type': 'tool_search_tool_result_error',
+            'error_code': err['error_code'],
+            'error_message': err.get('error_message', ''),
+        }
+    else:
+        parsed = extract_tool_search_return(response_part.content) or ToolSearchReturn(tools=[])
+        inner = {
+            'type': 'tool_search_tool_search_result',
+            'tool_references': [{'type': 'tool_reference', 'tool_name': match['name']} for match in parsed['tools']],
+        }
+    return {'tool_use_id': tool_use_id, 'type': 'tool_search_tool_result', 'content': inner}
+
+
 _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
     'web_search': WebSearchTool.kind,
     'code_execution': CodeExecutionTool.kind,
@@ -2003,10 +1998,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=tool_args,
             tool_call_id=item.id,
         )
-    if item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: lax no cover
-        raise NotImplementedError(
-            f'Anthropic built-in tool {item.name!r} is not currently supported.'
-        )  # pragma: lax no cover
     if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
         # Preserve the variant on the call part for replay (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
         return BuiltinToolCallPart(
@@ -2016,7 +2007,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
             provider_details={'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'},
         )
-    if item.name == 'advisor':  # pragma: no cover
+    if item.name in ('bash_code_execution', 'text_editor_code_execution', 'advisor'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     assert_never(item.name)
 
