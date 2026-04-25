@@ -1209,14 +1209,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     }
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
                                 # `BetaContentBlockParam` union yet; cast through Any until
-                                # the SDK's union is widened.
-                                tool_search_block_kwargs: dict[str, Any] = {
-                                    'tool_use_id': tool_use_id,
-                                    'type': 'tool_search_tool_result',
-                                    'content': inner,
-                                }
-                                tool_search_result_block: Any = BetaToolSearchToolResultBlockParam(
-                                    **tool_search_block_kwargs
+                                # the SDK's union is widened. The `lax no cover` keeps the
+                                # last keyword line out of the missing-line list — Python's
+                                # bytecode optimizer drops trace events for the trailing
+                                # entry of a multi-line keyword chain on some matrices.
+                                inner_content = cast(Any, inner)
+                                tool_search_result_block = cast(
+                                    Any,
+                                    BetaToolSearchToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='tool_search_tool_result',
+                                        content=inner_content,  # pragma: lax no cover
+                                    ),
                                 )
                                 assistant_content_params.append(tool_search_result_block)
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
@@ -2008,7 +2012,9 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
         )
     if item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+        raise NotImplementedError(  # pragma: no cover
+            f'Anthropic built-in tool {item.name!r} is not currently supported.'
+        )
     if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
         # Preserve the variant on the call part for replay (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
         return BuiltinToolCallPart(
