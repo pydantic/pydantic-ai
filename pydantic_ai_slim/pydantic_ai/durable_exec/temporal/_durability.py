@@ -6,14 +6,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, cast
 
-from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import _utils, messages as _messages
+from pydantic_ai import _utils
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
@@ -36,15 +35,6 @@ from ._toolset import (
     TemporalWrapperToolset,
     temporalize_toolset as _default_temporalize_toolset,
 )
-
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class _EventStreamHandlerParams:
-    """Params for the event stream handler activity."""
-
-    event: _messages.AgentStreamEvent
-    serialized_run_context: Any
 
 
 @dataclass(init=False)
@@ -164,6 +154,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self._models_by_id: dict[str, Model] = {}
         self._temporal_toolsets_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
         self._temporal_activities: list[Callable[..., Any]] = []
+        self._bound_capability_classes: frozenset[type[AbstractCapability[Any]]] = frozenset()
 
     @classmethod
     def from_agent(cls, agent: AbstractAgent[Any, Any]) -> TemporalDurability[Any] | None:
@@ -217,6 +208,16 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             if model_id == 'default':
                 raise UserError("Model ID 'default' is reserved for the agent's primary model.")
             bound._models_by_id[model_id] = model_instance
+
+        # Snapshot the leaf capability classes registered with the agent so we can
+        # detect runtime additions (which would bypass activity registration).
+        bound_classes: set[type[AbstractCapability[Any]]] = set()
+
+        def _collect_class(cap: AbstractCapability[Any]) -> None:
+            bound_classes.add(type(cap))
+
+        agent.root_capability.apply(_collect_class)
+        bound._bound_capability_classes = frozenset(bound_classes)
 
         # Register activities on the bound copy
         bound._temporal_toolsets_by_id = {}
@@ -286,27 +287,6 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             request_stream_activity
         )
         activities.append(self.request_stream_activity)
-
-        # --- Event stream handler activity ---
-
-        async def event_stream_handler_activity_fn(  # pragma: lax no cover
-            params: _EventStreamHandlerParams, deps: AgentDepsT
-        ) -> None:
-            assert event_stream_handler is not None
-            run_context = deserialize_run_context(
-                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-
-            async def streamed_response():
-                yield params.event
-
-            await event_stream_handler(run_context, streamed_response())
-
-        event_stream_handler_activity_fn.__annotations__['deps'] = deps_type
-        self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
-            event_stream_handler_activity_fn
-        )
-        activities.append(self.event_stream_handler_activity)
 
         # --- Toolset wrapping ---
         for toolset in agent.toolsets:
@@ -400,6 +380,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         if not workflow.in_workflow():
             return await handler()
 
+        self._validate_per_run_capabilities(ctx)
+
         with _utils.disable_threads():
             try:
                 return await handler()
@@ -408,6 +390,35 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                     'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
                     "to activities to be serializable using Pydantic's `TypeAdapter`."
                 ) from e
+
+    def _validate_per_run_capabilities(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject per-run capabilities not registered at agent construction time.
+
+        Temporal needs activities registered with the worker before a workflow runs.
+        Capabilities added per-run (via `agent.run(capabilities=[...])`) bypass
+        `for_agent()` activity registration, so any toolsets or model wrappers they
+        contribute would silently execute in workflow code (non-deterministic, no
+        retry semantics). Reject by class identity: if a leaf in `ctx.root_capability`
+        has a type the bound chain didn't see, raise `UserError`.
+        """
+        if ctx.root_capability is None:  # pragma: no cover - always set inside an agent run
+            return
+
+        runtime_classes: set[type[AbstractCapability[Any]]] = set()
+
+        def _collect(cap: AbstractCapability[Any]) -> None:
+            runtime_classes.add(type(cap))
+
+        ctx.root_capability.apply(_collect)
+        extra = runtime_classes - self._bound_capability_classes
+        if extra:
+            names = ', '.join(sorted(c.__name__ for c in extra))
+            raise UserError(
+                f'Capabilities added per-run inside a Temporal workflow are not supported: {names}. '
+                'Temporal activities must be registered with the worker before the workflow runs. '
+                'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
+                'can register their activities.'
+            )
 
     async def wrap_model_request(
         self,

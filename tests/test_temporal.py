@@ -4247,8 +4247,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 4
+    # 2 base activities (request, request_stream) + 1 for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 3
 
 
 def test_durability_temporal_activities_with_toolsets():
@@ -4261,8 +4261,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 3 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
-    assert len(bound.temporal_activities) == 5
+    # 2 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
+    assert len(bound.temporal_activities) == 4
 
 
 def test_durability_shared_instance_across_agents():
@@ -4340,6 +4340,42 @@ def test_durability_find_model_id_rejects_unregistered():
     # Unregistered model is rejected with a clear error
     with pytest.raises(UserError, match='not registered with this TemporalDurability'):
         bound._find_model_id(m_runtime)  # pyright: ignore[reportPrivateUsage]
+
+
+# --- _validate_per_run_capabilities rejects runtime-added classes ---
+
+
+def test_durability_rejects_runtime_added_capabilities():
+    """Per-run capabilities not seen at construction time are rejected.
+
+    Capability instances added via ``agent.run(capabilities=[...])`` bypass the
+    activity-registration step in ``for_agent``. The capability detects this by
+    snapshotting the bound chain's classes and comparing against ``ctx.root_capability``.
+    """
+    from pydantic_ai._run_context import RunContext
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.result import RunUsage
+
+    @dataclass
+    class _UnregisteredCap(AbstractCapability[None]):
+        pass
+
+    durability = TemporalDurability()
+    agent = Agent(_durability_fn_model, name='runtime_cap_test', capabilities=[durability])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    def make_ctx(root: AbstractCapability[Any]) -> RunContext[None]:
+        return RunContext[None](deps=None, model=_durability_fn_model, usage=RunUsage(), root_capability=root)
+
+    bound_chain = agent.root_capability
+    runtime_chain = CombinedCapability([*bound_chain.capabilities, _UnregisteredCap()])
+    with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+        bound._validate_per_run_capabilities(make_ctx(runtime_chain))  # pyright: ignore[reportPrivateUsage]
+
+    # Sanity: the bound chain alone passes validation.
+    bound._validate_per_run_capabilities(make_ctx(bound_chain))  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_serialization_name returns None ---
