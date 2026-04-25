@@ -65,6 +65,10 @@ class FunctionSchema:
         Covers both model-like single args (via `single_arg_name`, which uses a wrap validator
         to normalize to `{name: value}`) and primitive single args (where the schema is a
         one-property TypedDict). Returns `None` for multi-arg functions and `**kwargs`-only.
+
+        The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
+        this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
+        outer `{data: ...}` envelope is the wrapper.
         """
         if self.single_arg_name is not None:
             return self.single_arg_name

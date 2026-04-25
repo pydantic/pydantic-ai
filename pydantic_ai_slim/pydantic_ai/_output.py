@@ -1053,19 +1053,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> Any:
         if k := self.outer_typed_dict_key:
-            assert isinstance(output, dict), (
-                f'ObjectOutputProcessor.call expects a dict with key {k!r}; got {type(output).__name__}. '
-                'Output hooks that modify the semantic value must preserve the type; '
-                'to transform the output shape, use `before_output_process` (which operates on the '
-                'semantic value) rather than mutating the internal dict.'
-            )
             output = output[k]
 
         if self._function_schema:
-            assert isinstance(output, dict), (
-                f'ObjectOutputProcessor.call expects a dict of function arguments; got {type(output).__name__}. '
-                'Output hooks that modify function arguments must preserve the dict shape.'
-            )
             output = await execute_traced_output_function(
                 self._function_schema,
                 run_context=run_context,
@@ -1077,16 +1067,23 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
     @property
     def hook_unwrap_key(self) -> str | None:
-        """The dict key used to wrap a single semantic value, or `None`.
+        """The internal envelope key around a single semantic value, or `None`.
 
-        Output hooks see the **semantic value** the model was asked to produce (e.g., a
-        `MyModel` instance, `42`), not the internal dict shape from Pydantic validation.
-        For single-value outputs, the validator produces a dict like `{'response': 42}` or
-        `{'data': my_model}` — this is the key to unwrap at the hook boundary.
+        Output hooks see the **semantic value** the model was asked to produce (e.g. a
+        `MyModel` instance, `42`, or the dict the user is producing as `dict[str, str]`).
+        Pydantic validation works in dict-shape (`{'response': 42}`, `{'data': my_dict}`)
+        for primitive and function-arg cases, so this property returns the key to peel off
+        at the hook boundary and re-add when calling the inner processor.
 
-        Returns the key name for bare primitives (`outer_typed_dict_key`) and single-arg
-        output functions (via `FunctionSchema.single_field_name`). Returns `None` for bare
-        `BaseModel` outputs and multi-arg functions, where the validated value is used as-is.
+        - `outer_typed_dict_key` — set when wrapping a bare primitive (`output_type=int`,
+          `output_type=dict[str, str]`, etc.) so the model produces `{'response': value}`.
+          The wrapper key is purely a transport detail; the value's own structure is
+          unchanged.
+        - `FunctionSchema.single_field_name` — set when the output function takes exactly
+          one value-carrying arg (`def f(x: SomeType)`). The wrapper key is the arg name.
+
+        Returns `None` for bare `BaseModel` outputs and multi-arg output functions, where
+        the validated value is the semantic value as-is (no envelope to peel).
         """
         if self.outer_typed_dict_key is not None:
             return self.outer_typed_dict_key
