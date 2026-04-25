@@ -620,8 +620,6 @@ agent = Agent(model)
 
 To use [FuturMix.ai](https://futurmix.ai), go to [futurmix.ai](https://futurmix.ai) and create an API key.
 
-FuturMix is a unified AI gateway providing access to 22+ models (Claude, GPT, Gemini) through a single OpenAI-compatible API with 99.99% SLA.
-
 You can use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with a custom base URL:
 
 ```python
