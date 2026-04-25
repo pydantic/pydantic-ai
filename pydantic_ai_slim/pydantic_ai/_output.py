@@ -122,7 +122,7 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     if isinstance(e, ValidationError):
-        content: list[Any] | str = e.errors(include_url=False)
+        content: list[Any] | str = e.errors(include_url=False, include_context=False)
     else:
         content = e.message
     m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
@@ -232,11 +232,9 @@ async def run_none_process_hooks(
     *,
     capability: AbstractCapability[AgentDepsT],
     run_context: RunContext[AgentDepsT],
+    schema: OutputSchema[Any],
     wrap_validation_errors: bool = True,
     output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
-    allows_text: bool = False,
-    allows_image: bool = False,
-    allows_deferred_tools: bool = False,
 ) -> Any:
     """Run output process hooks for a `None` result (empty model response with `allows_none`).
 
@@ -247,9 +245,9 @@ async def run_none_process_hooks(
         output_type=type(None),
         object_def=None,
         has_function=False,
-        allows_text=allows_text,
-        allows_image=allows_image,
-        allows_deferred_tools=allows_deferred_tools,
+        allows_text=schema.allows_text,
+        allows_image=schema.allows_image,
+        allows_deferred_tools=schema.allows_deferred_tools,
     )
 
     async def do_process(output: Any) -> Any:
@@ -273,10 +271,9 @@ async def run_image_process_hooks(
     *,
     capability: AbstractCapability[AgentDepsT],
     run_context: RunContext[AgentDepsT],
+    schema: OutputSchema[Any],
     wrap_validation_errors: bool = True,
     output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
-    allows_text: bool = False,
-    allows_deferred_tools: bool = False,
 ) -> Any:
     """Run output process hooks for image output (no validate hooks — nothing to parse).
 
@@ -287,9 +284,9 @@ async def run_image_process_hooks(
         output_type=_messages.BinaryImage,
         object_def=None,
         has_function=False,
-        allows_text=allows_text,
+        allows_text=schema.allows_text,
         allows_image=True,
-        allows_deferred_tools=allows_deferred_tools,
+        allows_deferred_tools=schema.allows_deferred_tools,
     )
 
     async def do_process(output: Any) -> Any:
@@ -313,37 +310,21 @@ async def run_output_with_hooks(
     *,
     text: str,
     run_context: RunContext[AgentDepsT],
-    capability: AbstractCapability[AgentDepsT] | None,
-    output_mode: OutputMode,
+    capability: AbstractCapability[AgentDepsT],
+    schema: OutputSchema[Any],
     allow_partial: bool = False,
     wrap_validation_errors: bool = True,
     output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
-    allows_text: bool = False,
-    allows_image: bool = False,
-    allows_deferred_tools: bool = False,
 ) -> OutputDataT:
     """Process output text through the processor with capability output hooks.
 
     Validate hooks only fire for structured output (BaseObjectOutputProcessor) where
     real parsing occurs. Process hooks fire for all output types.
 
-    Output validators (`@agent.output_validator`) run inside process hooks when a capability
-    is present, ensuring `wrap_output_process` wraps the complete output pipeline.
+    Output validators (`@agent.output_validator`) run inside process hooks, ensuring
+    `wrap_output_process` wraps the complete output pipeline.
     """
-    if capability is None:
-        result = await processor.process(
-            text, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
-        )
-        for validator in output_validators:
-            result = await validator.validate(result, run_context)  # pragma: no cover
-        return result
-
-    output_context = processor.get_output_context(
-        output_mode,
-        allows_text=allows_text,
-        allows_image=allows_image,
-        allows_deferred_tools=allows_deferred_tools,
-    )
+    output_context = processor.get_output_context(schema)
     do_validate, base_do_process = _build_output_handlers(
         processor, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
     )
@@ -902,18 +883,18 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
     @abstractmethod
     def get_output_context(
         self,
-        mode: OutputMode,
+        schema: OutputSchema[Any],
         *,
+        mode: OutputMode | None = None,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         """Return context information about this processor for output hooks.
 
-        `allows_text`/`allows_image`/`allows_deferred_tools` come from the schema and are
-        passed through so hooks can see the full shape of what the schema accepts.
+        `schema` provides the run-wide output configuration (what the schema accepts).
+        `mode` overrides the reported mode for the current dispatch path (e.g. `'tool'`
+        when validating an output tool call within an `'auto'` schema); defaults to
+        `schema.mode`.
         """
         raise NotImplementedError()
 
@@ -1142,24 +1123,22 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
     def get_output_context(
         self,
-        mode: OutputMode,
+        schema: OutputSchema[Any],
         *,
+        mode: OutputMode | None = None,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
-            mode=mode,
+            mode=mode if mode is not None else schema.mode,
             output_type=self.output_type,
             object_def=self.object_def,
             has_function=self._function_schema is not None,
             tool_call=tool_call,
             tool_def=tool_def,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
 
@@ -1411,24 +1390,22 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
     def get_output_context(
         self,
-        mode: OutputMode,
+        schema: OutputSchema[Any],
         *,
+        mode: OutputMode | None = None,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
-            mode=mode,
+            mode=mode if mode is not None else schema.mode,
             output_type=None,
             object_def=self.object_def,
             has_function=any(p._function_schema is not None for p in self._processors.values()),  # pyright: ignore[reportPrivateUsage]
             tool_call=tool_call,
             tool_def=tool_def,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
 
@@ -1446,24 +1423,22 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
     def get_output_context(
         self,
-        mode: OutputMode,
+        schema: OutputSchema[Any],
         *,
+        mode: OutputMode | None = None,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
-            mode=mode,
+            mode=mode if mode is not None else schema.mode,
             output_type=str,
             object_def=None,
             has_function=False,
             tool_call=tool_call,
             tool_def=tool_def,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
 
@@ -1516,24 +1491,22 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
     def get_output_context(
         self,
-        mode: OutputMode,
+        schema: OutputSchema[Any],
         *,
+        mode: OutputMode | None = None,
         tool_call: _messages.ToolCallPart | None = None,
         tool_def: ToolDefinition | None = None,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> OutputContext:
         return OutputContext(
-            mode=mode,
+            mode=mode if mode is not None else schema.mode,
             output_type=str,
             object_def=None,
             has_function=True,
             tool_call=tool_call,
             tool_def=tool_def,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
 

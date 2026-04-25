@@ -15,6 +15,7 @@ from typing_extensions import deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from ._output import (
+    OutputSchema,
     OutputToolset,
     run_output_process_hooks,
     run_output_validate_hooks,
@@ -484,18 +485,16 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         call: ToolCallPart,
         *,
+        schema: OutputSchema[Any],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> ValidatedToolCall[AgentDepsT]:
         """Validate output tool args through output validate hooks (skipping tool hooks).
 
         Output tools use output hooks for validation instead of tool hooks. The Pydantic
         schema validation is used as the inner handler wrapped by output validate hooks.
 
-        `allows_text`/`allows_image`/`allows_deferred_tools` are forwarded to
+        `schema` is the run's output schema; it's forwarded to
         [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
         of what the schema accepts.
 
@@ -511,14 +510,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         toolset = tool.toolset
         processor = toolset.processors[name]
-        output_context = processor.get_output_context(
-            'tool',
-            tool_call=call,
-            tool_def=tool.tool_def,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
-        )
+        output_context = processor.get_output_context(schema, mode='tool', tool_call=call, tool_def=tool.tool_def)
 
         # Output hooks see the semantic value (what the model was asked to produce), not the
         # internal dict-wrapped form. This differs from tool call validation hooks, which see
@@ -564,10 +556,8 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
+        schema: OutputSchema[Any],
         wrap_validation_errors: bool = True,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> Any:
         """Execute output tool through output process hooks (skipping tool hooks).
 
@@ -575,7 +565,7 @@ class ToolManager(Generic[AgentDepsT]):
         the complete output pipeline is wrapped. Validators see the global output retry
         context (from self.ctx), not the per-tool context, matching the text output path.
 
-        `allows_text`/`allows_image`/`allows_deferred_tools` are forwarded to
+        `schema` is the run's output schema; it's forwarded to
         [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
         of what the schema accepts.
 
@@ -596,12 +586,7 @@ class ToolManager(Generic[AgentDepsT]):
         tool = validated.tool
         processor = toolset.processors[name]
         output_context = processor.get_output_context(
-            'tool',
-            tool_call=validated.call,
-            tool_def=tool.tool_def,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
+            schema, mode='tool', tool_call=validated.call, tool_def=tool.tool_def
         )
 
         # Unwrap the dict-shaped `validated_args` back to the semantic value that output hooks
@@ -657,11 +642,9 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         call: ToolCallPart,
         *,
+        schema: OutputSchema[Any],
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
-        allows_text: bool = False,
-        allows_image: bool = False,
-        allows_deferred_tools: bool = False,
     ) -> Any:
         """Handle an output tool call using output hooks (not tool hooks).
 
@@ -670,21 +653,17 @@ class ToolManager(Generic[AgentDepsT]):
         """
         validated = await self.validate_output_tool_call(
             call,
+            schema=schema,
             allow_partial=allow_partial,
             wrap_validation_errors=wrap_validation_errors,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
         )
         if not validated.args_valid:  # pragma: no cover — caller (result.py) uses wrap_validation_errors=False
             assert validated.validation_error is not None
             raise validated.validation_error
         return await self.execute_output_tool_call(
             validated,
+            schema=schema,
             wrap_validation_errors=wrap_validation_errors,
-            allows_text=allows_text,
-            allows_image=allows_image,
-            allows_deferred_tools=allows_deferred_tools,
         )
 
     async def _execute_tool_call_impl(

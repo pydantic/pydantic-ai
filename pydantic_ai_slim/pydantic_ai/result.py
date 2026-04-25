@@ -56,7 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
-    _root_capability: AbstractCapability[AgentDepsT] | None
+    _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -212,11 +212,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return await self._tool_manager.handle_output_tool_call(
                     tool_call,
+                    schema=self._output_schema,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
-                    allows_text=self._output_schema.allows_text,
-                    allows_image=self._output_schema.allows_image,
-                    allows_deferred_tools=self._output_schema.allows_deferred_tools,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -242,13 +240,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text=text,
                     run_context=run_ctx,
                     capability=self._root_capability,
-                    output_mode=self._output_schema.mode,
+                    schema=self._output_schema,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
                     output_validators=self._output_validators,
-                    allows_text=self._output_schema.allows_text,
-                    allows_image=self._output_schema.allows_image,
-                    allows_deferred_tools=self._output_schema.allows_deferred_tools,
                 )
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -264,22 +259,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
         """Run process hooks (including output validators) for image output."""
         run_ctx = replace(self._run_ctx, partial_output=allow_partial)
-        capability = self._root_capability
-        if capability is not None:
-            return cast(
-                OutputDataT,
-                await run_image_process_hooks(
-                    image,
-                    capability=capability,
-                    run_context=run_ctx,
-                    wrap_validation_errors=False,
-                    output_validators=self._output_validators,
-                    allows_text=self._output_schema.allows_text,
-                    allows_deferred_tools=self._output_schema.allows_deferred_tools,
-                ),
-            )
-        else:  # pragma: no cover — agents always have root_capability
-            return cast(OutputDataT, image)
+        return cast(
+            OutputDataT,
+            await run_image_process_hooks(
+                image,
+                capability=self._root_capability,
+                run_context=run_ctx,
+                schema=self._output_schema,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            ),
+        )
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
