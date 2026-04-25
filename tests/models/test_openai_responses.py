@@ -59,7 +59,12 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimitExceeded, UsageL
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
-from .mock_openai import MockOpenAIResponses, get_mock_input_token_count_kwargs, get_mock_responses_kwargs, response_message
+from .mock_openai import (
+    MockOpenAIResponses,
+    get_mock_input_token_count_kwargs,
+    get_mock_responses_kwargs,
+    response_message,
+)
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -12314,9 +12319,7 @@ async def test_openai_responses_count_tokens_different_models(allow_model_reques
             [
                 ResponseOutputMessage(
                     id='output-1',
-                    content=cast(
-                        list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]
-                    ),
+                    content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
                     role='assistant',
                     status='completed',
                     type='message',
