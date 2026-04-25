@@ -670,15 +670,17 @@ class OpenRouterModel(OpenAIChatModel):
         """Get the OpenRouter-specific model profile with cache capability flags."""
         return OpenRouterModelProfile.from_profile(self.profile)
 
-    def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> dict[str, str]:
+    def _build_cache_control(self, ttl: bool | Literal['5m', '1h'] = '5m') -> dict[str, str]:
         """Build a ``cache_control`` dict for the downstream provider.
 
         Args:
-            ttl: The cache time-to-live. Only included for providers that support it (Anthropic).
+            ttl: The cache time-to-live. ``True`` is treated as ``'5m'``.
+                Only included for providers that support it (Anthropic).
         """
+        resolved_ttl: Literal['5m', '1h'] = '5m' if isinstance(ttl, bool) else ttl
         cache_control: dict[str, str] = {'type': 'ephemeral'}
         if self._cache_profile.openrouter_supports_cache_ttl:
-            cache_control['ttl'] = ttl
+            cache_control['ttl'] = resolved_ttl
         return cache_control
 
     def _limit_cache_points(
@@ -716,7 +718,7 @@ class OpenRouterModel(OpenAIChatModel):
                     used += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
 
         remaining = max_points - used
-        if remaining < 0:  # pragma: no cover
+        if remaining < 0:
             raise UserError(
                 f'Too many cache points for downstream provider. '
                 f'Tool and system cache points already use {used}, '
@@ -737,7 +739,9 @@ class OpenRouterModel(OpenAIChatModel):
                     else:
                         del part_dict['cache_control']
 
-    def _add_cache_control(self, params: list[ChatCompletionContentPartParam], ttl: Literal['5m', '1h'] = '5m') -> None:
+    def _add_cache_control(
+        self, params: list[ChatCompletionContentPartParam], ttl: bool | Literal['5m', '1h'] = '5m'
+    ) -> None:
         """Add ``cache_control`` to the last content part.
 
         Mirrors the Anthropic model's ``_add_cache_control_to_last_param`` behavior for
@@ -747,7 +751,8 @@ class OpenRouterModel(OpenAIChatModel):
 
         Args:
             params: List of content parts to modify.
-            ttl: The cache time-to-live ('5m' or '1h'). Ignored for providers that don't support it.
+            ttl: The cache time-to-live (``True`` → ``'5m'``, or ``'5m'``/``'1h'``).
+                Ignored for providers that don't support it.
         """
         if not self._cache_profile.openrouter_supports_cache_control:
             return
@@ -812,9 +817,8 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_tool_defs := model_settings.get('openrouter_cache_tool_definitions'))
             and self._cache_profile.openrouter_supports_tool_cache
         ):
-            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = cast(dict[str, Any], tools[-1])
-            last_tool['cache_control'] = self._build_cache_control(ttl)
+            last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
 
         return tools
 
@@ -834,33 +838,35 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
             and self._cache_profile.openrouter_supports_cache_control
         ):
-            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
             last_msg = openai_messages[-1]
             content = last_msg.get('content')
             if isinstance(content, str):
                 last_msg['content'] = [  # type: ignore[typeddict-unknown-key]
-                    {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
+                    {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(cache_messages)}
                 ]
             elif isinstance(content, list) and content:
                 last_part = cast(dict[str, Any], content[-1])
-                last_part['cache_control'] = self._build_cache_control(ttl)
+                last_part['cache_control'] = self._build_cache_control(cache_messages)
 
         if (
             model_settings
             and (cache_instructions := model_settings.get('openrouter_cache_instructions'))
             and self._cache_profile.openrouter_supports_cache_control
         ):
-            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
             for msg in reversed(openai_messages):
                 if msg.get('role') in ('system', 'developer'):
                     content = msg.get('content')
                     if isinstance(content, str):
                         msg['content'] = [  # type: ignore[typeddict-unknown-key]
-                            {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
+                            {
+                                'type': 'text',
+                                'text': content,
+                                'cache_control': self._build_cache_control(cache_instructions),
+                            }
                         ]
                     elif isinstance(content, list) and content:  # pragma: no branch
                         last_part = cast(dict[str, Any], content[-1])
-                        last_part['cache_control'] = self._build_cache_control(ttl)
+                        last_part['cache_control'] = self._build_cache_control(cache_instructions)
                     break
 
         has_tool_cache_point = bool(
@@ -964,6 +970,9 @@ class OpenRouterModel(OpenAIChatModel):
                 self._add_cache_control(content, ttl=item.ttl)
             else:
                 mapped_item = await self._map_content_item(item)
+                # The base _map_content_item returns None for CachePoint, but we handle
+                # CachePoint earlier in this loop, so remaining items always produce
+                # non-None. The guard is kept for type safety.
                 if mapped_item is not None:  # pragma: no branch
                     content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)

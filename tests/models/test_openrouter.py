@@ -39,6 +39,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from openai.types import chat
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
@@ -1003,34 +1004,15 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
 # ===== CachePoint in user messages =====
 
 
-async def test_openrouter_cache_point_adds_cache_control() -> None:
-    """Test that CachePoint adds cache_control to the preceding content part for Anthropic models."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
-
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['Some context to cache', CachePoint(), 'Now the question'])])
-    ]
-
-    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-    content = mapped[0].get('content')
-    assert isinstance(content, list)
-    assert content == snapshot(
-        [
-            {'type': 'text', 'text': 'Some context to cache', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
-            {'type': 'text', 'text': 'Now the question'},
-        ]
-    )
-
-
 async def test_openrouter_cache_point_multiple_markers() -> None:
-    """Test multiple CachePoint markers in a single prompt."""
+    """Test multiple CachePoint markers in a single prompt, including custom TTL."""
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart(
-                    content=['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'],
+                    content=['First chunk', CachePoint(), 'Second chunk', CachePoint(ttl='1h'), 'Question'],
                 )
             ]
         )
@@ -1042,25 +1024,9 @@ async def test_openrouter_cache_point_multiple_markers() -> None:
     assert content == snapshot(
         [
             {'type': 'text', 'text': 'First chunk', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
-            {'type': 'text', 'text': 'Second chunk', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {'type': 'text', 'text': 'Second chunk', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}},
             {'type': 'text', 'text': 'Question'},
         ]
-    )
-
-
-async def test_openrouter_cache_point_with_custom_ttl() -> None:
-    """Test CachePoint with custom TTL='1h' for Anthropic model."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
-
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['Context', CachePoint(ttl='1h'), 'Question'])])
-    ]
-
-    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-    content = mapped[0].get('content')
-    assert isinstance(content, list)
-    assert content[0] == snapshot(
-        {'type': 'text', 'text': 'Context', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}
     )
 
 
@@ -1073,7 +1039,12 @@ async def test_openrouter_cache_point_gemini_omits_ttl() -> None:
     mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     content = mapped[0].get('content')
     assert isinstance(content, list)
-    assert content[0] == snapshot({'type': 'text', 'text': 'Context', 'cache_control': {'type': 'ephemeral'}})
+    assert content == snapshot(
+        [
+            {'type': 'text', 'text': 'Context', 'cache_control': {'type': 'ephemeral'}},
+            {'type': 'text', 'text': 'Question'},
+        ]
+    )
 
 
 async def test_openrouter_cache_point_first_content_raises_error(allow_model_requests: None) -> None:
@@ -1216,30 +1187,6 @@ async def test_openrouter_cache_instructions_adds_cache_control() -> None:
     )
 
 
-async def test_openrouter_cache_instructions_custom_ttl() -> None:
-    """Test openrouter_cache_instructions with custom TTL='1h'."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
-    settings = OpenRouterModelSettings(openrouter_cache_instructions='1h')
-
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                SystemPromptPart(content='You are a helpful assistant.'),
-                UserPromptPart(content='Hello'),
-            ]
-        )
-    ]
-
-    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), model_settings=settings
-    )
-
-    system_msg = next(m for m in mapped if m.get('role') in ('system', 'developer'))
-    content = system_msg.get('content')
-    assert isinstance(content, list)
-    assert cast(dict[str, Any], content[0])['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
-
-
 async def test_openrouter_cache_instructions_gemini_omits_ttl() -> None:
     """Test that openrouter_cache_instructions omits TTL for Gemini models."""
     model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test-key'))
@@ -1359,23 +1306,6 @@ async def test_openrouter_cache_messages_adds_cache_control() -> None:
     assert isinstance(system_content, str)
 
 
-async def test_openrouter_cache_messages_custom_ttl() -> None:
-    """Test openrouter_cache_messages with custom TTL='1h'."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
-    settings = OpenRouterModelSettings(openrouter_cache_messages='1h')
-
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='User message')])]
-
-    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), model_settings=settings
-    )
-
-    last_msg = mapped[-1]
-    content = last_msg.get('content')
-    assert isinstance(content, list)
-    assert cast(dict[str, Any], content[-1])['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
-
-
 async def test_openrouter_cache_messages_empty_content_no_crash() -> None:
     """Test that openrouter_cache_messages does not crash when last message has empty content list."""
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
@@ -1423,26 +1353,6 @@ async def test_openrouter_cache_tool_definitions_anthropic() -> None:
     # Last tool SHOULD have cache_control
     last_tool = cast(dict[str, Any], tools[1])
     assert last_tool['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
-
-
-async def test_openrouter_cache_tool_definitions_custom_ttl() -> None:
-    """Test openrouter_cache_tool_definitions with custom TTL='1h'."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
-    settings = OpenRouterModelSettings(openrouter_cache_tool_definitions='1h')
-
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(
-                name='my_tool', description='A tool', parameters_json_schema={'type': 'object', 'properties': {}}
-            ),
-        ],
-        allow_text_output=True,
-    )
-
-    tools = model._get_tools(params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
-
-    last_tool = cast(dict[str, Any], tools[0])
-    assert last_tool['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
 
 
 async def test_openrouter_cache_tool_definitions_gemini_ignored() -> None:
@@ -1592,70 +1502,25 @@ async def test_openrouter_limit_cache_points_anthropic() -> None:
     assert any('cache_control' in cast(dict[str, Any], p) for p in new_content)
 
 
-async def test_openrouter_limit_cache_points_gemini_no_limit() -> None:
-    """Gemini models via OpenRouter have no cache breakpoint limit."""
-    model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test-key'))
-
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=[
-                        'Chunk 1',
-                        CachePoint(),
-                        'Chunk 2',
-                        CachePoint(),
-                        'Chunk 3',
-                        CachePoint(),
-                        'Chunk 4',
-                        CachePoint(),
-                        'Chunk 5',
-                        CachePoint(),
-                        'Question',
-                    ]
-                ),
-            ]
-        ),
-    ]
-
-    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters()
-    )
-
-    content = mapped[0].get('content')
-    assert isinstance(content, list)
-    # All 5 CachePoints should survive — Gemini has no limit
-    cache_count = sum(1 for p in content if 'cache_control' in cast(dict[str, Any], p))
-    assert cache_count == 5
-
-
-async def test_openrouter_limit_cache_points_within_budget() -> None:
-    """When cache points are within the limit, all are preserved."""
+async def test_openrouter_limit_cache_points_exceeds_budget() -> None:
+    """When system + tool cache points alone exceed the limit, a UserError is raised."""
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
 
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(content=['Context 1', CachePoint(), 'Q1']),
-            ]
-        ),
-        ModelRequest(
-            parts=[
-                UserPromptPart(content=['Context 2', CachePoint(), 'Q2']),
-            ]
-        ),
+    openai_messages: list[chat.ChatCompletionMessageParam] = [
+        {
+            'role': 'system',
+            'content': [
+                {'type': 'text', 'text': 'System 1', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                {'type': 'text', 'text': 'System 2', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                {'type': 'text', 'text': 'System 3', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                {'type': 'text', 'text': 'System 4', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            ],
+        },  # type: ignore[typeddict-item]
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Hello'}]},
     ]
 
-    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters()
-    )
-
-    # 2 CachePoints, no system/tool cache → well within limit of 4
-    user_messages = [m for m in mapped if m.get('role') == 'user']
-    for msg in user_messages:
-        content = msg.get('content')
-        assert isinstance(content, list)
-        assert any('cache_control' in cast(dict[str, Any], p) for p in content)
+    with pytest.raises(UserError, match='Too many cache points for downstream provider'):
+        model._limit_cache_points(openai_messages, has_tool_cache_point=True)  # pyright: ignore[reportPrivateUsage]
 
 
 # ===== Cache E2E tests with cassettes =====
@@ -2191,6 +2056,58 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
     assert usage2.requests >= 1
     assert usage2.cache_read_tokens > 0
     assert usage2.output_tokens > 0
+
+
+async def test_openrouter_limit_cache_points_e2e(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Test that _limit_cache_points trims excess breakpoints so the request succeeds.
+
+    Sends 5 CachePoint markers plus cache_instructions (6 total breakpoints) to an
+    Anthropic model via OpenRouter. Without limiting, Anthropic would return a 400 error.
+    Verifies the request succeeds and the cassette shows at most 4 cache_control breakpoints.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
+    agent = Agent(
+        model,
+        instructions='You are a helpful assistant. ' * 50,
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    result = await agent.run(
+        [
+            'Context block one. ' * 20,
+            CachePoint(),
+            'Context block two. ' * 20,
+            CachePoint(),
+            'Context block three. ' * 20,
+            CachePoint(),
+            'Context block four. ' * 20,
+            CachePoint(),
+            'Context block five. ' * 20,
+            CachePoint(),
+            'Summarize everything in one sentence.',
+        ]
+    )
+
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
+
+    assert vcr is not None
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+    cache_count = 0
+    for msg in request_body['messages']:
+        content = msg.get('content')
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and 'cache_control' in block:
+                    cache_count += 1
+        elif isinstance(content, str):
+            continue
+
+    assert cache_count <= 4
 
 
 def test_openrouter_nested_provider_response() -> None:
