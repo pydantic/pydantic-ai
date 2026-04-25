@@ -150,7 +150,6 @@ try:
         BetaToolSearchToolBm25_20251119Param,
         BetaToolSearchToolRegex20251119Param,
         BetaToolSearchToolResultBlock,
-        BetaToolSearchToolResultBlockParam,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -1208,19 +1207,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         ],
                                     }
                                 # `BetaToolSearchToolResultBlockParam` isn't in the
-                                # `BetaContentBlockParam` union yet; cast through Any until
-                                # the SDK's union is widened. CPython's line tracer
-                                # inconsistently elides trace events from this construction
-                                # across CI matrices — the values are evaluated at runtime
-                                # but the statement-level events go missing on Linux 3.10/3.12.
-                                tool_search_result_block: Any = (  # pragma: lax no cover
-                                    BetaToolSearchToolResultBlockParam(
-                                        tool_use_id=tool_use_id,
-                                        type='tool_search_tool_result',
-                                        content=cast(Any, inner),
-                                    )
+                                # `BetaContentBlockParam` union yet; emit the equivalent dict
+                                # directly so it can flow through the union as ``Any``.
+                                tool_search_block: dict[str, Any] = dict(  # pragma: lax no cover
+                                    tool_use_id=tool_use_id, type='tool_search_tool_result', content=inner
                                 )
-                                assistant_content_params.append(tool_search_result_block)
+                                assistant_content_params.append(cast(Any, tool_search_block))
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
