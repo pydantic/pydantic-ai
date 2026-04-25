@@ -1289,6 +1289,16 @@ def infer_model(  # noqa: C901
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
+        # For the plain 'openai' prefix, check if the model requires the Responses API and auto-route.
+        if model_kind == 'openai':
+            from ..profiles.openai import OpenAIModelProfile, openai_model_profile
+
+            _openai_profile = OpenAIModelProfile.from_profile(openai_model_profile(model_name))
+            if _openai_profile.openai_requires_responses_api:
+                from .openai import OpenAIResponsesModel
+
+                return OpenAIResponsesModel(model_name, provider=provider)
+
         return OpenAIChatModel(model_name, provider=provider)
     elif model_kind == 'openai-responses':
         from .openai import OpenAIResponsesModel

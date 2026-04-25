@@ -136,6 +136,14 @@ class OpenAIModelProfile(ModelProfile):
     Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
     """
 
+    openai_requires_responses_api: bool = False
+    """Whether this model requires the OpenAI Responses API (/v1/responses) instead of Chat Completions (/v1/chat/completions).
+
+    When `True`, using this model with the `openai:` prefix will automatically route to `OpenAIResponsesModel`.
+    This is needed for models like gpt-5.4 that do not fully support Chat Completions for all use cases
+    (e.g. function tools combined with reasoning_effort).
+    """
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -155,6 +163,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
     is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5'))
+
+    # gpt-5.4 requires the Responses API; Chat Completions does not support function tools + reasoning_effort
+    is_gpt_5_4 = model_name.startswith('gpt-5.4')
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
@@ -196,6 +207,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        openai_requires_responses_api=is_gpt_5_4,
     )
 
 
