@@ -203,6 +203,23 @@ async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def echo_request_meta(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+    """Echo the request metadata.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with the request metadata fields.
+    """
+    meta = ctx.request_context.meta
+    if meta is None:
+        return {}
+    # Return all extra fields from _meta (excludes progressToken)
+    return {k: v for k, v in meta.model_dump().items() if k != 'progressToken' and v is not None}
+
+
+@mcp.tool()
 async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> CreateMessageResult:
     """Use sampling callback."""
 

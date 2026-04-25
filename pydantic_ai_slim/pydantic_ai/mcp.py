@@ -372,6 +372,16 @@ class MCPServer(AbstractToolset[Any], ABC):
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
+    request_meta: dict[str, Any] | None
+    """Custom metadata fields to include in the `_meta` of every outgoing MCP request.
+
+    These fields are merged into the `_meta` of all MCP requests
+    (`tools/list`, `tools/call`, `resources/list`, `resources/read`,
+    `resources/templates/list`). Per-request metadata (e.g., from
+    [`process_tool_call`][pydantic_ai.mcp.MCPServer.process_tool_call]) takes
+    precedence over `request_meta` fields when keys overlap.
+    """
+
     _id: str | None
 
     _enter_lock: Lock = field(compare=False)
@@ -408,6 +418,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         include_return_schema: bool | None = None,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
+        request_meta: dict[str, Any] | None = None,
     ):
         self.tool_prefix = tool_prefix
         self.log_level = log_level
@@ -424,6 +435,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
         self.client_info = client_info
+        self.request_meta = request_meta
 
         self._id = id or tool_prefix
 
@@ -435,6 +447,17 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._exit_stack = None
         self._cached_tools = None
         self._cached_resources = None
+
+    def _build_meta(self, extra: dict[str, Any] | None = None) -> mcp_types.RequestParams.Meta | None:
+        """Build a `RequestParams.Meta` combining `request_meta` with optional per-request overrides.
+
+        Args:
+            extra: Per-request metadata that takes precedence over `request_meta`.
+        """
+        if not self.request_meta and not extra:
+            return None
+        merged = {**(self.request_meta or {}), **(extra or {})}
+        return mcp_types.RequestParams.Meta(**merged) if merged else None
 
     @abstractmethod
     @asynccontextmanager
@@ -534,7 +557,9 @@ class MCPServer(AbstractToolset[Any], ABC):
             return self._cached_tools
 
         async with self:
-            result = await self._client.list_tools()
+            meta = self._build_meta()
+            params = mcp_types.PaginatedRequestParams(_meta=meta) if meta else None
+            result = await self._client.list_tools(params=params)
             if self.cache_tools:
                 self._cached_tools = result.tools
             return result.tools
@@ -567,7 +592,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                             params=mcp_types.CallToolRequestParams(
                                 name=name,
                                 arguments=args,
-                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                                _meta=self._build_meta(metadata),
                             ),
                         )
                     ),
@@ -661,7 +686,9 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.resources:
                 return []
             try:
-                result = await self._client.list_resources()
+                meta = self._build_meta()
+                params = mcp_types.PaginatedRequestParams(_meta=meta) if meta else None
+                result = await self._client.list_resources(params=params)
                 resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                 if self.cache_resources:
                     self._cached_resources = resources
@@ -679,7 +706,9 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.resources:
                 return []
             try:
-                result = await self._client.list_resource_templates()
+                meta = self._build_meta()
+                params = mcp_types.PaginatedRequestParams(_meta=meta) if meta else None
+                result = await self._client.list_resource_templates(params=params)
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
@@ -710,7 +739,18 @@ class MCPServer(AbstractToolset[Any], ABC):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
             try:
-                result = await self._client.read_resource(AnyUrl(resource_uri))
+                result = await self._client.send_request(
+                    mcp_types.ClientRequest(
+                        mcp_types.ReadResourceRequest(
+                            method='resources/read',
+                            params=mcp_types.ReadResourceRequestParams(
+                                uri=AnyUrl(resource_uri),
+                                _meta=self._build_meta(),
+                            ),
+                        )
+                    ),
+                    mcp_types.ReadResourceResult,
+                )
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
@@ -934,6 +974,7 @@ class MCPServerStdio(MCPServer):
         include_return_schema: bool | None = None,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
+        request_meta: dict[str, Any] | None = None,
     ):
         """Build a new MCP server.
 
@@ -962,6 +1003,8 @@ class MCPServerStdio(MCPServer):
                 See [`MCPServer.include_return_schema`][pydantic_ai.mcp.MCPServer.include_return_schema].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             client_info: Information describing the MCP client implementation.
+            request_meta: Custom metadata fields to include in the `_meta` of every outgoing MCP request.
+                See [`MCPServer.request_meta`][pydantic_ai.mcp.MCPServer.request_meta].
         """
         self.command = command
         self.args = args
@@ -985,6 +1028,7 @@ class MCPServerStdio(MCPServer):
             include_instructions=include_instructions,
             include_return_schema=include_return_schema,
             client_info=client_info,
+            request_meta=request_meta,
         )
 
     @classmethod
@@ -997,6 +1041,12 @@ class MCPServerStdio(MCPServer):
                     'args': core_schema.typed_dict_field(core_schema.list_schema(core_schema.str_schema())),
                     'env': core_schema.typed_dict_field(
                         core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()),
+                        required=False,
+                    ),
+                    'request_meta': core_schema.typed_dict_field(
+                        core_schema.nullable_schema(
+                            core_schema.dict_schema(core_schema.str_schema(), core_schema.any_schema())
+                        ),
                         required=False,
                     ),
                 }
@@ -1109,6 +1159,7 @@ class _MCPServerHTTP(MCPServer):
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
         client_info: mcp_types.Implementation | None = None,
+        request_meta: dict[str, Any] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Build a new MCP server.
@@ -1137,6 +1188,8 @@ class _MCPServerHTTP(MCPServer):
             include_return_schema: Whether to include return schemas in tool definitions.
                 See [`MCPServer.include_return_schema`][pydantic_ai.mcp.MCPServer.include_return_schema].
             client_info: Information describing the MCP client implementation.
+            request_meta: Custom metadata fields to include in the `_meta` of every outgoing MCP request.
+                See [`MCPServer.request_meta`][pydantic_ai.mcp.MCPServer.request_meta].
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
@@ -1173,6 +1226,7 @@ class _MCPServerHTTP(MCPServer):
             include_return_schema=include_return_schema,
             id=id,
             client_info=client_info,
+            request_meta=request_meta,
         )
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -1213,6 +1267,12 @@ class MCPServerSSE(_MCPServerHTTP):
                     'url': core_schema.typed_dict_field(core_schema.str_schema()),
                     'headers': core_schema.typed_dict_field(
                         core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                    'request_meta': core_schema.typed_dict_field(
+                        core_schema.nullable_schema(
+                            core_schema.dict_schema(core_schema.str_schema(), core_schema.any_schema())
+                        ),
+                        required=False,
                     ),
                 }
             ),
@@ -1315,6 +1375,12 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
                     'url': core_schema.typed_dict_field(core_schema.str_schema()),
                     'headers': core_schema.typed_dict_field(
                         core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                    'request_meta': core_schema.typed_dict_field(
+                        core_schema.nullable_schema(
+                            core_schema.dict_schema(core_schema.str_schema(), core_schema.any_schema())
+                        ),
+                        required=False,
                     ),
                 }
             ),
