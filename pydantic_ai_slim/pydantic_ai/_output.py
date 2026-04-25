@@ -122,7 +122,10 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     if isinstance(e, ValidationError):
-        content: list[Any] | str = e.errors(include_url=False, include_context=False)
+        # Keep `include_context=True` (default) — divergent from tool retries on purpose.
+        # Output retry prompts are sent to the LLM to help it produce valid output, and the
+        # `ctx` field carries useful info (e.g. expected JSON column for parse errors).
+        content: list[Any] | str = e.errors(include_url=False)
     else:
         content = e.message
     m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
