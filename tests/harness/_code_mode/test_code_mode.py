@@ -61,7 +61,13 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
     )
 
 
-async def build_ctx(deps: T, toolset: AbstractToolset[T], run_step: int = 0) -> RunContext[T]:
+async def build_ctx(
+    deps: T,
+    toolset: AbstractToolset[T],
+    run_step: int = 0,
+    *,
+    root_capability: Any = None,
+) -> RunContext[T]:
     """Build a `RunContext` with a prepared `ToolManager`.
 
     Use this for tests that call `call_tool` — `CodeModeToolset` requires
@@ -70,7 +76,7 @@ async def build_ctx(deps: T, toolset: AbstractToolset[T], run_step: int = 0) -> 
     from pydantic_ai.tool_manager import ToolManager
 
     ctx = build_run_context(deps, run_step=run_step)
-    tm = ToolManager(toolset=toolset)
+    tm = ToolManager(toolset=toolset, root_capability=root_capability)
     prepared_tm = await tm.for_run_step(ctx)
     ctx.tool_manager = prepared_tm
     return ctx
@@ -682,12 +688,13 @@ class TestCodeMode:
         # The deferred-loading tool should NOT be exposed as a native tool
         assert 'later' not in tools
 
-    async def test_deferred_execution_tools_promoted_to_native_with_warning(self) -> None:
-        """Tools with `kind='external'` (deferred execution) are excluded from sandbox but promoted to native."""
+    async def test_deferred_execution_tools_sandboxed(self) -> None:
+        """Tools with `kind='external'`/`'unapproved'` are sandboxed like any other tool; resolution happens via a `HandleDeferredToolCalls` capability."""
         td_external = ToolDefinition(
             name='approve_action',
             description='Needs approval.',
             parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
+            return_schema={'type': 'string'},
             kind='external',
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_external])
@@ -695,21 +702,14 @@ class TestCodeMode:
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
-        with pytest.warns(UserWarning, match=r"tool 'approve_action' requires deferred execution"):
-            tools = await wrapper.get_tools(ctx)
+        tools = await wrapper.get_tools(ctx)
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        assert 'approve_action' not in description
-        # External tool is promoted to native — not lost
-        assert 'approve_action' in tools
-
-        # Second call must not warn again.
-        import warnings as _warnings
-
-        with _warnings.catch_warnings():
-            _warnings.simplefilter('error')
-            await wrapper.get_tools(ctx)
+        # The external tool appears as a sandboxed function signature.
+        assert 'async def approve_action' in description
+        # Not exposed as a native tool.
+        assert 'approve_action' not in tools
 
     async def test_tool_without_return_schema_warns(self) -> None:
         """A sandboxed tool with no return_schema triggers a one-time warning."""
@@ -1018,7 +1018,40 @@ class TestCodeMode:
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
-        with pytest.raises(ModelRetry, match='approval and deferral are not supported'):
+        with pytest.raises(ModelRetry, match='no `HandleDeferredToolCalls` capability resolved it'):
+            await wrapper.call_tool('run_code', {'code': 'await needs_approval()'}, ctx, tools['run_code'])
+
+    async def test_handler_denial_surfaces_as_model_retry(self) -> None:
+        """A `HandleDeferredToolCalls` handler denying a sandboxed tool call surfaces the denial.
+
+        The denial raises `RuntimeError` inside the sandbox so the script can't mistake
+        the denial message for a regular string return. If the script doesn't catch it,
+        Monty re-raises as `MontyRuntimeError`, which the harness converts to `ModelRetry`
+        with the original denial message preserved in the trace.
+        """
+        try:
+            from pydantic_ai.capabilities import HandleDeferredToolCalls
+        except ImportError:  # pragma: no cover — only fires on floor-slim CI, which doesn't gate on coverage
+            pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
+
+        from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
+        from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+
+        def needs_approval() -> str:
+            """A tool that requires approval."""
+            raise _ApprovalRequired()
+
+        async def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(
+                approvals={call.tool_call_id: ToolDenied(message='nope') for call in requests.approvals}
+            )
+
+        wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(needs_approval))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper, root_capability=HandleDeferredToolCalls(handler=handler))
+        tools = await wrapper.get_tools(ctx)
+
+        with pytest.raises(ModelRetry, match=r'call denied: nope'):
             await wrapper.call_tool('run_code', {'code': 'await needs_approval()'}, ctx, tools['run_code'])
 
     async def test_model_retry_from_wrapped_tool_surfaces_as_model_retry(self) -> None:

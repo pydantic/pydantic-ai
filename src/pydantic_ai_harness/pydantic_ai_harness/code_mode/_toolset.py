@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, ToolReturnPart, is_multi_modal_content
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
+from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 
 try:
@@ -218,13 +218,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             else:
                 native_tools[name] = tool
 
-        callable_defs, sanitized_to_original, native_fallbacks = self._partition_callable_tools(sandboxed_tools)
-
-        # Tools that matched the selector but can't run in the sandbox (deferred
-        # execution, deferred loading) are promoted back to native tools so
-        # they remain visible to the model.
-        for name in native_fallbacks:
-            native_tools[name] = sandboxed_tools[name]
+        callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
         description = self._build_description(callable_defs)
 
@@ -265,7 +259,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         )
         return result
 
-    async def call_tool(
+    async def call_tool(  # noqa: C901
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         """Execute Python code in the sandbox, or pass through to a native tool."""
@@ -332,16 +326,29 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             try:
                 result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
             except (CallDeferred, ApprovalRequired) as e:
-                # Approval/deferral require a round-trip back to the caller,
-                # which the sandbox cannot do. Raise UserError so the execution
-                # loop passes it into Monty as an ExternalException; Monty
-                # re-raises it as MontyRuntimeError, which we catch and convert
-                # to ModelRetry. The error message is preserved through the chain.
+                # No handler resolved the deferral. The sandbox can't round-trip to the
+                # caller, so we convert it to a UserError that propagates through
+                # Monty → MontyRuntimeError → ModelRetry.
                 raise UserError(
-                    'Tool approval and deferral are not supported in code mode. '
-                    f'Tool {original_name!r} raised {type(e).__name__}; ensure wrapped '
-                    'tools do not use approval or deferral when used with CodeMode.'
+                    f'Tool {original_name!r} raised {type(e).__name__} inside code mode, '
+                    'but no `HandleDeferredToolCalls` capability resolved it. Add a handler '
+                    'capability on the agent so deferred and approval-required calls can '
+                    'be resolved inline.'
                 ) from e
+
+            if isinstance(result, ToolDenied):
+                # Handler denied the call. Record the denial with outcome='denied' so
+                # message history reflects it, then raise inside the sandbox: surfacing
+                # `ToolDenied` to the user's script would let it masquerade as a string
+                # tool result, and the script has no way to introspect the marker class
+                # since `ToolDenied` isn't exposed inside Monty.
+                nested_returns[tool_call_id] = ToolReturnPart(
+                    tool_name=original_name,
+                    content=result.message,
+                    tool_call_id=tool_call_id,
+                    outcome='denied',
+                )
+                raise RuntimeError(f'Tool {original_name!r} call denied: {result.message}')
 
             # Unwrap ToolReturn to get the plain value for the sandbox,
             # preserving the full ToolReturn metadata on the return part.
@@ -431,40 +438,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
-    ) -> tuple[dict[str, ToolDefinition], dict[str, str], set[str]]:
+    ) -> tuple[dict[str, ToolDefinition], dict[str, str]]:
         """Return tool definitions that can be called from inside the sandbox.
 
         Tool names that are not valid Python identifiers (e.g. MCP tools with
         hyphens or dots like `get-weather`, `api.call`) are sanitized to
         underscored forms and mapped back to their original names for dispatch.
 
-        Tools requiring deferred execution (kind `external`/`unapproved`) cannot
-        run in the sandbox and are excluded from `callable_defs`. Their names
-        are returned in the third element so the caller can promote them back
-        to native tools.
-
         Returns:
-            A tuple of `(callable_defs, sanitized_to_original, native_fallbacks)`
-            where `native_fallbacks` contains original tool names that should
-            be exposed as native tools instead of being sandboxed.
+            A tuple of `(callable_defs, sanitized_to_original)`.
         """
         callable_defs: dict[str, ToolDefinition] = {}
         sanitized_to_original: dict[str, str] = {}
-        native_fallbacks: set[str] = set()
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
-            if td.defer:
-                if name not in self._warned_deferred:
-                    self._warned_deferred.add(name)
-                    warnings.warn(
-                        f'CodeMode: tool {name!r} requires deferred execution '
-                        f'(kind={td.kind!r}) and cannot be called from inside the '
-                        f'sandbox; it will be exposed as a native tool instead.',
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                native_fallbacks.add(name)
-                continue
 
             safe_name = _sanitize_tool_name(name)
             if safe_name == _RUN_CODE_TOOL_NAME:
@@ -498,7 +485,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 td = replace(td, name=safe_name)
 
             callable_defs[safe_name] = td
-        return callable_defs, sanitized_to_original, native_fallbacks
+        return callable_defs, sanitized_to_original
 
     @staticmethod
     def _build_description(callable_defs: dict[str, ToolDefinition]) -> str:
