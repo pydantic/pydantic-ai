@@ -27,11 +27,15 @@ pip install pydantic-ai tessera-mesh[pydantic-ai]
 ## Wire the guard
 
 ```python
+import os
+import secrets
+
 from pydantic_ai import Agent, Tool
+
 from tessera.adapters.pydantic_ai import MeshPydanticAIGuard
 from tessera.policy import Policy
 from tessera.signing import HMACSigner
-import os, secrets
+
 
 # Tool that the guard will gate.
 def book_hotel(city: str, nights: int) -> str:
