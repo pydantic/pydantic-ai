@@ -22,7 +22,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -266,6 +266,27 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
         }
     assert_never(service_tier)  # pragma: no cover
+
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'request is too large',
+    'exceeds the maximum',
+    'token limit',
+)
+
+
+def _check_context_window_exceeded(
+    e: errors.APIError, model_name: str, status_code: int
+) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    message = str(e).lower()
+    if status_code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+        return ContextWindowExceeded(
+            status_code=status_code,
+            model_name=model_name,
+            body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+        )
+    return None
 
 
 @dataclass(init=False)
@@ -563,6 +584,8 @@ class GoogleModel(Model[Client]):
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
+                if ctx_exc := _check_context_window_exceeded(e, self._model_name, status_code):
+                    raise ctx_exc from e
                 raise ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,
@@ -1161,6 +1184,8 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
+                if ctx_exc := _check_context_window_exceeded(e, self._model_name, status_code):
+                    raise ctx_exc from e  # pragma: no cover
                 raise ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,

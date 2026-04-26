@@ -23,6 +23,7 @@ from typing import (
     TypeAlias,
     TypeGuard,
     TypeVar,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -188,6 +189,13 @@ class Some(Generic[T]):
 
 Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
+
+
+def as_dict(value: Any) -> dict[str, Any] | None:
+    """Return value as dict[str, Any] if it's a dict, otherwise None."""
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value)
+    return None
 
 
 async def gather(*coros: Awaitable[T]) -> list[T]:

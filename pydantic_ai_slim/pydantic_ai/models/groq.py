@@ -16,7 +16,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ContextWindowExceeded, ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -77,6 +77,8 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
+                raise ctx_exc from e
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
@@ -135,6 +137,36 @@ class GroqModelSettings(ModelSettings, total=False):
 
     See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-format) for more details.
     """
+
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'reduce the length of the messages',
+    'context length exceeded',
+)
+
+
+def _check_context_window_exceeded(
+    e: APIStatusError, model_name: str, status_code: int
+) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    if status_code != 400:
+        return None
+    if (body := _utils.as_dict(e.body)) and (error := _utils.as_dict(body.get('error'))):
+        if error.get('code') == 'context_length_exceeded':
+            return ContextWindowExceeded(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+        if error.get('type') == 'invalid_request_error':
+            message = error.get('message', '')
+            if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+                return ContextWindowExceeded(
+                    status_code=status_code,
+                    model_name=model_name,
+                    body=e.body,
+                )
+    return None
 
 
 @dataclass(init=False)
