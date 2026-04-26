@@ -1824,6 +1824,42 @@ def test_output_type_text_output_invalid():
         Agent('test', output_type=output_type)
 
 
+def test_output_type_native_output_must_be_only():
+    """Test that NativeOutput must be the only output type."""
+    with pytest.raises(UserError, match='`NativeOutput` must be the only output type.'):
+        Agent('test', output_type=[NativeOutput(str), str])
+
+
+def test_output_type_native_output_with_deferred_tool_requests():
+    """Test that NativeOutput cannot contain DeferredToolRequests."""
+    with pytest.raises(UserError, match='`NativeOutput` cannot contain `DeferredToolRequests`'):
+        Agent('test', output_type=NativeOutput([DeferredToolRequests]))
+
+
+def test_output_type_native_output_with_binary_image():
+    """Test that NativeOutput cannot contain BinaryImage."""
+    with pytest.raises(UserError, match='`NativeOutput` cannot contain `BinaryImage`'):
+        Agent('test', output_type=NativeOutput([BinaryImage]))
+
+
+def test_output_type_prompted_output_must_be_only():
+    """Test that PromptedOutput must be the only output type."""
+    with pytest.raises(UserError, match='`PromptedOutput` must be the only output type.'):
+        Agent('test', output_type=[PromptedOutput(str), str])
+
+
+def test_output_type_prompted_output_with_deferred_tool_requests():
+    """Test that PromptedOutput cannot contain DeferredToolRequests."""
+    with pytest.raises(UserError, match='`PromptedOutput` cannot contain `DeferredToolRequests`'):
+        Agent('test', output_type=PromptedOutput([DeferredToolRequests]))
+
+
+def test_output_type_prompted_output_with_binary_image():
+    """Test that PromptedOutput cannot contain BinaryImage."""
+    with pytest.raises(UserError, match='`PromptedOutput` cannot contain `BinaryImage`'):
+        Agent('test', output_type=PromptedOutput([BinaryImage]))
+
+
 def test_output_type_async_function():
     class Weather(BaseModel):
         temperature: float
