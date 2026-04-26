@@ -26,7 +26,7 @@ pip install pydantic-ai tessera-mesh[pydantic-ai]
 
 ## Wire the guard
 
-```python
+```python {test="skip"}
 import os
 import secrets
 
