@@ -30,10 +30,11 @@ pip install pydantic-ai tessera-mesh[pydantic-ai]
 import os
 import secrets
 
-from pydantic_ai import Agent, Tool
 from tessera.adapters.pydantic_ai import MeshPydanticAIGuard
 from tessera.policy import Policy
 from tessera.signing import HMACSigner
+
+from pydantic_ai import Agent, Tool
 
 
 # Tool that the guard will gate.
