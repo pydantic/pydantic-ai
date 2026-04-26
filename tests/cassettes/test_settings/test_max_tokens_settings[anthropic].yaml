@@ -8,22 +8,20 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '280'
+      - '171'
       content-type:
       - application/json
       host:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 4096
+      max_tokens: 500
       messages:
       - content:
-        - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+        - text: What is the capital of France?
           type: text
         role: user
       model: claude-sonnet-4-5
-      stop_sequences:
-      - Paris
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -31,7 +29,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '504'
+      - '503'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -44,13 +42,13 @@ interactions:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: 'The capital of France is '
+      - text: The capital of France is Paris.
         type: text
-      id: msg_018Vk6T4ngV8zEAV3PowbjAK
+      id: msg_0136bRbMAb2zmXNyba2bzN4h
       model: claude-sonnet-4-5-20250929
       role: assistant
-      stop_reason: stop_sequence
-      stop_sequence: Paris
+      stop_reason: end_turn
+      stop_sequence: null
       type: message
       usage:
         cache_creation:
@@ -59,8 +57,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 32
-        output_tokens: 6
+        input_tokens: 14
+        output_tokens: 10
         service_tier: standard
     status:
       code: 200

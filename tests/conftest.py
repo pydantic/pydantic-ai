@@ -842,12 +842,12 @@ def model(
             from pydantic_ai.models.groq import GroqModel
             from pydantic_ai.providers.groq import GroqProvider
 
-            return GroqModel('llama3-8b-8192', provider=GroqProvider(api_key=groq_api_key))
+            return GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
         elif request.param == 'cohere':
             from pydantic_ai.models.cohere import CohereModel
             from pydantic_ai.providers.cohere import CohereProvider
 
-            return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
+            return CohereModel('command-a-03-2025', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
             from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
             from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
@@ -857,7 +857,7 @@ def model(
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
 
-            return GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+            return GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
         elif request.param == 'bedrock':
             from pydantic_ai.models.bedrock import BedrockConverseModel
 

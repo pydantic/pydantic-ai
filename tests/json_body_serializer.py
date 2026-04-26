@@ -38,10 +38,14 @@ def normalize_smart_chars(text: str) -> str:
     return unicodedata.normalize('NFKC', text)
 
 
+def _scrub_aws_arns(text: str) -> str:
+    return _AWS_ARN_PATTERN.sub(lambda m: re.sub(r'\d{12}', '000000000000', m.group()), text)
+
+
 def normalize_body(obj: Any) -> Any:
-    """Recursively normalize smart characters in all strings within a data structure."""
+    """Recursively normalize smart characters and scrub sensitive identifiers in all strings."""
     if isinstance(obj, str):
-        return normalize_smart_chars(obj)
+        return _scrub_aws_arns(normalize_smart_chars(obj))
     elif isinstance(obj, dict):
         return {k: normalize_body(v) for k, v in obj.items()}
     elif isinstance(obj, list):  # pragma: no cover
@@ -102,6 +106,9 @@ def deserialize(cassette_string: str):
                 dumped_body = json.dumps(parsed_body)
                 data['body'] = {'string': dumped_body} if kind == 'response' else dumped_body
     return cassette_dict
+
+
+_AWS_ARN_PATTERN = re.compile(r'arn:aws[^:]*:[^:]+:[^:]*:\d{12}:')
 
 
 def _content_type_startswith(content_type: Sequence[str | bytes], prefix: str) -> bool:

@@ -1799,15 +1799,6 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
     assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
 
 
-@pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
-async def test_max_completion_tokens(allow_model_requests: None, model_name: str, openai_api_key: str):
-    m = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
-
-    result = await agent.run('hello')
-    assert result.output == IsStr()
-
-
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
     gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
