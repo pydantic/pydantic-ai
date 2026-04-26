@@ -455,6 +455,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         settings: ModelSettings = {**(merge_model_settings(self.settings, model_settings) or {})}
         profile = AnthropicModelProfile.from_profile(self.profile)
         self._validate_thinking_settings(settings, profile)
+        self._drop_unsupported_sampling_settings(settings, profile)
 
         # Determine if thinking is effectively enabled (check both provider-specific and unified fields)
         thinking_enabled = False
@@ -488,7 +489,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if prepared_settings is not None:
             filtered_settings: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered_settings, profile)
+            self._drop_unsupported_sampling_settings(filtered_settings, profile, warn=False)
             prepared_settings = filtered_settings or None
         return prepared_settings, model_request_parameters
 
@@ -505,7 +506,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
     @staticmethod
-    def _drop_unsupported_sampling_settings(model_settings: ModelSettings, profile: AnthropicModelProfile) -> None:
+    def _drop_unsupported_sampling_settings(
+        model_settings: ModelSettings, profile: AnthropicModelProfile, *, warn: bool = True
+    ) -> None:
         if not profile.anthropic_disallows_sampling_settings:
             return
 
@@ -523,11 +526,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for setting in _ANTHROPIC_SAMPLING_PARAMS
             if setting in dropped_from_settings or setting in dropped_from_extra_body
         ]:
-            warnings.warn(
-                f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
-                UserWarning,
-                stacklevel=2,
-            )
+            if warn:
+                warnings.warn(
+                    f'Sampling parameters {dropped} are not supported by Claude Opus 4.7. These settings will be ignored.',
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         for setting in _ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
