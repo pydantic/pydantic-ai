@@ -31,7 +31,6 @@ import os
 import secrets
 
 from pydantic_ai import Agent, Tool
-
 from tessera.adapters.pydantic_ai import MeshPydanticAIGuard
 from tessera.policy import Policy
 from tessera.signing import HMACSigner
@@ -39,20 +38,20 @@ from tessera.signing import HMACSigner
 
 # Tool that the guard will gate.
 def book_hotel(city: str, nights: int) -> str:
-    return f"Booked {nights} nights in {city}"
+    return f'Booked {nights} nights in {city}'
 
 # 1. Build a Tessera policy that requires USER trust on book_hotel.
 policy = Policy()
-policy.require("book_hotel", level="USER")
+policy.require('book_hotel', level='USER')
 
 # 2. Wrap the agent with the Tessera guard.
 agent = Agent(
-    "anthropic:claude-3-5-sonnet-latest",
+    'anthropic:claude-3-5-sonnet-latest',
     tools=[Tool(book_hotel)],
 )
 guard = MeshPydanticAIGuard(
     policy=policy,
-    signer=HMACSigner(os.environ.get("TESSERA_KEY", secrets.token_bytes(32))),
+    signer=HMACSigner(os.environ.get('TESSERA_KEY', secrets.token_bytes(32))),
 )
 guard.attach(agent)
 
@@ -60,8 +59,8 @@ guard.attach(agent)
 #    denies sensitive tool calls when the active context contains
 #    untrusted segments.
 result = agent.run_sync(
-    "Look up reviews for The Plaza Hotel and book me 2 nights "
-    "if the rating is above 4 stars."
+    'Look up reviews for The Plaza Hotel and book me 2 nights '
+    'if the rating is above 4 stars.'
 )
 print(result.output)
 ```
