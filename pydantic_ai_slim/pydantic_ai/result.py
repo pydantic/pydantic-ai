@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
 
+from pydantic_ai._output import BaseOutputProcessor
+
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
     OutputDataT_inv,
@@ -26,6 +28,7 @@ from .output import (
     ToolOutput,
 )
 from .tool_manager import ToolManager
+from .tools import ToolDenied
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
@@ -198,26 +201,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         try:
             if self._output_schema.toolset and output_tool_name is not None:
-                tool_call = next(
-                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                    None,
-                )
-                if tool_call is None:
-                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
-                    )
-                # Output tools can't be deferred, so `handle_call` here always
-                # returns the validated output (never `ToolDenied`).
-                return cast(
-                    OutputDataT,
-                    await self._tool_manager.handle_call(
-                        tool_call, allow_partial=allow_partial, wrap_validation_errors=False
-                    ),
-                )
+                return await self._validate_tool_output(message, output_tool_name, allow_partial)
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
                     raise exceptions.UserError(
-                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. '
+                        'To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                     )
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
@@ -228,26 +217,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return result_data
             elif text_processor := self._output_schema.text_processor:
-                text = ''
-                for part in message.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.BuiltinToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text = ''
-
-                result_data = await text_processor.process(
-                    text,
-                    run_context=replace(self._run_ctx, partial_output=allow_partial),
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=False,
-                )
-                for validator in self._output_validators:
-                    result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial)
-                    )
-                return result_data
+                return await self._validate_text_output(text_processor, message, allow_partial)
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     'Invalid response, unable to process text output'
@@ -258,6 +228,54 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
             raise
+
+    async def _validate_tool_output(
+        self, message: _messages.ModelResponse, output_tool_name: str, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate output from a tool call."""
+        tool_call = next(
+            (part for part in message.tool_calls if part.tool_name == output_tool_name),
+            None,
+        )
+        if tool_call is None:
+            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                f'Invalid response, unable to find tool call for {output_tool_name!r}'
+            )
+        # Output tools can't be deferred, so `handle_call` here always
+        # returns the validated output (never `ToolDenied`).
+        result = await self._tool_manager.handle_call(
+            tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+        )
+        # Defensive check: ToolDenied should not be returned for output tools
+        if isinstance(result, ToolDenied):
+            raise exceptions.UnexpectedModelBehavior(f'Output tool {output_tool_name!r} was denied')
+        return cast(OutputDataT, result)
+
+    async def _validate_text_output(
+        self,
+        text_processor: BaseOutputProcessor[OutputDataT],
+        message: _messages.ModelResponse,
+        allow_partial: bool,
+    ) -> OutputDataT:
+        """Validate text output from a model response."""
+        text = ''
+        for part in message.parts:
+            if isinstance(part, _messages.TextPart):
+                text += part.content
+            elif isinstance(part, _messages.BuiltinToolCallPart):
+                # Text parts before a built-in tool call are essentially thoughts,
+                # not part of the final result output, so we reset the accumulated text
+                text = ''
+
+        result_data = await text_processor.process(
+            text,
+            run_context=replace(self._run_ctx, partial_output=allow_partial),
+            allow_partial=allow_partial,
+            wrap_validation_errors=False,
+        )
+        for validator in self._output_validators:
+            result_data = await validator.validate(result_data, replace(self._run_ctx, partial_output=allow_partial))
+        return result_data
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
