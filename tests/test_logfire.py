@@ -1331,6 +1331,7 @@ def test_include_tool_args_span_attributes(
         if tool_error:
             assert tool_attributes == snapshot(
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'add_numbers',
                     'gen_ai.tool.call.id': IsStr(),
                     'tool_arguments': '{"x":42,"y":42}',
@@ -1362,6 +1363,7 @@ Fix the errors and try again.\
         else:
             assert tool_attributes == snapshot(
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'add_numbers',
                     'gen_ai.tool.call.id': IsStr(),
                     'tool_arguments': '{"x":42,"y":42}',
@@ -1389,6 +1391,7 @@ Fix the errors and try again.\
         if tool_error:
             assert tool_attributes == snapshot(
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'add_numbers',
                     'gen_ai.tool.call.id': IsStr(),
                     'logfire.msg': 'running tool: add_numbers',
@@ -1412,6 +1415,7 @@ Fix the errors and try again.\
         else:
             assert tool_attributes == snapshot(
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'add_numbers',
                     'gen_ai.tool.call.id': IsStr(),
                     'logfire.msg': 'running tool: add_numbers',
@@ -1492,6 +1496,7 @@ def test_logfire_output_function_v2_v3(
         )
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'logfire.msg': 'running output function: final_result',
                 'gen_ai.tool.call.id': IsStr(),
@@ -1541,6 +1546,7 @@ def test_logfire_output_function_v2_v3(
         )
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'logfire.msg': 'running output function: final_result',
                 'gen_ai.tool.call.id': IsStr(),
@@ -1596,6 +1602,7 @@ def test_output_type_function_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
@@ -1622,6 +1629,7 @@ def test_output_type_function_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
@@ -1664,6 +1672,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
@@ -1690,6 +1699,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
@@ -1740,6 +1750,7 @@ def test_output_type_function_with_retry_logfire_attributes(
         assert output_function_attributes == snapshot(
             [
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
@@ -1763,6 +1774,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'logfire.level_num': 17,
                 },
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
@@ -1791,6 +1803,7 @@ def test_output_type_function_with_retry_logfire_attributes(
         assert output_function_attributes == snapshot(
             [
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
@@ -1803,6 +1816,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'logfire.level_num': 17,
                 },
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
@@ -1846,6 +1860,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
@@ -1872,6 +1887,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: get_weather',
@@ -1921,6 +1937,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
@@ -1947,6 +1964,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
@@ -1997,6 +2015,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
@@ -2023,6 +2042,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
@@ -2068,6 +2088,7 @@ def test_output_type_async_function_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
@@ -2094,6 +2115,7 @@ def test_output_type_async_function_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
@@ -2144,6 +2166,7 @@ def test_text_output_function_logfire_attributes(
     if include_content:
         assert text_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'upcase_text',
                 'tool_arguments': '{"text":"hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
@@ -2168,6 +2191,7 @@ def test_text_output_function_logfire_attributes(
     else:
         assert text_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
@@ -2220,6 +2244,7 @@ def test_prompted_output_function_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'upcase_text',
                 'tool_arguments': '{"text":"hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
@@ -2244,6 +2269,7 @@ def test_prompted_output_function_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
@@ -2296,6 +2322,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
         assert text_function_attributes == snapshot(
             [
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'tool_arguments': '{"city":"New York City"}',
                     'logfire.msg': 'running output function: get_weather_with_retry',
@@ -2317,6 +2344,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.level_num': 17,
                 },
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'tool_arguments': '{"city":"Mexico City"}',
                     'logfire.msg': 'running output function: get_weather_with_retry',
@@ -2343,6 +2371,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
         assert text_function_attributes == snapshot(
             [
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
@@ -2352,6 +2381,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.level_num': 17,
                 },
                 {
+                    'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
@@ -3340,6 +3370,7 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
             'start_time': 4000000000,
             'end_time': 6000000000,
             'attributes': {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
                 'tool_arguments': {'x': 0},
@@ -3399,6 +3430,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
             'start_time': 4000000000,
             'end_time': 6000000000,
             'attributes': {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
                 'tool_arguments': {'x': 0},
@@ -3458,6 +3490,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
             'start_time': 4000000000,
             'end_time': 5000000000,
             'attributes': {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
                 'gen_ai.tool.call.arguments': {'x': 0},
@@ -3504,6 +3537,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
             'start_time': 4000000000,
             'end_time': 5000000000,
             'attributes': {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
                 'gen_ai.tool.call.arguments': {'x': 0},
@@ -3552,6 +3586,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
             'start_time': 4000000000,
             'end_time': 5000000000,
             'attributes': {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
                 'gen_ai.tool.call.arguments': {'x': 0},
@@ -3604,6 +3639,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
             'start_time': 4000000000,
             'end_time': 5000000000,
             'attributes': {
+                'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
                 'gen_ai.tool.call.arguments': {'x': 0},

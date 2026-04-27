@@ -515,8 +515,6 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ```
     """
 
-    client: BedrockRuntimeClient
-
     _model_name: BedrockEmbeddingModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
     _handler: _BedrockEmbeddingHandler = field(repr=False)
@@ -548,10 +546,13 @@ class BedrockEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = cast('BedrockRuntimeClient', provider.client)
         self._handler = _get_handler_for_model(model_name)
 
         super().__init__(settings=settings)
+
+    @property
+    def client(self) -> BedrockRuntimeClient:
+        return cast('BedrockRuntimeClient', self._provider.client)
 
     @property
     def base_url(self) -> str:

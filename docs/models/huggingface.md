@@ -2,6 +2,9 @@
 
 [Hugging Face](https://huggingface.co/) is an AI platform with all major open source models, datasets, MCPs, and demos. You can use [Inference Providers](https://huggingface.co/docs/inference-providers) to run open source models like DeepSeek R1 on scalable serverless infrastructure.
 
+!!! tip "Local embeddings via Sentence Transformers"
+    This page covers chat completions via Hugging Face Inference Providers. To run Hugging Face **embedding** models locally (no API key, no network calls), see the [Sentence Transformers embedding model](../embeddings.md#sentence-transformers-local), which works with any model in the [sentence-transformers library](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html).
+
 ## Install
 
 To use `HuggingFaceModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `huggingface` optional group:

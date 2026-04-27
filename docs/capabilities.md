@@ -29,7 +29,9 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
-| [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](deferred-tools.md#resolving-deferred-calls-with-a-handler) inline with a handler function | — |
+| [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards agent stream events to a handler function | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
@@ -344,6 +346,37 @@ assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is No
 _(This example is complete, it can be run "as is")_
 
 The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
+
+### ReinjectSystemPrompt
+
+[`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] ensures the agent's configured [`system_prompt`](agent.md#system-prompts) is at the head of the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] on every model request. By default, if any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is already present in the history, the capability is a no-op (so multi-agent handoff and user-managed system prompts remain authoritative). Set `replace_existing=True` to instead strip any existing `SystemPromptPart`s before prepending the agent's configured prompt — useful when the history comes from an untrusted source and the server's prompt must win.
+
+Useful when `message_history` comes from a source that doesn't round-trip system prompts — UI frontends, database persistence layers, conversation compaction pipelines. Without this capability, an agent configured with a `system_prompt` will silently run without it if the history doesn't already include one.
+
+```python {title="reinject_system_prompt.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+agent = Agent('test', system_prompt='You are a helpful assistant.', capabilities=[ReinjectSystemPrompt()])
+
+# History that's missing the system prompt (e.g. reconstructed from a UI frontend).
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')]),
+    ModelResponse(parts=[TextPart(content='Hello!')]),
+]
+
+# Without the capability, the agent would run without its configured system prompt.
+# With the capability, the system prompt is reinjected at the head of the first request.
+result = agent.run_sync('Follow up', message_history=history)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+assert first_request.parts[0].content == 'You are a helpful assistant.'
+```
+
+_(This example is complete, it can be run "as is")_
+
+The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
 
 ## Building custom capabilities
 
@@ -856,6 +889,18 @@ class ErrorLogger(AbstractCapability[Any]):
         self.errors.append(f'Tool {call.tool_name} failed: {error}')
         raise error  # Re-raise to let the normal retry flow handle it
 ```
+
+#### Deferred tool calls
+
+Capabilities can resolve [deferred tool calls](deferred-tools.md) — calls that require approval, or that are executed externally — directly from the agent run, without ending the run and waiting for a follow-up:
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] | `(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults \| None` | Resolve some or all pending approval/external calls inline |
+
+Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output for the caller to handle.
+
+For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
 ### Wrapping capabilities
 
