@@ -72,8 +72,8 @@ class MistralProvider(Provider[Mistral]):
 
             if not api_key:
                 raise UserError(
-                    'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-                    ' to use the Mistral provider.'
+                    'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)` '
+                    'to use the Mistral provider.'
                 )
             elif http_client is not None:
                 self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
