@@ -22,9 +22,16 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_tool_call import Function
+    from openai.types.completion_usage import CompletionUsage
+
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.ollama import OllamaProvider
+
+    from ..models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -335,3 +342,51 @@ We need to provide answer in JSON format. Let's do that.\
             ),
         ]
     )
+
+
+async def test_ollama_assistant_message_content_none_becomes_empty_string(
+    allow_model_requests: None, ollama_api_key: str
+) -> None:
+    """Ollama's OpenAI-compatible API rejects `content: null` in assistant messages.
+
+    When a tool call response has no text content, OpenAI's API accepts `content: None`,
+    but Ollama requires it to be an empty string. This test verifies that `OllamaModel`
+    normalizes `None` to `''` before sending the request.
+    See https://github.com/pydantic/pydantic-ai/issues/5206
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='1',
+                        function=Function(arguments='{"value": 42}', name='get_value'),
+                        type='function',
+                    )
+                ],
+            ),
+            usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        ),
+        completion_message(ChatCompletionMessage(content='The value is 42', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    provider = OllamaProvider(openai_client=mock_client)
+    m = OllamaModel('qwen3:0.6b', provider=provider)
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_value(value: int) -> int:
+        return value
+
+    result = await agent.run('What is the value?')
+    assert result.output == 'The value is 42'
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # Second request includes the assistant message with the tool call
+    second_request_messages = kwargs[1]['messages']
+    assistant_message = second_request_messages[1]
+    assert assistant_message['role'] == 'assistant'
+    assert assistant_message['content'] == ''
+    assert 'tool_calls' in assistant_message
