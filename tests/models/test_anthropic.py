@@ -66,13 +66,13 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    import anthropic
     from anthropic import (
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         omit as OMIT,
     )
@@ -128,7 +128,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = None
+    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -1984,10 +1984,16 @@ async def test_anthropic_speed_ignored_on_unsupported_model(
     assert 'fast-mode-2026-02-01' not in betas
 
 
-@pytest.mark.parametrize('client_cls_name', ['AsyncAnthropicBedrock', 'AsyncAnthropicVertex', 'AsyncAnthropicFoundry'])
-async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls_name: str) -> None:
+@pytest.mark.parametrize(
+    'client_cls',
+    [
+        pytest.param(AsyncAnthropicBedrock, id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, id='vertex'),
+        pytest.param(AsyncAnthropicFoundry, id='foundry'),
+    ],
+)
+async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls: type) -> None:
     """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
-    client_cls = getattr(anthropic, client_cls_name)
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MagicMock()
     mock_client.__class__ = client_cls
@@ -1999,7 +2005,7 @@ async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_request
         await agent.run('hello')
 
     call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['speed'] is anthropic.omit
+    assert call_kwargs['speed'] is OMIT
     assert 'fast-mode-2026-02-01' not in call_kwargs['betas']
 
 
