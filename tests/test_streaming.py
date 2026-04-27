@@ -14,7 +14,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from dirty_equals import IsDatetime
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -37,7 +36,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RequestUsage,
     RetryPromptPart,
     RunContext,
     TextPart,
@@ -4528,7 +4526,7 @@ async def test_complete_unanswered_tool_call_filtered_from_history():
     tool call has no matching tool result, so it must be filtered too.
     """
 
-    async def my_tool(x: int) -> str:  # pragma: no cover
+    async def my_tool(x: int) -> str:
         return str(x)
 
     agent = Agent(TestModel(), tools=[my_tool])

@@ -556,7 +556,7 @@ class OutlinesStreamedResponse(StreamedResponse):
             # at runtime (either from the SDK or our local sync->async wrapper),
             # so aclose() stops the token-pulling loop. AsyncIterable doesn't
             # expose aclose in its type — hence the ignore.
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue]
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         except RuntimeError as exc:
             if not _utils.is_async_generator_already_running(exc):
                 raise

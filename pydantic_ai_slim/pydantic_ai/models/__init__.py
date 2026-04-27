@@ -995,7 +995,7 @@ class StreamedResponse(ABC):
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
