@@ -12,6 +12,7 @@ from ..settings import ModelSettings
 
 try:
     from openai import AsyncOpenAI
+    from openai.types import chat
 
     from .openai import OpenAIChatModel
 except ImportError as _import_error:
@@ -93,3 +94,10 @@ class OllamaModel(OpenAIChatModel):
             profile = replace(base_profile, supports_json_schema_output=False)
 
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+
+    class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+            message_param = super()._into_message_param()
+            if message_param.get('content') is None:
+                message_param['content'] = ''
+            return message_param
