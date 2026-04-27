@@ -1912,7 +1912,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 def _filter_interrupted_response(
     message: _messages.ModelResponse, processed_tool_call_ids: set[str]
 ) -> _messages.ModelResponse | None:
-    """Drop unanswered tool calls from an interrupted ``ModelResponse``.
+    """Drop unanswered (client-side) tool calls from an interrupted ``ModelResponse``.
 
     Cancellation can leave a tool call in the response without a corresponding
     ``ToolReturnPart``/``RetryPromptPart`` later in history — either because the
@@ -1922,6 +1922,12 @@ def _filter_interrupted_response(
     so we strip those tool calls here. Tool calls that *do* have a matching return
     are kept; removing them would orphan the return part instead.
 
+    Only ``ToolCallPart`` is filtered. ``BuiltinToolCallPart`` is left untouched
+    because builtin tool call/return pairs are handled server-side within a single
+    response — providers don't validate their pairing in the message history, and
+    their corresponding ``BuiltinToolReturnPart`` lives in the same response, not
+    in a later ``ModelRequest``.
+
     Returns ``None`` if the response would be empty after filtering — providers like
     OpenAI/Mistral reject empty assistant messages, so those responses must be dropped
     entirely.
@@ -1930,7 +1936,7 @@ def _filter_interrupted_response(
         part
         for part in message.parts
         if not (
-            isinstance(part, _messages.BaseToolCallPart)
+            isinstance(part, _messages.ToolCallPart)
             and part.tool_call_id not in processed_tool_call_ids
         )
     ]

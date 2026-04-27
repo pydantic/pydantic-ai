@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from dirty_equals import IsDatetime
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -23,6 +24,8 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -34,6 +37,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     RunContext,
     TextPart,
@@ -4576,6 +4580,75 @@ async def test_complete_unanswered_tool_call_filtered_from_history():
     )
 
 
+async def test_builtin_tool_call_in_interrupted_response_kept():
+    """The filter must not strip BuiltinToolCallParts. Builtin tool call/return pairs are
+    handled server-side within a single response and providers don't validate their pairing
+    in history; their `BuiltinToolReturnPart` lives in the same response, not in a later
+    `ModelRequest`, so they would never appear in `processed_tool_call_ids`.
+    """
+
+    agent = Agent(TestModel())
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'pydantic'},
+                    tool_call_id='builtin_1',
+                    provider_name='test',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='results',
+                    tool_call_id='builtin_1',
+                    provider_name='test',
+                ),
+            ],
+            state='interrupted',
+        ),
+    ]
+
+    result = await agent.run('Continue', message_history=history)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'pydantic'},
+                        tool_call_id='builtin_1',
+                        provider_name='test',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='results',
+                        tool_call_id='builtin_1',
+                        timestamp=IsDatetime(),
+                        provider_name='test',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                state='interrupted',
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=52, output_tokens=10),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_unanswered_tool_call_with_matching_return_kept_in_history():
     """A tool call in an interrupted response with a matching ToolReturnPart in history is kept —
     removing it would orphan the return part instead.
@@ -4596,11 +4669,31 @@ async def test_unanswered_tool_call_with_matching_return_kept_in_history():
     ]
 
     result = await agent.run('Continue', message_history=history)
-    cleaned = result.all_messages()
-    interrupted = next(m for m in cleaned if isinstance(m, ModelResponse) and m.state == 'interrupted')
-    assert any(
-        isinstance(p, ToolCallPart) and p.tool_call_id == 'call_1' for p in interrupted.parts
-    ), 'tool call with a matching return must be preserved'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
+                timestamp=IsDatetime(),
+                state='interrupted',
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='my_tool', content='1', tool_call_id='call_1', timestamp=IsDatetime())]
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":"1"}')],
+                usage=RequestUsage(input_tokens=53, output_tokens=8),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # endregion

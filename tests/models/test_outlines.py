@@ -10,12 +10,13 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -47,7 +48,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 with try_import() as imports_successful:
     import outlines
 
-    from pydantic_ai.models.outlines import OutlinesAsyncBaseModel, OutlinesModel
+    from pydantic_ai.models.outlines import OutlinesAsyncBaseModel, OutlinesModel, OutlinesStreamedResponse
     from pydantic_ai.providers.outlines import OutlinesProvider
 
 with try_import() as transformer_imports_successful:
@@ -878,3 +879,31 @@ def test_model_settings_vllm_offline(vllm_model_offline: OutlinesModel) -> None:
     assert kwargs['priority'] == 1
     assert 'sampling_params' in kwargs
     assert 'temperature' in kwargs['sampling_params']
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_outlines_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = OutlinesStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='outlines-model',
+        _model_profile=cast(Any, object()),
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
+        _provider_name='outlines',
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()
