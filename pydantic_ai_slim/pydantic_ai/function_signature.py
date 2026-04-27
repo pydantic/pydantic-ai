@@ -515,6 +515,11 @@ def _build_params_from_schema(
         else:
             # Optional without default — add | None
             if _schema_allows_null(prop_schema):
+                # Schema already allows null, but Python type may not.
+                # Wrap type to include None if needed for the function signature.
+                if isinstance(type_expr, SimpleTypeExpr) and type_expr.name in ('str', 'int', 'float', 'bool'):
+                    # For simple types that don't include None, wrap in union
+                    type_expr = UnionTypeExpr(members=[type_expr, _NONE])
                 optional_params[prop_name] = FunctionParam(name=prop_name, type=type_expr, default='None')
             else:
                 nullable_expr = UnionTypeExpr(members=[type_expr, _NONE])
