@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1953,28 +1952,30 @@ async def test_anthropic_speed_setting(allow_model_requests: None, speed: Litera
     assert ('fast-mode-2026-02-01' in betas) is (speed == 'fast')
 
 
-@pytest.mark.parametrize('speed', ['fast', 'standard'])
+@pytest.mark.parametrize(
+    'speed,expected_warning',
+    [
+        ('fast', "anthropic_speed='fast' is not supported"),
+        ('standard', None),
+    ],
+)
 async def test_anthropic_speed_ignored_on_unsupported_model(
-    allow_model_requests: None, speed: Literal['fast', 'standard']
+    allow_model_requests: None,
+    speed: Literal['fast', 'standard'],
+    expected_warning: str | None,
 ) -> None:
     """On models without fast-mode support, `anthropic_speed` is omitted; `'fast'` also warns."""
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
+    settings = AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta'])
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        await agent.run(
-            'hello',
-            model_settings=AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta']),
-        )
-    speed_warnings = [w for w in caught if 'anthropic_speed' in str(w.message)]
-    if speed == 'fast':
-        assert len(speed_warnings) == 1
-        assert issubclass(speed_warnings[0].category, UserWarning)
+    if expected_warning is not None:
+        with pytest.warns(UserWarning, match=expected_warning):
+            await agent.run('hello', model_settings=settings)
     else:
-        assert speed_warnings == []
+        await agent.run('hello', model_settings=settings)
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs.get('speed') is OMIT
