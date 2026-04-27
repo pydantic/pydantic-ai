@@ -83,6 +83,7 @@ nav:
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+          - Agentic: evals/evaluators/agentic.md
       - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
