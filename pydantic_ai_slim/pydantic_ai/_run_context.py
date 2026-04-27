@@ -109,6 +109,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    @property
+    def context_window_used(self) -> float | None:
+        """Fraction of the model's context window used by the most recent request, or `None` if unknown."""
+        ctx_window = self.model.profile.context_window
+        if ctx_window is None or ctx_window <= 0:
+            return None
+
+        for message in reversed(self.messages):
+            if isinstance(message, _messages.ModelResponse):
+                return message.usage.total_tokens / ctx_window
+        return None
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
