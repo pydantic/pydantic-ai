@@ -113,6 +113,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import (
+        AnthropicCodeExecutionToolVersion,
         AnthropicCompaction,
         AnthropicModel,
         AnthropicModelSettings,
@@ -6182,7 +6183,9 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+        [], model_request_parameters, AnthropicModelSettings()
+    )
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -6215,7 +6218,9 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+        [], model_request_parameters, AnthropicModelSettings()
+    )
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -7216,6 +7221,72 @@ async def test_anthropic_code_execution_tool_haiku_4_5_support(allow_model_reque
     assert len(tool_returns) == 1
     assert tool_returns[0].tool_name in {CodeExecutionTool.kind, 'bash_code_execution'}
     assert '4' in str(tool_returns[0].content)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_tool_type'),
+    [
+        ('claude-sonnet-4-0', 'code_execution_20250825'),
+        ('claude-opus-4-1', 'code_execution_20250825'),
+        ('claude-haiku-4-5-20251001', 'code_execution_20250825'),
+        ('claude-sonnet-4-5', 'code_execution_20260120'),
+        ('claude-sonnet-4-6', 'code_execution_20260120'),
+        ('claude-opus-4-5', 'code_execution_20260120'),
+    ],
+)
+async def test_anthropic_code_execution_tool_version_auto(
+    allow_model_requests: None,
+    model_name: str,
+    expected_tool_type: str,
+):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
+
+
+@pytest.mark.parametrize(
+    ('tool_version', 'expected_tool_type', 'expected_betas'),
+    [
+        ('20250522', 'code_execution_20250522', ['code-execution-2025-05-22']),
+        ('20250825', 'code_execution_20250825', []),
+        ('20260120', 'code_execution_20260120', []),
+    ],
+)
+async def test_anthropic_code_execution_tool_version_setting(
+    allow_model_requests: None,
+    tool_version: AnthropicCodeExecutionToolVersion,
+    expected_tool_type: str,
+    expected_betas: list[str],
+):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-sonnet-4-0',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_code_execution_tool_version=tool_version),
+    )
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
+    if expected_betas:
+        assert completion_kwargs['betas'] == expected_betas
+    else:
+        assert completion_kwargs['betas'] is OMIT
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
@@ -9828,6 +9899,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     agent = Agent(
         m,
         builtin_tools=[CodeExecutionTool()],
+        model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20250522'),
         instructions='Always use the code execution tool for math.',
     )
 
@@ -10131,243 +10203,6 @@ Fix the errors and try again.\
                     {'text': 'Please fix the tool call and try again.', 'type': 'text'},
                 ],
             },
-        ]
-    )
-
-
-async def test_anthropic_code_execution_tool_file_ids(allow_model_requests: None, anthropic_api_key: str):
-    """Record first-use file mounting through Anthropic's `container_upload` content block."""
-    client = AsyncAnthropic(api_key=anthropic_api_key)
-    file_meta = await client.beta.files.upload(
-        file=('data.txt', b'value: 42\n', 'text/plain'),
-        betas=['files-api-2025-04-14'],
-    )
-
-    sent_bodies: list[dict[str, Any]] = []
-
-    async def capture_request(request: httpx.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
-
-    async with httpx.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
-        m = AnthropicModel(
-            'claude-sonnet-4-6',
-            provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
-        )
-        agent = Agent(m, builtin_tools=[CodeExecutionTool(file_ids=[file_meta.id])])
-
-        result = await agent.run(
-            'Read the uploaded file and tell me what value it contains.',
-            model_settings=AnthropicModelSettings(anthropic_container=False),
-        )
-    assert len(sent_bodies) == 1
-    assert 'container' not in sent_bodies[0]
-    assert sent_bodies[0]['messages'][0]['content'][0] == {
-        'type': 'container_upload',
-        'file_id': file_meta.id,
-    }
-    assert result.output == snapshot("""\
-The file **data.txt** contains the following:
-
-- **Key:** `value`
-- **Value:** `42`
-
-In other words, the file stores a single key-value pair: `value: 42`.\
-""")
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Read the uploaded file and tell me what value it contains.', timestamp=IsDatetime()
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
-                        args={'command': 'cat $INPUT_DIR/data.txt'},
-                        tool_call_id='srvtoolu_01JTbAsbaVruRcBjxpKvYAdZ',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
-                        content={
-                            'content': [],
-                            'return_code': 0,
-                            'stderr': '',
-                            'stdout': 'value: 42\n',
-                            'type': 'bash_code_execution_result',
-                        },
-                        tool_call_id='srvtoolu_01JTbAsbaVruRcBjxpKvYAdZ',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(
-                        content="""\
-The file **data.txt** contains the following:
-
-- **Key:** `value`
-- **Value:** `42`
-
-In other words, the file stores a single key-value pair: `value: 42`.\
-"""
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=4609,
-                    output_tokens=115,
-                    details={
-                        'input_tokens': 4609,
-                        'output_tokens': 115,
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                    },
-                ),
-                model_name='claude-sonnet-4-6',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRFuDZ1c88cB9WLFVjU'},
-                provider_response_id='msg_01JDFN4JLb7zx55KXshhNCBa',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_anthropic_code_execution_tool_file_ids_not_resent_with_reused_container(
-    allow_model_requests: None, anthropic_api_key: str
-):
-    """Record that subsequent runs reuse the returned container instead of resending `container_upload`."""
-    client = AsyncAnthropic(api_key=anthropic_api_key)
-    file_meta = await client.beta.files.upload(
-        file=('data.txt', b'value: 42\n', 'text/plain'),
-        betas=['files-api-2025-04-14'],
-    )
-
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool(file_ids=[file_meta.id])])
-
-    first_result = await agent.run('Read the uploaded file and tell me what value it contains.')
-    second_result = await agent.run(
-        'Now multiply that value by 2 and print the result.',
-        message_history=first_result.new_messages(),
-    )
-    assert second_result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Read the uploaded file and tell me what value it contains.', timestamp=IsDatetime()
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
-                        args={'command': 'cat "$INPUT_DIR/data.txt"'},
-                        tool_call_id='srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
-                        content={
-                            'content': [],
-                            'return_code': 0,
-                            'stderr': '',
-                            'stdout': 'value: 42\n',
-                            'type': 'bash_code_execution_result',
-                        },
-                        tool_call_id='srvtoolu_01X7Pz3JrhBefWBFTKDWwnWa',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(
-                        content="""\
-The uploaded file **data.txt** contains the following:
-
-- **Key:** `value`
-- **Value:** `42`
-
-In other words, the file stores a single key-value pair: `value: 42`.\
-"""
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=4610,
-                    output_tokens=117,
-                    details={
-                        'input_tokens': 4610,
-                        'output_tokens': 117,
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                    },
-                ),
-                model_name='claude-sonnet-4-6',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRGaQjqDSvHoSZCuLk2'},
-                provider_response_id='msg_011DQwRgpZsMJBeZBFfqxw25',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Now multiply that value by 2 and print the result.', timestamp=IsDatetime())
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
-                        args={'command': 'echo $((42 * 2))'},
-                        tool_call_id='srvtoolu_012sVKUHuq7CupDkzsjRQQ5F',
-                        provider_name='anthropic',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
-                        content={
-                            'content': [],
-                            'return_code': 0,
-                            'stderr': '',
-                            'stdout': '84\n',
-                            'type': 'bash_code_execution_result',
-                        },
-                        tool_call_id='srvtoolu_012sVKUHuq7CupDkzsjRQQ5F',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(content='The result of multiplying **42 × 2 = 84**!'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=4902,
-                    output_tokens=84,
-                    details={
-                        'input_tokens': 4902,
-                        'output_tokens': 84,
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                    },
-                ),
-                model_name='claude-sonnet-4-6',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRGaQjqDSvHoSZCuLk2'},
-                provider_response_id='msg_016xXcjtRVd7owfwq21ADL3A',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
         ]
     )
 

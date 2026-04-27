@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from ..settings import ThinkingLevel
 from . import ModelProfile
@@ -46,6 +47,9 @@ class AnthropicModelProfile(ModelProfile):
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """
 
+    anthropic_code_execution_tool_version: Literal['20250825', '20260120'] = '20250825'
+    """The latest Anthropic code execution tool version supported by the model."""
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -85,6 +89,13 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
+    code_execution_tool_version: Literal['20250825', '20260120'] = (
+        '20260120'
+        if model_name.startswith(
+            ('claude-opus-4-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-sonnet-4-5', 'claude-sonnet-4-6')
+        )
+        else '20250825'
+    )
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -95,4 +106,5 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_code_execution_tool_version=code_execution_tool_version,
     )

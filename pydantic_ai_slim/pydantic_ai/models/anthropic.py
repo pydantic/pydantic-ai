@@ -90,6 +90,8 @@ try:
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
+        BetaCodeExecutionTool20250522Param,
+        BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
         BetaCodeExecutionToolResultBlockContent,
@@ -99,7 +101,6 @@ try:
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
         BetaContainerParams,
-        BetaContainerUploadBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
@@ -219,6 +220,11 @@ The installed Anthropic SDK exposes the current literal set and still allows arb
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
+AnthropicCodeExecutionToolVersion = Literal['auto', '20250522', '20250825', '20260120']
+"""Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+_ResolvedAnthropicCodeExecutionToolVersion = Literal['20250522', '20250825', '20260120']
+
 
 class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request."""
@@ -299,6 +305,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
     `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
     Skills beta.
+    """
+
+    anthropic_code_execution_tool_version: AnthropicCodeExecutionToolVersion
+    """Which Anthropic code execution tool version to send for `CodeExecutionTool`.
+
+    Defaults to `'auto'`, which uses the latest version supported by the model profile:
+    `code_execution_20260120` for Sonnet 4.5+ and Opus 4.5+, otherwise
+    `code_execution_20250825`. Set a concrete version to force that tool version.
     """
 
     anthropic_eager_input_streaming: bool
@@ -590,7 +604,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Most preprocessing has happened in `prepare_request()`.
         """
         tools = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
+        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(
+            tools, model_request_parameters, model_settings
+        )
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
@@ -716,7 +732,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
+        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(
+            tools, model_request_parameters, model_settings
+        )
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
@@ -849,8 +867,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return tools
 
+    def _get_code_execution_tool_version(
+        self, model_settings: AnthropicModelSettings
+    ) -> _ResolvedAnthropicCodeExecutionToolVersion:
+        version = model_settings.get('anthropic_code_execution_tool_version', 'auto')
+        if version == 'auto':
+            return AnthropicModelProfile.from_profile(self.profile).anthropic_code_execution_tool_version
+        return version
+
     def _add_builtin_tools(
-        self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
+        self,
+        tools: list[BetaToolUnionParam],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: AnthropicModelSettings,
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
@@ -870,9 +899,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     )
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                tools.append(BetaCodeExecutionTool20260120Param(name='code_execution', type='code_execution_20260120'))
-                if tool.file_ids:
-                    beta_features.add('files-api-2025-04-14')
+                tool_version = self._get_code_execution_tool_version(model_settings)
+                tools.append(_map_code_execution_tool(tool_version))
+                if tool_version == '20250522':
+                    beta_features.add('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
@@ -945,30 +975,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-
-        code_execution_file_ids: list[str] = []
-        for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, CodeExecutionTool) and tool.file_ids:
-                code_execution_file_ids.extend(tool.file_ids)
-
-        current_request_index = -1
-        for i, m in enumerate(messages):
-            if isinstance(m, ModelRequest):
-                current_request_index = i
-
-        container = self._get_container(messages, model_settings)
-        reusing_container = isinstance(container, str) or (container is not None and container.get('id') is not None)
-
-        for i, m in enumerate(messages):
+        for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
-
-                if i == current_request_index and code_execution_file_ids and not reusing_container:
-                    for file_id in code_execution_file_ids:
-                        user_content_params.append(
-                            BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
-                        )
-
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt_parts.append(request_part.content)
@@ -1971,6 +1980,18 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _map_code_execution_tool(version: _ResolvedAnthropicCodeExecutionToolVersion) -> BetaToolUnionParam:
+    match version:
+        case '20250522':
+            return BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522')
+        case '20250825':
+            return BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825')
+        case '20260120':
+            return BetaCodeExecutionTool20260120Param(name='code_execution', type='code_execution_20260120')
+        case _:
+            assert_never(version)
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:

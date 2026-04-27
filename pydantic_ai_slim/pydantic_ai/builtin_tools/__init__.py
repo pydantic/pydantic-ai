@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
@@ -281,14 +281,6 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     * Bedrock (Nova2.0)
     * xAI
-    """
-
-    file_ids: list[str] | None = field(default=None, repr=False)
-    """The file IDs to make available to the code execution environment.
-
-    Supported by:
-
-    * Anthropic
     """
 
     kind: str = 'code_execution'
