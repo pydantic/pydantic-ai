@@ -75,9 +75,30 @@ def test_deep_seek_chat_model_profile():
     assert profile.openai_supports_tool_choice_required is True
 
 
+def test_deep_seek_r1_model_profile():
+    """Regression anchor: deepseek-r1 must always have thinking enabled."""
+    provider = DeepSeekProvider(api_key='api-key')
+    profile = provider.model_profile('deepseek-r1')
+    assert profile is not None
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.supports_thinking is True
+    assert profile.thinking_always_enabled is True
+
+
 def test_deep_seek_reasoner_model_profile():
     provider = DeepSeekProvider(api_key='api-key')
     profile = provider.model_profile('deepseek-reasoner')
+    assert profile is not None
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.supports_thinking is True
+    assert profile.thinking_always_enabled is True
+    assert profile.openai_supports_tool_choice_required is False
+
+
+def test_deep_seek_v4_future_sku_inherits_tool_choice_restriction():
+    """Future deepseek-v4-* SKUs must inherit tool_choice=required restriction via startswith predicate."""
+    provider = DeepSeekProvider(api_key='api-key')
+    profile = provider.model_profile('deepseek-v4-turbo')
     assert profile is not None
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.openai_supports_tool_choice_required is False
