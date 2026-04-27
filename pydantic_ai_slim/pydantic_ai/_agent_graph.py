@@ -1912,12 +1912,15 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 def _filter_interrupted_response(
     message: _messages.ModelResponse, processed_tool_call_ids: set[str]
 ) -> _messages.ModelResponse | None:
-    """Drop incomplete tool calls from an interrupted ``ModelResponse``.
+    """Drop unanswered tool calls from an interrupted ``ModelResponse``.
 
-    Tool calls whose ``args`` are incomplete (truncated JSON from stream cancellation)
-    and which have no corresponding ``ToolReturnPart``/``RetryPromptPart`` later in
-    history are removed. Stripping one that does have a matching return would orphan
-    it and break the conversation for the provider.
+    Cancellation can leave a tool call in the response without a corresponding
+    ``ToolReturnPart``/``RetryPromptPart`` later in history — either because the
+    JSON args were truncated or because the cancel fired after the args completed
+    but before the tool was executed. Either way, providers like OpenAI/Anthropic
+    reject the next request when an assistant tool call has no matching tool result,
+    so we strip those tool calls here. Tool calls that *do* have a matching return
+    are kept; removing them would orphan the return part instead.
 
     Returns ``None`` if the response would be empty after filtering — providers like
     OpenAI/Mistral reject empty assistant messages, so those responses must be dropped
@@ -1928,7 +1931,6 @@ def _filter_interrupted_response(
         for part in message.parts
         if not (
             isinstance(part, _messages.BaseToolCallPart)
-            and part.args_incomplete
             and part.tool_call_id not in processed_tool_call_ids
         )
     ]
@@ -1940,11 +1942,13 @@ def _filter_interrupted_response(
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type and filtering incomplete tool calls.
+    """Clean the message history by merging consecutive messages of the same type and filtering unanswered tool calls.
 
-    For interrupted responses (from stream cancellation), tool calls with incomplete arguments that have no
-    corresponding tool return or retry prompt are filtered out. If an interrupted response ends up with no
-    parts after filtering, it is dropped entirely (providers like OpenAI/Mistral reject empty assistant messages).
+    For interrupted responses (from stream cancellation), tool calls with no corresponding tool return or
+    retry prompt later in history are filtered out, regardless of whether their JSON args completed before
+    the cancel — providers reject assistant tool calls without a matching tool result either way. If an
+    interrupted response ends up with no parts after filtering, it is dropped entirely (providers like
+    OpenAI/Mistral reject empty assistant messages).
     """
     # Collect tool_call_ids that already have a ToolReturnPart or RetryPromptPart in history.
     processed_tool_call_ids: set[str] = set()

@@ -4471,29 +4471,17 @@ async def test_incomplete_tool_call_filtered_from_history():
     )
 
 
-def test_args_incomplete_property():
-    """args_incomplete returns True only for truncated JSON string args."""
-    # dict args are never incomplete (already parsed)
-    assert ToolCallPart(tool_name='t', args={'x': 1}, tool_call_id='c1').args_incomplete is False
-    # empty string args are not incomplete
-    assert ToolCallPart(tool_name='t', args='', tool_call_id='c2').args_incomplete is False
-    # valid JSON string args are not incomplete
-    assert ToolCallPart(tool_name='t', args='{"x": 1}', tool_call_id='c3').args_incomplete is False
-    # truncated JSON is incomplete
-    assert ToolCallPart(tool_name='t', args='{"x": ', tool_call_id='c4').args_incomplete is True
-
-
-async def test_partial_incomplete_tool_call_filtered_from_history():
-    """When an interrupted response has a mix of valid and incomplete parts,
-    the incomplete tool calls are stripped but valid parts are kept."""
+async def test_unanswered_tool_call_filtered_from_mixed_response():
+    """When an interrupted response mixes a non-tool-call part with an unanswered tool call,
+    the tool call is stripped and the other parts survive — the response is trimmed, not dropped."""
 
     async def my_tool(x: int) -> str:  # pragma: no cover
         return str(x)
 
     agent = Agent(TestModel(), tools=[my_tool])
 
-    # Interrupted response with a valid TextPart and an incomplete ToolCallPart.
-    # The TextPart survives filtering; the response is trimmed, not dropped.
+    # Interrupted response with a TextPart and an unanswered ToolCallPart (truncated args
+    # used here just to make the cancellation timing concrete; the filter applies regardless).
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
@@ -4507,7 +4495,7 @@ async def test_partial_incomplete_tool_call_filtered_from_history():
 
     result = await agent.run('Continue', message_history=history)
     # The interrupted response is kept but with only the TextPart;
-    # the incomplete ToolCallPart is stripped.
+    # the unanswered ToolCallPart is stripped.
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
@@ -4528,6 +4516,91 @@ async def test_partial_incomplete_tool_call_filtered_from_history():
             ),
         ]
     )
+
+
+async def test_complete_unanswered_tool_call_filtered_from_history():
+    """An interrupted response can contain a tool call whose JSON args completed before the cancel
+    fired but the tool was never executed. Providers reject the next request when such an orphan
+    tool call has no matching tool result, so it must be filtered too.
+    """
+
+    async def my_tool(x: int) -> str:  # pragma: no cover
+        return str(x)
+
+    agent = Agent(TestModel(), tools=[my_tool])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
+            state='interrupted',
+        ),
+    ]
+
+    result = await agent.run('Continue', message_history=history)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='0',
+                        tool_call_id='pyd_ai_tool_call_id__my_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":"0"}')],
+                usage=RequestUsage(input_tokens=53, output_tokens=8),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_unanswered_tool_call_with_matching_return_kept_in_history():
+    """A tool call in an interrupted response with a matching ToolReturnPart in history is kept —
+    removing it would orphan the return part instead.
+    """
+
+    async def my_tool(x: int) -> str:  # pragma: no cover
+        return str(x)
+
+    agent = Agent(TestModel(), tools=[my_tool])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
+            state='interrupted',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='1', tool_call_id='call_1')]),
+    ]
+
+    result = await agent.run('Continue', message_history=history)
+    cleaned = result.all_messages()
+    interrupted = next(m for m in cleaned if isinstance(m, ModelResponse) and m.state == 'interrupted')
+    assert any(
+        isinstance(p, ToolCallPart) and p.tool_call_id == 'call_1' for p in interrupted.parts
+    ), 'tool call with a matching return must be preserved'
 
 
 # endregion
