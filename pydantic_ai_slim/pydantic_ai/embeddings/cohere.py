@@ -11,7 +11,7 @@ from .result import EmbeddingResult
 from .settings import EmbeddingSettings
 
 try:
-    from cohere import AsyncClientV2
+    from cohere import AsyncClient, AsyncClientV2
     from cohere.core.api_error import ApiError
     from cohere.core.request_options import RequestOptions
     from cohere.types.embed_by_type_response import EmbedByTypeResponse
@@ -125,10 +125,16 @@ class CohereEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self._client = provider.client
-        self._v1_client = provider.v1_client if isinstance(provider, CohereProvider) else None
 
         super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> AsyncClientV2:
+        return self._provider.client
+
+    @property
+    def _v1_client(self) -> AsyncClient | None:
+        return self._provider.v1_client if isinstance(self._provider, CohereProvider) else None
 
     @property
     def base_url(self) -> str:

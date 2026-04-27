@@ -143,7 +143,7 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
-If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
+If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
@@ -341,7 +341,7 @@ reasons (filtering out sensitive information), to save costs on tokens, to give 
 custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
+the message history before each model request. History processors can also be provided via the [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.

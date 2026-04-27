@@ -594,8 +594,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: AsyncOpenAI = field(repr=False)
-
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -665,12 +663,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
             self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -995,10 +996,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(message, field_name, None)
-            if reasoning:  # pragma: no branch
-                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
-                return items
+            reasoning: object = getattr(message, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
+                )
+                continue
+            items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+            return items
 
         return items or None
 
@@ -1513,8 +1522,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
-    client: AsyncOpenAI = field(repr=False)
-
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1544,9 +1551,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -2633,10 +2643,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if chunk.model:
                     self._model_name = chunk.model
 
-                try:
-                    choice = chunk.choices[0]
-                except IndexError:
+                # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
+                # malformed chunks that the openai SDK's loose constructor lets through (#5165).
+                if not chunk.choices:
                     continue
+                choice = chunk.choices[0]
 
                 # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
                 if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
@@ -2704,15 +2715,23 @@ class OpenAIStreamedResponse(StreamedResponse):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(choice.delta, field_name, None)
-            if reasoning:  # pragma: no branch
-                yield from self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=field_name,
-                    id=field_name,
-                    content=reasoning,
-                    provider_name=self.provider_name,
+            reasoning: object = getattr(choice.delta, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
                 )
-                break
+                continue
+            yield from self._parts_manager.handle_thinking_delta(
+                vendor_part_id=field_name,
+                id=field_name,
+                content=reasoning,
+                provider_name=self.provider_name,
+            )
+            break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
