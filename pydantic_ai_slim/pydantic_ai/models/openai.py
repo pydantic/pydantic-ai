@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -84,8 +84,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-
-_StreamCloser = Callable[[], Awaitable[None]]
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -1020,7 +1018,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: OpenAIChatModelSettings | None = None,
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]] = (
+            _utils.PeekableAsyncStream(response)
+        )
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -1037,7 +1037,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _close_stream=response.close,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
@@ -1864,7 +1863,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
@@ -1876,7 +1877,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _model_name=first_chunk.response.model,
             _model_settings=model_settings,
             _response=peekable_response,
-            _close_stream=response.close,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
@@ -2619,8 +2619,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
-    _response: AsyncIterable[ChatCompletionChunk]
-    _close_stream: _StreamCloser
+    _response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2630,10 +2629,10 @@ class OpenAIStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
-        await self._close_stream()
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name), self._stream_cancel_guard():
+        with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._validate_response():
@@ -2821,8 +2820,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: AsyncIterable[responses.ResponseStreamEvent]
-    _close_stream: _StreamCloser
+    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2831,10 +2829,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
-        await self._close_stream()
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name), self._stream_cancel_guard():
+        with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
 

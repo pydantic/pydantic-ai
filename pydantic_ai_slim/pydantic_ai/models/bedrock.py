@@ -1221,7 +1221,7 @@ class BedrockStreamedResponse(StreamedResponse):
         self._event_stream.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name), self._stream_cancel_guard():
+        with _map_api_errors(self._model_name):
             if self._provider_response_id is not None:
                 self.provider_response_id = self._provider_response_id
 

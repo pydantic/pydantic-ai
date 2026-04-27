@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -55,8 +55,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-
-_StreamCloser = Callable[[], Awaitable[None]]
 
 try:
     from mistralai.client import Mistral
@@ -407,7 +405,9 @@ class MistralModel(Model[Mistral]):
         model_request_parameters: ModelRequestParameters,
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            MistralCompletionEvent, MistralEventStreamAsync[MistralCompletionEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -418,7 +418,6 @@ class MistralModel(Model[Mistral]):
         return MistralStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
-            _close_stream=response.response.aclose,
             _model_name=first_chunk.data.model,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
@@ -662,8 +661,7 @@ class MistralStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Mistral models."""
 
     _model_name: MistralModelName
-    _response: AsyncIterable[MistralCompletionEvent]
-    _close_stream: _StreamCloser
+    _response: _utils.PeekableAsyncStream[MistralCompletionEvent, MistralEventStreamAsync[MistralCompletionEvent]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -672,10 +670,10 @@ class MistralStreamedResponse(StreamedResponse):
     _delta_content: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
-        await self._close_stream()
+        await self._response.source.response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name), self._stream_cancel_guard():
+        with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent

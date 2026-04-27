@@ -51,6 +51,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
@@ -353,8 +354,7 @@ async def test_google_close_stream_only_suppresses_async_generator_race(error_me
     response = GeminiStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-2.0-flash',
-        _response=cast(Any, stream),
-        _close_stream=stream.aclose,
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
         _provider_name='google-gla',
         _provider_url='https://generativelanguage.googleapis.com',
     )
@@ -4481,15 +4481,11 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
         yield chunk
 
-    async def close_stream() -> None:
-        pass
-
     response = response_iterator()
     streamed_response = GeminiStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
-        _response=response,
-        _close_stream=close_stream,
+        _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',

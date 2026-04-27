@@ -1058,7 +1058,8 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            with self._stream_cancel_guard():
+                self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
         return self._event_iterator
 
     async def cancel(self) -> None:

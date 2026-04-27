@@ -60,6 +60,7 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -5540,8 +5541,7 @@ async def test_xai_close_stream_only_suppresses_async_generator_race(error_messa
     response = XaiStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='grok-4-fast-non-reasoning',
-        _response=cast(Any, stream),
-        _close_stream=stream.aclose,
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
         _timestamp=datetime.now(timezone.utc),
         _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
     )

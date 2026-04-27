@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -805,7 +805,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     async def _process_streamed_response(
         self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
-        peekable_response = _utils.PeekableAsyncStream(response)
+        # peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -817,7 +820,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.message.model,
             _response=peekable_response,
-            _close_stream=response.close,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
         )
@@ -1697,14 +1699,15 @@ class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
     _model_name: AnthropicModelName
-    _response: AsyncIterable[BetaRawMessageStreamEvent]
-    _close_stream: _StreamCloser
+    _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
+    # _response: AsyncIterable[BetaRawMessageStreamEvent]
+    # _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name), self._stream_cancel_guard():
+        with _map_api_errors(self._model_name):
             current_block: BetaContentBlock | None = None
 
             builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
@@ -1862,7 +1865,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
 
     async def close_stream(self) -> None:
-        await self._close_stream()
+        await self._response.source.close()
 
     @property
     def model_name(self) -> AnthropicModelName:

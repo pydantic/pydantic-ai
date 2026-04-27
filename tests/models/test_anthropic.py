@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -45,6 +45,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -72,6 +73,7 @@ with try_import() as imports_successful:
         AsyncAnthropic,
         AsyncAnthropicBedrock,
         AsyncAnthropicVertex,
+        AsyncStream,
         omit as OMIT,
     )
     from anthropic.lib.tools import BetaAbstractMemoryTool
@@ -159,31 +161,37 @@ def test_init():
     assert m.base_url == 'https://api.anthropic.com'
 
 
-class _BrokenReadResponse:
-    def __aiter__(self) -> _BrokenReadResponse:
+@dataclass
+class _BrokenClosableStream:
+    closed: bool = False
+
+    def __aiter__(self) -> _BrokenClosableStream:
         return self
 
     async def __anext__(self) -> BetaRawMessageStreamEvent:
         raise httpx.ReadError('stream closed')
 
-
-@dataclass
-class _ClosableStream:
-    closed: bool = False
-
     async def close(self) -> None:
         self.closed = True
 
 
+def _peekable_broken_stream(
+    stream: _BrokenClosableStream,
+) -> PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]:
+    return cast(
+        PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]],
+        PeekableAsyncStream(stream),
+    )
+
+
 async def test_anthropic_cancelled_read_error_is_suppressed():
-    stream = _ClosableStream()
+    stream = _BrokenClosableStream()
     response = AnthropicStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='claude-haiku-4-5',
-        _response=cast(AsyncIterable[BetaRawMessageStreamEvent], _BrokenReadResponse()),
+        _response=_peekable_broken_stream(stream),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
-        _close_stream=stream.close,
     )
 
     await response.cancel()
@@ -198,10 +206,9 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
     response = AnthropicStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='claude-haiku-4-5',
-        _response=cast(AsyncIterable[BetaRawMessageStreamEvent], _BrokenReadResponse()),
+        _response=_peekable_broken_stream(_BrokenClosableStream()),
         _provider_name='anthropic',
         _provider_url='https://api.anthropic.com',
-        _close_stream=_ClosableStream().close,
     )
 
     with pytest.raises(httpx.ReadError):

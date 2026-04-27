@@ -32,6 +32,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.result import RunUsage
@@ -1192,8 +1193,7 @@ async def test_huggingface_close_stream_only_suppresses_async_generator_race(err
         model_request_parameters=ModelRequestParameters(),
         _model_name='hf-model',
         _model_profile=cast(Any, object()),
-        _response=cast(Any, stream),
-        _close_stream=stream.aclose,
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
         _provider_name='huggingface',
         _provider_url='https://api-inference.huggingface.co',
     )
