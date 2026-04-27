@@ -1,20 +1,20 @@
-"""Responses protocol adapter for Pydantic AI agents."""
+"""OpenAI Responses protocol adapter for Pydantic AI agents."""
+
+from __future__ import annotations
 
 import json
 from collections.abc import Sequence
 from functools import cached_property
-from typing import Any, Union, cast
+from typing import Any
 
-from openai.types.responses import ResponseInputParam
-from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
-from pydantic import TypeAdapter
-
-from ... import ExternalToolset, ModelMessage, ToolDefinition
+from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     BinaryContent,
     ImageUrl,
+    ModelMessage,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserContent,
     UserPromptPart,
@@ -22,264 +22,236 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
-from ...ui import MessagesBuilder, UIAdapter, UIEventStream
-from ._event_stream import ResponsesEventStream
-from ._type_guards import (
-    _is_assistant_role,
-    _is_function_call_output_item,
-    _is_input_file_item,
-    _is_input_image_item,
-    _is_input_text_item,
-    _is_message_item,
-    _is_system_role,
-    _is_text_content_part,
-    _is_user_role,
-)
 
-# Format mappings for media types
-_document_format_inverse_lookup = {
-    '.pdf': 'application/pdf',
-    '.txt': 'text/plain',
-    '.csv': 'text/csv',
-    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.html': 'text/html',
-    '.md': 'text/markdown',
-    '.xls': 'application/vnd.ms-excel',
-}
+try:
+    from openai.types.responses import ResponseInputItemParam
+    from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
 
-_audio_format_inverse_lookup = {
-    'mp3': 'audio/mpeg',
-    'wav': 'audio/wav',
-    'flac': 'audio/flac',
-    'oga': 'audio/ogg',
-    'aiff': 'audio/aiff',
-    'aac': 'audio/aac',
-}
+    from .. import MessagesBuilder, UIAdapter, UIEventStream
+    from ._event_stream import ResponsesEventStream
+except ImportError as e:  # pragma: no cover
+    raise ImportError(
+        'Please install the `openai` and `starlette` packages to use the Responses integration, '
+        'you can use the `responses` optional group — `pip install "pydantic-ai-slim[responses]"`'
+    ) from e
 
-_image_format_inverse_lookup = {
-    'jpeg': 'image/jpeg',
-    'png': 'image/png',
-    'gif': 'image/gif',
-    'webp': 'image/webp',
-}
+__all__ = ['ResponsesAdapter']
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    """Return `value` as a `dict[str, Any]` if it is a dict, else `None`."""
+    return value if isinstance(value, dict) else None  # pyright: ignore[reportUnknownVariableType]
 
 
 class _ResponsesFrontendToolset(ExternalToolset[AgentDepsT]):
-    """Toolset for Responses API frontend tools."""
+    """Toolset for OpenAI Responses API frontend function tools."""
 
-    def __init__(self, tools: list[dict[str, Any]]):
-        """Initialize the toolset with Responses API tools.
-
-        Args:
-            tools: List of tool definitions from the Responses API.
-        """
+    def __init__(self, tools: Sequence[Any]):
         tool_defs: list[ToolDefinition] = []
-        for tool in tools:
-            if isinstance(tool, dict) and tool.get('type') == 'function':
-                func = tool.get('function', {})
-                if isinstance(func, dict) and 'name' in func:
-                    tool_defs.append(
-                        ToolDefinition(
-                            name=func['name'],
-                            description=func.get('description'),
-                            parameters_json_schema=func.get('parameters'),
-                        )
-                    )
+        for raw_tool in tools:
+            tool = _as_dict(raw_tool)
+            if tool is None or tool.get('type') != 'function':
+                continue
+            name = tool.get('name')
+            if not isinstance(name, str):
+                continue
+            description = tool.get('description')
+            parameters = tool.get('parameters')
+            strict = tool.get('strict')
+            parameters_schema = _as_dict(parameters) or {}
+            tool_defs.append(
+                ToolDefinition(
+                    name=name,
+                    description=description if isinstance(description, str) else None,
+                    parameters_json_schema=parameters_schema,
+                    strict=strict if isinstance(strict, bool) else None,
+                )
+            )
         super().__init__(tool_defs)
 
     @property
     def label(self) -> str:
-        """Return the label for this toolset."""
-        return 'the Responses API frontend tools'
+        return 'the Responses API frontend tools'  # pragma: no cover
 
 
-def _parse_response_user_content_part(part: dict[str, Any]) -> UserContent | None:
-    """Parse a single Responses API user content part.
+def _parse_user_content_part(part: dict[str, Any]) -> UserContent | None:
+    """Parse one Responses input user-content part into a Pydantic AI UserContent value."""
+    part_type = part.get('type')
 
-    Args:
-        part: A content part which can be input_text, input_image, or input_file.
+    if part_type in ('input_text', 'text'):
+        text = part.get('text')
+        return text if isinstance(text, str) else None
 
-    Returns:
-        A UserContent object or None if the part cannot be parsed.
-    """
-    if _is_input_text_item(part):
-        return part.get('text', '')
-
-    if _is_input_image_item(part):
+    if part_type == 'input_image':
         image_url = part.get('image_url')
-        if not image_url:
+        if not isinstance(image_url, str):
             return None
-        # If it's a data URI, convert to BinaryContent; otherwise ImageUrl
-        if isinstance(image_url, str) and image_url.startswith('data:'):
-            try:
-                bc = BinaryContent.from_data_uri(image_url)
-                # carry detail if present
-                detail = part.get('detail')
-                if detail is not None:
-                    bc.vendor_metadata = {**(bc.vendor_metadata or {}), 'detail': detail}
-                return bc
-            except Exception:
-                return ImageUrl(url=str(image_url))
-        else:
-            vendor_metadata = {}
-            if (detail := part.get('detail')) is not None:
-                vendor_metadata['detail'] = detail
-            return ImageUrl(url=str(image_url), vendor_metadata=vendor_metadata or None)
+        if image_url.startswith('data:'):
+            return BinaryContent.from_data_uri(image_url)
+        return ImageUrl(url=image_url)
 
-    if _is_input_file_item(part):
-        data_uri = part.get('file_data')
-        if isinstance(data_uri, str) and data_uri.startswith('data:'):
-            try:
-                return BinaryContent.from_data_uri(data_uri)
-            except Exception:
-                return None
-        # If file_data missing or not a data URI, ignore for now
+    if part_type == 'input_file':
+        file_data = part.get('file_data')
+        if isinstance(file_data, str) and file_data.startswith('data:'):
+            return BinaryContent.from_data_uri(file_data)
         return None
 
     return None
 
 
-class ResponsesAdapter(
-    UIAdapter[ResponseCreateParamsStreaming, Union[str, ResponseInputParam], Any, AgentDepsT, OutputDataT]
-):
+class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputItemParam, Any, AgentDepsT, OutputDataT]):
     """UI adapter for the OpenAI Responses protocol."""
-
-    _RESPONSES_TA: TypeAdapter[ResponseCreateParamsStreaming] = TypeAdapter(ResponseCreateParamsStreaming)
 
     @classmethod
     def build_run_input(cls, body: bytes) -> ResponseCreateParamsStreaming:
-        """Build a Responses input object from the request body."""
-        # Parse JSON first to extract raw tools before validation
-        raw_data = json.loads(body)
+        """Build a Responses input object from the request body.
 
-        # Extract tools if present (before validation to avoid type mismatch)
-        raw_tools = raw_data.pop('tools', None)
-
-        # Validate the rest of the params
-        params = cls._RESPONSES_TA.validate_python(raw_data)
-
-        # Add back the raw tools without validation
-        if raw_tools is not None:
-            params['tools'] = raw_tools
-
-        return params
+        The OpenAI SDK's `ResponseCreateParamsStreaming` is a structural TypedDict;
+        constructing a `pydantic.TypeAdapter` for it produces an overly strict
+        validator that rejects the heterogeneous `input` and `tools` unions in
+        practice. We rely on the SDK's own runtime contract instead.
+        """
+        raw_data: Any = json.loads(body)
+        if not isinstance(raw_data, dict):
+            raise ValueError('Responses API request body must be a JSON object.')
+        return raw_data  # pyright: ignore[reportReturnType, reportUnknownVariableType]
 
     def build_event_stream(self) -> UIEventStream[ResponseCreateParamsStreaming, Any, AgentDepsT, OutputDataT]:
-        """Build a Responses event stream transformer."""
         return ResponsesEventStream(self.run_input, accept=self.accept)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Responses input."""
-        run_input = cast(ResponseCreateParamsStreaming, self.run_input)
+        builder = MessagesBuilder()
 
-        # Extract input and instructions from Responses API format
-        input_data = run_input.get('input')
-        instructions = run_input.get('instructions')
+        instructions = self.run_input.get('instructions')
+        if isinstance(instructions, str) and instructions:
+            builder.add(SystemPromptPart(content=instructions))
 
-        # Build a sequence of message items for load_messages
-        # We need to handle both input_data and instructions together
-        messages_seq: list[str | ResponseInputParam] = []
+        input_data = self.run_input.get('input')
+        if isinstance(input_data, str):
+            builder.add(UserPromptPart(content=input_data))
+        elif isinstance(input_data, list):
+            self._load_input_items(input_data, builder)
 
-        # Add instructions first if present (wrap as system message item)
-        if instructions:
-            # Wrap instructions as a message item with system role
-            messages_seq.append([{'role': 'system', 'content': instructions}])
+        return builder.messages
 
-        # Add input data
-        # The Responses API allows input to be either a string or a list of items
-        if input_data is not None:
-            messages_seq.append(input_data)
+    @classmethod
+    def _load_input_items(cls, items: Sequence[Any], builder: MessagesBuilder) -> None:
+        tool_call_names: dict[str, str] = {}
 
-        return self.load_messages(messages_seq)
+        for raw_item in items:
+            item = _as_dict(raw_item)
+            if item is None:
+                continue
+
+            item_type = item.get('type')
+            role = item.get('role')
+
+            # Implicit message item: has role + content but no explicit type
+            if item_type == 'message' or (item_type is None and role is not None and 'content' in item):
+                cls._load_message_item(item, builder)
+                continue
+
+            if item_type == 'function_call':
+                call_id_raw = item.get('call_id') or item.get('id') or ''
+                name_raw = item.get('name', '')
+                if isinstance(call_id_raw, str) and isinstance(name_raw, str) and name_raw:
+                    tool_call_names[call_id_raw] = name_raw
+                    builder.add(
+                        ToolCallPart(
+                            tool_name=name_raw,
+                            tool_call_id=call_id_raw,
+                            args=item.get('arguments'),
+                        )
+                    )
+                continue
+
+            if item_type == 'function_call_output':
+                call_id_raw = item.get('call_id', '')
+                if not isinstance(call_id_raw, str):
+                    continue
+                tool_name = tool_call_names.get(call_id_raw)
+                if tool_name is None:
+                    raise ValueError(f'function_call_output references unknown call_id {call_id_raw!r}.')
+                builder.add(
+                    ToolReturnPart(
+                        tool_name=tool_name,
+                        tool_call_id=call_id_raw,
+                        content=str(item.get('output', '')),
+                    )
+                )
+                continue
+
+    @classmethod
+    def _load_message_item(cls, item: dict[str, Any], builder: MessagesBuilder) -> None:
+        role = item.get('role')
+        content = item.get('content')
+
+        if role in ('system', 'developer'):
+            text = cls._extract_text_content(content)
+            if text:
+                builder.add(SystemPromptPart(content=text))
+            return
+
+        if role == 'user':
+            if isinstance(content, str):
+                builder.add(UserPromptPart(content=content))
+                return
+            if isinstance(content, list):
+                parts: list[UserContent] = []
+                content_list: list[Any] = content  # pyright: ignore[reportUnknownVariableType]
+                for raw_c in content_list:
+                    c = _as_dict(raw_c)
+                    if c is None:
+                        continue
+                    parsed = _parse_user_content_part(c)
+                    if parsed is not None:
+                        parts.append(parsed)
+                if parts:
+                    builder.add(UserPromptPart(content=parts))
+            return
+
+        if role == 'assistant':
+            text = cls._extract_text_content(content)
+            if text:
+                builder.add(TextPart(content=text))
+
+    @staticmethod
+    def _extract_text_content(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            texts: list[str] = []
+            content_list: list[Any] = content  # pyright: ignore[reportUnknownVariableType]
+            for raw_c in content_list:
+                c = _as_dict(raw_c)
+                if c is None:
+                    continue
+                if c.get('type') in ('input_text', 'text', 'output_text'):
+                    text = c.get('text')
+                    if isinstance(text, str):
+                        texts.append(text)
+            return ''.join(texts)
+        return ''
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        """Toolset representing frontend tools from the Responses run input."""
-        run_input = cast(ResponseCreateParamsStreaming, self.run_input)
-        tools = run_input.get('tools')
-        if tools:
-            # Tools are already a raw list from build_run_input, no conversion needed
-            if isinstance(tools, list) and tools:
-                return _ResponsesFrontendToolset[AgentDepsT](tools)
+        tools = self.run_input.get('tools')
+        if isinstance(tools, list) and tools:
+            return _ResponsesFrontendToolset[AgentDepsT](tools)
         return None
 
     @cached_property
     def state(self) -> dict[str, Any] | None:
-        """Frontend state from the Responses run input."""
-        run_input = cast(ResponseCreateParamsStreaming, self.run_input)
-        metadata = run_input.get('metadata')
-        if metadata and isinstance(metadata, dict):
+        metadata = self.run_input.get('metadata')
+        if isinstance(metadata, dict) and metadata:
             return metadata
         return None
 
     @classmethod
-    def load_messages(cls, messages: Sequence[str | ResponseInputParam]) -> list[ModelMessage]:
-        """Transform OpenAI Responses API input into Pydantic AI messages.
-
-        Args:
-            messages: Sequence of input data - each can be str or list of items.
-
-        Returns:
-            A list of ModelMessage objects representing the conversation history.
-        """
+    def load_messages(cls, messages: Sequence[ResponseInputItemParam]) -> list[ModelMessage]:
+        """Transform a flat sequence of Responses input items into Pydantic AI messages."""
         builder = MessagesBuilder()
-
-        # Process each message in the sequence
-        for input_data in messages:
-            # Handle input - can be string or list
-            if isinstance(input_data, str):
-                # Simple string input becomes a user message
-                builder.add(UserPromptPart(content=input_data))
-            elif isinstance(input_data, list):
-                for item in input_data:
-                    if not isinstance(item, dict):
-                        continue
-
-                    if _is_message_item(item):
-                        content = item.get('content')
-
-                        if _is_system_role(item):
-                            # System/developer both map to system prompt
-                            if isinstance(content, str):
-                                builder.add(SystemPromptPart(content=content))
-                            elif isinstance(content, list):
-                                # Concatenate text parts into one system string; ignore non-text
-                                texts: list[str] = []
-                                for c in content:
-                                    if _is_text_content_part(c):
-                                        txt = c.get('text') or c.get('content') or ''
-                                        if isinstance(txt, str):
-                                            texts.append(txt)
-                                if texts:
-                                    builder.add(SystemPromptPart(content=''.join(texts)))
-
-                        elif _is_user_role(item):
-                            if isinstance(content, str):
-                                builder.add(UserPromptPart(content=content))
-                            elif isinstance(content, list):
-                                parts: list[UserContent] = []
-                                for c in content:
-                                    if isinstance(c, dict):
-                                        parsed = _parse_response_user_content_part(c)
-                                        if parsed is not None:
-                                            parts.append(parsed)
-                                if parts:
-                                    builder.add(UserPromptPart(content=parts))
-
-                        elif _is_assistant_role(item):
-                            # Assistant content to ModelResponse
-                            if isinstance(content, str):
-                                builder.add(TextPart(content=content))
-                            elif isinstance(content, list):
-                                txt = ''.join(str(c.get('text', '')) for c in content if _is_text_content_part(c))
-                                if txt:
-                                    builder.add(TextPart(content=txt))
-
-                    elif _is_function_call_output_item(item):
-                        call_id = item.get('call_id', '')
-                        output = item.get('output', '')
-                        builder.add(ToolReturnPart(tool_name=call_id, tool_call_id=call_id, content=str(output)))
-
+        cls._load_input_items(messages, builder)
         return builder.messages

@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.ui.ag_ui.app import AGUIApp
+    from pydantic_ai.ui.responses.app import ResponsesApp
 
 
 T = TypeVar('T')
@@ -1342,6 +1343,106 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name=infer_name,
             toolsets=toolsets,
             # Starlette
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
+        )
+
+    def to_responses(
+        self,
+        *,
+        # Agent.iter parameters
+        output_type: OutputSpec[OutputDataT] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[BaseRoute] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+        on_startup: Sequence[Callable[[], Any]] | None = None,
+        on_shutdown: Sequence[Callable[[], Any]] | None = None,
+        lifespan: Lifespan[ResponsesApp[AgentDepsT, OutputDataT]] | None = None,
+    ) -> ResponsesApp[AgentDepsT, OutputDataT]:
+        """Returns an ASGI application that exposes the agent as an OpenAI Responses API endpoint.
+
+        The returned app mounts a `POST /v1/responses` route, so an OpenAI SDK pointed at the app's
+        base URL can talk to your agent unchanged.
+
+        Note that the `deps` will be the same for each request, with the exception of the request
+        `metadata` that's injected into the `state` field of a `deps` object that implements the
+        [`StateHandler`][pydantic_ai.ui.StateHandler] protocol. To provide different `deps` per
+        request (e.g. based on the authenticated user), use
+        [`ResponsesAdapter.dispatch_request()`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request]
+        directly.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-5.2')
+        app = agent.to_responses()
+        ```
+
+        Run with:
+
+        ```bash
+        uvicorn app:app --host 0.0.0.0 --port 8000
+        ```
+
+        See [Responses docs](../ui/responses.md) for more information.
+
+        Args:
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
+                no output validators since output validators would expect an argument that matches the agent's
+                output type.
+            message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+
+            debug: Boolean indicating if debug tracebacks should be returned on errors.
+            routes: A list of routes to serve incoming HTTP and WebSocket requests.
+            middleware: A list of middleware to run for every request.
+            exception_handlers: A mapping of either integer status codes, or exception class types onto
+                callables which handle the exceptions.
+            on_startup: A list of callables to run on application startup.
+            on_shutdown: A list of callables to run on application shutdown.
+            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
+
+        Returns:
+            An ASGI application that handles OpenAI Responses API requests by running the agent.
+        """
+        from pydantic_ai.ui.responses.app import ResponsesApp
+
+        return ResponsesApp(
+            agent=self,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
             debug=debug,
             routes=routes,
             middleware=middleware,
