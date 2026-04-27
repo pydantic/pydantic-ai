@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
 
@@ -53,3 +53,33 @@ def test_deep_seek_model_profile():
     provider = DeepSeekProvider(api_key='api-key')
     model = OpenAIChatModel('deepseek-r1', provider=provider)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert model.profile.supports_thinking is True
+    assert model.profile.thinking_always_enabled is True
+
+
+@pytest.mark.parametrize('model_name', ['deepseek-v4-flash', 'deepseek-v4-pro'])
+def test_deep_seek_v4_model_profile(model_name: str):
+    provider = DeepSeekProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.supports_thinking is True
+    assert profile.thinking_always_enabled is False
+    assert profile.openai_supports_tool_choice_required is False
+
+
+def test_deep_seek_chat_model_profile():
+    provider = DeepSeekProvider(api_key='api-key')
+    profile = provider.model_profile('deepseek-chat')
+    assert profile is not None
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.supports_thinking is False
+    assert profile.openai_supports_tool_choice_required is True
+
+
+def test_deep_seek_reasoner_model_profile():
+    provider = DeepSeekProvider(api_key='api-key')
+    profile = provider.model_profile('deepseek-reasoner')
+    assert profile is not None
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.openai_supports_tool_choice_required is False
