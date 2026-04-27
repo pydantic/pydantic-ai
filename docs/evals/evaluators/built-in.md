@@ -156,6 +156,63 @@ dataset = Dataset(
 
 ---
 
+### ContainsExpected
+
+Check if the output contains the expected output defined in the case.
+
+```python
+from pydantic_evals.evaluators import ContainsExpected
+
+ContainsExpected(
+    case_sensitive=True,
+    as_strings=False,
+)
+```
+
+**Parameters:**
+
+- `case_sensitive` (bool): Case-sensitive comparison for strings (default: `True`)
+- `as_strings` (bool): Convert both values to strings before checking (default: `False`)
+- `evaluation_name` (str | None): Custom name for this evaluation in reports
+
+**Returns:** [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] - Pass/fail with explanation
+
+**Behavior:**
+
+This evaluator uses the same logic as [`Contains`][pydantic_evals.evaluators.Contains], but dynamically pulls the comparison value from the case's expected_output.
+- Strings: Checks if `expected_output` is a substring of the actual output.
+- Collections (Lists/Tuples): Checks if `expected_output` is a member of the result.
+- Dictionaries/Models: Checks if all key-value pairs defined in expected_output exist in the result.
+
+**Example:**
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import ContainsExpected
+
+dataset = Dataset(
+    # Define expected substring in `expected_output` rather than
+    # a value passed as Contains(value='terms and conditions')
+    cases=[Case(inputs='test', expected_output='terms and conditions')],
+    evaluators=[
+        ContainsExpected(case_sensitive=False),
+    ],
+)
+```
+
+**Use Cases:**
+
+- Checking that a generated JSON object contains mandatory fields while ignoring optional ones.
+- Keyword verification against dynamic ground truth.
+- Checking must-have categories were generated in multi-label classification
+
+**Notes:**
+
+- Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
+- Useful for "partial match" scenarios where the model might return extra information that shouldn't cause a failure.
+
+---
+
 ## Type Validation
 
 ### IsInstance
@@ -435,6 +492,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected] | Exact match with expected | `bool` | Free | Instant |
 | [`Equals`][pydantic_evals.evaluators.Equals] | Equals specific value | `bool` | Free | Instant |
 | [`Contains`][pydantic_evals.evaluators.Contains] | Contains value/substring | `bool` + reason | Free | Instant |
+| [`ContainsExpected`][pydantic_evals.evaluators.ContainsExpected] | Contains expected | `bool` + reason | Free | Instant |
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
