@@ -525,7 +525,7 @@ class OutlinesModel(Model):
         self, response: AsyncIterable[str], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Turn the Outlines text response into a Pydantic AI streamed response instance."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[str, AsyncIterable[str]] = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')

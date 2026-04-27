@@ -181,7 +181,10 @@ class FunctionModel(Model):
             'FunctionModel must receive a `stream_function` to support streamed requests'
         )
 
-        response_stream = PeekableAsyncStream(self.stream_function(messages, agent_info))
+        response_stream: PeekableAsyncStream[
+            str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns,
+            AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns],
+        ] = PeekableAsyncStream(self.stream_function(messages, agent_info))
 
         first = await response_stream.peek()
         if isinstance(first, _utils.Unset):
