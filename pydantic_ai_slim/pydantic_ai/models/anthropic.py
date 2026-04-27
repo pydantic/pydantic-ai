@@ -81,6 +81,7 @@ try:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
+        Omit,
         omit as OMIT,
     )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
@@ -678,7 +679,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _effective_speed(
         self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
-    ) -> Literal['standard', 'fast']:
+    ) -> Literal['standard', 'fast'] | Omit:
         """Speed to send to the API, or OMIT when the model or client does not support the `speed` parameter."""
         s = model_settings.get('anthropic_speed')
         if s in ('standard', 'fast') and self._client_supports_fast_speed(anthropic_profile):
@@ -689,7 +690,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 UserWarning,
                 stacklevel=2,
             )
-        return OMIT  # pyright: ignore[reportReturnType]
+        return OMIT
 
     def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
         """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
