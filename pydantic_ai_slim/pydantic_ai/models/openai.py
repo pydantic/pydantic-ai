@@ -1132,7 +1132,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
-            else:
+            elif not self.tool_calls:
                 message_param['content'] = None
             if self.tool_calls:
                 message_param['tool_calls'] = self.tool_calls
