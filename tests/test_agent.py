@@ -8484,17 +8484,16 @@ async def test_user_prompt_with_deferred_tool_results():
     )
 
 
-def test_tool_requires_approval_error():
+def test_tool_requires_approval_no_output_type():
+    """Adding a requires_approval tool without DeferredToolRequests in output type is allowed.
+
+    The error is raised at runtime if the tool is called and no handler resolves it.
+    """
     agent = Agent('test')
 
-    with pytest.raises(
-        UserError,
-        match='To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.',
-    ):
-
-        @agent.tool_plain(requires_approval=True)
-        def delete_file(path: str) -> None:
-            pass
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> None:
+        pass
 
 
 async def test_consecutive_model_responses_in_history():
