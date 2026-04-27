@@ -14,7 +14,7 @@ from pydantic_ai.providers import Provider
 try:
     from google.auth.credentials import Credentials
     from google.genai.client import Client
-    from google.genai.types import HttpOptions
+    from google.genai.types import HttpOptions, HttpRetryOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -43,7 +43,12 @@ class GoogleProvider(Provider[Client]):
 
     @overload
     def __init__(
-        self, *, api_key: str, http_client: httpx.AsyncClient | None = None, base_url: str | None = None
+        self,
+        *,
+        api_key: str,
+        http_client: httpx.AsyncClient | None = None,
+        base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
 
     @overload
@@ -55,6 +60,7 @@ class GoogleProvider(Provider[Client]):
         location: VertexAILocation | Literal['global'] | str | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
 
     @overload
@@ -68,6 +74,7 @@ class GoogleProvider(Provider[Client]):
         api_key: str | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
 
     def __init__(
@@ -81,6 +88,7 @@ class GoogleProvider(Provider[Client]):
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None:
         """Create a new Google provider.
 
@@ -99,6 +107,8 @@ class GoogleProvider(Provider[Client]):
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google API.
+            retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
+                See `google.genai.types.HttpRetryOptions` for available fields.
         """
         if client is None:
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
@@ -124,6 +134,7 @@ class GoogleProvider(Provider[Client]):
                 headers={'User-Agent': get_user_agent()},
                 httpx_async_client=http_client,
                 timeout=timeout_ms,
+                retry_options=retry_options,
             )
             if not vertexai:
                 if api_key is None:
