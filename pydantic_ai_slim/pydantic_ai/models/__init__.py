@@ -1058,8 +1058,21 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            with self._stream_cancel_guard():
-                self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            async def guarded() -> AsyncIterator[ModelResponseStreamEvent]:
+                # Suppress transport errors caused by `cancel()` tearing down the
+                # connection mid-stream. The try/except has to live inside an
+                # async generator body so it's active at every `await` during
+                # iteration — wrapping the synchronous chain construction below
+                # would catch nothing.
+                chain = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+                try:
+                    async for event in chain:
+                        yield event
+                except self.get_stream_cancel_errors():
+                    if not self.cancelled:
+                        raise
+
+            self._event_iterator = guarded()
         return self._event_iterator
 
     async def cancel(self) -> None:
@@ -1099,25 +1112,6 @@ class StreamedResponse(ABC):
             f'Stream cancellation is not implemented for {type(self).__name__}. '
             'This model class must override `close_stream()` to support streaming cancellation.'
         )
-
-    @contextmanager
-    def _stream_cancel_guard(self):
-        """Suppress transport errors caused by stream cancellation.
-
-        When `cancel()` closes the underlying connection while
-        `_get_event_iterator()` is awaiting the next chunk, the SDK raises
-        a transport-level error (e.g. `httpx.StreamClosed`). Subclasses
-        extend `get_stream_cancel_errors()` for non-`httpx` transports. When
-        `self.cancelled` is `True` we know the error was caused by our
-        own cancellation, so we suppress it and let the async generator exit
-        cleanly via `StopAsyncIteration`.
-        """
-        stream_cancel_errors = self.get_stream_cancel_errors()
-        try:
-            yield
-        except stream_cancel_errors:
-            if not self.cancelled:
-                raise
 
     # TODO: (v2) We should not have public private methods which need to be overwritten.
     @abstractmethod

@@ -1700,8 +1700,6 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     _model_name: AnthropicModelName
     _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
-    # _response: AsyncIterable[BetaRawMessageStreamEvent]
-    # _close_stream: _StreamCloser
     _provider_name: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
