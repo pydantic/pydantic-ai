@@ -277,14 +277,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or other rewritten context.
     """
 
-    anthropic_container: BetaContainerParams | Literal[False]
+    anthropic_container: BetaContainerParams | str | Literal[False]
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
-    Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
+    Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
+    or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
+    `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
+    Skills beta.
     """
 
     anthropic_eager_input_streaming: bool
@@ -324,8 +327,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: AsyncAnthropicClient = field(repr=False)
-
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
 
@@ -353,9 +354,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> AsyncAnthropicClient:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -651,14 +655,32 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | None:
-        """Get container config for the API request."""
+    ) -> BetaContainerParams | str | None:
+        """Resolve the `container` request parameter.
+
+        The Anthropic SDK types `container` as `BetaContainerParams | str`, and the
+        live API accepts both forms *except* for one specific shape: a dict carrying
+        only `id` and nothing else, which is rejected with
+        `container: Input should be a valid string`. `{"skills": [...]}`,
+        `{"id": x, "skills": [...]}`, and the raw `"x"` string all work — only
+        `{"id": x}` alone is broken server-side.
+
+        So when the user passes that only-broken shape, we transparently unwrap it to
+        the string the server wants. Every other shape is passed through untouched so
+        the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
+        working. History-based reuse is always sent as the raw id string since we
+        never have skills to attach there.
+        """
         if (container := model_settings.get('anthropic_container')) is not None:
-            return None if container is False else container
+            if container is False:
+                return None
+            if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
+                return cid
+            return container
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return BetaContainerParams(id=cid)
+                    return cid
         return None
 
     async def _messages_count_tokens(

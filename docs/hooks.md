@@ -123,6 +123,9 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 
 Validation hooks fire when the model's JSON arguments are parsed and validated. All tool hooks receive `call` ([`ToolCallPart`][pydantic_ai.messages.ToolCallPart]) and `tool_def` ([`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) parameters.
 
+!!! note
+    Tool validation and execution hooks only fire for function tools. Internal output tools (used to deliver structured output) are not user-facing and are skipped.
+
 To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `tool_validate` (wrap).
 
 ### Tool execution hooks
@@ -145,6 +148,38 @@ To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.Sk
 | `prepare_tools` | `prepare_tools=` | `prepare_tools` |
 
 Filters or modifies tool definitions the model sees on each step. Controls visibility, not execution.
+
+### Deferred tool call hook
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `deferred_tool_calls` | `deferred_tool_calls=` | `handle_deferred_tool_calls` |
+
+Resolves [deferred tool calls](deferred-tools.md) (approval-required or externally-executed) inline during a run. The hook receives a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and returns a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] (or `None` to decline). Multiple registered hooks accumulate: each receives the still-unresolved requests and can resolve some or all of them.
+
+```python {title="hooks_deferred_tool_calls.py"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+
+
+@hooks.on.deferred_tool_calls
+async def auto_approve(
+    ctx: RunContext[None], *, requests: DeferredToolRequests
+) -> DeferredToolResults:
+    return requests.build_results(approve_all=True)
+
+
+agent = Agent('test', capabilities=[hooks])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    return f'File {path!r} deleted'
+```
+
+For pure application-level handler registration without other hooks, the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability is more concise — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
 ### Event stream hooks
 
