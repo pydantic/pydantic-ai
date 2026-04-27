@@ -8530,6 +8530,71 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
     assert result_block['content']['type'] == 'text_editor_code_execution_view_result'  # type: ignore[typeddict-item]
 
 
+async def test_anthropic_bash_code_execution_tool_message_replay():
+    """Serialize bash_code_execution BuiltinToolCallPart/ReturnPart back to Anthropic block params."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Run a shell command.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='bash_code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_bash_1',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='bash_code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': 'hello\n',
+                        'type': 'bash_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_bash_1',
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[], builtin_tools=[CodeExecutionTool()], output_tools=[]
+    )
+    _, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
+
+    assert anthropic_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Run a shell command.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_bash_1',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_bash_1',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': 'hello\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                    },
+                ],
+            },
+        ]
+    )
+
+
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
