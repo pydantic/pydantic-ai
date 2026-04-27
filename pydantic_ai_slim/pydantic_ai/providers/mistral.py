@@ -13,13 +13,11 @@ from pydantic_ai.providers import Provider
 
 try:
     from mistralai.client import Mistral
-except ModuleNotFoundError as e:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `mistral` package to use the Mistral provider, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
-    ) from e
-except ImportError:  # pragma: no cover
-    raise
+    ) from _import_error
 
 
 class MistralProvider(Provider[Mistral]):
