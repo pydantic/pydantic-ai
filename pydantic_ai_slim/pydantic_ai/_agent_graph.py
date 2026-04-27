@@ -1935,10 +1935,7 @@ def _filter_interrupted_response(
     filtered_parts = [
         part
         for part in message.parts
-        if not (
-            isinstance(part, _messages.ToolCallPart)
-            and part.tool_call_id not in processed_tool_call_ids
-        )
+        if not (isinstance(part, _messages.ToolCallPart) and part.tool_call_id not in processed_tool_call_ids)
     ]
     if not filtered_parts:
         return None
