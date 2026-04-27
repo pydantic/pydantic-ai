@@ -284,6 +284,12 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
 
+_SHUTDOWN_GRACE_SECONDS = 3
+"""How long to wait for the session task to wind down after we cancel it during a
+cancelled `__aenter__`. Bounds worst-case cleanup time when the underlying transport
+is unresponsive (e.g. a hung subprocess); past this we move on without awaiting it."""
+
+
 @dataclass
 class _MCPSessionState:
     """State for the single background session task that owns an MCPServer's connection.
@@ -819,7 +825,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     state.stop_event.set()
                     task.cancel()
                     with anyio.CancelScope(shield=True):
-                        with anyio.move_on_after(3):
+                        with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
                             try:
                                 await task
                             except BaseException:

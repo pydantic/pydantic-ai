@@ -174,13 +174,12 @@ async def test_parallel_agent_runs():
 
 
 async def test_parallel_agent_runs_share_one_connection():
-    """Parallel agent.run() calls on one MCPServer must reuse a single underlying connection.
+    """Parallel `agent.run()` calls on one MCPServer must reuse a single underlying connection.
 
-    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
-    cross-task lifecycle fix: a prior attempt (via `ContextVar`) made each sibling
-    `asyncio.gather` child open its own subprocess, defeating the purpose of sharing a
-    server instance. This asserts that 5 concurrent runs open the stdio transport exactly
-    once.
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514. Sharing a
+    server instance across concurrent tasks is the whole point of holding a server object;
+    if each sibling task opened its own subprocess we'd silently multiply resource usage.
+    Asserts that 5 concurrent runs open the stdio transport exactly once.
     """
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
@@ -208,10 +207,9 @@ async def test_server_shared_across_sibling_tasks():
     Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
     fasta2a / FastAPI lifespan pattern: a lifespan task opens `async with server:` and
     yields, then request-handler tasks — spawned as *siblings* (not descendants) of the
-    lifespan task — enter the same server object. A prior attempt using `ContextVar`
-    scoped connections to the lifespan's context, so sibling handler tasks would each
-    open their own subprocess instead of sharing. This test asserts the server opens
-    exactly once.
+    lifespan task — enter the same server object. They must share the lifespan's
+    connection; opening a fresh subprocess per request would defeat the lifespan pattern.
+    Asserts the server opens exactly once.
     """
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
@@ -251,12 +249,11 @@ async def test_server_shared_across_sibling_tasks():
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_parallel_agent_runs_produce_independent_span_trees():
-    """Each parallel agent.run() sharing one MCPServer produces its own independent trace.
+    """Each parallel `agent.run()` sharing one MCPServer produces its own independent trace.
 
-    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: the fix
-    moves the MCP session into a dedicated asyncio.Task. We must confirm that user-visible
-    span nesting is unchanged — each agent run's tool calls remain children of that run's
-    `agent run` span and do not leak across sibling runs' traces.
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: each agent
+    run's tool calls must remain children of that run's `agent run` span and not leak
+    across sibling runs' traces.
     """
     exporter = TestExporter()
     logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
