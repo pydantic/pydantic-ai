@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -30,35 +31,36 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from mistralai import (
+    from mistralai.client import Mistral
+    from mistralai.client.errors import SDKError
+    from mistralai.client.models import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
+        CompletionEvent as MistralCompletionEvent,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
-        Mistral,
         ReferenceChunk as MistralReferenceChunk,
+        TextChunk,
         TextChunk as MistralTextChunk,
-        UsageInfo as MistralUsageInfo,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        SDKError,
         ToolCall as MistralToolCall,
+        UsageInfo as MistralUsageInfo,
+        UserMessage,
     )
-    from mistralai.types.basemodel import Unset as MistralUnset
+    from mistralai.client.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
         MistralModel,
@@ -195,7 +197,9 @@ def func_chunk(
 
 
 def test_init():
-    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='foobar'))
+    provider = MistralProvider(api_key='foobar')
+    m = MistralModel('mistral-large-latest', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'mistral-large-latest'
     assert m.base_url == 'https://api.mistral.ai'
 
@@ -2065,11 +2069,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=IsInstance(BinaryImage),
                         tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -2092,6 +2095,21 @@ async def test_image_as_binary_content_tool_response(
             ),
         ]
     )
+
+
+async def test_text_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    part = UserPromptPart(
+        content=[
+            'Hello',
+            TextContent(content='This is some text content.', metadata={'key': 'value'}),
+        ]
+    )
+    m = await model._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    assert m == snapshot(UserMessage(content=[TextChunk(text='Hello'), TextChunk(text='This is some text content.')]))
 
 
 async def test_image_url_input(allow_model_requests: None):
@@ -2285,7 +2303,9 @@ async def test_txt_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='DocumentUrl other than PDF is not supported in Mistral.'):
+    with pytest.raises(
+        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(
             [
                 'hello',
@@ -2302,7 +2322,9 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='BinaryContent other than image or PDF is not supported in Mistral.'):
+    with pytest.raises(
+        NotImplementedError, match='BinaryContent other than image or PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
 
@@ -2312,7 +2334,7 @@ async def test_video_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='VideoUrl is not supported in Mistral.'):
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported in Mistral user prompts'):
         await agent.run(['hello', VideoUrl(url='https://www.google.com')])
 
 
@@ -2322,7 +2344,7 @@ async def test_uploaded_file_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='UploadedFile is not supported by Mistral.'):
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported in Mistral user prompts'):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 

@@ -38,6 +38,7 @@ pytestmark = [
     pytest.mark.filterwarnings(
         'ignore:State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol:UserWarning'
     ),
+    pytest.mark.filterwarnings('ignore:Frontend system prompts were provided:UserWarning'),
 ]
 
 

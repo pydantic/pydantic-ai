@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from typing import TypeAlias, overload
 
@@ -8,8 +9,8 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -44,7 +45,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = anthropic_model_profile(model_name)
-        return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
@@ -85,13 +86,18 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if not api_key:
                 raise UserError(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
-                    'to use the Anthropic provider.'
+                    ' to use the Anthropic provider.'
                 )
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = cached_async_http_client(provider='anthropic')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass(init=False)
@@ -139,6 +145,23 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
             return transform_schema(schema)
         else:
             return schema
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_object(schema)
+        if self.strict is True:
+            additional_properties = schema.get('additionalProperties')
+            if isinstance(additional_properties, dict) or additional_properties is True:
+                warnings.warn(
+                    '`dict` fields are not supported by Anthropic in strict mode '
+                    '(including `NativeOutput`, which is automatically selected when thinking is enabled). '
+                    "Anthropic's schema transformation sets `additionalProperties` to `false`, "
+                    'which forces the model to return `{}`. '
+                    'Use a `list` of `tuple[str, str]`, or a `TypedDict` or `dataclass` '
+                    'with explicit `key` and `value` fields, '
+                    'or set `output_type=PromptedOutput(...)`.',
+                    UserWarning,
+                )
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)

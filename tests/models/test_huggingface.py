@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -117,6 +118,12 @@ class MockHuggingFace:
                 response = cast(ChatCompletionOutput, self.completions)
         self.index += 1
         return response
+
+
+def test_huggingface_client_property_delegates_to_provider():
+    provider = HuggingFaceProvider(provider_name='nebius', api_key='test-key')
+    model = HuggingFaceModel('Qwen/Qwen2.5-72B-Instruct', provider=provider)
+    assert model.client is provider.client
 
 
 def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dict[str, Any]]:
@@ -1119,3 +1126,13 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_map_user_prompt_with_text_content():
+    """Test that UserPromptPart with text content is mapped correctly."""
+    msg = await HuggingFaceModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['hello', TextContent(content='there', metadata={'id': 'h01'})])
+    )
+
+    assert msg.content[0].text == snapshot('hello')  # pyright: ignore
+    assert msg.content[1].text == snapshot('there')  # pyright: ignore

@@ -16,7 +16,7 @@ def my_task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test1'), Case(inputs='test2')])
+dataset = Dataset(name='concurrency_demo', cases=[Case(inputs='test1'), Case(inputs='test2')])
 
 # Run all cases concurrently (default)
 report = dataset.evaluate_sync(my_task)
@@ -42,7 +42,7 @@ async def my_llm_task(inputs: str) -> str:
     return f'LLM Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test1')])
+dataset = Dataset(name='rate_limit_demo', cases=[Case(inputs='test1')])
 
 # If your API allows 10 requests/second
 report = dataset.evaluate_sync(
@@ -67,7 +67,7 @@ def db_query_task(inputs: str) -> str:
     return f'DB: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test1')])
+dataset = Dataset(name='resource_constraints', cases=[Case(inputs='test1')])
 
 # Memory-intensive operations
 report = dataset.evaluate_sync(
@@ -94,7 +94,7 @@ def my_task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test1')])
+dataset = Dataset(name='debug_demo', cases=[Case(inputs='test1')])
 
 # Easier to debug
 report = dataset.evaluate_sync(
@@ -114,6 +114,7 @@ from pydantic_evals import Case, Dataset
 
 # Create a dataset with multiple test cases
 dataset = Dataset(
+    name='performance_comparison',
     cases=[
         Case(
             name=f'case_{i}',
@@ -155,6 +156,7 @@ def my_task(inputs: str) -> str:
 
 
 dataset = Dataset(
+    name='evaluator_concurrency',
     cases=[Case(inputs=f'test{i}') for i in range(100)],  # 100 cases
     evaluators=[
         LLMJudge(rubric='Quality check'),  # Makes API calls
@@ -187,7 +189,7 @@ def my_task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test1')])
+dataset = Dataset(name='sync_demo', cases=[Case(inputs='test1')])
 
 # Runs async operations internally with controlled concurrency
 report = dataset.evaluate_sync(my_task, max_concurrency=10)
@@ -204,7 +206,7 @@ async def my_task(inputs: str) -> str:
 
 
 async def run_evaluation():
-    dataset = Dataset(cases=[Case(inputs='test1')])
+    dataset = Dataset(name='async_demo', cases=[Case(inputs='test1')])
     # Same behavior, but in async context
     report = await dataset.evaluate(my_task, max_concurrency=10)
     return report
@@ -224,7 +226,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs=f'test{i}') for i in range(10)])
+dataset = Dataset(name='monitoring', cases=[Case(inputs=f'test{i}') for i in range(10)])
 
 t0 = time.time()
 report = dataset.evaluate_sync(task, max_concurrency=10)
@@ -255,7 +257,7 @@ def task(inputs: str) -> str:
     return f'Result: {inputs}'
 
 
-dataset = Dataset(cases=[Case(inputs='test1')])
+dataset = Dataset(name='rate_limit_handling', cases=[Case(inputs='test1')])
 
 # Reduce concurrency to avoid rate limits
 report = dataset.evaluate_sync(

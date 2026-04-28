@@ -78,13 +78,10 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
 
-1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message.
-2. **Cache System Instructions**: Enable [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to append a cache point after the system prompt.
-3. **Cache Tool Definitions**: Enable [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to cache your tool schemas.
-4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` to automatically cache the last user message.
-
-!!! note "No TTL Support"
-    Unlike the direct Anthropic API, Bedrock manages cache TTL automatically. All cache settings are boolean only — no `'5m'` or `'1h'` options.
+1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
+2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
+3. **Cache Tool Definitions**: Set [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly.
+4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly to automatically cache the last user message.
 
 !!! note "Minimum Token Threshold"
     AWS only serves cached content once a segment crosses the provider-specific minimum token thresholds (see the [Bedrock prompt caching docs](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)). Short prompts or tool definitions below those limits will bypass the cache, so don't expect savings for tiny payloads.
@@ -128,7 +125,7 @@ agent = Agent(
     system_prompt='Detailed instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,       # Cache system instructions
-        bedrock_cache_tool_definitions=True,   # Cache tool definitions
+        bedrock_cache_tool_definitions='1h',   # Cache tool definitions with 1h TTL
         bedrock_cache_messages=True,           # Also cache the last message
     ),
 )
@@ -286,29 +283,21 @@ agent = Agent(model)
 
 ## Using AWS Application Inference Profiles
 
-AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. When using these profiles, you should specify a [model profile](https://ai.pydantic.dev/models/overview/#models-and-providers) to ensure Pydantic AI can correctly identify model capabilities (streaming, tool use, caching, etc.) while still using the custom inference profile for cost tracking.
-
-Without explicit configuration, an inference profile ARN like `arn:aws:bedrock:us-east-2:*****:application-inference-profile/****` doesn't contain enough information for Pydantic AI to determine the underlying model. You can work around this by:
-
-1. Passing the inference profile ARN as the model name to [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-2. Using the `profile` parameter to specify the logical model name for feature detection
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. Set [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
-# Create provider with your AWS configuration
 provider = BedrockProvider(region_name='us-east-2')
 
-# Create a profile with the logical model name for feature detection
-profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
-
-# Pass the inference profile ARN as the model name
 model = BedrockConverseModel(
-    'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    'us.anthropic.claude-opus-4-5-20251101-v1:0',
     provider=provider,
-    profile=profile,  # Provides the logical model name for feature detection
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    },
 )
 
 agent = Agent(model)

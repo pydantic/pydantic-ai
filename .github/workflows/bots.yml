@@ -1,15 +1,17 @@
 name: PR Bots
 
 on:
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
     types: [opened, synchronize, labeled]
+
+permissions: {}
 
 concurrency:
   group: pr-bots-${{ github.event.pull_request.number }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
-
   size-label:
     name: Size Label
     if: github.event.action != 'labeled'
@@ -76,15 +78,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  category-label:
-    name: Category Label
+  # Security: The classify job runs the LLM with READ-ONLY permissions and no label API access.
+  # The LLM's output is validated against an allowlist before the apply job takes any write action.
+  # This prevents prompt injection from adding arbitrary labels (e.g. 'auto-review' to trigger the review job).
+  category-classify:
+    name: Category Classify
     if: github.event.action != 'labeled'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
+      pull-requests: read
+    outputs:
+      category: ${{ steps.extract.outputs.category }}
+      skip: ${{ steps.check-label.outputs.has_label }}
     steps:
       - name: Check for modified config files
         if: github.event.pull_request.head.repo.fork
@@ -95,7 +102,7 @@ jobs:
             exit 1
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
 
       - name: Check if category label already exists
         id: check-label
@@ -115,39 +122,91 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Determine category label with Claude Code
+      - name: Checkout repository
         if: steps.check-label.outputs.has_label == 'false'
-        uses: anthropics/claude-code-action@v1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install bubblewrap
+        if: steps.check-label.outputs.has_label == 'false'
+        run: sudo apt-get install -y bubblewrap
+
+      - name: Classify PR with Claude Code
+        if: steps.check-label.outputs.has_label == 'false'
+        id: classify
+        uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
           anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          allowed_non_write_users: '*'
+          github_token: ${{ github.token }}
+          allowed_non_write_users: "*"
           claude_args: |
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels:*)"
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'
           prompt: |
-            Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }} and add exactly one label.
+            Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
 
             Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` for the title and description.
             Run `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --name-only` for the changed files.
 
             Categories:
-            - `bug`: Fixes broken behavior
-            - `feature`: New functionality
-            - `docs`: Documentation-only (no code changes)
-            - `chore`: CI, refactoring, dev dependencies, tests-only
-            - `dependency`: Production dependency updates
+            - bug: Fixes broken behavior
+            - feature: New functionality
+            - docs: Documentation-only (no code changes)
+            - chore: CI, refactoring, dev dependencies, tests-only
+            - dependency: Production dependency updates
 
             When both code and docs change, prefer `feature` or `bug` over `docs`.
-            If pyproject.toml files changed, check their diff to distinguish production deps (`dependency`) from dev-only deps in `[dependency-groups]` (`chore`).
+            If pyproject.toml files changed, run `gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` to see the full diff and distinguish production deps (`dependency`) from dev-only deps in `[dependency-groups]` (`chore`).
 
-            Add the label:
-            gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels --method POST -f "labels[]=<category>"
+            Return your classification as JSON with a "category" field set to one of: bug, feature, docs, chore, dependency.
+
+      - name: Extract and validate category
+        if: steps.check-label.outputs.has_label == 'false'
+        id: extract
+        run: |
+          CATEGORY=$(echo "$STRUCTURED_OUTPUT" | jq -r .category | tr -d '[:space:]')
+          ALLOWED="bug feature docs chore dependency"
+          if ! echo "$ALLOWED" | grep -Fqw "$CATEGORY"; then
+            echo "::error::Invalid category '$CATEGORY' from Claude — must be one of: $ALLOWED"
+            exit 1
+          fi
+          echo "category=$CATEGORY" >> $GITHUB_OUTPUT
+          echo "Classified as: $CATEGORY"
+        env:
+          STRUCTURED_OUTPUT: ${{ steps.classify.outputs.structured_output }}
+
+  category-apply:
+    name: Category Apply
+    needs: category-classify
+    if: needs.category-classify.outputs.skip != 'true' && needs.category-classify.outputs.category != ''
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Validate and apply category label
+        run: |
+          CATEGORY="${NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY}"
+          ALLOWED="bug feature docs chore dependency"
+
+          if ! echo "$ALLOWED" | grep -Fqw "$CATEGORY"; then
+            echo "::error::Invalid category '$CATEGORY' — must be one of: $ALLOWED"
+            exit 1
+          fi
+
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
+            --method POST -f "labels[]=$CATEGORY"
+          echo "Applied label: $CATEGORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
 
   review:
     name: Review
-    needs: [size-label, category-label]
+    needs: [size-label, category-apply]
     if: >-
       !failure() && !cancelled() &&
       github.event.action == 'labeled' && github.event.label.name == 'auto-review'
@@ -159,11 +218,12 @@ jobs:
       pull-requests: write
       actions: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check for modified config files
         if: github.event.pull_request.head.repo.fork
@@ -186,12 +246,12 @@ jobs:
           SIZE=$(echo "$LABELS" | grep -E '^size: ' | head -1)
 
           # Default to Opus for large/complex PRs
-          MODEL="claude-opus-4-6"
+          MODEL="claude-opus-4-6[1m]"
 
           # Disabled for now because Sonnet reviews have been disappointing
           # # Use Sonnet for docs, dependency, chore, or small/medium PRs
           # if [ "$CATEGORY" = "docs" ] || [ "$CATEGORY" = "dependency" ] || [ "$CATEGORY" = "chore" ] || [ "$SIZE" = "size: S" ] || [ "$SIZE" = "size: M" ]; then
-          #   MODEL="claude-sonnet-4-5"
+          #   MODEL="claude-sonnet-4-5[1m]"
           # fi
 
           echo "model=$MODEL" >> $GITHUB_OUTPUT
@@ -202,23 +262,30 @@ jobs:
       - name: Gather PR context
         run: |
           # Use the script from the base repo (main branch), not the fork
-          gh api repos/${{ github.repository }}/contents/scripts/gather-review-context.sh?ref=${{ github.event.pull_request.base.ref }} --jq .content | base64 -d > /tmp/gather-review-context.sh
-          bash /tmp/gather-review-context.sh ${{ github.event.pull_request.number }} ${{ github.repository }}
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
+      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
         with:
           anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          allowed_non_write_users: '*'
+          allowed_non_write_users: "*"
+          display_report: 'true'
           additional_permissions: |
             actions: read
           claude_args: |
             --model ${{ steps.model.outputs.model }}
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git grep:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(rg:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
           prompt: |
             REPO: ${{ github.repository }}
@@ -264,7 +331,12 @@ jobs:
             When you need code context beyond what the diffs provide, use the `Read` tool on the checked-out source files.
 
             Use the `gh` CLI only when you need additional information not already in these files (e.g. to read other referenced PRs or issues, check CI status, or read files excluded from the gathered diff).
-            When using `gh api`, prefer using the built-in `--jq` and `--template` flags for filtering/formatting since `python3` is not allowed.
+            Use specific `gh` subcommands (`gh pr view`, `gh issue view`, `gh run view`, etc.) rather than `gh api` for most queries.
+            `gh api` is scoped to comment and review endpoints on this PR only:
+            - `gh api repos/${{ github.repository }}/pulls/comments/<id>` — individual review comment by ID
+            - `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments` — list review comments
+            - `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews` — list reviews
+            - `gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments` — list issue comments
 
             Be careful about loading large diffs if you're unlikely to need them yet, like massive test files when there's plenty of more interesting code to comment on first, as you don't want to blow your context window too early.
             You will usually want to read all the "core implementation" and docs diffs in one go, though, so you have the full context of the PR as you identify problems, instead of going file by file.
