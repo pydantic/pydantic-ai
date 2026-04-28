@@ -12395,6 +12395,34 @@ class TestUnionOutputWithHooks:
         assert isinstance(result.output, TypeA)
         assert result.output.value == 10
 
+    def test_union_with_multi_arg_output_function_runs(self):
+        """A multi-arg output function in a union must actually execute.
+
+        Regression: `UnionOutputProcessor.hook_execute` previously isinstance-checked the
+        validated dict against the function's first-arg type, which always failed for
+        multi-arg functions, so the function was silently bypassed.
+        """
+        executed: list[tuple[int, str]] = []
+
+        def combine(x: int, y: str) -> str:
+            executed.append((x, y))
+            return f'{x}:{y}'
+
+        class Other(BaseModel):
+            value: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Emit the discriminated union shape that PromptedOutput expects, selecting the
+            # `combine` branch with the dict the multi-arg function will receive.
+            return ModelResponse(
+                parts=[TextPart(content='{"result": {"kind": "combine", "data": {"x": 7, "y": "ok"}}}')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput([combine, Other]))
+        result = agent.run_sync('hello')
+        assert result.output == '7:ok'
+        assert executed == [(7, 'ok')]
+
     def test_union_on_output_validate_error_fires(self):
         """on_output_validate_error fires for union output when validation fails."""
         call_count = 0

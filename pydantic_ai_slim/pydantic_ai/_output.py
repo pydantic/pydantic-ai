@@ -1336,7 +1336,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         kind: str | None = state
         if kind is not None:
             inner = self._processors[kind]
-            if inner.output_type is not None and _isinstance_maybe_generic(semantic, inner.output_type):
+            if self._semantic_matches_inner(inner, semantic):
                 return await self.call(
                     _UnionValidatedOutput(kind=kind, data=semantic),
                     run_context=run_context,
@@ -1351,15 +1351,42 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         # (if any) doesn't run. Users hitting this should inspect their hook return type.
         return semantic
 
+    @staticmethod
+    def _semantic_matches_inner(inner: ObjectOutputProcessor[Any], semantic: Any) -> bool:
+        """Check whether `semantic` matches the shape `inner` expects to receive.
+
+        - **Multi-arg output function** (`def f(x: int, y: str) -> Foo`): no unwrap key, so
+          `semantic` is the validated dict of args. `inner.output_type` is the first arg's
+          type, which can't be compared against the dict, so just check `isinstance(dict)`.
+        - **Single-value cases** (BaseModel, single-arg function, primitives): `semantic`
+          is the unwrapped value, so isinstance against `inner.output_type` is correct.
+        """
+        # Both inners are `ObjectOutputProcessor` (same module), so `_function_schema` is internal,
+        # not external; pyright's private-usage warning is a false positive here.
+        fn_schema = inner._function_schema  # pyright: ignore[reportPrivateUsage]
+        if fn_schema is not None and fn_schema.single_field_name is None:
+            return isinstance(semantic, dict)
+        if inner.output_type is None:
+            return False  # pragma: no cover
+        return _isinstance_maybe_generic(semantic, inner.output_type)
+
     def _resolve_inner_for_value(self, value: Any) -> _UnionValidatedOutput | None:
         """Find the inner processor whose `output_type` matches `value`.
 
         Used on the error-recovery and type-mismatch paths in `hook_execute`. Returns a
         `_UnionValidatedOutput` ready for `call()`, or `None` if no inner type matches.
+
+        Multi-arg output function inners are skipped: their `output_type` is the first
+        arg's type, not the dict shape `value` would have, so isinstance can't pick
+        them out unambiguously. The kind-trust path in `hook_execute` already handles
+        the normal multi-arg case (no swap).
         """
         for kind, inner in self._processors.items():
             if inner.output_type is None:  # pragma: no cover
                 continue
+            fn_schema = inner._function_schema  # pyright: ignore[reportPrivateUsage]
+            if fn_schema is not None and fn_schema.single_field_name is None:
+                continue  # multi-arg — see docstring
             if _isinstance_maybe_generic(value, inner.output_type):
                 return _UnionValidatedOutput(kind=kind, data=value)
         return None
