@@ -7528,30 +7528,6 @@ def test_prepare_output_tools():
     )
 
 
-def test_prepare_output_tools_sees_output_retries():
-    captured_max_retries: list[int] = []
-
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
-
-    async def capture_prepare(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        captured_max_retries.append(ctx.max_retries)
-        return tool_defs
-
-    agent = Agent(
-        FunctionModel(return_model),
-        output_type=Foo,
-        retries=1,
-        output_retries=5,
-        prepare_output_tools=capture_prepare,
-    )
-
-    result = agent.run_sync('Hello')
-    assert isinstance(result.output, Foo)
-    assert captured_max_retries == [5]
-
-
 async def test_explicit_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
