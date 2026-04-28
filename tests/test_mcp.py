@@ -49,7 +49,7 @@ with try_import() as imports_successful:
         ElicitResult,
         ImageContent,
         Implementation,
-        TextContent,
+        TextContent as McpTextContent,
         ToolUseContent,
     )
 
@@ -60,10 +60,15 @@ with try_import() as imports_successful:
         MCPServerSSE,
         MCPServerStdio,
         MCPServerStreamableHTTP,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         Resource,
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        TextContent,
         ToolResult,
         load_mcp_servers,
     )
@@ -1714,7 +1719,7 @@ async def test_mcp_server_raises_mcp_error(
 def test_map_from_mcp_params_model_request():
     params = CreateMessageRequestParams(
         messages=[
-            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
+            SamplingMessage(role='user', content=McpTextContent(type='text', text='xx')),
             SamplingMessage(
                 role='user',
                 content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
@@ -1741,7 +1746,7 @@ def test_map_from_mcp_params_model_request():
 def test_map_from_mcp_params_model_response():
     params = CreateMessageRequestParams(
         messages=[
-            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
+            SamplingMessage(role='assistant', content=McpTextContent(type='text', text='xx')),
         ],
         maxTokens=8,
     )
@@ -2281,6 +2286,16 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             assert result == []
 
 
+async def test_prompt_methods_without_capability(mcp_server: MCPServerStdio) -> None:
+    """Test that prompt list methods return empty values when prompts capability is not available."""
+    async with mcp_server:
+        mock_capabilities = ServerCapabilities(prompts=False)
+        with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
+            mcp_server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
+            result = await mcp_server.list_prompts()
+            assert result == []
+
+
 async def test_instructions(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
@@ -2495,3 +2510,199 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+async def test_list_prompts() -> None:
+    """Test list_prompts() basic functionality and caching."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Test basic functionality and available prompts
+        assert server.capabilities.prompts
+
+        prompts = await server.list_prompts()
+        assert prompts == snapshot(
+            [
+                Prompt(name='simple_prompt', description='A simple prompt template.'),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[PromptArgument(name='name', required=True), PromptArgument(name='topic', required=True)],
+                ),
+                Prompt(name='annotated_text_prompt', description='A prompt template with annotated text content.'),
+                Prompt(name='image_prompt', description='A prompt template with image content.'),
+                Prompt(name='audio_prompt', description='A prompt template with audio content.'),
+                Prompt(
+                    name='embedded_resource_prompt', description='A prompt template with an embedded text resource.'
+                ),
+                Prompt(name='resource_link_prompt', description='A prompt template with a resource link.'),
+            ]
+        )
+
+        # Test caching behavior
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts
+
+
+async def test_get_prompt() -> None:
+    """Test get_prompt() retrieves specific prompts and handles errors."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Test simple prompt (no parameters)
+        result = await server.get_prompt('simple_prompt')
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(type='text', text='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
+
+        # Test parameterized prompt with arguments
+        result = await server.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        assert result == snapshot(
+            PromptResult(
+                messages=[
+                    PromptMessage(
+                        role='user', content=TextContent(type='text', text="Hello Alice, let's talk about AI!")
+                    )
+                ],
+                description='A prompt template with parameters.',
+            )
+        )
+
+        # Test error handling for nonexistent prompt
+        with pytest.raises(MCPError) as exc_info:
+            await server.get_prompt('nonexistent_prompt')
+        assert 'unknown' in str(exc_info.value).lower()
+
+
+async def test_prompts_no_caching_when_disabled() -> None:
+    """Test that list_prompts() does not cache when cache_prompts=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_prompts=False)
+    async with server:
+        assert server.capabilities.prompts
+
+        # First call - should not populate cache
+        prompts1 = await server.list_prompts()
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - cache should still be None
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts1
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_prompts_cache_invalidation_on_notification() -> None:
+    """Test that prompts cache is invalidated when PromptListChangedNotification is received."""
+    from mcp.types import PromptListChangedNotification, ServerNotification
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.prompts
+
+        # Populate cache
+        await server.list_prompts()
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Simulate receiving a prompt list changed notification
+        notification = ServerNotification(PromptListChangedNotification())
+        await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
+
+        # Cache should be invalidated
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_list_prompts_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_prompts converts McpError to MCPError."""
+    mcp_error = McpError(
+        error=ErrorData(code=-32603, message='Failed to list prompts', data={'details': 'server overloaded'})
+    )
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_prompts',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPError, match='Failed to list prompts') as exc_info:
+                await mcp_server.list_prompts()
+
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to list prompts'
+            assert exc_info.value.data == {'details': 'server overloaded'}
+
+
+async def test_map_prompt_content() -> None:
+    """Test that get_prompt() correctly maps all MCP content types to Pydantic AI types.
+
+    Each content type is exercised through the real MCP server (full round-trip over
+    the MCP protocol) using dedicated prompt handlers defined in tests/mcp_server.py.
+    TextContent without annotations is already covered by test_get_prompt via
+    simple_prompt/parameterized_prompt, so only annotated text is tested here.
+    """
+    from pathlib import Path
+
+    from pydantic_ai.mcp import Annotations, EmbeddedResource, ResourceLink
+
+    assets_dir = Path(__file__).parent / 'assets'
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # TextContent with annotations
+        result = await server.get_prompt('annotated_text_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=TextContent(
+                        text='annotated text', annotations=Annotations(audience=['user'], priority=1.0)
+                    ),
+                )
+            ]
+        )
+
+        # ImageContent → BinaryImage
+        result = await server.get_prompt('image_prompt')
+        content = result.messages[0].content
+        assert isinstance(content, BinaryImage)
+        assert content.media_type == 'image/jpeg'
+        assert content.data == assets_dir.joinpath('kiwi.jpg').read_bytes()
+
+        # AudioContent → BinaryContent
+        result = await server.get_prompt('audio_prompt')
+        content = result.messages[0].content
+        assert isinstance(content, BinaryContent)
+        assert content.media_type == 'audio/mpeg'
+        assert content.data == assets_dir.joinpath('marcelo.mp3').read_bytes()
+
+        # EmbeddedResource with annotations
+        result = await server.get_prompt('embedded_resource_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=EmbeddedResource(
+                        uri='resource://product_name.txt',
+                        content='Pydantic AI',
+                        mime_type='text/plain',
+                        annotations=Annotations(audience=['user'], priority=0.5),
+                    ),
+                )
+            ]
+        )
+
+        # ResourceLink
+        result = await server.get_prompt('resource_link_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=ResourceLink(
+                        uri='resource://kiwi.jpg',
+                        name='kiwi-image',
+                        title='Kiwi Image',
+                        description='A photo of a kiwi fruit',
+                        mime_type='image/jpeg',
+                    ),
+                )
+            ]
+        )
