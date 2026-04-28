@@ -414,6 +414,10 @@ async def _prepare_request_parameters(
         output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
+    # `tool_manager.tool_defs` already reflects the `prepare_tools`/`prepare_output_tools`
+    # capability hooks — they're dispatched at `get_tools()` time via `PreparedToolset`
+    # wrappers in `Agent._get_toolset`, so the filtered/modified defs are baked into
+    # `ToolManager.tools` (and execution lookups) as well as the model's request parameters.
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
     for tool_def in ctx.deps.tool_manager.tool_defs:
@@ -422,17 +426,6 @@ async def _prepare_request_parameters(
         else:
             function_tools.append(tool_def)
 
-    # Let capabilities filter/modify tool definitions. Function and output tools go through
-    # separate hooks, mirroring the rest of the tool-hook lifecycle (output tools have their
-    # own hooks). The function-tool hook gets the tool-manager run context (per-tool retry
-    # counts, tool retry budget); the output-tool hook gets the output run context (global
-    # output retry budget), matching the output hooks' contract.
-    function_tools_ctx = ctx.deps.tool_manager.ctx
-    assert function_tools_ctx is not None, 'ToolManager.for_run_step must run before prepare_tools'
-    function_tools = await ctx.deps.root_capability.prepare_tools(function_tools_ctx, function_tools)
-    if output_tools:
-        output_run_context = _build_output_run_context(ctx)
-        output_tools = await ctx.deps.root_capability.prepare_output_tools(output_run_context, output_tools)
     run_context = build_run_context(ctx)
 
     # resolve dynamic builtin tools

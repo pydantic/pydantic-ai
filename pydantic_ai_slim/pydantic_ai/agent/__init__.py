@@ -10,6 +10,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
@@ -68,6 +69,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -82,6 +84,7 @@ from ..toolsets._dynamic import (
 )
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
+from ..toolsets.prepared import PreparedToolset
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -2436,8 +2439,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if run_capability is not None:
             toolset = run_capability.get_wrapper_toolset(toolset) or toolset
 
+            # Dispatch the `prepare_tools` capability hook chain via a `PreparedToolset` so the
+            # filtered/modified tool defs flow into `ToolManager.tools` (not just the model's
+            # `ModelRequestParameters`). This is the outermost function-side wrapper, so the
+            # hook runs after any inner wrappers (e.g. `SetToolMetadata`) have applied.
+            cap = run_capability
+
+            async def _dispatch_prepare_tools(
+                ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return await cap.prepare_tools(ctx, tool_defs)
+
+            toolset = PreparedToolset(toolset, _dispatch_prepare_tools)
+
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
+            if run_capability is not None:
+                # Dispatch `prepare_output_tools` similarly, but override `ctx.max_retries` to the
+                # output retry budget (matches `_build_output_run_context`'s contract — see #4745).
+                # `output_toolset.max_retries` is set to the agent's `max_result_retries` at agent
+                # construction time.
+                output_cap = run_capability
+                output_max_retries = self._max_result_retries
+
+                async def _dispatch_prepare_output_tools(
+                    ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+                ) -> list[ToolDefinition]:
+                    output_ctx = replace(ctx, max_retries=output_max_retries)
+                    return await output_cap.prepare_output_tools(output_ctx, tool_defs)
+
+                output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset

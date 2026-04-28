@@ -5110,6 +5110,43 @@ class TestPrepareToolsCapability:
         with pytest.raises(UserError, match='cannot add or rename'):
             await agent.run('hello')
 
+    async def test_prepare_tools_filtering_blocks_hallucinated_calls(self):
+        """A tool filtered out by `prepare_tools` must be unreachable, even if the model
+        hallucinates a call to it. Regression test: the hook must affect `ToolManager.tools`,
+        not just the model's `ModelRequestParameters` — otherwise the model could (re)call
+        a filtered tool and `ToolManager` would happily execute it."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        executed: list[str] = []
+
+        async def hide_secret(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return [td for td in tool_defs if td.name != 'secret_tool']
+
+        call_count = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            # First turn: hallucinate a call to the filtered tool. Even though the model
+            # doesn't see `secret_tool` in `info.function_tools`, simulate it doing so anyway
+            # (this can also happen via leftover history).
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart('secret_tool', {})])
+            return make_text_response('done')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(hide_secret)])
+
+        @agent.tool_plain
+        def secret_tool() -> str:
+            executed.append('secret')  # pragma: no cover
+            return 'secret'  # pragma: no cover
+
+        await agent.run('hello')
+
+        # `secret_tool` was never executed — the hallucinated call resolved to "unknown tool"
+        # because `prepare_tools` filtering also removed it from `ToolManager.tools`.
+        assert executed == []
+
 
 class TestPrepareOutputToolsCapability:
     async def test_filters_output_tools(self):
