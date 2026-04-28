@@ -494,7 +494,18 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Moderation',
                             'type': 'string',
                         },
-                        'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Model',
+                        },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1307,7 +1318,17 @@ Supported by:
                             'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Moderation',
                         },
-                        'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Model'},
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Model',
+                        },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Output Compression',
