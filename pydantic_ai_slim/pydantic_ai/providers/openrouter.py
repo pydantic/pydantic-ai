@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import overload
 
 import httpx
@@ -31,6 +31,26 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the OpenRouter provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+@dataclass(kw_only=True)
+class OpenRouterModelProfile(OpenAIModelProfile):
+    """Profile for models used with OpenRouterModel.
+
+    ALL FIELDS MUST BE ``openrouter_`` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openrouter_supports_cache_control: bool = False
+    """Whether the downstream provider supports explicit ``cache_control`` breakpoints via OpenRouter."""
+    openrouter_supports_cache_ttl: bool = False
+    """Whether the downstream provider supports TTL in ``cache_control``."""
+    openrouter_supports_tool_cache: bool = False
+    """Whether the downstream provider supports ``cache_control`` on tool definitions."""
+    openrouter_max_cache_points: int | None = None
+    """Maximum number of ``cache_control`` breakpoints the downstream provider allows per request.
+
+    Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
+    from messages (newest kept first). ``None`` means no limit."""
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -131,14 +151,22 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
+        # Set cache capability flags based on the downstream provider
+        supports_cache_control = provider in ('anthropic', 'google')
+        supports_anthropic_cache = provider == 'anthropic'
+
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        return OpenRouterModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
+            openrouter_supports_cache_control=supports_cache_control,
+            openrouter_supports_cache_ttl=supports_anthropic_cache,
+            openrouter_supports_tool_cache=supports_anthropic_cache,
+            openrouter_max_cache_points=4 if supports_anthropic_cache else None,
         ).update(profile)
 
     @overload
