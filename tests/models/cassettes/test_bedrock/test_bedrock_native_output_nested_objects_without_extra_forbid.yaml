@@ -1,0 +1,54 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Look up John who lives at 123 Main St, Springfield"}]}], "system":
+      [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"name":
+      "_PersonQuery", "schema": "{\"properties\": {\"name\": {\"type\": \"string\"}, \"address\": {\"$ref\": \"#/$defs/_Address\"}},
+      \"required\": [\"name\", \"address\"], \"type\": \"object\", \"additionalProperties\": false, \"$defs\": {\"_Address\":
+      {\"description\": \"A street address (no extra=''forbid'' \\u2014 additionalProperties: false not in native schema).\",
+      \"properties\": {\"street\": {\"type\": \"string\"}, \"city\": {\"type\": \"string\"}}, \"required\": [\"street\", \"city\"],
+      \"type\": \"object\", \"additionalProperties\": false}}}", "description": "A person query with a nested Address object
+      (no extra=''forbid'')."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MjU1NmEzYTctZGEyNS00YTdlLWJiNGUtYmY5YWQ2YmEwYTli
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '875'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '428'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 4117
+      output:
+        message:
+          content:
+          - text: '{"name":"John","address":{"street":"123 Main St","city":"Springfield"}}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 317
+        outputTokens: 23
+        serverToolUsage: {}
+        totalTokens: 340
+    status:
+      code: 200
+      message: OK
+version: 1

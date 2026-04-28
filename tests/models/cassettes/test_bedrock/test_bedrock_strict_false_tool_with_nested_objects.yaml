@@ -1,0 +1,115 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Look up John who lives at 123 Main St, Springfield"}]}], "system":
+      [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "lookup_person", "inputSchema": {"json": {"properties":
+      {"name": {"type": "string"}, "address": {"$ref": "#/$defs/_Address"}}, "required": ["name", "address"], "type": "object",
+      "$defs": {"_Address": {"description": "A street address (no extra=''forbid'' \u2014 additionalProperties: false not
+      in native schema).", "properties": {"street": {"type": "string"}, "city": {"type": "string"}}, "required": ["street",
+      "city"], "type": "object"}}}}, "description": "A person query with a nested Address object (no extra=''forbid'')."}}],
+      "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZTViZmI1NmEtNjM4OC00ZDI4LWIxODgtMDE3ZjgyNTBjZjFi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '749'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '524'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3833
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                address:
+                  city: Springfield
+                  street: 123 Main St
+                name: John
+              name: lookup_person
+              toolUseId: tooluse_Lb2NdegZQWXSFZHioMGjkd
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 675
+        outputTokens: 84
+        serverToolUsage: {}
+        totalTokens: 759
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Look up John who lives at 123 Main St, Springfield"}]}, {"role":
+      "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_Lb2NdegZQWXSFZHioMGjkd", "name": "lookup_person", "input":
+      {"name": "John", "address": {"street": "123 Main St", "city": "Springfield"}}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "tooluse_Lb2NdegZQWXSFZHioMGjkd", "content": [{"text": "John lives at 123 Main St, Springfield"}], "status":
+      "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "lookup_person",
+      "inputSchema": {"json": {"properties": {"name": {"type": "string"}, "address": {"$ref": "#/$defs/_Address"}}, "required":
+      ["name", "address"], "type": "object", "$defs": {"_Address": {"description": "A street address (no extra=''forbid''
+      \u2014 additionalProperties: false not in native schema).", "properties": {"street": {"type": "string"}, "city": {"type":
+      "string"}}, "required": ["street", "city"], "type": "object"}}}}, "description": "A person query with a nested Address
+      object (no extra=''forbid'')."}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NzQyODI2YjctZTg3ZS00MWMwLTg1NTgtYjhhYzM5NjgwMWEz
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1142'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '403'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3685
+      output:
+        message:
+          content:
+          - text: I found John's record. He lives at 123 Main St, Springfield.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 782
+        outputTokens: 20
+        serverToolUsage: {}
+        totalTokens: 802
+    status:
+      code: 200
+      message: OK
+version: 1

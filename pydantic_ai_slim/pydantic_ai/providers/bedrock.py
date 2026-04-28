@@ -7,14 +7,17 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -29,6 +32,81 @@ except ImportError as _import_error:
         'Please install the `boto3` package to use the Bedrock provider, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
     ) from _import_error
+
+
+_STRICT_INCOMPATIBLE_KEYS = (
+    'minimum',
+    'maximum',
+    'exclusiveMinimum',
+    'exclusiveMaximum',
+    'multipleOf',
+)
+
+
+@dataclass(init=False)
+class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms schemas to the subset supported by Bedrock structured outputs.
+
+    Transformation is applied when:
+    - `NativeOutput` is used as the `output_type` of the Agent
+    - `strict=True` is set on the `Tool`
+
+    When ``strict=None`` (the default), simple schemas without incompatible constraints are
+    auto-promoted to ``strict=True``. Schemas with incompatible numeric or array constraints
+    remain ``strict=False``.
+
+    When ``strict=True``:
+    - Strips numeric constraints (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``)
+    - Strips ``maxItems`` and ``minItems > 1`` on arrays
+    - Appends stripped constraint info to the ``description`` field as a hint to the model
+
+    The following are preserved — Bedrock accepts them under strict validation:
+    - String constraints: ``minLength``, ``maxLength``, ``pattern``
+    - String ``format`` (all values including ``date-time``, ``date``, ``email``, ``uri``, etc.)
+    - ``enum``, ``const``, ``default``, ``$defs``/``$ref``, ``anyOf``
+    - ``minItems`` of 0 or 1 on arrays
+    """
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema.pop('title', None)
+        schema.pop('$schema', None)
+
+        if schema.get('type') == 'object':
+            if self.strict:
+                schema['additionalProperties'] = False
+            elif self.strict is None:
+                if schema.get('additionalProperties', None) not in (None, False):
+                    self.is_strict_compatible = False
+                else:
+                    schema['additionalProperties'] = False
+
+        # Track Bedrock-incompatible constraints
+        incompatible: dict[str, Any] = {}
+        schema_type = schema.get('type')
+
+        if schema_type in ('number', 'integer'):
+            for key in _STRICT_INCOMPATIBLE_KEYS:
+                if key in schema:
+                    incompatible[key] = schema[key]
+        elif schema_type == 'array':
+            if 'maxItems' in schema:
+                incompatible['maxItems'] = schema['maxItems']
+            if 'minItems' in schema and schema['minItems'] > 1:
+                incompatible['minItems'] = schema['minItems']
+
+        if incompatible:
+            if self.strict:
+                notes: list[str] = []
+                for key, value in incompatible.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                notes_str = ', '.join(notes)
+                desc = schema.get('description')
+                schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
+
+        return schema
 
 
 @dataclass(kw_only=True)
@@ -55,6 +133,25 @@ class BedrockModelProfile(ModelProfile):
     """
 
 
+def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model used via Bedrock."""
+    # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
+    # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+    bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_send_back_thinking_parts=True,
+        bedrock_supports_prompt_caching=True,
+        bedrock_supports_tool_caching=True,
+        bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+        bedrock_thinking_variant='anthropic',
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+    ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
+    if model_name.startswith(bedrock_structured_output_unsupported):
+        profile = replace(profile, supports_json_schema_output=False)
+    return profile
+
+
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
     profile = _without_builtin_tools(amazon_model_profile(model_name))
@@ -76,6 +173,69 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
     return profile  # pragma: no cover
+
+
+def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Mistral model used via Bedrock."""
+    models_that_support_json_schema_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
+    return replace(
+        BedrockModelProfile(
+            bedrock_tool_result_format='json',
+        ).update(_without_builtin_tools(mistral_model_profile(model_name))),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
+
+
+def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Qwen model used via Bedrock."""
+    models_that_support_json_schema_output = ('qwen3',)
+    return replace(
+        BedrockModelProfile(
+            bedrock_thinking_variant='qwen',
+            supports_thinking='qwq' in model_name or 'qwen3' in model_name,
+        ).update(_without_builtin_tools(qwen_model_profile(model_name))),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        # Bedrock Converse API doesn't support JSON object mode
+        supports_json_object_output=False,
+    )
+
+
+def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Google model used via Bedrock."""
+    models_that_support_json_schema_output = ('gemma-3-12b-it', 'gemma-3-27b-it')
+    return replace(
+        BedrockModelProfile().update(_without_builtin_tools(google_model_profile(model_name))),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        # Bedrock Converse API doesn't support JSON object mode
+        supports_json_object_output=False,
+        # Bedrock Converse API doesn't support tool return schemas natively
+        supports_tool_return_schema=False,
+    )
+
+
+def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a MiniMax model used via Bedrock."""
+    models_that_support_json_schema_output = ('minimax-m2',)
+    return replace(
+        BedrockModelProfile(),
+        supported_builtin_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
+
+
+def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an NVIDIA model used via Bedrock."""
+    models_that_support_json_schema_output = ('nemotron-nano',)
+    return replace(
+        BedrockModelProfile(),
+        supported_builtin_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
 
 
 # Known geo prefixes for cross-region inference profile IDs
@@ -120,22 +280,8 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
-                BedrockModelProfile(
-                    bedrock_supports_tool_choice=True,
-                    bedrock_send_back_thinking_parts=True,
-                    bedrock_supports_prompt_caching=True,
-                    bedrock_supports_tool_caching=True,
-                    bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
-                    bedrock_thinking_variant='anthropic',
-                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-                # We don't currently support native structured output with Bedrock.
-                # See https://github.com/pydantic/pydantic-ai/issues/4209.
-                supports_json_schema_output=False,
-            ),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                _without_builtin_tools(mistral_model_profile(model_name))
-            ),
+            'anthropic': bedrock_anthropic_model_profile,
+            'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
@@ -144,10 +290,10 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
             ),
-            'qwen': lambda mn: BedrockModelProfile(
-                bedrock_thinking_variant='qwen',
-                supports_thinking='qwq' in mn or 'qwen3' in mn,
-            ),
+            'qwen': bedrock_qwen_model_profile,
+            'google': bedrock_google_model_profile,
+            'minimax': bedrock_minimax_model_profile,
+            'nvidia': bedrock_nvidia_model_profile,
         }
 
         # Split the model name into parts
