@@ -599,7 +599,10 @@ class ToolManager(Generic[AgentDepsT]):
             semantic_value = validated.validated_args
 
         # Use the global output retry context for validators, matching the text output path.
-        validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=self.ctx.max_retries)
+        # `self.ctx.max_retries` is the tool retry budget (post-#4745); the output retry budget
+        # lives on the OutputToolset, set by the Agent from `max_result_retries`.
+        assert toolset.max_retries is not None
+        validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=toolset.max_retries)
 
         async def do_process(output: Any) -> Any:
             # `processor.hook_execute` re-wraps the semantic value into the dict shape

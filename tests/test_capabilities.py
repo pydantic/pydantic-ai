@@ -12068,6 +12068,7 @@ class TestOutputHookEdgeCases:
 
         toolset = OutputToolset.build([MyOutput])
         assert toolset is not None
+        toolset.max_retries = 1  # Agent normally sets this; required by `get_tools`
 
         async def run():
             ctx = RunContext(
