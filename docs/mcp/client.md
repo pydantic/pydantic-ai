@@ -354,6 +354,21 @@ agent = Agent('openai:gpt-5.2', toolsets=[server])
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
 
+## Tool result metadata
+
+The MCP specification supports `_meta` data on tool results and on the individual content blocks they contain. This data is meant for application-side consumption, not the model — for example a request ID, a user-facing render hint, or a debug payload. Pydantic AI surfaces it through typed fields:
+
+- **Per-content-block `_meta`** lands on the corresponding Pydantic AI content type:
+  [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] for text parts and
+  [`BinaryContent.metadata`][pydantic_ai.messages.BinaryContent.metadata] for image/audio/document parts.
+  You can read it directly off the value returned by the tool.
+- **Top-level `CallToolResult._meta`** lives on
+  [`ToolReturn.metadata['meta']`][pydantic_ai.messages.ToolReturn.metadata].
+
+The MCP spec also lets servers annotate content blocks with `audience`, restricting them to `user`, `assistant`, or both. Pydantic AI keeps `audience=['user']` blocks out of what's sent to the model, and exposes them on `ToolReturn.metadata['user_content']` (as `ContentBlock.model_dump()` dicts) so the application can render or log them out of band. If every block is `audience=['user']`, the model receives a placeholder `return_value` indicating the tool ran without producing model-visible content.
+
+When a tool result has none of these, the call returns the bare value as before — the [`ToolReturn`][pydantic_ai.messages.ToolReturn] wrapper is only used when there's something to attach.
+
 ## Resources
 
 MCP servers can provide [resources](https://modelcontextprotocol.io/docs/concepts/resources) - files, data, or content that can be accessed by the client. Resources in MCP are application-driven, with host applications determining how to incorporate context manually, based on their needs. This means they will _not_ be exposed to the LLM automatically (unless a tool returns a `ResourceLink` or `EmbeddedResource`).
