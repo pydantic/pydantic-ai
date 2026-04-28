@@ -109,9 +109,7 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
     deferred_capabilities: Sequence[DeferredCapability[AgentDepsT]]
 
     def get_ordering(self) -> CapabilityOrdering | None:
-        # It makes sense for this to be outermost although I am skeptical how this will work with tool search something to understand for me
         return CapabilityOrdering(position='outermost')
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        # This toolset will provide us with the tools to use deferred capabilities
         return DeferredCapabilityToolset(wrapped=toolset, deferred_capabilities=self.deferred_capabilities)
