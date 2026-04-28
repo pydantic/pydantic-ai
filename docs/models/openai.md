@@ -819,3 +819,64 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+### Doubleword
+
+To use [Doubleword](https://doubleword.ai), create an API key from the [Doubleword dashboard](https://doubleword.ai).
+
+You can set the `DOUBLEWORD_API_KEY` environment variable and use `OpenAIProvider` with the Doubleword base URL:
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3.5-397B-A17B-FP8',
+    provider=OpenAIProvider(
+        base_url='https://api.doubleword.ai/v1',
+        api_key=os.environ['DOUBLEWORD_API_KEY'],
+    ),
+)
+agent = Agent(model)
+...
+```
+
+For a complete list of available models, see the [Doubleword models documentation](https://docs.doubleword.ai/inference-api/models).
+
+#### Batch and async (flex) pricing via `autobatcher`
+
+For background workloads, Doubleword exposes two off-realtime pricing tiers
+through the [`autobatcher`](https://pypi.org/project/autobatcher/) package,
+both of which are drop-in subclasses of `openai.AsyncOpenAI`:
+
+- `BatchOpenAI` — 24-hour batch tier (deepest discount, up to ~90% off realtime).
+- `AsyncOpenAI` — 1-hour flex tier (between realtime and batch on cost and latency).
+
+`OpenAIProvider` accepts an `openai_client` argument, so you can pass either
+client directly:
+
+```python
+import os
+
+from autobatcher import AsyncOpenAI  # or BatchOpenAI for the 24h tier
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3.5-397B-A17B-FP8',
+    provider=OpenAIProvider(
+        openai_client=AsyncOpenAI(  # 1h flex tier
+            base_url='https://api.doubleword.ai/v1',
+            api_key=os.environ['DOUBLEWORD_API_KEY'],
+        ),
+    ),
+)
+agent = Agent(model)
+```
+
+Concurrent calls fanned out from agent runs are collected into a single
+batch submission under the hood — no other code changes required.
