@@ -22,7 +22,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner']
+DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
 
 
 class DeepSeekProvider(Provider[AsyncOpenAI]):
@@ -54,8 +54,11 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
             openai_chat_thinking_field='reasoning_content',
             # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
             openai_chat_send_back_thinking_parts='field',
-            # DeepSeek v3.2 reasoning mode does not support tool_choice=required yet
-            openai_supports_tool_choice_required=(model_name != 'deepseek-reasoner'),
+            # Reasoning-capable models do not support tool_choice=required; use startswith so
+            # future deepseek-v4-* SKUs are covered automatically without listing each one.
+            openai_supports_tool_choice_required=(
+                model_name != 'deepseek-reasoner' and not model_name.startswith('deepseek-v4-')
+            ),
         ).update(profile)
 
     @overload
