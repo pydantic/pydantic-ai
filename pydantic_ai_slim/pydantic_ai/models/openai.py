@@ -315,6 +315,26 @@ def _resolve_openai_image_generation_size(
     return mapped_size
 
 
+def _map_openai_image_generation_tool(tool: ImageGenerationTool) -> responses.tool_param.ImageGeneration:
+    size = _resolve_openai_image_generation_size(tool)
+    output_compression = tool.output_compression if tool.output_compression is not None else 100
+    image_generation_tool = responses.tool_param.ImageGeneration(
+        type='image_generation',
+        action=tool.action,
+        background=tool.background,
+        input_fidelity=tool.input_fidelity,
+        moderation=tool.moderation,
+        output_compression=output_compression,
+        output_format=tool.output_format or 'png',
+        partial_images=tool.partial_images,
+        quality=tool.quality,
+        size=size,
+    )
+    if tool.model is not None:
+        image_generation_tool['model'] = tool.model
+    return image_generation_tool
+
+
 def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
@@ -2142,21 +2162,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tools.append(mcp_tool)
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
-                size = _resolve_openai_image_generation_size(tool)
-                output_compression = tool.output_compression if tool.output_compression is not None else 100
-                tools.append(
-                    responses.tool_param.ImageGeneration(
-                        type='image_generation',
-                        background=tool.background,
-                        input_fidelity=tool.input_fidelity,
-                        moderation=tool.moderation,
-                        output_compression=output_compression,
-                        output_format=tool.output_format or 'png',
-                        partial_images=tool.partial_images,
-                        quality=tool.quality,
-                        size=size,
-                    )
-                )
+                tools.append(_map_openai_image_generation_tool(tool))
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
