@@ -1314,10 +1314,12 @@ async def test_limit_cache_points_with_cache_messages(allow_model_requests: None
     await agent.run(
         [
             'Context 1',
-            CachePoint(),
+            CachePoint(),  # oldest, trimmed because total cache points (4 explicit + 1 from cache_messages) exceeds the budget of 4
             'Context 2',
             CachePoint(),
             'Context 3',
+            CachePoint(),
+            'Context 4',
             CachePoint(),
             'Question',
         ]
@@ -1332,9 +1334,10 @@ async def test_limit_cache_points_with_cache_messages(allow_model_requests: None
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'Context 1', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Context 1', 'type': 'text'},
                     {'text': 'Context 2', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
                     {'text': 'Context 3', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Context 4', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
                     {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
                 ],
             }

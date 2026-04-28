@@ -596,6 +596,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
+        self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -749,6 +750,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
+        self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1200,9 +1202,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
-        if cache_messages := model_settings.get('anthropic_cache_messages'):
-            self._apply_message_cache_control(anthropic_messages, '5m' if cache_messages is True else cache_messages)
-
         # Build system prompt blocks: each instruction part becomes a separate text block.
         # When anthropic_cache_instructions is enabled, the cache point goes after the last
         # static instruction (or at the end if all instructions are static).
@@ -1382,6 +1381,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if resolved_ttl and isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
             self._apply_message_cache_control(anthropic_messages, resolved_ttl)
+
+    def _apply_explicit_message_caching(
+        self,
+        model_settings: AnthropicModelSettings,
+        anthropic_messages: list[BetaMessageParam],
+    ) -> None:
+        """Apply per-block message caching when `anthropic_cache_messages` is enabled.
+
+        Mutually exclusive with `anthropic_cache` (enforced by `_build_automatic_cache_control`).
+        """
+        if cache_messages := model_settings.get('anthropic_cache_messages'):
+            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            self._apply_message_cache_control(anthropic_messages, ttl)
 
     def _apply_message_cache_control(
         self,
