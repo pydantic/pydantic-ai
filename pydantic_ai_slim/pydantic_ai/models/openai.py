@@ -1768,6 +1768,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        if item.phase is not None:
+                            part_provider_details = part_provider_details or {}
+                            part_provider_details['phase'] = item.phase
                         # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
                         # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
@@ -2268,6 +2271,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     )
 
                     if isinstance(item, TextPart):
+                        phase = (item.provider_details or {}).get('phase')
+                        send_phase = (
+                            profile.openai_supports_phase
+                            and item.provider_name == self.system
+                            and phase in ('commentary', 'final_answer')
+                        )
                         if item.id and should_send_item_id:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
@@ -2285,10 +2294,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     text=item.content, type='output_text', annotations=[]
                                 ),
                             ]
+                            if send_phase:
+                                message_item['phase'] = phase
                         else:
-                            openai_messages.append(
-                                responses.EasyInputMessageParam(role='assistant', content=item.content)
-                            )
+                            easy_message_item = responses.EasyInputMessageParam(role='assistant', content=item.content)
+                            if send_phase:
+                                easy_message_item['phase'] = phase
+                            openai_messages.append(easy_message_item)
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
@@ -2825,6 +2837,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
+            # Track `phase` (commentary | final_answer) on assistant message items, captured
+            # from the `output_item.added` event and merged into the corresponding
+            # `TextPart.provider_details` on `output_text.done`.
+            _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -2889,7 +2905,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
-                        pass
+                        if chunk.item.phase is not None:
+                            _phase_by_item[chunk.item.id] = chunk.item.phase
                     elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                         call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
@@ -3098,6 +3115,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
+                    if (phase := _phase_by_item.get(chunk.item_id)) is not None:
+                        provider_details['phase'] = phase
                     if provider_details:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
