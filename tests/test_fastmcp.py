@@ -13,6 +13,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
@@ -306,19 +307,31 @@ class TestFastMCPToolsetToolDiscovery:
             }
             assert set(tools.keys()) == expected_tools
 
-            # Check tool definitions
             test_tool = tools['test_tool']
-            assert test_tool.tool_def.name == 'test_tool'
-            assert test_tool.tool_def.description is not None
-            assert 'test tool that returns a formatted string' in test_tool.tool_def.description
-            assert test_tool.max_retries == 1
             assert test_tool.toolset is toolset
+            assert test_tool.tool_def.name == 'test_tool'
+            assert test_tool.tool_def.description == 'A test tool that returns a formatted string.'
+            # toolset left max_retries unset and the fixture ctx defaults to 0, so the tool inherits 0
+            assert test_tool.max_retries == 0
+            assert test_tool.tool_def.parameters_json_schema == snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'param1': {'type': 'string'}, 'param2': {'default': 0, 'type': 'integer'}},
+                    'required': ['param1'],
+                    'type': 'object',
+                }
+            )
 
-            # Check that the tool has proper schema
-            schema = test_tool.tool_def.parameters_json_schema
-            assert schema['type'] == 'object'
-            assert 'param1' in schema['properties']
-            assert 'param2' in schema['properties']
+    async def test_fastmcp_tool_for_tool_def_uses_toolset_max_retries(self, fastmcp_client: Client[FastMCPTransport]):
+        """`tool_for_tool_def` resolves `self.max_retries`: explicit int when set, fallback to `1`
+        when unset (durable-execution path has no `ctx` to inherit from)."""
+        tool_def = ToolDefinition(name='x', description='', parameters_json_schema={})
+
+        toolset_default = FastMCPToolset(fastmcp_client)
+        assert toolset_default.tool_for_tool_def(tool_def).max_retries == 1
+
+        toolset_explicit = FastMCPToolset(fastmcp_client, max_retries=5)
+        assert toolset_explicit.tool_for_tool_def(tool_def).max_retries == 5
 
     async def test_get_tools_with_empty_server(self, run_context: RunContext[None]):
         """Test getting tools from an empty FastMCP server."""

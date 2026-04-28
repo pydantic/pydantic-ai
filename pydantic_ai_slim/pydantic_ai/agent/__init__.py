@@ -50,7 +50,7 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._ordering import has_capability_type
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
-from ..capabilities.history_processor import HistoryProcessor as HistoryProcessorCap
+from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
@@ -86,6 +86,7 @@ from .abstract import (
     AgentMetadata,
     AgentModelSettings,
     EventStreamHandler,
+    EventStreamProcessor,
     RunOutputDataT,
 )
 from .spec import AgentSpec, get_capability_registry
@@ -110,6 +111,7 @@ __all__ = (
     'CallToolsNode',
     'EndStrategy',
     'EventStreamHandler',
+    'EventStreamProcessor',
     'InstrumentationSettings',
     'ModelRequestNode',
     'ParallelExecutionMode',
@@ -400,7 +402,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         capabilities = list(capabilities or [])
         for history_processor in self.history_processors:
-            capabilities.append(HistoryProcessorCap(history_processor))
+            capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
 
@@ -923,6 +925,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -944,6 +947,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -965,6 +969,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1047,6 +1052,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1156,9 +1162,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_cap = self._override_root_capability.get()
         base_capability = override_cap.value if override_cap is not None else self._root_capability
 
-        # Merge spec capability additively with base capability
+        # Merge spec and run-time capabilities additively with the base capability
+        extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
-            effective_capability = CombinedCapability([base_capability, resolved.capability])
+            extra_capabilities.append(resolved.capability)
+        if capabilities:
+            extra_capabilities.extend(capabilities)
+        if extra_capabilities:
+            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
 
@@ -1168,7 +1179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if run_capability is not effective_capability:
             source_cap = run_capability
-        elif override_cap is not None or (resolved is not None and resolved.capability is not None):
+        elif override_cap is not None or extra_capabilities:
             source_cap = effective_capability
         else:
             source_cap = None
@@ -1826,6 +1837,34 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             self._instructions.append(func)
             return func
+
+    async def system_prompt_parts(
+        self,
+        *,
+        deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        prompt: str | Sequence[_messages.UserContent] | None = None,
+        usage: _usage.RunUsage | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> list[_messages.SystemPromptPart]:
+        """Resolve the agent's configured system prompts into `SystemPromptPart`s.
+
+        See [`AbstractAgent.system_prompt_parts`][pydantic_ai.agent.AbstractAgent.system_prompt_parts].
+        """
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=self._get_model(model),
+            usage=usage or _usage.RunUsage(),
+            prompt=prompt,
+            messages=list(message_history or []),
+            model_settings=model_settings,
+            run_step=1,
+        )
+        return await _system_prompt.resolve_system_prompts(
+            self._system_prompts, self._system_prompt_functions, run_context
+        )
 
     @overload
     def system_prompt(
@@ -2710,7 +2749,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
@@ -2725,10 +2764,3 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         return 'the agent'
-
-    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
-        if tool.requires_approval and not self.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
-        super().add_tool(tool)

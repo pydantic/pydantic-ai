@@ -103,6 +103,7 @@ async def execute_traced_output_function(
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
+        'gen_ai.operation.name': 'execute_tool',
         'gen_ai.tool.name': tool_name,
         **get_agent_run_baggage_attributes(),
         'logfire.msg': f'running output function: {tool_name}',
@@ -904,7 +905,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     _output_retry_count: int
     """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
     _output_max_retries: int
-    """Global output max retries, snapshotted from `ctx.max_retries` in `for_run_step`."""
+    """Global output max retries, snapshotted from `self.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -1011,13 +1012,15 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # copy() instead of replace() because @dataclass(init=False) with a custom __init__
         # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
         # makes replace() pass unrecognized kwargs to __init__.
+        assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
         new = copy(self)
         new._output_retry_count = ctx.retry
-        new._output_max_retries = ctx.max_retries
+        new._output_max_retries = self.max_retries
         return new
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries if self.max_retries is not None else 1
+        assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
+        max_retries = self.max_retries
         return {
             tool_def.name: ToolsetTool(
                 toolset=self,

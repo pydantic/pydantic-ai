@@ -3472,6 +3472,36 @@ async def test_run_event_stream_handler():
     )
 
 
+async def test_event_stream_handler_propagates_tool_error():
+    """When a tool raises during streaming with event_stream_handler and the error
+    is suppressed by the handler, the _stream_error re-raise path in run() should
+    propagate the original error — not an internal AssertionError about _next_node."""
+
+    m = TestModel()
+    test_agent = Agent(m)
+
+    @test_agent.tool_plain
+    async def failing_tool(x: str) -> str:
+        raise RuntimeError('tool execution failed')
+
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        # Suppress the error to simulate UIEventStream.transform_stream behavior,
+        # which catches exceptions and doesn't re-raise them.
+        try:
+            async for event in stream:
+                events.append(event)
+        except RuntimeError:
+            pass
+
+    with pytest.raises(RuntimeError, match='tool execution failed'):
+        await test_agent.run('Hello', event_stream_handler=handler)
+
+    # Events up to the tool call should still have been emitted
+    assert any(isinstance(e, FunctionToolCallEvent) for e in events)
+
+
 def test_run_sync_event_stream_handler():
     m = TestModel()
 

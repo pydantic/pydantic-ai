@@ -79,6 +79,7 @@ nav:
           - Overview: evals/evaluators/overview.md
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
+          - Third-Party Integrations: evals/evaluators/framework-integrations.md
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
@@ -199,6 +200,7 @@ nav:
           - api/pydantic_evals/evaluators.md
           - api/pydantic_evals/lifecycle.md
           - api/pydantic_evals/online.md
+          - api/pydantic_evals/online_capability.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
