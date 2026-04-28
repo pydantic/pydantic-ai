@@ -1318,10 +1318,17 @@ def build_validation_context(
 def _build_output_run_context(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
 ) -> RunContext[DepsT]:
-    """Build a RunContext with global output retry info for output validation."""
-    run_context = build_run_context(ctx)
+    """Build a RunContext with global output retry info for output validation.
+
+    Starts from `tool_manager.ctx` (when available) so per-tool retry counts
+    (`ctx.retries[name]`) populated by `for_run_step` propagate to output hooks
+    like `prepare_output_tools` and output validators. Then overrides `retry`
+    and `max_retries` with the **output** budget (`max_result_retries`),
+    distinct from the tool budget on `tool_manager.ctx`.
+    """
+    base = ctx.deps.tool_manager.ctx if ctx.deps.tool_manager.ctx is not None else build_run_context(ctx)
     return replace(
-        run_context,
+        base,
         retry=ctx.state.retries,
         max_retries=ctx.deps.max_result_retries,
     )

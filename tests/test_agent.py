@@ -7532,10 +7532,12 @@ def test_prepare_output_tools():
 def test_prepare_output_tools_receives_output_max_retries():
     """Regression for the bug surfaced in #4745 / #4859 design discussion: the
     `prepare_output_tools` callable must see `ctx.max_retries == max_result_retries`,
-    not the function-tool retry budget. Also verifies `ctx.retry` advances per output retry.
+    not the function-tool retry budget. Also verifies `ctx.retry` advances per output retry
+    and that per-tool retry counts in `ctx.retries` propagate (matching `prepare_tools`).
     """
     seen_retries: list[int] = []
     seen_max_retries: list[int] = []
+    seen_per_tool_retries: list[int] = []
 
     target_retries = 3
 
@@ -7547,6 +7549,7 @@ def test_prepare_output_tools_receives_output_max_retries():
     async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         seen_retries.append(ctx.retry)
         seen_max_retries.append(ctx.max_retries)
+        seen_per_tool_retries.append(ctx.retries.get(tool_defs[0].name, 0))
         return tool_defs
 
     agent = Agent(
@@ -7570,6 +7573,9 @@ def test_prepare_output_tools_receives_output_max_retries():
     # OUTPUT retry budget, never the tool retry budget (`retries=1`).
     assert seen_max_retries == [target_retries] * (target_retries + 1)
     assert seen_retries == [0, 1, 2, 3]
+    # Per-tool retry counts populated by `for_run_step` propagate too — matching
+    # what `prepare_tools` sees on the function-tool side.
+    assert seen_per_tool_retries == [0, 1, 2, 3]
 
 
 async def test_explicit_context_manager():
