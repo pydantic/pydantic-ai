@@ -368,19 +368,19 @@ def test_agent_from_spec_model_settings_merged():
 def test_agent_from_spec_retries():
     agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_retries_override():
     agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_output_retries():
     agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
     assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 10  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_end_strategy():
@@ -4645,7 +4645,7 @@ class TestImageGenerationCapability:
                 ModelRequest(
                     parts=[
                         RetryPromptPart(
-                            content='Exceeded maximum retries (1) for output validation',
+                            content='Exceeded maximum output retries (1)',
                             tool_name='generate_image',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -4656,7 +4656,7 @@ class TestImageGenerationCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    usage=RequestUsage(input_tokens=66, output_tokens=7),
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -7906,7 +7906,7 @@ class TestModelRetryFromHooks:
         )
 
     async def test_after_model_request_model_retry_max_retries(self):
-        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+        """after_model_request raises ModelRetry repeatedly — hits output_retries."""
 
         @dataclass
         class AlwaysRetryCap(AbstractCapability[Any]):
@@ -7924,7 +7924,7 @@ class TestModelRetryFromHooks:
             capabilities=[AlwaysRetryCap()],
             output_retries=2,
         )
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
 
     async def test_after_model_request_model_retry_streaming(self):
@@ -8236,7 +8236,7 @@ class TestModelRetryFromHooks:
                 raise error
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
 

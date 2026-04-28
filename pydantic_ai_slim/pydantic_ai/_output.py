@@ -904,8 +904,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     output_validators: list[OutputValidator[AgentDepsT, Any]]
     _output_retry_count: int
     """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
-    _output_max_retries: int
-    """Global output max retries, snapshotted from `ctx.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -998,7 +996,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
         self._output_retry_count = 0
-        self._output_max_retries = 0
 
     @property
     def id(self) -> str | None:
@@ -1014,7 +1011,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # makes replace() pass unrecognized kwargs to __init__.
         new = copy(self)
         new._output_retry_count = ctx.retry
-        new._output_max_retries = ctx.max_retries
         return new
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -1034,7 +1030,11 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         if self.output_validators:
-            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self._output_max_retries)
+            # The snapshot-and-replace pattern is needed because `ctx` at this point still carries the
+            # pre-`for_run_step` counter and `ctx.max_retries` reflects the agent default rather than the
+            # per-tool `tool.max_retries` that actually enforces the retry budget here. Follow-up: if PR
+            # #4745 lands, `ctx.max_retries` will already carry the per-tool value and this replace can go.
+            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=tool.max_retries)
             for validator in self.output_validators:
                 output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
         return output

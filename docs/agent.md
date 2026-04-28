@@ -1079,8 +1079,17 @@ Validation errors from both function tool parameter validation and [structured o
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The agent-level `output_retries` can also be overridden per run via `agent.run(output_retries=...)` and friends.
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
+
+### How output retries are enforced
+
+Pydantic AI enforces `output_retries` differently depending on how the model returns its final output:
+
+- **Text output path** (`output_type=str`, text-only outputs, empty or unusable model responses): a single global budget of size `output_retries` is shared across the whole run. Each invalid response consumes one unit of the budget; when it's exhausted, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Exceeded maximum output retries (N)'`.
+- **Tool output path** (`output_type=ToolOutput(...)`, structured outputs): `output_retries` is the *default per-tool limit*. Each output tool gets its own retry counter, enforced by the tool manager as it would for any other tool. Individual output tools can override the limit via [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries]; the agent-level `output_retries` applies only to tools that don't set their own limit.
+
+Inside an [`output_validator`][pydantic_ai.agent.Agent.output_validator], [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects the enforcement limit that will actually stop the validator: the global budget on the text path, or the per-tool limit on the tool path. [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is the global retry counter in both cases, so it stays consistent across output tool switches within a single run.
 
 Here's an example:
 
