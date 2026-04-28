@@ -1691,6 +1691,92 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count input tokens using the OpenAI Responses API `input_tokens` endpoint.
+
+        This uses the `POST /responses/input_tokens` endpoint which returns an accurate
+        token count without running inference. See:
+        https://platform.openai.com/docs/api-reference/responses/input-tokens
+        """
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        model_settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+
+        tools = (
+            self._get_builtin_tools(model_request_parameters)
+            + list(model_settings.get('openai_builtin_tools', []))
+            + self._get_tools(model_request_parameters)
+        )
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        if not tools:
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
+
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        reasoning = self._translate_thinking(model_settings, model_request_parameters)
+
+        text: responses.ResponseTextConfigParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            text = {'format': self._map_json_schema(output_object)}
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            text = {'format': {'type': 'json_object'}}
+            assert isinstance(instructions, str)
+            system_prompt_count = next(
+                (i for i, m in enumerate(openai_messages) if m.get('role') != 'system'), len(openai_messages)
+            )
+            openai_messages.insert(
+                system_prompt_count, responses.EasyInputMessageParam(role='system', content=instructions)
+            )
+            instructions = OMIT
+
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        if not openai_messages and not previous_response_id:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
+
+        with _map_api_errors(self.model_name):
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
+            response = await self.client.responses.input_tokens.count(
+                input=openai_messages,
+                model=self.model_name,
+                instructions=instructions,
+                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
+                truncation=model_settings.get('openai_truncation', OMIT),
+                previous_response_id=previous_response_id or OMIT,
+                reasoning=reasoning,
+                text=text or OMIT,
+                extra_headers=extra_headers,
+            )
+        return usage.RequestUsage(input_tokens=response.input_tokens)
+
     @asynccontextmanager
     async def request_stream(
         self,
