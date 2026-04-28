@@ -188,7 +188,7 @@ This is ideal for multi-turn conversations where the cache breakpoint should mov
 
 ### Per-block Message Caching
 
-Use [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to add per-block `cache_control` to the last content block in the final message. This is useful for Anthropic-compatible providers and gateways that support per-block caching in the Anthropic message format:
+As an alternative to `anthropic_cache`, [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] adds per-block `cache_control` to the last content block of the final message instead of using Anthropic's top-level automatic caching parameter. Use this with Anthropic-compatible gateways and proxies (such as MiniMax, OpenRouter, or LiteLLM) that accept the Anthropic message format but don't support top-level automatic caching:
 
 ```python {test="skip"}
 from anthropic import AsyncAnthropic
@@ -217,7 +217,7 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 ```
 
-You can also specify a custom TTL with `anthropic_cache_messages='1h'`. Use either `anthropic_cache` or `anthropic_cache_messages` for message caching in a given request.
+You can also specify a custom TTL with `anthropic_cache_messages='1h'`. `anthropic_cache_messages` cannot be combined with `anthropic_cache`.
 
 ### Explicit Cache Breakpoints
 
@@ -348,7 +348,7 @@ Cache points can come from several sources:
 4. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
 5. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them. Use either `anthropic_cache` or `anthropic_cache_messages` in a given request. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
+Each setting uses **at most 1 cache point**, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
 
 #### Example: Combining Automatic and Explicit Caching
 
