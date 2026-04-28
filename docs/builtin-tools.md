@@ -453,9 +453,11 @@ For more details, check the [API documentation][pydantic_ai.builtin_tools.ImageG
 
 | Parameter | OpenAI | Google |
 |-----------|--------|--------|
+| `action` | ✅ (auto (default), generate, edit) | ❌ |
 | `background` | ✅ | ❌ |
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
+| `model` | ✅ | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Vertex AI only) |
 | `output_format` | ✅ | ✅ (Vertex AI only) |
 | `partial_images` | ✅ | ❌ |
