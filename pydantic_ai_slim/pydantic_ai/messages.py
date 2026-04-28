@@ -200,6 +200,12 @@ class FileUrl(ABC):
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+
+    For files mapped from MCP tool results or resources, this is populated from the source's `_meta` field.
+    """
+
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -218,6 +224,7 @@ class FileUrl(ABC):
         identifier: str | None = None,
         force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
@@ -282,6 +289,7 @@ class VideoUrl(FileUrl):
         identifier: str | None = None,
         force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         kind: Literal['video-url'] = 'video-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -341,6 +349,7 @@ class AudioUrl(FileUrl):
         identifier: str | None = None,
         force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -388,6 +397,7 @@ class ImageUrl(FileUrl):
         identifier: str | None = None,
         force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         kind: Literal['image-url'] = 'image-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -434,6 +444,7 @@ class DocumentUrl(FileUrl):
         identifier: str | None = None,
         force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         kind: Literal['document-url'] = 'document-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
@@ -513,6 +524,12 @@ class BinaryContent:
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+
+    For files mapped from MCP tool results or resources, this is populated from the source's `_meta` field.
+    """
+
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -529,6 +546,7 @@ class BinaryContent:
         media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
@@ -543,6 +561,7 @@ class BinaryContent:
                 media_type=bc.media_type,
                 identifier=bc.identifier,
                 vendor_metadata=bc.vendor_metadata,
+                metadata=bc.metadata,
             )
         else:
             return bc
@@ -659,6 +678,7 @@ class BinaryImage(BinaryContent):
         media_type: ImageMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
@@ -745,6 +765,9 @@ class UploadedFile:
     - `GoogleModel`: used as `video_metadata` for video files
     """
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -765,6 +788,7 @@ class UploadedFile:
         *,
         media_type: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         identifier: str | None = None,
         kind: Literal['uploaded-file'] = 'uploaded-file',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
