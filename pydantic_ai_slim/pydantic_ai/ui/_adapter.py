@@ -262,6 +262,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         Currently strips:
 
+        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s when
+          [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is
+          `'server'`. The agent's configured `system_prompt` is reinjected by
+          [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on
+          the next model request. If stripping leaves a `ModelRequest` with no parts,
+          the request is dropped from history entirely.
         - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
           [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
           Non-HTTP schemes like `s3://` or `gs://` cause the model provider to fetch
@@ -282,6 +288,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
+        strip_system_prompt = self.manage_system_prompt == 'server'
+        stripped_system_prompt = False
         disallowed_url_schemes: set[str] = set()
         dangling_tool_call_names: list[str] = []
         last_index = len(messages) - 1
@@ -289,34 +297,34 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         sanitized: list[ModelMessage] = []
         for index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
-                new_request_parts: list[ModelRequestPart] = []
-                for part in message.parts:
-                    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                        filtered: list[UserContent] = []
-                        for item in part.content:
-                            if isinstance(item, FileUrl):
-                                scheme = urlparse(item.url).scheme.lower()
-                                if scheme and scheme not in self.allowed_file_url_schemes:
-                                    disallowed_url_schemes.add(scheme)
-                                    continue
-                            filtered.append(item)
-                        new_request_parts.append(replace(part, content=filtered))
-                    else:
-                        new_request_parts.append(part)
-                sanitized.append(replace(message, parts=new_request_parts))
+                new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
+                    message.parts, strip_system_prompt=strip_system_prompt, disallowed_schemes=disallowed_url_schemes
+                )
+                stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
+                if new_request_parts:
+                    sanitized.append(replace(message, parts=new_request_parts))
+                # Otherwise drop the request entirely so we don't leave an empty
+                # `ModelRequest(parts=[])` in history.
             elif isinstance(message, ModelResponse) and index == last_index:
-                new_response_parts: list[ModelResponsePart] = []
-                for part in message.parts:
-                    if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
-                        dangling_tool_call_names.append(part.tool_name)
-                        continue
-                    new_response_parts.append(part)
+                new_response_parts = self._sanitize_last_response_parts(
+                    message.parts,
+                    resolved_tool_call_ids=resolved_tool_call_ids,
+                    dangling_names=dangling_tool_call_names,
+                )
                 if new_response_parts:
                     sanitized.append(replace(message, parts=new_response_parts))
                 # Otherwise drop the final response entirely so we don't leave an empty
                 # `ModelResponse(parts=[])` in history.
             else:
                 sanitized.append(message)
+
+        if stripped_system_prompt:
+            warnings.warn(
+                "Client-submitted system prompts were stripped because `manage_system_prompt` is `'server'` "
+                "(the default). Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         if disallowed_url_schemes:
             warnings.warn(
@@ -343,6 +351,69 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             )
 
         return sanitized
+
+    def _sanitize_request_parts(
+        self,
+        parts: Sequence[ModelRequestPart],
+        *,
+        strip_system_prompt: bool,
+        disallowed_schemes: set[str],
+    ) -> tuple[list[ModelRequestPart], bool]:
+        """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
+
+        `disallowed_schemes` is updated in place with any non-allowlisted file URL schemes encountered.
+        Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped.
+        """
+        stripped_system_prompt = False
+        new_parts: list[ModelRequestPart] = []
+        for part in parts:
+            if strip_system_prompt and isinstance(part, SystemPromptPart):
+                stripped_system_prompt = True
+                continue
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                new_parts.append(replace(part, content=self._filter_user_content(part.content, disallowed_schemes)))
+            else:
+                new_parts.append(part)
+        return new_parts, stripped_system_prompt
+
+    def _filter_user_content(
+        self,
+        content: Sequence[UserContent],
+        disallowed_schemes: set[str],
+    ) -> list[UserContent]:
+        """Drop [`FileUrl`][pydantic_ai.messages.FileUrl] items whose scheme isn't in the allowlist.
+
+        `disallowed_schemes` is updated in place with any disallowed schemes encountered.
+        """
+        filtered: list[UserContent] = []
+        for item in content:
+            if isinstance(item, FileUrl):
+                scheme = urlparse(item.url).scheme.lower()
+                if scheme and scheme not in self.allowed_file_url_schemes:
+                    disallowed_schemes.add(scheme)
+                    continue
+            filtered.append(item)
+        return filtered
+
+    def _sanitize_last_response_parts(
+        self,
+        parts: Sequence[ModelResponsePart],
+        *,
+        resolved_tool_call_ids: set[str],
+        dangling_names: list[str],
+    ) -> list[ModelResponsePart]:
+        """Sanitize the parts of the trailing client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+
+        Drops tool calls that aren't resolved by `deferred_tool_results`. `dangling_names`
+        is appended to with the names of any stripped calls.
+        """
+        new_parts: list[ModelResponsePart] = []
+        for part in parts:
+            if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+                dangling_names.append(part.tool_name)
+                continue
+            new_parts.append(part)
+        return new_parts
 
     def transform_stream(
         self,
@@ -414,20 +485,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             deferred_tool_results = self.deferred_tool_results
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
-        if self.manage_system_prompt == 'server' and any(
-            isinstance(part, SystemPromptPart)
-            for msg in frontend_messages
-            if isinstance(msg, ModelRequest)
-            for part in msg.parts
-        ):
-            warnings.warn(
-                "Frontend system prompts were provided but `manage_system_prompt` is `'server'` "
-                '(the default), so they will be stripped. '
-                "Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
-                UserWarning,
-                stacklevel=2,
-            )
-
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
