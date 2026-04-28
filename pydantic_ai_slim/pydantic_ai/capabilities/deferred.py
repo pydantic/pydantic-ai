@@ -8,7 +8,7 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
-from pydantic_ai.toolsets._deferred_capability import DeferredCapabilityToolset
+from pydantic_ai.toolsets._deferred_capability import DeferredCapabilityToolset, parse_loaded_capabilities
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -40,6 +40,11 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
 
     def load(self) -> None:
         self._loaded = True
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        if not self._loaded and self.wrapped.id in parse_loaded_capabilities(ctx.messages):
+            self._loaded = True
+        return self
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         if not self._loaded:
