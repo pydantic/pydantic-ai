@@ -96,11 +96,11 @@ async def responses(request: Request) -> Response:
 
 ### Stand-alone ASGI app
 
-[`ResponsesApp`][pydantic_ai.ui.responses.ResponsesApp] creates a Starlette app and mounts a `POST /v1/responses` endpoint for you.
+[`ResponsesApp`][pydantic_ai.ui.responses.app.ResponsesApp] creates a Starlette app and mounts a `POST /v1/responses` endpoint for you.
 
 ```py {title="responses_app.py"}
 from pydantic_ai import Agent
-from pydantic_ai.ui.responses import ResponsesApp
+from pydantic_ai.ui.responses.app import ResponsesApp
 
 agent = Agent('openai:gpt-5.2')
 app = ResponsesApp(agent)
@@ -132,4 +132,4 @@ Responses request `metadata` is exposed as frontend state. If your deps type imp
 
 ### Completion callback
 
-Like other UI adapters, [`ResponsesAdapter.dispatch_request()`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request] and [`ResponsesApp`][pydantic_ai.ui.responses.ResponsesApp] support `on_complete`, which receives the final [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
+Like other UI adapters, [`ResponsesAdapter.dispatch_request()`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request] and [`ResponsesApp`][pydantic_ai.ui.responses.app.ResponsesApp] support `on_complete`, which receives the final [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].

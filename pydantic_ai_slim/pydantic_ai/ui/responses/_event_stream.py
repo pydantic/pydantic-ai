@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 try:
     from openai.types.responses import (
@@ -80,8 +80,9 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         model = self.run_input.get('model')
         return str(model) if model is not None else 'unknown'
 
-    def _instructions(self) -> str | list[Any] | None:
-        return self.run_input.get('instructions')
+    def _instructions(self) -> str | None:
+        instructions = self.run_input.get('instructions')
+        return instructions if isinstance(instructions, str) else None
 
     def _empty_usage(self) -> ResponseUsage:
         return ResponseUsage(
@@ -92,7 +93,12 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
             total_tokens=0,
         )
 
-    def _build_response(self, *, status: str, usage: ResponseUsage) -> ResponseObject:
+    def _build_response(
+        self,
+        *,
+        status: Literal['in_progress', 'completed', 'failed'],
+        usage: ResponseUsage,
+    ) -> ResponseObject:
         # `tool_choice` and `tools` come from the request-side TypedDict union, which is
         # structurally compatible with but distinct from the response-side pydantic union;
         # the runtime accepts both, the static unions don't intersect.
@@ -102,7 +108,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
             created_at=time.time(),
             model=self._model_name(),
             output=[],
-            status=status,  # pyright: ignore[reportArgumentType]
+            status=status,
             usage=usage,
             instructions=self._instructions(),
             parallel_tool_calls=bool(self.run_input.get('parallel_tool_calls', True)),
@@ -145,7 +151,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     async def on_error(self, error: Exception) -> AsyncIterator[Any]:
         self._error = True
         return
-        yield  # pyright: ignore[reportUnreachable]
+        yield  # Make this an async generator
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[Any]:
         if not self._message_item_added:
@@ -277,8 +283,8 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[Any]:
         # Tool call arguments are sent in full at start; streaming deltas are not surfaced.
         return
-        yield  # pyright: ignore[reportUnreachable]
+        yield  # Make this an async generator
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[Any]:
         return
-        yield  # pyright: ignore[reportUnreachable]
+        yield  # Make this an async generator

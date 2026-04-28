@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from functools import cached_property
 from typing import Any
 
 from ... import ExternalToolset, ToolDefinition
+from ..._utils import is_str_dict
 from ...messages import (
     BinaryContent,
     ImageUrl,
@@ -26,6 +27,7 @@ from ...toolsets import AbstractToolset
 try:
     from openai.types.responses import ResponseInputItemParam
     from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
+    from openai.types.responses.tool_param import ToolParam
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import ResponsesEventStream
@@ -38,27 +40,21 @@ except ImportError as e:  # pragma: no cover
 __all__ = ['ResponsesAdapter']
 
 
-def _as_dict(value: Any) -> dict[str, Any] | None:
-    """Return `value` as a `dict[str, Any]` if it is a dict, else `None`."""
-    return value if isinstance(value, dict) else None  # pyright: ignore[reportUnknownVariableType]
-
-
 class _ResponsesFrontendToolset(ExternalToolset[AgentDepsT]):
     """Toolset for OpenAI Responses API frontend function tools."""
 
-    def __init__(self, tools: Sequence[Any]):
+    def __init__(self, tools: Iterable[ToolParam]):
         tool_defs: list[ToolDefinition] = []
         for raw_tool in tools:
-            tool = _as_dict(raw_tool)
-            if tool is None or tool.get('type') != 'function':
+            if not is_str_dict(raw_tool) or raw_tool.get('type') != 'function':
                 continue
-            name = tool.get('name')
+            name = raw_tool.get('name')
             if not isinstance(name, str):
                 continue
-            description = tool.get('description')
-            parameters = tool.get('parameters')
-            strict = tool.get('strict')
-            parameters_schema = _as_dict(parameters) or {}
+            description = raw_tool.get('description')
+            parameters = raw_tool.get('parameters')
+            strict = raw_tool.get('strict')
+            parameters_schema = parameters if is_str_dict(parameters) else {}
             tool_defs.append(
                 ToolDefinition(
                     name=name,
@@ -75,7 +71,13 @@ class _ResponsesFrontendToolset(ExternalToolset[AgentDepsT]):
 
 
 def _parse_user_content_part(part: dict[str, Any]) -> UserContent | None:
-    """Parse one Responses input user-content part into a Pydantic AI UserContent value."""
+    """Parse one Responses input user-content part into a Pydantic AI UserContent value.
+
+    The wire shape is one of `ResponseInputTextParam`, `ResponseInputImageParam`,
+    or `ResponseInputFileParam`; we accept the loose `dict[str, Any]` because
+    pyright's TypedDict narrowing on the `type` discriminator does not flow
+    through helper boundaries.
+    """
     part_type = part.get('type')
 
     if part_type in ('input_text', 'text'):
@@ -111,10 +113,10 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
         validator that rejects the heterogeneous `input` and `tools` unions in
         practice. We rely on the SDK's own runtime contract instead.
         """
-        raw_data: Any = json.loads(body)
-        if not isinstance(raw_data, dict):
+        raw_data = json.loads(body)
+        if not is_str_dict(raw_data):
             raise ValueError('Responses API request body must be a JSON object.')
-        return raw_data  # pyright: ignore[reportReturnType, reportUnknownVariableType]
+        return raw_data  # pyright: ignore[reportReturnType]
 
     def build_event_stream(self) -> UIEventStream[ResponseCreateParamsStreaming, Any, AgentDepsT, OutputDataT]:
         return ResponsesEventStream(self.run_input, accept=self.accept)
@@ -137,38 +139,37 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
         return builder.messages
 
     @classmethod
-    def _load_input_items(cls, items: Sequence[Any], builder: MessagesBuilder) -> None:
+    def _load_input_items(cls, items: Sequence[ResponseInputItemParam], builder: MessagesBuilder) -> None:
         tool_call_names: dict[str, str] = {}
 
         for raw_item in items:
-            item = _as_dict(raw_item)
-            if item is None:
+            if not is_str_dict(raw_item):
                 continue
 
-            item_type = item.get('type')
-            role = item.get('role')
+            item_type = raw_item.get('type')
+            role = raw_item.get('role')
 
             # Implicit message item: has role + content but no explicit type
-            if item_type == 'message' or (item_type is None and role is not None and 'content' in item):
-                cls._load_message_item(item, builder)
+            if item_type == 'message' or (item_type is None and role is not None and 'content' in raw_item):
+                cls._load_message_item(raw_item, builder)
                 continue
 
             if item_type == 'function_call':
-                call_id_raw = item.get('call_id') or item.get('id') or ''
-                name_raw = item.get('name', '')
+                call_id_raw = raw_item.get('call_id') or raw_item.get('id') or ''
+                name_raw = raw_item.get('name', '')
                 if isinstance(call_id_raw, str) and isinstance(name_raw, str) and name_raw:
                     tool_call_names[call_id_raw] = name_raw
                     builder.add(
                         ToolCallPart(
                             tool_name=name_raw,
                             tool_call_id=call_id_raw,
-                            args=item.get('arguments'),
+                            args=raw_item.get('arguments'),
                         )
                     )
                 continue
 
             if item_type == 'function_call_output':
-                call_id_raw = item.get('call_id', '')
+                call_id_raw = raw_item.get('call_id', '')
                 if not isinstance(call_id_raw, str):
                     continue
                 tool_name = tool_call_names.get(call_id_raw)
@@ -178,7 +179,7 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
                     ToolReturnPart(
                         tool_name=tool_name,
                         tool_call_id=call_id_raw,
-                        content=str(item.get('output', '')),
+                        content=str(raw_item.get('output', '')),
                     )
                 )
                 continue
@@ -200,12 +201,10 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
                 return
             if isinstance(content, list):
                 parts: list[UserContent] = []
-                content_list: list[Any] = content  # pyright: ignore[reportUnknownVariableType]
-                for raw_c in content_list:
-                    c = _as_dict(raw_c)
-                    if c is None:
+                for raw_c in content:  # pyright: ignore[reportUnknownVariableType]
+                    if not is_str_dict(raw_c):
                         continue
-                    parsed = _parse_user_content_part(c)
+                    parsed = _parse_user_content_part(raw_c)
                     if parsed is not None:
                         parts.append(parsed)
                 if parts:
@@ -223,13 +222,11 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
             return content
         if isinstance(content, list):
             texts: list[str] = []
-            content_list: list[Any] = content  # pyright: ignore[reportUnknownVariableType]
-            for raw_c in content_list:
-                c = _as_dict(raw_c)
-                if c is None:
+            for raw_c in content:  # pyright: ignore[reportUnknownVariableType]
+                if not is_str_dict(raw_c):
                     continue
-                if c.get('type') in ('input_text', 'text', 'output_text'):
-                    text = c.get('text')
+                if raw_c.get('type') in ('input_text', 'text', 'output_text'):
+                    text = raw_c.get('text')
                     if isinstance(text, str):
                         texts.append(text)
             return ''.join(texts)
