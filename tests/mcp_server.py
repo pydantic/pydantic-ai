@@ -7,8 +7,10 @@ from mcp.server.session import ServerSession
 from mcp.types import (
     Annotations,
     BlobResourceContents,
+    CallToolResult,
     CreateMessageResult,
     EmbeddedResource,
+    ImageContent,
     ResourceLink,
     SamplingMessage,
     TextContent,
@@ -74,6 +76,64 @@ async def get_collatz_conjecture(n: int) -> TextContent:
         type='text',
         text=str(sequence),
         _meta={'pydantic_ai': {'tool': 'collatz_conjecture', 'n': input_param_n, 'length': len(sequence)}},
+    )
+
+
+@mcp.tool()
+async def get_with_result_meta(value: str) -> CallToolResult:
+    """Return a single text part wrapped in a CallToolResult that carries top-level `_meta`.
+
+    Args:
+        value: The text content to return.
+    """
+    return CallToolResult(
+        content=[TextContent(type='text', text=value)],
+        _meta={'request_id': 'rid-42', 'duration_ms': 7},
+    )
+
+
+@mcp.tool()
+async def get_user_only_audience(reason: str) -> CallToolResult:
+    """Return a tool result whose only content is annotated `audience=['user']`.
+
+    The model should see the placeholder return; the application can read the original content from
+    `ToolReturn.metadata['user_content']`.
+
+    Args:
+        reason: The user-facing reason text.
+    """
+    return CallToolResult(
+        content=[
+            TextContent(type='text', text=reason, annotations=Annotations(audience=['user'])),
+        ],
+    )
+
+
+@mcp.tool()
+async def get_mixed_audience(answer: str, user_note: str) -> CallToolResult:
+    """Return a tool result with both assistant-visible and user-only text parts.
+
+    Args:
+        answer: Text shown to the model.
+        user_note: Text annotated `audience=['user']` — withheld from the model.
+    """
+    return CallToolResult(
+        content=[
+            TextContent(type='text', text=answer, annotations=Annotations(audience=['assistant'])),
+            TextContent(type='text', text=user_note, annotations=Annotations(audience=['user'])),
+        ],
+    )
+
+
+@mcp.tool()
+async def get_image_with_meta() -> ImageContent:
+    """Return a single image content block with per-part `_meta`."""
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return ImageContent(
+        type='image',
+        data=base64.b64encode(data).decode(),
+        mimeType='image/jpeg',
+        _meta={'caption': 'A kiwi'},
     )
 
 

@@ -24,6 +24,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _mcp_util,
     messages,
 )
 from pydantic_ai.agent import Agent
@@ -104,7 +105,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(21)
+        assert len(tools) == snapshot(25)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -114,19 +115,84 @@ async def test_stdio_server(run_context: RunContext[int]):
         assert result == snapshot(32.0)
 
 
-async def test_tool_response_single_text_part_metadata(run_context: RunContext[int]):
+async def test_tool_response_text_part_meta_promotes_to_text_content():
+    """A `TextContent` part with `_meta` is mapped to `messages.TextContent` so the meta survives."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(21)
-        assert tools[2].name == 'get_collatz_conjecture'
-        assert isinstance(tools[2].description, str)
-        assert tools[2].description.startswith('Generate the Collatz conjecture sequence for a given number.')
-
         result = await server.direct_call_tool('get_collatz_conjecture', {'n': 7})
-        assert isinstance(result, messages.TextContent)
-        assert result.content == snapshot('[7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]')
-        assert result.metadata == snapshot({'pydantic_ai': {'tool': 'collatz_conjecture', 'n': 7, 'length': 17}})
+        assert result == snapshot(
+            messages.TextContent(
+                content='[7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]',
+                metadata={'pydantic_ai': {'tool': 'collatz_conjecture', 'n': 7, 'length': 17}},
+            )
+        )
+
+
+async def test_tool_result_top_level_meta_wraps_in_tool_return():
+    """Top-level `CallToolResult._meta` lives on `ToolReturn.metadata['meta']`."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.direct_call_tool('get_with_result_meta', {'value': 'hi'})
+        assert result == snapshot(
+            messages.ToolReturn(
+                return_value='hi',
+                metadata={'meta': {'request_id': 'rid-42', 'duration_ms': 7}},
+            )
+        )
+
+
+async def test_tool_audience_user_only_all_yields_placeholder():
+    """When every content block is `audience=['user']`, the model gets the placeholder and the user content is preserved on `ToolReturn.metadata['user_content']`."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.direct_call_tool('get_user_only_audience', {'reason': 'displayed inline'})
+        assert isinstance(result, messages.ToolReturn)
+        assert result.return_value == _mcp_util.USER_ONLY_PLACEHOLDER_TEXT
+        assert result.metadata == snapshot(
+            {
+                'user_content': [
+                    {
+                        'type': 'text',
+                        'text': 'displayed inline',
+                        'annotations': {'audience': ['user'], 'priority': None},
+                        'meta': None,
+                    }
+                ]
+            }
+        )
+
+
+async def test_tool_audience_user_mixed_keeps_assistant_visible_content():
+    """A mix of `audience=['assistant']` and `audience=['user']` parts: model sees the assistant text only, user content is on `metadata['user_content']`."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.direct_call_tool(
+            'get_mixed_audience', {'answer': 'The answer is 42.', 'user_note': 'Computed in 3ms.'}
+        )
+        assert isinstance(result, messages.ToolReturn)
+        assert result.return_value == 'The answer is 42.'
+        assert result.metadata == snapshot(
+            {
+                'user_content': [
+                    {
+                        'type': 'text',
+                        'text': 'Computed in 3ms.',
+                        'annotations': {'audience': ['user'], 'priority': None},
+                        'meta': None,
+                    }
+                ]
+            }
+        )
+
+
+async def test_tool_image_part_meta_promotes_to_binary_image():
+    """An `ImageContent` part with `_meta` is mapped to `BinaryImage` with the meta attached."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.direct_call_tool('get_image_with_meta', {})
+        assert isinstance(result, messages.BinaryImage)
+        assert result.metadata == snapshot({'caption': 'A kiwi'})
+        assert result.media_type == 'image/jpeg'
 
 
 async def test_reentrant_context_manager():
@@ -223,7 +289,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(21)
+        assert len(tools) == snapshot(25)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
