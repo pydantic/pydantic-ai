@@ -249,7 +249,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         build_run_context(ctx),
                         run_step=ctx.state.run_step + 1,
                         retry=ctx.state.retries,
-                        max_retries=ctx.deps.max_result_retries,
+                        max_retries=ctx.deps.tool_manager.default_max_retries,
                     )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
                     if last_message.tool_calls:
@@ -764,7 +764,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context = replace(
             run_context,
             retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
         # This will raise errors for any tool name conflicts.
@@ -1142,7 +1142,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         run_context = replace(
             run_context,
             retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
         # This will raise errors for any tool name conflicts
