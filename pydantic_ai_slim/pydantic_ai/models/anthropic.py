@@ -1392,10 +1392,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
         it is left unchanged to preserve the user's chosen TTL.
-        """
-        if not anthropic_messages:
-            return
 
+        Assumes `anthropic_messages` is non-empty.
+        """
         last_message = anthropic_messages[-1]
         content = last_message['content']
         if isinstance(content, str):  # pragma: no cover
