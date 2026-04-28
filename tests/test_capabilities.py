@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12422,6 +12422,49 @@ class TestUnionOutputWithHooks:
         result = agent.run_sync('hello')
         assert result.output == '7:ok'
         assert executed == [(7, 'ok')]
+
+    def test_union_resolve_by_type_skips_multi_arg_inners(self):
+        """When a process hook swaps the semantic value to a different type, `hook_execute`
+        falls through to `_resolve_inner_for_value`. That fallback can't pick a multi-arg
+        function inner because its `output_type` is just the first arg's type — it should
+        skip multi-arg inners and only consider single-value inners (BaseModel, primitives).
+        """
+
+        def combine(x: int, y: str) -> str:  # pragma: no cover
+            return f'{x}:{y}'
+
+        class Single(BaseModel):
+            value: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='{"result": {"kind": "Single", "data": {"value": 1}}}')])
+
+        @dataclass
+        class SwapToInt(AbstractCapability[Any]):
+            """Swap the validated `Single` instance for a bare `int` during the process
+            phase, so the value no longer matches `Single`'s type. The fallthrough resolver
+            should iterate inners — skip `combine` (multi-arg, can't isinstance-check),
+            and not find any matching single-value inner for `int` since `Single` is the
+            only single-value inner and the int isn't a `Single`."""
+
+            async def wrap_output_process(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: Any,
+                handler: Callable[[Any], Awaitable[Any]],
+            ) -> Any:
+                return await handler(99)
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=PromptedOutput([combine, Single]),
+            capabilities=[SwapToInt()],
+        )
+        # No matching inner found → semantic returned unmodified.
+        result = agent.run_sync('hello')
+        assert result.output == 99
 
     def test_union_on_output_validate_error_fires(self):
         """on_output_validate_error fires for union output when validation fails."""
