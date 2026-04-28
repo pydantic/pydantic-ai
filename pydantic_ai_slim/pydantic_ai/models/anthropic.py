@@ -78,8 +78,10 @@ try:
         APIConnectionError,
         APIStatusError,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
+        Omit,
         omit as OMIT,
     )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
@@ -168,6 +170,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+_FAST_MODE_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _STR_OBJECT_DICT = TypeAdapter(dict[str, object])
@@ -239,7 +242,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_messages: bool | Literal['5m', '1h']
-    """Deprecated: use `anthropic_cache` instead.
+    """Deprecated: use `anthropic_cache` instead. Will be removed in V2.
 
     Behaves the same as `anthropic_cache`: uses automatic caching where supported,
     falls back to per-block caching on Bedrock and Vertex. Emits a deprecation warning.
@@ -299,6 +302,16 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
     Merged with auto-added betas (e.g. builtin tools) and any betas from
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
+    """
+
+    anthropic_speed: Literal['standard', 'fast']
+    """The inference speed mode for this request.
+
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6 only).
+    On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
+    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
+    see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
     anthropic_context_management: BetaContextManagementConfigParam
@@ -584,7 +597,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
+        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
@@ -609,6 +623,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
                 container=container or OMIT,
+                speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -636,6 +651,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _get_betas_and_extra_headers(
         self,
         model_settings: AnthropicModelSettings,
+        anthropic_profile: AnthropicModelProfile,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -650,6 +666,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
 
+        if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
+            betas.add('fast-mode-2026-02-01')
+
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
 
@@ -657,6 +676,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
         return betas, extra_headers
+
+    def _effective_speed(
+        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
+    ) -> Literal['standard', 'fast'] | Omit:
+        """Speed to send to the API, or OMIT when the model or client does not support the `speed` parameter."""
+        s = model_settings.get('anthropic_speed')
+        if s in ('standard', 'fast') and self._client_supports_fast_speed(anthropic_profile):
+            return s
+        if s == 'fast':
+            warnings.warn(
+                f"anthropic_speed='fast' is not supported by {self.model_name} on this client; the setting will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return OMIT
+
+    def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
+        """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
+        return anthropic_profile.anthropic_supports_fast_speed and not isinstance(
+            self.client, _FAST_MODE_UNSUPPORTED_CLIENTS
+        )
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
@@ -710,7 +750,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
+        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
@@ -727,6 +768,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
                 context_management=context_management or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
