@@ -1,0 +1,191 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '655'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_answer
+            response:
+              error: |-
+                Try again.
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1471'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1581
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_answer
+            thoughtSignature: CtsFAb4+9vt/OTeNb8uiaC8ILe89OM+EUyXYCYBTUdWUYex80zTeDc8de5YC0Ytc2RxMpQjRYsVYoNnyxs+s/S+UaicmanE7a/khorhCVtFvOXdOVHtcOjAcumy9X2S0GWi8TWE9lLyDk6KeHvjMPsj8g+yCREbNVwGqBIpbKi0E0faxE2AuZtKIFJskV/96a0b593J3DmZnobFgn3v+gfzjj0wPj3nyhf9J3s1o+e9bxiS66p+YB3TnBkv0eFBkmatjoIJfkqjS31UpUOgOmo0thB8pX9I21O8ZqDP6MApvofA4tVcMls49g726lAJpQv3mwrBD0v2/7LlCTbzUA825MRlf9Vm7V5oNii2j140C3A3cMQMjMcbKwBPlnvCwajCjsPlmLwdie7kG0vK+gzmieFmORtX2VW5oIbZSvrFNuZKPfrLaieNWTI356HBKqQ7WfY+wRs9w+YwMhq64JsvAqgc1QMpxnSUut8lbtZ0hvBRChCOwIsHrZDS6Mhz+HV6qGJdk0D4EXFEd3U7dJAYlSgkbcGcdRm61qUBChs3+cxy5spV6HwqZ3CgTKxpN9LecN1Lpld+RrK63Txa6sZMCv5iCooQCK8KqCqj45hCcfy8SvrPxIkh/1RyIYLUvNhB4GkXGiTjkDSI3iDK35HzzpbmlZwXet7frk0sAelnfsTno43D5DKKOpKv+8Zty61GGEAwbWcoGoUAGv2x2xym5Sc2tOZG+4LhpQ1B6ZoQrsL5mefPo4CPSGAAq4enelzrOhbdnvcGbHv1cMpw7f4689rm4BBZIlerQOahXkz//3lq8c8V53LAXZdcVGM8HXic/4DcGYiC07PQ15A5Q493KE4kk90Pmmo50FIdRbVzQR6+1Gu2aC3sONBGVYirJKLf4ujQPciQSCo5vp/5owgMUgH/t5uwkCaYlow3+RkYurN7CzerpMnLfXjdnzC95khwnzb5uWWEPFFlcfew=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: GrDgaa-zIKSkjuMP0ZCF0Q8
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 66
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 66
+        thoughtsTokenCount: 158
+        totalTokenCount: 234
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1852'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_answer
+            response:
+              error: |-
+                Try again.
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_answer
+          thoughtSignature: CtsFAb4-9vt_OTeNb8uiaC8ILe89OM-EUyXYCYBTUdWUYex80zTeDc8de5YC0Ytc2RxMpQjRYsVYoNnyxs-s_S-UaicmanE7a_khorhCVtFvOXdOVHtcOjAcumy9X2S0GWi8TWE9lLyDk6KeHvjMPsj8g-yCREbNVwGqBIpbKi0E0faxE2AuZtKIFJskV_96a0b593J3DmZnobFgn3v-gfzjj0wPj3nyhf9J3s1o-e9bxiS66p-YB3TnBkv0eFBkmatjoIJfkqjS31UpUOgOmo0thB8pX9I21O8ZqDP6MApvofA4tVcMls49g726lAJpQv3mwrBD0v2_7LlCTbzUA825MRlf9Vm7V5oNii2j140C3A3cMQMjMcbKwBPlnvCwajCjsPlmLwdie7kG0vK-gzmieFmORtX2VW5oIbZSvrFNuZKPfrLaieNWTI356HBKqQ7WfY-wRs9w-YwMhq64JsvAqgc1QMpxnSUut8lbtZ0hvBRChCOwIsHrZDS6Mhz-HV6qGJdk0D4EXFEd3U7dJAYlSgkbcGcdRm61qUBChs3-cxy5spV6HwqZ3CgTKxpN9LecN1Lpld-RrK63Txa6sZMCv5iCooQCK8KqCqj45hCcfy8SvrPxIkh_1RyIYLUvNhB4GkXGiTjkDSI3iDK35HzzpbmlZwXet7frk0sAelnfsTno43D5DKKOpKv-8Zty61GGEAwbWcoGoUAGv2x2xym5Sc2tOZG-4LhpQ1B6ZoQrsL5mefPo4CPSGAAq4enelzrOhbdnvcGbHv1cMpw7f4689rm4BBZIlerQOahXkz__3lq8c8V53LAXZdcVGM8HXic_4DcGYiC07PQ15A5Q493KE4kk90Pmmo50FIdRbVzQR6-1Gu2aC3sONBGVYirJKLf4ujQPciQSCo5vp_5owgMUgH_t5uwkCaYlow3-RkYurN7CzerpMnLfXjdnzC95khwnzb5uWWEPFFlcfew=
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_answer
+            response:
+              return_value: 42
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '362'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1221
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The answer is 42.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: HLDgacCkE8z2juMP8pCmoAE
+      usageMetadata:
+        candidatesTokenCount: 7
+        promptTokenCount: 94
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 94
+        totalTokenCount: 101
+    status:
+      code: 200
+      message: OK
+version: 1

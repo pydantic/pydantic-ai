@@ -1,0 +1,87 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '619'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_answer
+            response:
+              return_value: 42
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1138'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1849
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The answer is 42. Is there anything else I can help you with?
+            thoughtSignature: CvkDAb4+9vuOmgFi2ku1+K+LS5Un64JwpOX8LNlN+/ahZJECrCxFF5v3uUbSvSlPNbYYZMKJTv91n+s4F2qhOpMkbpzO6uuKqY0oSMnxEAphAr4pr/+d0k0pjSF9lHKY8yIWK9qXHjzQPC/8zp6G85Tm+IeI/wjS7k09tgvwTByiVQOK6uaYomJ3uVbQti9cy2DILYx82mr+BvSSwio+SOCIzx1wKKqywA+7Ml6r1qwwcsu7qI0GzT85uXz18s6st6++OBC0frDRdwEKKgXUy54VvF1F8RyUoOrY/1sJ6KUcLJgwFFu7F/fX15g/tPuweUhrmSxfD1fGds5pwtpPRkTVcClueuyh4a9PxYRVrMwHxpauRH8WODSWEMaZnSvprKcxwSIzFMaW5kIoQRN7jtbLAeos/HN17mfhSGe4obVvTMuYCg0dXowanxlZU9ZmcO9EdEHL/lqqr4ihsb8ILoFe2Gtp+JHSKI2KFxXlKN1Zm2gDFxm+8tpCTCradUwgTzMpOyeOmnutAiK6H9Beemh7DZeZ1HK2FrPdrPHvx59EQXwFuB8CZBGbRG2gRdPa89fGu9TeQIMGKRW2GUgAucpGycQpyQa9GonYLbPu49QSninufzfHADs4lJSETIFqgamLYX/8Gtoa1OWWzVOK5fitF+X7sFUg2Zy2Mg==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: DLDgab3rJK-ejuMPuMqF8QE
+      usageMetadata:
+        candidatesTokenCount: 17
+        promptTokenCount: 57
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 57
+        thoughtsTokenCount: 107
+        totalTokenCount: 181
+    status:
+      code: 200
+      message: OK
+version: 1

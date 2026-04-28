@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '669'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: call_openai_xyz
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            id: call_openai_xyz
+            name: get_answer
+            response:
+              return_value: 42
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1588'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2875
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The answer is 42, which is a famous reference from the science fiction book "The Hitchhiker's Guide to the
+              Galaxy" by Douglas Adams. In the story, it's revealed to be the "Answer to the Ultimate Question of Life, the
+              Universe, and Everything."
+            thoughtSignature: CsEFAb4+9vt7aZFWTlmvCAfESyfRFURwUzjGnZa+Lv/wF/qV0h3Hrj/JU46os4h/rurj8mAwsUbFr05tgLd2z6jwGOZpgj5DE0zsw5FH+lH72uhBUVPmkEvs4w7dQooEIxVmSpY7OwB0ZWdnt6Zs9QaAyWWV5dWpcxcWEJndey8XBapjhXKHa3VgKY7EcvZiIk4qWV4FDwIV4zLhV75O4x8ywGTlmu523bgquxONS07LjbxgDVeBfTNgAAiKLpciDqZjfUj1h6N7rCYvjW+7k8wF95pjLTDbyUlhrwU1iyb8enaP6uoBSfqqpd2Z6pqA6nml39X5Qc4tBYzpFuzYwbreyTu/Q3S5k8zIoAgS9P3eYebNNbsyjwAHo2PS26oZytPQQLO1yruL10TemKtPKS3Pz1k/bfIp6YS0fz7Zy7PZ9bZ13pt9ChPRk44uMfgk5FrsDgP5ysk2Y/y4KT0hBOI3Rq15/Yv8g4lBbfEPQ1PcDVM5P0Hz8KdDI03HyCF3w/4BY59AGEwjDuK4+KOstilpDrpTNbJzMNhNOye5Iw6wDcIJEhbD/QNt4bsAr7nlnydnyJKePYBq041MQv3FXHEQ8mcdI5ZbKhgNu87WtKaNnCWWmpdtOEwhVa3gEYsTaReLPSVjAodv0qFicThxiGpqReNYBDA8FRlgU1t+F3YuRHC4IAEZJ7uhYqXpw9SBBehTbSn4LJDWCRIIarnZn54c9nnNAzLWvW6/iXmZNnuyRtrEtSDF5l+QpR9ZZkKCDONrqJiaTiNBWBKI4xzGGNeBl6hOWfcSzkiYaUe6l13y1kbPm2+BVAYHY3q3++S7c4XAbcO/sAKjFFnKbGPyum0kmlh28xAcNly2pJKQESyBfDt4K2GoUjBoUz+sp0XghKAoKd4HCouUlEScu307qtswQELgCXe8Kvl0UnM/ZzdejFoR
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: D7DgafGAFpDtg8UP6OXzoQ4
+      usageMetadata:
+        candidatesTokenCount: 59
+        promptTokenCount: 57
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 57
+        thoughtsTokenCount: 163
+        totalTokenCount: 279
+    status:
+      code: 200
+      message: OK
+version: 1

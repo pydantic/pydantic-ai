@@ -1,0 +1,128 @@
+interactions:
+- request:
+    body: assertion=scrubbed&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '819'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '72'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '617'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the answer?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_answer
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_answer
+            response:
+              return_value: 42
+        role: user
+      - parts:
+        - text: continue
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_answer
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1596'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -1.0684893290201822
+        content:
+          parts:
+          - text: The answer is 42. This is a well-known cultural reference to the science fiction book "The Hitchhiker's
+              Guide to the Galaxy" by Douglas Adams, where 42 is revealed to be the "Answer to the Ultimate Question of Life,
+              the Universe, and Everything."
+            thoughtSignature: CskEAY89a1+7L4zo4TA80eu6mSQE3+BnR+Fr9hIA0LHzwLthFNRB9tVQZgTfhKjfQW3N8OXvwaykb2XFeZP8TpbDtVSYAxkbnqV2p0jSJGU9R/3dIRyyT4rwIodw7Chg0t/R+Dx6Xc/TzvFJRqXHWAqP1RUboy9EjrugcIJFAXooBXzwA4UsAUwY0VE4LzNBfLa4Qz9KwsL8vXJdEdAorEXyA+cHO6sBL2RdqCZVMTJVO9f4QcWwTmgF93TAsncYt25FIzmCRiYgRy0J5Y+kU+3r4uhSznQt7IACGCxTGtFKp63Jj6lhYILgci1q69ba8t5mbNWTgpQjOhy1RZ4n57RuWgLOWy/MRPfRcQIm6IGTZ3Nctdu73fdlvICg8Qoc/jvihpEFjM5VYHCIp6dqG7SuSTHcXda2aN/m1ME2E5jcnM+NSlKdjsHJ0Ieeyro7vvUuiqcO9VFQ1VHyrCoLRARc5N9L6pCi3XXNuFRs4IfEMFXVl/9i9koCXqfVLnLyaJ79n1kHpZFBAZNdPdlfk0aNaeycAUWZRcNZV4ETw6mF8koNGkxKNMITOs7b1OiIEEoIxx+SYcfasp+5iwhrvzcAStNJKWrUjdDsaqMB7i43JKRq1RDx0gLABPinr7Aiz04rYMNndi3XyYo258g9gse+8s2h5EKNHeHVDTj7dJP8W15D+l3+3XqMTdYJ6ZQiM++NVOaQdXbGNnT3YVacMlW+1e1EGIEPu7NJAs2mIPHdMTAtXzkhKAQE1bOiXWgLZcVBzSS6DjOn9nD5
+          role: model
+        finishReason: STOP
+      createTime: '2026-04-16T09:46:48.008553Z'
+      modelVersion: gemini-2.5-flash
+      responseId: CLDgaelClKqm3w-SxOP5AQ
+      usageMetadata:
+        candidatesTokenCount: 60
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 60
+        promptTokenCount: 19
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 19
+        thoughtsTokenCount: 121
+        totalTokenCount: 200
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1
