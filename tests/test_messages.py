@@ -617,6 +617,7 @@ def test_file_part_serialization_roundtrip():
                 'finish_reason': None,
                 'run_id': None,
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )

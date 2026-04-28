@@ -1,9 +1,19 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
@@ -32,7 +42,7 @@ from .._template import TemplateStr
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability
 from ..output import OutputDataT, OutputSpec
-from ..result import AgentStream, FinalResult, StreamedRunResult
+from ..result import AgentEventStream, AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
 from ..tool_manager import ToolManager
@@ -977,7 +987,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AgentEventStream[OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -999,7 +1009,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AgentEventStream[RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -1020,7 +1030,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AgentEventStream[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -1034,8 +1044,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         async def main():
             events: list[AgentStreamEvent | AgentRunResultEvent] = []
-            async for event in agent.run_stream_events('What is the capital of France?'):
-                events.append(event)
+            async with agent.run_stream_events('What is the capital of France?') as stream:
+                async for event in stream:
+                    events.append(event)
             print(events)
             '''
             [
@@ -1087,22 +1098,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # unfortunately this hack of returning a generator rather than defining it right here is
         # required to allow overloads of this method to work in python's typing system, or at least with pyright
         # or at least I couldn't make it work without
-        return self._run_stream_events(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            capabilities=capabilities,
-            spec=spec,
+        return AgentEventStream(
+            generator=self._run_stream_events(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                capabilities=capabilities,
+                spec=spec,
+            )
         )
 
     async def _run_stream_events(
@@ -1123,7 +1136,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
         ]()
@@ -1158,6 +1171,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         task = asyncio.create_task(run_agent())
 
+        # TODO: Replace _task_cancel_sent flag with task.cancelling() when Python 3.10 is dropped (3.11+).
+        _task_cancel_sent: bool = False
+
         try:
             async with receive_stream:
                 async for message in receive_stream:
@@ -1167,7 +1183,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         except asyncio.CancelledError as e:
             task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            _task_cancel_sent = True
             raise
+
+        finally:
+            # We do not support trio but catching via anyio anyway
+            cancelled_exc = anyio.get_cancelled_exc_class()
+            if not task.done() and not _task_cancel_sent:
+                task.cancel()
+
+            with contextlib.suppress(cancelled_exc):
+                await task
 
         yield AgentRunResultEvent(result)
 

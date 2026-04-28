@@ -1,10 +1,13 @@
 from __future__ import annotations as _annotations
 
+import asyncio
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 from pydantic import ValidationError
@@ -19,7 +22,7 @@ from ._output import (
     TextOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from .messages import ModelResponseStreamEvent
+from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
@@ -29,7 +32,7 @@ from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
-    from .run import AgentRunResult
+    from .run import AgentRunResult, AgentRunResultEvent
 
 __all__ = (
     'OutputDataT',
@@ -58,6 +61,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+
+    _anext_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -135,6 +140,20 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 for validator in self._output_validators:
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
+
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection."""
+        await self._raw_stream_response.cancel()
+
+    async def drain(self) -> None:
+        """Consume all remaining events from the stream, discarding them."""
+        async for _ in self:
+            pass
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
+        return self._raw_stream_response.cancelled
 
     @property
     def run_id(self) -> str:
@@ -277,7 +296,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield part.content, i
 
             last_text_index: int | None = None
-            async for event in self._raw_stream_response:
+            async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
@@ -326,7 +345,25 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._raw_stream_response, self._usage_limits, self.usage
             )
 
-        return self._agent_stream_iterator
+        base_iter = self._agent_stream_iterator
+
+        return self._events_iter(base_iter)
+
+    async def _events_iter(
+        self, base_iter: AsyncIterator[ModelResponseStreamEvent]
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Serialize access to the shared base iterator. An early break from
+        # stream_text() can leave a pending `anext()` task in group_by_temporal
+        # while cleanup/drain starts iterating the same stream.
+        while True:
+            async with self._anext_lock:
+                try:
+                    event = await anext(base_iter)
+
+                except StopAsyncIteration:
+                    return
+
+            yield event
 
 
 @dataclass(init=False)
@@ -626,16 +663,42 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    def _record_response(self, message: _messages.ModelResponse) -> None:
+        """Append a model response to the message history with the correct run_id."""
+        if self._stream_response:  # pragma: no branch
+            message.run_id = self._stream_response.run_id
+        self._all_messages.append(message)
+
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         if self.is_complete:
             return
         self.is_complete = True
         if message is not None:
-            if self._stream_response:  # pragma: no branch
-                message.run_id = self._stream_response.run_id
-            self._all_messages.append(message)
+            self._record_response(message)
         if self._on_complete is not None:
             await self._on_complete()
+
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection.
+
+        The interrupted response state is recorded in the message history so that
+        `all_messages()` includes it.
+        """
+        if self._stream_response is not None:  # pragma: no branch
+            await self._stream_response.cancel()
+            # Record the interrupted response in _all_messages so all_messages()
+            # includes it. is_complete guard prevents double-append if the stream
+            # was already fully consumed before cancel was called.
+            if not self.is_complete:
+                self.is_complete = True
+                self._record_response(self.response)
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
+        if self._stream_response is not None:
+            return self._stream_response.cancelled
+        return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)
 
 
 @dataclass(init=False)
@@ -798,6 +861,100 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
+
+
+class AgentEventStream(Generic[OutputDataT]):
+    """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+    Wraps the underlying async generator to support explicit cancellation
+    via [`cancel()`][pydantic_ai.result.AgentEventStream.cancel] and
+    deterministic cleanup via the async context manager protocol.
+
+    Usage:
+
+    ```python {lint="skip"}
+    async def stream_events_example():
+        async with agent.run_stream_events('Hello') as stream:
+            async for event in stream:
+                ...
+            # optional: await stream.cancel() to stop early
+    # cleanup is automatic on __aexit__
+    ```
+
+    Direct iteration with `async for event in stream:` (without `async with`)
+    is deprecated and will be removed in v2.
+    """
+
+    def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
+        self._generator = generator
+        self._managed = False
+        self._closed = False
+
+    async def __aenter__(self) -> AgentEventStream[OutputDataT]:
+        self._managed = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        await self.aclose()
+        return False
+
+    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]:
+        # TODO(v2): remove standalone iteration support and require `async with`
+        if self._managed:
+            return self
+
+        warnings.warn(
+            'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated. '
+            'Use `async with agent.run_stream_events(...) as stream:` and '
+            '`async for event in stream:` instead '
+            'to ensure proper cleanup.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        return self._standalone_iterator()
+
+    async def _standalone_iterator(
+        self,
+    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT], None]:
+        # `async for` only closes async generators on early exit. Wrapping the deprecated
+        # standalone path in an async generator preserves cleanup on `break`.
+        try:
+            async for event in self._generator:
+                yield event
+        finally:
+            await self.aclose()
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            return await self._generator.__anext__()
+        except StopAsyncIteration:
+            # Not strictly necessary (aclose() on an exhausted generator is a no-op),
+            # but keeps _closed accurate after natural exhaustion so __aexit__/cancel()
+            # don't call aclose() unnecessarily.
+            self._closed = True
+            raise
+
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation.
+
+        Closes the underlying generator, which triggers task cancellation
+        and HTTP connection cleanup via the generator's finally block.
+        """
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Close the stream and trigger any pending cleanup."""
+        if not self._closed:
+            self._closed = True
+            await self._generator.aclose()
 
 
 @dataclass(repr=False)

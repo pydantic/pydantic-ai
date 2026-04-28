@@ -390,7 +390,9 @@ class GroqModel(Model[AsyncGroq]):
         self, response: AsyncStream[chat.ChatCompletionChunk], model_request_parameters: ModelRequestParameters
     ) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -579,11 +581,14 @@ class GroqStreamedResponse(StreamedResponse):
 
     _model_name: GroqModelName
     _model_profile: ModelProfile
-    _response: AsyncIterable[chat.ChatCompletionChunk]
+    _response: _utils.PeekableAsyncStream[chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):

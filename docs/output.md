@@ -875,6 +875,126 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+### Cancelling Streams
+
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to limit costs. The primary streaming API, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], along with [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter], all support explicit cancellation.
+
+#### Cancelling `run_stream_events`
+
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager. Call `cancel()` on the stream to stop it:
+
+```python {title="stream_cancel_run_stream_events.py"}
+from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
+        async for event in stream:
+            if isinstance(event, PartStartEvent):
+                print(f'Started: {event.part!r}')
+                #> Started: TextPart(content='Python is a ')
+            elif isinstance(event, FinalResultEvent):
+                await stream.cancel()  # (2)!
+                break
+```
+
+1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
+2. `cancel()` closes the underlying generator, which triggers task cancellation and connection cleanup.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+Breaking out of the loop only stops local iteration; the stream is cleaned up when the surrounding `async with` exits. Call `cancel()` when you want to stop generation immediately instead of waiting for context exit.
+
+#### Cancelling `run_stream`
+
+Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] to cancel the stream:
+
+```python {title="stream_cancel_run_stream.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Write a long essay about Python') as result:
+        text = ''
+        async for chunk in result.stream_text(delta=True):
+            text += chunk
+            if len(text) > 100:  # (1)!
+                await result.cancel()  # (2)!
+                break
+        print(result.cancelled)  # (3)!
+        #> True
+        print(result.response.state == 'interrupted')  # (4)!
+        #> True
+```
+
+1. Check a condition during streaming, for example whether enough text has been received.
+2. `cancel()` tells the model provider to stop generating tokens and closes the HTTP connection.
+3. The `cancelled` property reflects the cancellation state.
+4. The final [`ModelResponse`][pydantic_ai.messages.ModelResponse] is marked with `state='interrupted'` so that downstream code can identify incomplete responses.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
+
+#### Cancelling with `iter`
+
+When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained control over the agent graph, you can cancel the [`AgentStream`][pydantic_ai.result.AgentStream] inside a `ModelRequestNode.stream()` context:
+
+```python {title="stream_cancel_iter.py"}
+from pydantic_ai import Agent, FinalResultEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.iter('Write a long essay about Python') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        if isinstance(event, FinalResultEvent):
+                            await stream.cancel()  # (1)!
+                            break
+```
+
+1. `AgentStream.cancel()` cancels the stream at the model request level.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Message History After Cancellation
+
+When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. If you pass this history into a subsequent run, Pydantic AI automatically filters out incomplete tool calls from interrupted responses to avoid errors from model providers that reject malformed tool call arguments:
+
+```python {title="stream_cancel_history.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Tell me about Python') as result:
+        async for text in result.stream_text(delta=True):
+            break
+        await result.cancel()
+
+    messages = result.all_messages()  # (1)!
+    result2 = await agent.run('Continue from where you left off', message_history=messages)  # (2)!
+    print(result2.output)
+    #> Python is a versatile programming language.
+```
+
+1. The message history includes the interrupted response with any partial content that was received before cancellation.
+2. Incomplete tool calls are filtered automatically when the history is sent to the model, so the conversation can continue cleanly.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+!!! info "Usage tracking for cancelled streams"
+    Token usage reported by `usage()` after cancellation reflects only the tokens that were generated before the stream was stopped. This can be useful for tracking costs when cancellation is used to limit spending.
+
 ## Examples
 
 The following examples demonstrate how to use streamed responses in Pydantic AI:

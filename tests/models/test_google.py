@@ -51,6 +51,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
@@ -301,6 +302,68 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             ),
         ]
     )
+
+
+async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
+    provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
+    model = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com',
+                provider_response_id=IsStr(),
+                state='interrupted',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_google_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-2.0-flash',
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
+        _provider_name='google-gla',
+        _provider_url='https://generativelanguage.googleapis.com',
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -1121,6 +1184,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )
@@ -4417,10 +4481,11 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
         yield chunk
 
+    response = response_iterator()
     streamed_response = GeminiStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
-        _response=response_iterator(),
+        _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',

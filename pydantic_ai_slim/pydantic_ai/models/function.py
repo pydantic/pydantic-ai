@@ -181,7 +181,10 @@ class FunctionModel(Model):
             'FunctionModel must receive a `stream_function` to support streamed requests'
         )
 
-        response_stream = PeekableAsyncStream(self.stream_function(messages, agent_info))
+        response_stream: PeekableAsyncStream[
+            str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns,
+            AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns],
+        ] = PeekableAsyncStream(self.stream_function(messages, agent_info))
 
         first = await response_stream.peek()
         if isinstance(first, _utils.Unset):
@@ -350,6 +353,10 @@ class FunctionStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
                     else:
                         assert_never(delta)
+
+    async def close_stream(self) -> None:
+        # FunctionModel has no underlying connection to close.
+        pass
 
     @property
     def model_name(self) -> str:

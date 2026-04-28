@@ -870,7 +870,10 @@ class XaiModel(Model[AsyncClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            tuple[chat_types.Response, chat_types.Chunk],
+            AsyncIterator[tuple[chat_types.Response, Any]],
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_item = await peekable_response.peek()
         if isinstance(first_item, _utils.Unset):
@@ -892,9 +895,29 @@ class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
     _model_name: str
-    _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]
+    _response: _utils.PeekableAsyncStream[
+        tuple[chat_types.Response, chat_types.Chunk],
+        AsyncIterator[tuple[chat_types.Response, Any]],
+    ]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (grpc.RpcError,)
+
+    async def close_stream(self) -> None:
+        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
+        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
+        #
+        # Calling `aclose()` shuts down that local async-generator wrapper and
+        # stops consumption on our side, but the SDK does not expose the inner
+        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
+        # RPC cancellation hook.
+        try:
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     @property
     def system(self) -> str:

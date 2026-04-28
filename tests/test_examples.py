@@ -596,6 +596,14 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What was the mass of the largest meteorite found this year?': (
         'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
+    'Write a long essay about Python': (
+        'Python is a versatile, high-level programming language known for its readability and simplicity. '
+        'Created by Guido van Rossum and first released in 1991, Python has grown to become one of the most '
+        'popular programming languages in the world, used in web development, data science, artificial intelligence, '
+        'automation, and countless other domains.'
+    ),
+    'Tell me about Python': 'Python is a versatile programming language.',
+    'Continue from where you left off': 'Python is a versatile programming language.',
     'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }

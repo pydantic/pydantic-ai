@@ -124,7 +124,7 @@ def test_check_object_json_schema():
 @pytest.mark.anyio
 async def test_peekable_async_stream(peek_first: bool):
     async_stream = MockAsyncStream(iter([1, 2, 3]))
-    peekable_async_stream = PeekableAsyncStream(async_stream)
+    peekable_async_stream: PeekableAsyncStream[int, MockAsyncStream[int]] = PeekableAsyncStream(async_stream)
 
     items: list[int] = []
 

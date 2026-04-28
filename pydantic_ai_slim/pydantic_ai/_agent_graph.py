@@ -481,6 +481,11 @@ class _SkipStreamedResponse(models.StreamedResponse):
     def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
+    async def close_stream(self) -> None:  # pragma: no cover
+        # _SkipStreamedResponse is produced by short-circuit paths that never
+        # open a connection; there is nothing to close.
+        pass
+
     async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
         return
         yield  # pragma: no cover
@@ -627,9 +632,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
-            # Ensure stream is fully consumed for proper usage counting
-            async for _ in agent_stream_holder[0]:
-                pass
+            # Race condition: early break from stream_text() could leave a pending
+            # anext() task from group_by_temporal while this drain runs, causing
+            # concurrent anext() on the same async generator. Mitigated by
+            # AgentStream._anext_lock which serializes all anext() calls through
+            # _events_iter(), including this drain path.
+            # Ensure stream is fully consumed for proper usage counting.
+            if not agent_stream_holder[0].cancelled:
+                await agent_stream_holder[0].drain()
         except BaseException as exc:
             stream_error = exc
             raise
@@ -1945,8 +1955,59 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     )
 
 
+def _filter_interrupted_response(
+    message: _messages.ModelResponse, processed_tool_call_ids: set[str]
+) -> _messages.ModelResponse | None:
+    """Drop unanswered (client-side) tool calls from an interrupted ``ModelResponse``.
+
+    Cancellation can leave a tool call in the response without a corresponding
+    ``ToolReturnPart``/``RetryPromptPart`` later in history — either because the
+    JSON args were truncated or because the cancel fired after the args completed
+    but before the tool was executed. Either way, providers like OpenAI/Anthropic
+    reject the next request when an assistant tool call has no matching tool result,
+    so we strip those tool calls here. Tool calls that *do* have a matching return
+    are kept; removing them would orphan the return part instead.
+
+    Only ``ToolCallPart`` is filtered. ``BuiltinToolCallPart`` is left untouched
+    because builtin tool call/return pairs are handled server-side within a single
+    response — providers don't validate their pairing in the message history, and
+    their corresponding ``BuiltinToolReturnPart`` lives in the same response, not
+    in a later ``ModelRequest``.
+
+    Returns ``None`` if the response would be empty after filtering — providers like
+    OpenAI/Mistral reject empty assistant messages, so those responses must be dropped
+    entirely.
+    """
+    filtered_parts = [
+        part
+        for part in message.parts
+        if not (isinstance(part, _messages.ToolCallPart) and part.tool_call_id not in processed_tool_call_ids)
+    ]
+    if not filtered_parts:
+        return None
+    if len(filtered_parts) != len(message.parts):
+        return replace(message, parts=filtered_parts)
+    return message
+
+
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type."""
+    """Clean the message history by merging consecutive messages of the same type and filtering unanswered tool calls.
+
+    For interrupted responses (from stream cancellation), tool calls with no corresponding tool return or
+    retry prompt later in history are filtered out, regardless of whether their JSON args completed before
+    the cancel — providers reject assistant tool calls without a matching tool result either way. If an
+    interrupted response ends up with no parts after filtering, it is dropped entirely (providers like
+    OpenAI/Mistral reject empty assistant messages).
+    """
+    # Collect tool_call_ids that already have a ToolReturnPart or RetryPromptPart in history.
+    processed_tool_call_ids: set[str] = set()
+    for message in messages:
+        if isinstance(message, _messages.ModelRequest):
+            for part in message.parts:
+                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                    if part.tool_call_id:  # pragma: no branch
+                        processed_tool_call_ids.add(part.tool_call_id)
+
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
@@ -1976,6 +2037,12 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            if message.state == 'interrupted':
+                filtered = _filter_interrupted_response(message, processed_tool_call_ids)
+                if filtered is None:
+                    continue
+                message = filtered
+
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)
