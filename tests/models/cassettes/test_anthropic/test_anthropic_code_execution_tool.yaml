@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '357'
+      - '413'
       content-type:
       - application/json
       host:
@@ -21,9 +21,11 @@ interactions:
         - text: How much is 3 * 12390?
           type: text
         role: user
-      model: claude-sonnet-4-0
+      model: claude-sonnet-4-6
       stream: false
-      system: Always use the code execution tool for math.
+      system:
+      - text: Always use the code execution tool for math.
+        type: text
       thinking:
         budget_tokens: 3000
         type: enabled
@@ -31,52 +33,54 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '2028'
+      - '1469'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=5649
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2025-09-17T00:24:43.124581Z'
-        id: container_011CTCwceSoRxi8Pf16Fb7Tn
+        expires_at: '2026-04-24T11:19:38.758845Z'
+        id: container_011CaNRhtVsGiXZx1CgSETLH
       content:
-      - signature: EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=
-        thinking: 'The user is asking for a simple multiplication: 3 * 12390. This is a mathematical calculation, and according
-          to my guidelines, I should always use the code execution tool for math. Even though this is a relatively simple
-          calculation that could be done mentally, the instruction is clear that I should use the code execution tool for
-          math.'
+      - signature: EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==
+        thinking: The user wants to calculate 3 * 12390.
         type: thinking
-      - id: srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn
+      - id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
         input:
-          code: |-
-            result = 3 * 12390
-            print(f"3 * 12390 = {result}")
-        name: code_execution
+          command: echo $((3 * 12390))
+        name: bash_code_execution
         type: server_tool_use
       - content:
           content: []
           return_code: 0
           stderr: ''
           stdout: |
-            3 * 12390 = 37170
-          type: code_execution_result
-        tool_use_id: srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn
-        type: code_execution_tool_result
-      - text: 3 * 12390 = 37170
+            37170
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
+        type: bash_code_execution_tool_result
+      - text: The result of **3 × 12,390 = 37,170**.
         type: text
-      id: msg_018bVTPr9khzuds31rFDuqW4
-      model: claude-sonnet-4-20250514
+      id: msg_01FzttSG1H2WSfUwv2J5qbMB
+      model: claude-sonnet-4-6
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
@@ -86,8 +90,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1771
-        output_tokens: 171
+        inference_geo: global
+        input_tokens: 4692
+        output_tokens: 106
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0
@@ -100,13 +105,15 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '355'
+      - '411'
       content-type:
       - application/json
+      cookie:
+      - _cfuvid=j72gcLZrTocYXb_vinek8NA1OCCR6yME.LP4xDAzUm8-1777025974.0505912-1.0.1.1-4G21WdL0FAHoHQLaobcbSsV3hID5SurjleBDz1zHi_E
       host:
       - api.anthropic.com
     method: POST
@@ -117,9 +124,11 @@ interactions:
         - text: How about 4 * 12390?
           type: text
         role: user
-      model: claude-sonnet-4-0
+      model: claude-sonnet-4-6
       stream: false
-      system: Always use the code execution tool for math.
+      system:
+      - text: Always use the code execution tool for math.
+        type: text
       thinking:
         budget_tokens: 3000
         type: enabled
@@ -127,14 +136,16 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1684'
+      - '1454'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -143,34 +154,32 @@ interactions:
       - chunked
     parsed_body:
       container:
-        expires_at: '2025-09-17T00:24:54.409332Z'
-        id: container_011CTCwdXe48NC7LaX3rxQ4d
+        expires_at: '2026-04-24T11:19:44.819633Z'
+        id: container_011CaNRiLGQoB5CoDJP5jaVY
       content:
-      - signature: EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==
-        thinking: 'The user is asking for a simple multiplication: 4 * 12390. This is a computational task that requires precise
-          calculation, so I should use the code execution tool to get the accurate result.'
+      - signature: EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==
+        thinking: The user wants to calculate 4 * 12390.
         type: thinking
-      - id: srvtoolu_017iCje5DPMZEdgBkxj1osgt
+      - id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
         input:
-          code: |-
-            result = 4 * 12390
-            print(f"4 * 12390 = {result}")
-        name: code_execution
+          command: echo $((4 * 12390))
+        name: bash_code_execution
         type: server_tool_use
       - content:
           content: []
           return_code: 0
           stderr: ''
           stdout: |
-            4 * 12390 = 49560
-          type: code_execution_result
-        tool_use_id: srvtoolu_017iCje5DPMZEdgBkxj1osgt
-        type: code_execution_tool_result
-      - text: 4 * 12390 = 49560
+            49560
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
+        type: bash_code_execution_tool_result
+      - text: '**4 × 12,390 = 49,560**'
         type: text
-      id: msg_01VngRFBcNddwrYQoKUmdePY
-      model: claude-sonnet-4-20250514
+      id: msg_01GpqA67eRBKk6HEb9w5Rs28
+      model: claude-sonnet-4-6
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
@@ -180,8 +189,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1741
-        output_tokens: 143
+        inference_geo: global
+        input_tokens: 4690
+        output_tokens: 103
         server_tool_use:
           web_fetch_requests: 0
           web_search_requests: 0

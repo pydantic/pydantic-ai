@@ -435,3 +435,18 @@ result = agent.run_sync(
 
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
+
+## Code Execution Tool Version
+
+By default, Pydantic AI uses the latest Anthropic code execution tool version supported by the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific Anthropic tool version:
+
+```py {title="anthropic_code_execution_tool_version.py"}
+from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    builtin_tools=[CodeExecutionTool()],
+    model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
+)
+```
