@@ -51,6 +51,7 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.deferred import DeferredCapability, DeferredLoadingCapability
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -402,6 +403,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
         capabilities = list(capabilities or [])
+        deferred: list[DeferredCapability[AgentDepsT]] = []
+        for i, cap in enumerate(capabilities):
+            if cap.defer_loading:
+                wrapped = DeferredCapability(wrapped=cap)
+                capabilities[i] = wrapped
+                deferred.append(wrapped)
+        if deferred:
+            capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred))
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
@@ -1170,6 +1179,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             extra_capabilities.extend(capabilities)
         if extra_capabilities:
+            deferred: list[DeferredCapability[AgentDepsT]] = []
+            for i, cap in enumerate(extra_capabilities):
+                if cap.defer_loading:
+                    wrapped = DeferredCapability(wrapped=cap)
+                    extra_capabilities[i] = wrapped
+                    deferred.append(wrapped)
+            if deferred:
+                extra_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred))
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability

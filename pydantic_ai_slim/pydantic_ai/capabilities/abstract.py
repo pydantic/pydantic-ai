@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
@@ -143,6 +143,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    id: str | None = field(default=None, kw_only=True)
+    description: str | None = field(default=None, kw_only=True)
+    defer_loading: bool = field(default=False, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.defer_loading:
+            if not self.id:
+                raise ValueError('Capabilities with defer_loading=True must have an id.')
+            if not self.description:
+                raise ValueError('Capabilities with defer_loading=True must have a description.')
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -210,6 +221,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
         """
         return None
+
+    def get_description(self) -> str | None:
+        # Allowing for it to be dynamic if needed
+        return self.description
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
