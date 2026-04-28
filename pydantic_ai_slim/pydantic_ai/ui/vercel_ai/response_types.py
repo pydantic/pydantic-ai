@@ -166,6 +166,18 @@ class ToolApprovalRequestChunk(BaseChunk):
     tool_call_id: str
 
 
+class ToolDeferredCallChunk(BaseChunk):
+    """Tool deferred call chunk for tools that will be executed externally.
+
+    Requires AI SDK UI v6 or later.
+    """
+
+    type: Literal['tool-deferred-call'] = 'tool-deferred-call'
+    tool_call_id: str
+    tool_name: str
+    args: Any
+
+
 class ToolOutputDeniedChunk(BaseChunk):
     """Tool output denied chunk when user denies tool execution.
 

@@ -48,6 +48,7 @@ from .response_types import (
     TextEndChunk,
     TextStartChunk,
     ToolApprovalRequestChunk,
+    ToolDeferredCallChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
@@ -124,9 +125,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
-        # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
+        # Emit tool approval requests and deferred call notifications (only when sdk_version >= 6)
         output = event.result.output
         if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
+            for tool_call in output.calls:
+                yield ToolDeferredCallChunk(
+                    tool_call_id=tool_call.tool_call_id,
+                    tool_name=tool_call.tool_name,
+                    args=tool_call.args_as_dict(),
+                )
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
                     approval_id=tool_call.tool_call_id,

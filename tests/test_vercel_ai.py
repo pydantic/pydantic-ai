@@ -13,7 +13,7 @@ from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import CallDeferred, ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -2654,6 +2654,122 @@ async def test_tool_approval_request_emission():
                 run_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_tool_deferred_call_emission():
+    """Test that ToolDeferredCallChunk is emitted when tools are deferred for external execution."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='external_tool',
+                json_args='{"x": 42}',
+                tool_call_id='ext_1',
+            )
+        }
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def external_tool(x: int) -> str:
+        raise CallDeferred
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Run external tool')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+
+    result: AgentRunResult[Any] | None = None
+
+    def capture_result(r: AgentRunResult[Any]) -> None:
+        nonlocal result
+        result = r
+
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(on_complete=capture_result))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'ext_1', 'toolName': 'external_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'ext_1', 'inputTextDelta': '{"x": 42}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'ext_1',
+                'toolName': 'external_tool',
+                'input': {'x': 42},
+            },
+            {'type': 'tool-deferred-call', 'toolCallId': 'ext_1', 'toolName': 'external_tool', 'args': {'x': 42}},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+    assert result is not None
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.calls) == 1
+
+
+async def test_sdk_version_5_does_not_emit_deferred_or_approval_chunks():
+    """Test that ToolDeferredCallChunk and ToolApprovalRequestChunk are NOT emitted when sdk_version=5 (default)."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(
+                name='external_tool',
+                json_args='{"x": 42}',
+                tool_call_id='ext_1',
+            )
+        }
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def external_tool(x: int) -> str:
+        raise CallDeferred
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Run external tool')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, sdk_version=5)
+
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    # Neither tool-deferred-call nor tool-approval-request should appear
+    assert all(
+        e.get('type') not in ('tool-deferred-call', 'tool-approval-request') for e in events if isinstance(e, dict)
     )
 
 
