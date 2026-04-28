@@ -414,19 +414,23 @@ async def _prepare_request_parameters(
         output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
-    all_tool_defs = list(ctx.deps.tool_manager.tool_defs)
-
-    # Let capabilities filter/modify tool definitions
-    run_context = build_run_context(ctx)
-    all_tool_defs = await ctx.deps.root_capability.prepare_tools(run_context, all_tool_defs)
-
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
-    for tool_def in all_tool_defs:
+    for tool_def in ctx.deps.tool_manager.tool_defs:
         if tool_def.kind == 'output':
             output_tools.append(tool_def)
         else:
             function_tools.append(tool_def)
+
+    # Let capabilities filter/modify tool definitions. Function and output tools go through
+    # separate hooks, mirroring the rest of the tool-hook lifecycle (output tools have their
+    # own hooks). `prepare_output_tools` gets a run context with output retry info, matching
+    # the output hooks' contract.
+    run_context = build_run_context(ctx)
+    function_tools = await ctx.deps.root_capability.prepare_tools(run_context, function_tools)
+    if output_tools:
+        output_run_context = _build_output_run_context(ctx)
+        output_tools = await ctx.deps.root_capability.prepare_output_tools(output_run_context, output_tools)
 
     # resolve dynamic builtin tools
     builtin_tools: list[AbstractBuiltinTool] = []

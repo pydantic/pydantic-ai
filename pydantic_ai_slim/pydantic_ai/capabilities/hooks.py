@@ -153,6 +153,10 @@ class PrepareToolsHookFunc(Protocol):
     """Protocol for [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] hook functions."""
     def __call__(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition], /) -> list[ToolDefinition] | Awaitable[list[ToolDefinition]]: ...
 
+class PrepareOutputToolsHookFunc(Protocol):
+    """Protocol for [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hook functions."""
+    def __call__(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition], /) -> list[ToolDefinition] | Awaitable[list[ToolDefinition]]: ...
+
 class BeforeToolValidateHookFunc(Protocol):
     """Protocol for [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs) -> RawToolArgs | Awaitable[RawToolArgs]: ...
@@ -462,6 +466,17 @@ class _HookRegistration(Generic[AgentDepsT]):
     def prepare_tools(self, func: PrepareToolsHookFunc | None = None, *, timeout: float | None = None) -> Any:
         return _bare_or_parameterized(self._r, 'prepare_tools', func, timeout=timeout)
 
+    @overload
+    def prepare_output_tools(self, func: PrepareOutputToolsHookFunc, /) -> PrepareOutputToolsHookFunc: ...
+    @overload
+    def prepare_output_tools(
+        self, *, timeout: float | None = None
+    ) -> Callable[[PrepareOutputToolsHookFunc], PrepareOutputToolsHookFunc]: ...
+    def prepare_output_tools(
+        self, func: PrepareOutputToolsHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'prepare_output_tools', func, timeout=timeout)
+
     # --- Tool validation ---
 
     @overload
@@ -742,6 +757,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         model_request_error: OnModelRequestErrorHookFunc | None = None,
         # Tool preparation
         prepare_tools: PrepareToolsHookFunc | None = None,
+        prepare_output_tools: PrepareOutputToolsHookFunc | None = None,
         # Tool validation
         before_tool_validate: BeforeToolValidateHookFunc | None = None,
         after_tool_validate: AfterToolValidateHookFunc | None = None,
@@ -786,6 +802,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'wrap_model_request': model_request,
             'on_model_request_error': model_request_error,
             'prepare_tools': prepare_tools,
+            'prepare_output_tools': prepare_output_tools,
             'before_tool_validate': before_tool_validate,
             'after_tool_validate': after_tool_validate,
             'wrap_tool_validate': tool_validate,
@@ -970,6 +987,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         for entry in self._get('prepare_tools'):
             tool_defs = await _call_entry(entry, 'prepare_tools', ctx, tool_defs)
+        return tool_defs
+
+    async def prepare_output_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        for entry in self._get('prepare_output_tools'):
+            tool_defs = await _call_entry(entry, 'prepare_output_tools', ctx, tool_defs)
         return tool_defs
 
     async def before_tool_validate(

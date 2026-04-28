@@ -129,7 +129,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    # --- Tool preparation hook ---
+    # --- Tool preparation hooks ---
 
     async def prepare_tools(
         self,
@@ -138,6 +138,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> list[ToolDefinition]:
         for capability in self.capabilities:
             tool_defs = await capability.prepare_tools(ctx, tool_defs)
+        return tool_defs
+
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        for capability in self.capabilities:
+            tool_defs = await capability.prepare_output_tools(ctx, tool_defs)
         return tool_defs
 
     # --- Run lifecycle hooks ---

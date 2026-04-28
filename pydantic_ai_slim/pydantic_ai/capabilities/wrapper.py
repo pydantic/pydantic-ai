@@ -100,6 +100,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> list[ToolDefinition]:
         return await self.wrapped.prepare_tools(ctx, tool_defs)
 
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        return await self.wrapped.prepare_output_tools(ctx, tool_defs)
+
     # --- Run lifecycle hooks ---
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:

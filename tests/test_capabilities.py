@@ -3908,34 +3908,34 @@ class TestPrepareToolsHook:
         result = await agent.run('hello')
         assert result.output == "tools: ['visible_tool']"
 
-    async def test_filter_output_tools(self):
-        """Capability can filter output tools (kind='output')."""
+    async def test_does_not_receive_output_tools(self):
+        """`prepare_tools` only receives function tools — output tools route to
+        `prepare_output_tools` instead, mirroring the rest of the tool-hook lifecycle."""
 
         @dataclass
-        class RemoveOutputToolsCap(AbstractCapability[Any]):
-            seen_output_tool_count: int = 0
+        class CountKindsCap(AbstractCapability[Any]):
+            seen_kinds: list[str] = field(default_factory=list[str])
 
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                self.seen_output_tool_count = len([td for td in tool_defs if td.kind == 'output'])
-                return [td for td in tool_defs if td.kind != 'output']
+                self.seen_kinds = [td.kind for td in tool_defs]
+                return tool_defs
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            has_output_tools = len(info.output_tools) > 0
-            return make_text_response(f'has output tools: {has_output_tools}')
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 1}', tool_call_id='c1')]
+            )
 
-        cap = RemoveOutputToolsCap()
-        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+        cap = CountKindsCap()
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[cap])
 
         @agent.tool_plain
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
         await agent.run('hello')
-        # The capability should have seen 0 output tools (no output_type set),
-        # but the hook itself was called
-        assert cap.seen_output_tool_count == 0
+        assert 'output' not in cap.seen_kinds, f'prepare_tools should not see output tools, got {cap.seen_kinds}'
 
     async def test_modify_tool_description(self):
         """Capability can modify tool descriptions."""
@@ -3946,10 +3946,7 @@ class TestPrepareToolsHook:
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [
-                    dc_replace(td, description=f'[PREFIXED] {td.description}') if td.kind == 'function' else td
-                    for td in tool_defs
-                ]
+                return [dc_replace(td, description=f'[PREFIXED] {td.description}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             descs = [t.description for t in info.function_tools]
@@ -3996,6 +3993,107 @@ class TestPrepareToolsHook:
         result = await agent.run('hello')
         # A runs first, then B, so suffix order is _A_B
         assert 'desc_A_B' in result.output
+
+
+class TestPrepareOutputToolsHook:
+    async def test_only_receives_output_tools(self):
+        """`prepare_output_tools` receives only output tools — function tools route to
+        `prepare_tools`."""
+
+        @dataclass
+        class CountKindsCap(AbstractCapability[Any]):
+            seen_kinds: list[str] = field(default_factory=list[str])
+
+            async def prepare_output_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                self.seen_kinds = [td.kind for td in tool_defs]
+                return tool_defs
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 1}', tool_call_id='c1')]
+            )
+
+        cap = CountKindsCap()
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        await agent.run('hello')
+        assert cap.seen_kinds == ['output'], f'expected only output tools, got {cap.seen_kinds}'
+
+    async def test_filter_output_tools(self):
+        """Capability can hide output tools from the model."""
+
+        @dataclass
+        class HideCap(AbstractCapability[Any]):
+            async def prepare_output_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return []  # hide all output tools
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response(f'output_tools: {len(info.output_tools)}')
+
+        agent = Agent(FunctionModel(model_fn), output_type=str, capabilities=[HideCap()])
+
+        result = await agent.run('hello')
+        assert result.output == 'output_tools: 0'
+
+    async def test_run_context_carries_output_max_retries(self):
+        """`prepare_output_tools` ctx.max_retries reflects the agent-level output retry budget,
+        matching the contract of output hooks (and unlike `prepare_tools` which doesn't have
+        a tool-specific retry budget at preparation time)."""
+        seen: list[tuple[int, int]] = []
+
+        @dataclass
+        class CaptureCtxCap(AbstractCapability[Any]):
+            async def prepare_output_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                seen.append((ctx.retry, ctx.max_retries))
+                return tool_defs
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 7}', tool_call_id='c1')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, retries=4, capabilities=[CaptureCtxCap()])
+        await agent.run('hello')
+        assert seen == [(0, 4)]
+
+    async def test_chaining_order(self):
+        """Multiple capabilities chain `prepare_output_tools` in forward order."""
+        from dataclasses import replace as dc_replace
+
+        @dataclass
+        class AddSuffixCap(AbstractCapability[Any]):
+            suffix: str
+
+            async def prepare_output_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return [dc_replace(td, description=f'{td.description or ""}{self.suffix}') for td in tool_defs]
+
+        descs: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            descs.extend(t.description for t in info.output_tools)
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 1}', tool_call_id='c1')]
+            )
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=MyOutput,
+            capabilities=[AddSuffixCap(suffix='_A'), AddSuffixCap(suffix='_B')],
+        )
+        await agent.run('hello')
+        assert descs and descs[0] is not None and descs[0].endswith('_A_B')
 
 
 class TestWrapNodeRunHook:

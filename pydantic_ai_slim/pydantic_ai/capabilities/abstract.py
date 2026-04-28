@@ -262,19 +262,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    # --- Tool preparation hook ---
+    # --- Tool preparation hooks ---
 
     async def prepare_tools(
         self,
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        """Filter or modify tool definitions visible to the model for this step.
+        """Filter or modify function tool definitions visible to the model for this step.
 
-        The list contains all tool kinds (function, output, unapproved) distinguished
-        by [`tool_def.kind`][pydantic_ai.tools.ToolDefinition.kind]. Return a filtered
-        or modified list. Called after the agent-level
+        Receives only function tools (and other non-output kinds like `unapproved`); output
+        tools are routed to
+        [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools]
+        instead. This mirrors the rest of the tool-hook lifecycle, which doesn't fire for
+        output tools either — those go through the dedicated output hooks.
+
+        Return a filtered or modified list. Called after the agent-level
         [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] has already run.
+        """
+        return tool_defs
+
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        """Filter or modify output tool definitions visible to the model for this step.
+
+        Receives only [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry` and
+        `ctx.max_retries` reflect the **output** retry budget (agent-level
+        `max_result_retries`), matching the output hook lifecycle.
+
+        Return a filtered or modified list. Called after the agent-level
+        [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc] has already run.
         """
         return tool_defs
 

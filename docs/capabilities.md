@@ -723,7 +723,12 @@ Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exception
 
 #### Tool preparation
 
-Capabilities can filter or modify which tool definitions the model sees on each step via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools]. This controls tool **visibility**, not execution — use execution hooks for that.
+Capabilities can filter or modify which tool definitions the model sees on each step via two parallel hooks:
+
+- [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives function tools (and other non-output kinds).
+- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry`/`ctx.max_retries` reflect the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle.
+
+This controls tool **visibility**, not execution — use the relevant execution hooks for that.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
@@ -764,7 +769,7 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-The list includes all tool kinds (function, output, unapproved) — use `tool_def.kind` to distinguish. This hook runs after the agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc]. For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] capability wraps a callable without needing a custom subclass.
+Both hooks run after their agent-level counterparts ([`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc]). For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] capability wraps a function-tool callable without a custom subclass.
 
 #### Event stream hook
 
