@@ -17,7 +17,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
+from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -34,7 +34,6 @@ from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentBuiltinTool,
-    DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -65,7 +64,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-EndStrategy = Literal['early', 'exhaustive']
+EndStrategy = Literal['early', 'graceful', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -295,7 +294,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
 
-    async def _handle_deferred_tool_results(  # noqa: C901
+    async def _handle_deferred_tool_results(
         self,
         deferred_tool_results: DeferredToolResults,
         messages: list[_messages.ModelMessage],
@@ -322,21 +321,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
 
-        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
-        tool_call_results = {}
-        for tool_call_id, approval in deferred_tool_results.approvals.items():
-            if approval is True:
-                approval = ToolApproved()
-            elif approval is False:
-                approval = ToolDenied()
-            tool_call_results[tool_call_id] = approval
-
-        if calls := deferred_tool_results.calls:
-            call_result_types = get_union_args(DeferredToolCallResult)
-            for tool_call_id, result in calls.items():
-                if not isinstance(result, call_result_types):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
+        tool_call_results.update(deferred_tool_results.to_tool_call_results())
 
         if last_model_request:
             for part in last_model_request.parts:
@@ -382,20 +368,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     if reevaluated_message_parts != msg.parts:
                         msg.parts = reevaluated_message_parts
 
-    async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
-        """Build the initial messages for the conversation."""
-        messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
-        for sys_prompt_runner in self.system_prompt_functions:
-            prompt = await sys_prompt_runner.run(run_context)
-            if sys_prompt_runner.dynamic:
-                # To enable dynamic system prompt refs in future runs, use a placeholder string
-                messages.append(
-                    _messages.SystemPromptPart(prompt or '', dynamic_ref=sys_prompt_runner.function.__qualname__)
-                )
-            elif prompt:
-                # omit empty system prompts
-                messages.append(_messages.SystemPromptPart(prompt))
-        return messages
+    async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
+        """Build the initial system-prompt messages for the conversation."""
+        return await _system_prompt.resolve_system_prompts(
+            self.system_prompts, self.system_prompt_functions, run_context
+        )
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -1034,6 +1011,19 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                         raise exceptions.ContentFilterError(message, body=body)
 
+                    # If the output type allows None, an empty response is a valid result.
+                    if is_empty and output_schema.allows_none:
+                        run_context = _build_output_run_context(ctx)
+                        try:
+                            result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
+                            self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                        except ToolRetryError as e:
+                            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                                _messages.ModelRequest(parts=[e.tool_retry])
+                            )
+                        return
+
                     # Try to recover text from a previous model response.
                     # This handles the case where the model returned text alongside tool calls
                     # (so the text was discarded in favor of executing the tools) and subsequently
@@ -1365,14 +1355,13 @@ async def process_tool_calls(  # noqa: C901
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
-        # Early strategy is chosen and final result is already set
-        elif ctx.deps.end_strategy == 'early' and final_result:
+        # A final result is already set and this strategy skips remaining output tools
+        elif ctx.deps.end_strategy in ('early', 'graceful') and final_result:
             for event in _emit_skipped_output_tool(
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
                 yield event
-        # Early strategy is chosen and final result is not yet set
-        # Or exhaustive strategy is chosen
+        # No final result yet, or exhaustive strategy processes all output tools
         else:
             # Validate and execute the output tool call — unlike deferred tools,
             # output tools track retries and can be skipped if a final_result exists.
@@ -1441,7 +1430,7 @@ async def process_tool_calls(  # noqa: C901
             )
             output_parts.append(part)
 
-            # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+            # Use the first valid output tool's result as the final result
             if not final_result:
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
@@ -1568,17 +1557,76 @@ async def process_tool_calls(  # noqa: C901
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
-        if not ctx.deps.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-            )
-        deferred_tool_requests = _output.DeferredToolRequests(
+        deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
         )
 
-        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
+        # Let capability handlers resolve deferred calls inline (one shot).
+        # Results are fed back through the existing tool-execution pipeline so that
+        # approvals, denials, retries, and ToolReturn unwrapping all behave identically
+        # to the UserPromptNode resume path.
+        handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
+        if handler_results is not None:
+            handler_tool_call_results = handler_results.to_tool_call_results()
+            resolved_calls = [
+                call
+                for call in [*deferred_calls['unapproved'], *deferred_calls['external']]
+                if call.tool_call_id in handler_tool_call_results
+            ]
+
+            handler_validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
+            for call in resolved_calls:
+                handler_result = handler_tool_call_results[call.tool_call_id]
+                if not isinstance(handler_result, ToolApproved):
+                    continue
+                validate_call = call
+                if handler_result.override_args is not None:
+                    validate_call = dataclasses.replace(call, args=handler_result.override_args)
+                call_metadata = handler_results.metadata.get(call.tool_call_id)
+                try:
+                    handler_validated_calls[call.tool_call_id] = await tool_manager.validate_tool_call(
+                        validate_call, approved=True, metadata=call_metadata
+                    )
+                except exceptions.UnexpectedModelBehavior:  # pragma: no cover
+                    # Defensive: only reached if the handler's override_args fail validation after
+                    # retries were already exhausted in this run step. Mirrors the non-deferred
+                    # validation path above; naturally triggered there, not here.
+                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
+                    raise
+
+            new_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(
+                list
+            )
+            new_deferred_metadata: dict[str, dict[str, Any]] = {}
+            async for event in _call_tools(
+                tool_manager=tool_manager,
+                tool_calls=resolved_calls,
+                tool_call_results=handler_tool_call_results,
+                validated_calls=handler_validated_calls,
+                output_parts=output_parts,
+                output_deferred_calls=new_deferred_calls,
+                output_deferred_metadata=new_deferred_metadata,
+            ):
+                yield event
+
+            deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
+            if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
+                if deferred_tool_requests is None:
+                    deferred_tool_requests = _output.DeferredToolRequests()
+                deferred_tool_requests.calls.extend(new_deferred_calls['external'])
+                deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
+                deferred_tool_requests.metadata.update(new_deferred_metadata)
+
+        if deferred_tool_requests is not None:
+            if not ctx.deps.output_schema.allows_deferred_tools:
+                raise exceptions.UserError(
+                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. '
+                    'To resolve this, add `DeferredToolRequests` to the list of output types for this agent, '
+                    'or use a `HandleDeferredToolCalls` capability to handle deferred tool calls inline.'
+                )
+            final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
 
     if final_result:
         output_final_result.append(final_result)
@@ -1877,13 +1925,14 @@ def _first_new_message_index(
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
-                # Include the resumed request in new_messages only if it was
-                # mapped/created during the current run (e.g., via adapters).
-                return index if message.run_id == run_id else index + 1
+                # Requests passed in via `message_history` are prior context,
+                # even if they are stamped with the current `run_id` for adapter
+                # bookkeeping.
+                return index + 1
 
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
-                return index if messages[index].run_id == run_id else index + 1
+                return index + 1
     return _first_run_id_index(messages, run_id)
 
 

@@ -1,3 +1,8 @@
+---
+name: address-feedback
+description: Find and address unresolved PR review comments for the current branch, then summarize the changes and help reply to and resolve threads after user approval.
+---
+
 # Address PR Review Feedback
 
 Find and address all review comments on the PR for the current branch. For each comment:
