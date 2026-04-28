@@ -874,6 +874,41 @@ async def test_reinject_system_prompt_capability_does_not_mutate_input_history()
     assert history_request.parts == original_parts, 'capability mutated caller-owned ModelRequest'
 
 
+async def test_reinject_system_prompt_capability_replace_drops_system_only_requests():
+    """When `replace_existing=True` strips the only parts in a `ModelRequest`, the request is
+    dropped from the history rather than left as an empty placeholder.
+    """
+    captured: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured.append(list(messages))
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    agent = Agent(FunctionModel(respond), system_prompt='Server prompt')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Caller-supplied client prompt')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    await agent.run(
+        'Follow up',
+        message_history=history,
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    assert len(captured) == 1
+    seen = captured[0]
+    assert all(not (isinstance(m, ModelRequest) and not m.parts) for m in seen), (
+        'capability left an empty ModelRequest in history'
+    )
+    assert any(
+        isinstance(m, ModelRequest)
+        and any(isinstance(p, SystemPromptPart) and p.content == 'Server prompt' for p in m.parts)
+        for m in seen
+    ), "agent's configured system prompt should be reinjected at the head"
+
+
 async def test_reinject_system_prompt_capability_agent_without_model():
     """Regression guard: agent constructed without a model gets its model passed via `run(model=...)`.
 
