@@ -423,6 +423,7 @@
               "api/models/instrumented",
               "api/models/mcp-sampling",
               "api/models/mistral",
+              "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
               "api/models/outlines",
@@ -457,6 +458,7 @@
           "api/pydantic_evals/evaluators",
           "api/pydantic_evals/lifecycle",
           "api/pydantic_evals/online",
+          "api/pydantic_evals/online_capability",
           "api/pydantic_evals/reporting",
           "api/pydantic_evals/otel",
           "api/pydantic_evals/generation"
