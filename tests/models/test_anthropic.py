@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeVar, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -71,6 +72,7 @@ with try_import() as imports_successful:
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         omit as OMIT,
     )
@@ -126,7 +128,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = None
+    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -1883,6 +1885,85 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
     assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
+
+
+@pytest.mark.parametrize('speed', ['fast', 'standard', None])
+async def test_anthropic_speed_setting(allow_model_requests: None, speed: Literal['fast', 'standard'] | None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    settings = AnthropicModelSettings(anthropic_betas=['custom-beta'])
+    if speed is not None:
+        settings['anthropic_speed'] = speed
+    await agent.run('hello', model_settings=settings)
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    if speed is not None:
+        assert kwargs['speed'] == speed
+    else:
+        assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert ('fast-mode-2026-02-01' in betas) is (speed == 'fast')
+
+
+@pytest.mark.parametrize(
+    'speed,expected_warning',
+    [
+        ('fast', "anthropic_speed='fast' is not supported"),
+        ('standard', None),
+    ],
+)
+async def test_anthropic_speed_ignored_on_unsupported_model(
+    allow_model_requests: None,
+    speed: Literal['fast', 'standard'],
+    expected_warning: str | None,
+) -> None:
+    """On models without fast-mode support, `anthropic_speed` is omitted; `'fast'` also warns."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    settings = AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta'])
+
+    if expected_warning is not None:
+        with pytest.warns(UserWarning, match=expected_warning):
+            await agent.run('hello', model_settings=settings)
+    else:
+        await agent.run('hello', model_settings=settings)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
+
+
+@pytest.mark.parametrize(
+    'client_cls',
+    [
+        pytest.param(AsyncAnthropicBedrock, id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, id='vertex'),
+        pytest.param(AsyncAnthropicFoundry, id='foundry'),
+    ],
+)
+async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls: type) -> None:
+    """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MagicMock()
+    mock_client.__class__ = client_cls
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']))
+    with pytest.warns(UserWarning, match='anthropic_speed=.fast. is not supported'):
+        await agent.run('hello')
+
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert call_kwargs['speed'] is OMIT
+    assert 'fast-mode-2026-02-01' not in call_kwargs['betas']
 
 
 async def test_stream_structured(allow_model_requests: None):
