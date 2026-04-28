@@ -4,6 +4,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from datetime import timezone
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
@@ -27,24 +28,34 @@ from pydantic_ai import (
     ToolCallPart,
     ToolsetTool,
     WrapperToolset,
+    capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import InstructionPart, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import (
+    InstructionPart,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
 
 
-def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
+def build_run_context(deps: T, run_step: int = 0, max_retries: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -52,6 +63,7 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
         prompt=None,
         messages=[],
         run_step=run_step,
+        max_retries=max_retries,
     )
 
 
@@ -743,6 +755,204 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_toolset_max_retries_inherits_from_agent():
+    """Agent(retries=...) should propagate to user-provided toolsets that don't set max_retries explicitly."""
+    attempts: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # retries=0 means the tool is called once and then fails immediately.
+    assert len(attempts) == 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call always_fails', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_toolset_explicit_max_retries_overrides_agent():
+    """FunctionToolset(max_retries=X) should take precedence over Agent(retries=Y)."""
+    toolset = FunctionToolset[None](max_retries=2)
+    attempts: list[int] = []
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # Initial call + 2 retries = 3 attempts.
+    assert len(attempts) == 3
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
+
+
+async def test_tool_explicit_retries_overrides_toolset_and_agent():
+    """Tool(retries=X) should take precedence over both toolset and agent defaults."""
+    attempts: list[int] = []
+
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # Initial call + 3 retries = 4 attempts.
+    assert len(attempts) == 4
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails', 'Always fails'])
+
+
+async def test_prepare_function_sees_agent_max_retries():
+    """Prepare functions should see the agent's default max_retries on ctx when the toolset doesn't set one."""
+    captured_max_retries: list[int] = []
+    captured_last_attempt: list[bool] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured_max_retries.append(ctx.max_retries)
+        captured_last_attempt.append(ctx.last_attempt)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    agent = Agent('test', toolsets=[toolset], retries=3)
+    result = await agent.run('call my_tool', model=TestModel())
+
+    assert captured_max_retries[0] == 3
+    assert captured_last_attempt[0] is False
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call my_tool', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":0}')],
+                usage=RequestUsage(input_tokens=53, output_tokens=7),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retries():
+    """When a user toolset leaves `max_retries=None` and `retries != output_retries`, the fallback
+    must resolve to the agent's **tool** retry count, not the output retry count.
+    Regression: `ctx.max_retries` previously carried `max_result_retries` during `get_tools`."""
+    attempts: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # retries=1 means initial call + 1 retry = 2 attempts, not 6 (which would be output_retries).
+    assert len(attempts) == 2
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails'])
+
+
+async def test_prepare_function_sees_tool_retries_not_output_retries():
+    """Prepare functions must see the agent's **tool** retry count on `ctx.max_retries`,
+    not the output retry count. Regression for a non-output toolset previously receiving the
+    output-tool preparation context."""
+    captured: list[int] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured.append(ctx.max_retries)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+    result = await agent.run('call my_tool', model=TestModel())
+
+    assert captured[0] == 1
+    assert [type(m).__name__ for m in result.all_messages()] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+
+
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
 
@@ -767,8 +977,8 @@ async def test_tool_manager_multiple_failed_tools():
         """Tool C that works"""
         return x * 3
 
-    # Create tool manager
-    context = build_run_context(TestDeps())
+    # Create tool manager with max_retries=1, matching what _agent_graph.py sets in a real run
+    context = build_run_context(TestDeps(), max_retries=1)
     tool_manager = await ToolManager[TestDeps](toolset).for_run_step(context)
 
     # Call tool_a - should fail and be added to failed_tools
@@ -787,7 +997,7 @@ async def test_tool_manager_multiple_failed_tools():
     assert tool_manager.failed_tools == {'tool_a', 'tool_b'}  # unchanged
 
     # Create next run step - should have retry counts for both failed tools
-    new_context = build_run_context(TestDeps(), run_step=1)
+    new_context = build_run_context(TestDeps(), run_step=1, max_retries=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     assert new_tool_manager.ctx is not None
@@ -944,6 +1154,188 @@ async def test_dynamic_toolset():
     original_toolset.apply(uninitialized_visitor)
 
     assert tools == {}
+
+
+async def test_dynamic_toolset_enter_failure_does_not_exit_unentered_toolset():
+    """If the inner toolset's __aenter__ raises, DynamicToolset.__aexit__ must not
+    try to exit a toolset that was never entered.
+
+    Reproduces https://github.com/pydantic/pydantic-ai/issues/3542: a per-run-step
+    factory produces a fresh toolset each step; if __aenter__ on the new one fails,
+    the old logic still stored it and the outer context manager then called
+    __aexit__ on an unentered toolset (MCPServer raised "__aexit__ called more
+    times than __aenter__").
+    """
+
+    class FlakyToolset(AbstractToolset[None]):
+        enter_count = 0
+        exit_count = 0
+        fail_on_enter = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            if self.fail_on_enter:
+                raise RuntimeError('enter failed')
+            self.enter_count += 1
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exit_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    first = FlakyToolset()
+    second = FlakyToolset()
+    second.fail_on_enter = True
+    produced = iter([first, second])
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return next(produced)
+
+    dynamic = DynamicToolset[None](toolset_func=factory)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    assert isinstance(toolset, DynamicToolset)
+    async with toolset:
+        await toolset.for_run_step(run_context)
+        assert first.enter_count == 1
+        with pytest.raises(RuntimeError, match='enter failed'):
+            await toolset.for_run_step(run_context)
+        # After the failed transition, _toolset should be None so __aexit__ is a no-op.
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+    # Old toolset was exited exactly once during the transition; the failed one
+    # was never entered so must never be exited.
+    assert first.exit_count == 1
+    assert second.exit_count == 0
+
+
+async def test_dynamic_toolset_aenter_failure_does_not_exit_unentered_toolset():
+    """If the initial outer __aenter__ fails, __aexit__ must not try to exit it."""
+
+    class FailingEnterToolset(AbstractToolset[None]):
+        exit_count = 0
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            raise RuntimeError('enter failed')
+
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
+            self.exit_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    inner = FailingEnterToolset()
+    dynamic = DynamicToolset[None](toolset_func=lambda ctx: inner, per_run_step=False)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    assert isinstance(toolset, DynamicToolset)
+    with pytest.raises(RuntimeError, match='enter failed'):
+        async with toolset:
+            pass  # pragma: no cover
+
+    assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+    assert inner.exit_count == 0
+
+
+async def test_dynamic_toolset_old_aexit_failure_does_not_store_new_toolset():
+    """If the old toolset's __aexit__ raises during a per-run-step transition,
+    the new toolset must not be stored (and thus not exited) since it was never entered.
+    """
+
+    class FailingExitToolset(AbstractToolset[None]):
+        entered = False
+        exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exited = True
+            raise RuntimeError('exit failed')
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    class TrackedToolset(AbstractToolset[None]):
+        entered = False
+        exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:  # pragma: no cover
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
+            self.exited = True
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    first = FailingExitToolset()
+    second = TrackedToolset()
+    produced = iter([first, second])
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return next(produced)
+
+    dynamic = DynamicToolset[None](toolset_func=factory)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    # Suppress the transition failure so we can inspect state afterwards; the
+    # outer __aexit__ must not then try to exit the never-entered second toolset.
+    with pytest.raises(RuntimeError, match='exit failed'):
+        async with toolset:
+            await toolset.for_run_step(run_context)
+            assert first.entered
+            await toolset.for_run_step(run_context)  # raises on old.__aexit__
+            pass  # pragma: no cover
+
+    assert first.exited
+    assert not second.entered
+    assert not second.exited
 
 
 async def test_dynamic_toolset_empty():

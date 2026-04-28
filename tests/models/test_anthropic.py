@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeVar, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -71,6 +72,7 @@ with try_import() as imports_successful:
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         omit as OMIT,
     )
@@ -126,7 +128,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = None
+    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -148,8 +150,10 @@ T = TypeVar('T')
 
 
 def test_init():
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='foobar'))
+    provider = AnthropicProvider(api_key='foobar')
+    m = AnthropicModel('claude-haiku-4-5', provider=provider)
     assert isinstance(m.client, AsyncAnthropic)
+    assert m.client is provider.client
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-haiku-4-5'
     assert m.system == 'anthropic'
@@ -1924,6 +1928,85 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
     assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
+
+
+@pytest.mark.parametrize('speed', ['fast', 'standard', None])
+async def test_anthropic_speed_setting(allow_model_requests: None, speed: Literal['fast', 'standard'] | None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    settings = AnthropicModelSettings(anthropic_betas=['custom-beta'])
+    if speed is not None:
+        settings['anthropic_speed'] = speed
+    await agent.run('hello', model_settings=settings)
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    if speed is not None:
+        assert kwargs['speed'] == speed
+    else:
+        assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert ('fast-mode-2026-02-01' in betas) is (speed == 'fast')
+
+
+@pytest.mark.parametrize(
+    'speed,expected_warning',
+    [
+        ('fast', "anthropic_speed='fast' is not supported"),
+        ('standard', None),
+    ],
+)
+async def test_anthropic_speed_ignored_on_unsupported_model(
+    allow_model_requests: None,
+    speed: Literal['fast', 'standard'],
+    expected_warning: str | None,
+) -> None:
+    """On models without fast-mode support, `anthropic_speed` is omitted; `'fast'` also warns."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    settings = AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta'])
+
+    if expected_warning is not None:
+        with pytest.warns(UserWarning, match=expected_warning):
+            await agent.run('hello', model_settings=settings)
+    else:
+        await agent.run('hello', model_settings=settings)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
+
+
+@pytest.mark.parametrize(
+    'client_cls',
+    [
+        pytest.param(AsyncAnthropicBedrock, id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, id='vertex'),
+        pytest.param(AsyncAnthropicFoundry, id='foundry'),
+    ],
+)
+async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls: type) -> None:
+    """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MagicMock()
+    mock_client.__class__ = client_cls
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']))
+    with pytest.warns(UserWarning, match='anthropic_speed=.fast. is not supported'):
+        await agent.run('hello')
+
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert call_kwargs['speed'] is OMIT
+    assert 'fast-mode-2026-02-01' not in call_kwargs['betas']
 
 
 async def test_stream_structured(allow_model_requests: None):
@@ -9294,18 +9377,52 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     )
 
 
-async def test_anthropic_container_setting_explicit(allow_model_requests: None):
-    """Test that anthropic_container setting passes explicit container config to API."""
+async def test_anthropic_container_setting_explicit_string(allow_model_requests: None):
+    """A raw id string is passed through to the `container` request param."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    # Test with explicit container config
+    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_container='container_abc123'))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['container'] == 'container_abc123'
+
+
+async def test_anthropic_container_setting_id_only_dict_unwrapped_to_string(allow_model_requests: None):
+    """`{'id': x}` (with no other keys) is unwrapped to the raw string `x`.
+
+    The Anthropic live API rejects `container={'id': x}` with
+    `container: Input should be a valid string` even though the SDK type permits it,
+    so `_get_container()` unwraps this one specifically broken shape before sending.
+    """
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
     await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_container={'id': 'container_abc123'}))
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['container'] == BetaContainerParams(id='container_abc123')
+    assert completion_kwargs['container'] == 'container_abc123'
+
+
+async def test_anthropic_container_setting_dict_with_skills_passed_through(allow_model_requests: None):
+    """Dicts carrying `skills` are passed through unchanged — the live API accepts them."""
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    container_with_skills: BetaContainerParams = {
+        'id': 'container_abc123',
+        'skills': [{'type': 'anthropic', 'skill_id': 'xlsx', 'version': 'latest'}],
+    }
+    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_container=container_with_skills))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['container'] == container_with_skills
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
@@ -9329,7 +9446,7 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     await agent.run('follow up', message_history=history)
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['container'] == BetaContainerParams(id='container_from_history')
+    assert completion_kwargs['container'] == 'container_from_history'
 
 
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
@@ -9416,6 +9533,162 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
+
+
+@pytest.mark.vcr()
+async def test_anthropic_code_execution_tool_container_reuse(allow_model_requests: None, anthropic_api_key: str):
+    """Reusing a `container_id` from message history must be sent as a raw string.
+
+    The Anthropic SDK types `container` as `BetaContainerParams | str`, but the live
+    API rejects the object form with `container: Input should be a valid string`.
+    This test records a two-turn conversation using the code execution tool and
+    asserts that the second request sends `container` on the wire as the raw id —
+    using an httpx event hook so the assertion runs against what the client
+    actually sent, not what the VCR cassette happens to hold.
+    """
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    m = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+    )
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions='Always use the code execution tool for math.',
+    )
+
+    first = await agent.run('How much is 3 * 12390?')
+    first_response = first.all_messages()[-1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.provider_details is not None
+    container_id = first_response.provider_details.get('container_id')
+    assert isinstance(container_id, str) and container_id.startswith('container_')
+
+    second = await agent.run('And what about 4 * 12390?', message_history=first.new_messages())
+
+    assert len(sent_bodies) == 2
+    assert 'container' not in sent_bodies[0]
+    assert sent_bodies[1]['container'] == container_id
+
+    assert second.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+
+result = 3 * 12390
+print(result)
+"""
+                        },
+                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '37170',
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='3 × 12,390 = **37,170**'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1983,
+                    output_tokens=85,
+                    details={
+                        'input_tokens': 1983,
+                        'output_tokens': 85,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
+                provider_response_id='msg_01CSsc4t4e4ThJfJp8nsPxc5',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='And what about 4 * 12390?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the code execution tool for math.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+
+result = 4 * 12390
+print(result)
+"""
+                        },
+                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        provider_name='anthropic',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '49560',
+                            'type': 'code_execution_result',
+                            'abort_reason': None,
+                        },
+                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='4 × 12,390 = **49,560**'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2219,
+                    output_tokens=85,
+                    details={
+                        'input_tokens': 2219,
+                        'output_tokens': 85,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
+                provider_response_id='msg_016hgHtSKi8fEDBmSkEtL364',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_anthropic_system_prompts_and_instructions_ordering():

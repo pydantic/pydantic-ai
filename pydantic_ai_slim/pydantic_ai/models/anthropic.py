@@ -78,8 +78,10 @@ try:
         APIConnectionError,
         APIStatusError,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
+        Omit,
         omit as OMIT,
     )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
@@ -168,6 +170,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+_FAST_MODE_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _STR_OBJECT_DICT = TypeAdapter(dict[str, object])
@@ -245,7 +248,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_messages: bool | Literal['5m', '1h']
-    """Deprecated: use `anthropic_cache` instead.
+    """Deprecated: use `anthropic_cache` instead. Will be removed in V2.
 
     Behaves the same as `anthropic_cache`: uses automatic caching where supported,
     falls back to per-block caching on Bedrock and Vertex. Emits a deprecation warning.
@@ -277,14 +280,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
     """
 
-    anthropic_container: BetaContainerParams | Literal[False]
+    anthropic_container: BetaContainerParams | str | Literal[False]
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
-    Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
+    Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
+    or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
+    `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
+    Skills beta.
     """
 
     anthropic_eager_input_streaming: bool
@@ -302,6 +308,16 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
     Merged with auto-added betas (e.g. builtin tools) and any betas from
     extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
+    """
+
+    anthropic_speed: Literal['standard', 'fast']
+    """The inference speed mode for this request.
+
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6 only).
+    On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
+    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
+    see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
     anthropic_context_management: BetaContextManagementConfigParam
@@ -323,8 +339,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
-
-    client: AsyncAnthropicClient = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -353,9 +367,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> AsyncAnthropicClient:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -586,7 +603,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
+        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
@@ -620,6 +638,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 context_management=context_management or OMIT,
                 container=container or OMIT,
                 service_tier=service_tier,
+                speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -647,6 +666,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _get_betas_and_extra_headers(
         self,
         model_settings: AnthropicModelSettings,
+        anthropic_profile: AnthropicModelProfile,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -661,6 +681,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
 
+        if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
+            betas.add('fast-mode-2026-02-01')
+
         if betas_from_setting := model_settings.get('anthropic_betas'):
             betas.update(str(b) for b in betas_from_setting)
 
@@ -669,16 +692,55 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return betas, extra_headers
 
+    def _effective_speed(
+        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
+    ) -> Literal['standard', 'fast'] | Omit:
+        """Speed to send to the API, or OMIT when the model or client does not support the `speed` parameter."""
+        s = model_settings.get('anthropic_speed')
+        if s in ('standard', 'fast') and self._client_supports_fast_speed(anthropic_profile):
+            return s
+        if s == 'fast':
+            warnings.warn(
+                f"anthropic_speed='fast' is not supported by {self.model_name} on this client; the setting will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return OMIT
+
+    def _client_supports_fast_speed(self, anthropic_profile: AnthropicModelProfile) -> bool:
+        """Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry)."""
+        return anthropic_profile.anthropic_supports_fast_speed and not isinstance(
+            self.client, _FAST_MODE_UNSUPPORTED_CLIENTS
+        )
+
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | None:
-        """Get container config for the API request."""
+    ) -> BetaContainerParams | str | None:
+        """Resolve the `container` request parameter.
+
+        The Anthropic SDK types `container` as `BetaContainerParams | str`, and the
+        live API accepts both forms *except* for one specific shape: a dict carrying
+        only `id` and nothing else, which is rejected with
+        `container: Input should be a valid string`. `{"skills": [...]}`,
+        `{"id": x, "skills": [...]}`, and the raw `"x"` string all work — only
+        `{"id": x}` alone is broken server-side.
+
+        So when the user passes that only-broken shape, we transparently unwrap it to
+        the string the server wants. Every other shape is passed through untouched so
+        the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
+        working. History-based reuse is always sent as the raw id string since we
+        never have skills to attach there.
+        """
         if (container := model_settings.get('anthropic_container')) is not None:
-            return None if container is False else container
+            if container is False:
+                return None
+            if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
+                return cid
+            return container
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return BetaContainerParams(id=cid)
+                    return cid
         return None
 
     async def _messages_count_tokens(
@@ -703,7 +765,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings)
+        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
@@ -720,6 +783,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thinking=self._translate_thinking(model_settings, model_request_parameters),
                 context_management=context_management or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )

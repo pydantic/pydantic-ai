@@ -387,7 +387,7 @@ class RegenerateMessage(CamelBaseModel, extra='allow'):
     trigger: Literal['regenerate-message']
     id: str
     messages: list[UIMessage]
-    message_id: str
+    message_id: str | None = None
 
 
 RequestData = Annotated[SubmitMessage | RegenerateMessage, Discriminator('trigger')]
