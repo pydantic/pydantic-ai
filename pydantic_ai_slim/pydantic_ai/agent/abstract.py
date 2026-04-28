@@ -369,14 +369,30 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     n: _agent_graph.AgentNode[AgentDepsT, Any],
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
+                        stream_error: BaseException | None = None
+
+                        async def _error_capturing_stream() -> AsyncIterator[_messages.AgentStreamEvent]:
+                            nonlocal stream_error
+                            try:
+                                async for event in stream:
+                                    yield event
+                            except BaseException as e:
+                                stream_error = e
+                                raise
+
                         async with n.stream(agent_run.ctx) as stream:
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(
+                                run_ctx, stream=_error_capturing_stream()
+                            )
                             if _handler is not None:
                                 await _handler(run_ctx, wrapped)
                             else:
                                 async for _ in wrapped:
                                     pass
+
+                        if stream_error is not None:
+                            raise stream_error
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance

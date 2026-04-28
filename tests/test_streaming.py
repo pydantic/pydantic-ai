@@ -52,6 +52,7 @@ from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.ui import UIEventStream
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
@@ -3566,6 +3567,35 @@ async def test_run_stream_event_stream_handler():
             FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
     )
+
+
+async def test_run_event_stream_handler_error_propagation():
+    """When a tool raises inside agent.run() with an event_stream_handler that uses transform_stream(),
+    the original exception should propagate instead of being masked by an AssertionError."""
+    m = TestModel(call_tools=['failing_tool'])
+
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def failing_tool() -> str:
+        raise RuntimeError('Tool execution failed!')
+
+    class MinimalEventStream(UIEventStream[None, str, None, str]):
+        run_input: None = None
+
+        def encode_event(self, event: str) -> str:
+            return event
+
+        async def on_error(self, error: Exception) -> AsyncIterator[str]:
+            yield f'error: {error}'
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        event_stream = MinimalEventStream(run_input=None)
+        async for _event in event_stream.transform_stream(stream.__aiter__()):
+            pass
+
+    with pytest.raises(RuntimeError, match='Tool execution failed!'):
+        await agent.run('use the tool', event_stream_handler=event_stream_handler)
 
 
 async def test_stream_tool_returning_user_content():
