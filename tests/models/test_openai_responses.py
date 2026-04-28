@@ -11172,9 +11172,7 @@ async def test_openai_responses_phase_round_trip_without_item_id(allow_model_req
             [
                 ResponseOutputMessage.model_construct(
                     id='msg_999',
-                    content=cast(
-                        list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]
-                    ),
+                    content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
                     role='assistant',
                     status='completed',
                     type='message',
