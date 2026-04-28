@@ -1251,26 +1251,6 @@ async def test_openrouter_cache_instructions_no_system_message() -> None:
     assert mapped[0].get('role') == 'user'
 
 
-async def test_openrouter_cache_instructions_with_list_content() -> None:
-    """Test cache_instructions when system content is already list format (from cache_messages)."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
-    # Both enabled: cache_messages runs first and converts last msg (system) content to list,
-    # then cache_instructions finds the system message with list content
-    settings = OpenRouterModelSettings(openrouter_cache_instructions=True, openrouter_cache_messages=True)
-
-    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant.')])]
-
-    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), model_settings=settings
-    )
-
-    system_msg = next(m for m in mapped if m.get('role') in ('system', 'developer'))
-    content = system_msg.get('content')
-    assert isinstance(content, list)
-    # cache_control should be present (added by both cache_messages and cache_instructions)
-    assert 'cache_control' in cast(dict[str, Any], content[-1])
-
-
 # ===== openrouter_cache_messages =====
 
 
@@ -2095,17 +2075,16 @@ async def test_openrouter_limit_cache_points_e2e(
     assert len(result.output) > 0
 
     assert vcr is not None
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = cast(
+        dict[str, list[dict[str, list[dict[str, Any]]]]],
+        json.loads(vcr.requests[0].body),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    )
 
     cache_count = 0
     for msg in request_body['messages']:
-        content = msg.get('content')
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and 'cache_control' in block:
-                    cache_count += 1
-        elif isinstance(content, str):
-            continue
+        for block in msg['content']:
+            if 'cache_control' in block:
+                cache_count += 1
 
     assert cache_count <= 4
 

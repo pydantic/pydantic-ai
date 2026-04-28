@@ -115,7 +115,7 @@ def search_docs(ctx: RunContext, query: str) -> str:
 ...
 ```
 
-Each setting accepts `True` (defaults to `'5m'` TTL) or an explicit `'5m'` / `'1h'` TTL value. After running, check `result.usage().cache_write_tokens` and `result.usage().cache_read_tokens` to see caching in action. On subsequent calls with `message_history=result.all_messages()`, cached tokens are reused.
+Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` uses Anthropic's default `'5m'` TTL; Gemini ignores TTL values and manages cache lifetime itself. After running, check `result.usage().cache_write_tokens` and `result.usage().cache_read_tokens` to see caching in action. On subsequent calls with `message_history=result.all_messages()`, cached tokens are reused.
 
 ### Fine-Grained Control with CachePoint
 

@@ -766,6 +766,19 @@ class OpenRouterModel(OpenAIChatModel):
         last_param = cast(dict[str, Any], params[-1])
         last_param['cache_control'] = self._build_cache_control(ttl)
 
+    def _add_cache_control_to_message(
+        self, message: chat.ChatCompletionMessageParam, ttl: bool | Literal['5m', '1h'] = '5m'
+    ) -> None:
+        """Add ``cache_control`` to the last content block in a mapped chat message."""
+        content = message.get('content')
+        if isinstance(content, str):
+            message['content'] = [  # type: ignore[typeddict-unknown-key]
+                {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
+            ]
+        elif isinstance(content, list) and content:
+            last_part = cast(dict[str, Any], content[-1])
+            last_part['cache_control'] = self._build_cache_control(ttl)
+
     @classmethod
     @override
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
@@ -838,15 +851,7 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
             and self._cache_profile.openrouter_supports_cache_control
         ):
-            last_msg = openai_messages[-1]
-            content = last_msg.get('content')
-            if isinstance(content, str):
-                last_msg['content'] = [  # type: ignore[typeddict-unknown-key]
-                    {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(cache_messages)}
-                ]
-            elif isinstance(content, list) and content:
-                last_part = cast(dict[str, Any], content[-1])
-                last_part['cache_control'] = self._build_cache_control(cache_messages)
+            self._add_cache_control_to_message(openai_messages[-1], cache_messages)
 
         if (
             model_settings
@@ -855,18 +860,7 @@ class OpenRouterModel(OpenAIChatModel):
         ):
             for msg in reversed(openai_messages):
                 if msg.get('role') in ('system', 'developer'):
-                    content = msg.get('content')
-                    if isinstance(content, str):
-                        msg['content'] = [  # type: ignore[typeddict-unknown-key]
-                            {
-                                'type': 'text',
-                                'text': content,
-                                'cache_control': self._build_cache_control(cache_instructions),
-                            }
-                        ]
-                    elif isinstance(content, list) and content:  # pragma: no branch
-                        last_part = cast(dict[str, Any], content[-1])
-                        last_part['cache_control'] = self._build_cache_control(cache_instructions)
+                    self._add_cache_control_to_message(msg, cache_instructions)
                     break
 
         has_tool_cache_point = bool(
