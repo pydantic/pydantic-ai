@@ -1,0 +1,235 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '310'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      - code_interpreter_call.outputs
+      input:
+      - content: Create a CSV file with the numbers 1 to 5 and their squares
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - container:
+          type: auto
+        type: code_interpreter
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '6467'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-lejylkyjyvnucwqwg6ukehns
+      openai-processing-ms:
+      - '11543'
+      openai-project:
+      - proj_StfCERTWb3NYVdXZh90HL3gV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775986256
+      created_at: 1775986245
+      error: null
+      frequency_penalty: 0.0
+      id: resp_08878b9ae73ae3ca0069db664575c481959d2689fe9d4e4597
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABp22ZQ09wSLEFqqgqBlQP24vO-quXJlGWxxlVE9q2eLtj_Ka9n1IhlsDKVwOVjRD97U0XgoCe8CVKexbIBixhdIT9c7-0-ZY3BD2RweNSn5ZSD_ao1qoMURM3vYMS_1e_mq3Lv0Dh9YvZQ-gNzCtM_3y5dU-NOlnIfX78ERIg5Vn-qoVNyCB1-r3yfaateWIyFH5bIveniyCLc7j96mT44F-RDB0VD918Jpu85Ml1wWc9tiFCqf3MreiDgTxTG01sg7nyAT16Hw5ZJ4br-WBIOWLil0giOozdmJ8U6YMuIJekYtXy3AOUpMsKDV9pIVB7HnECK0AkrnxQqwrf_STDJFdf_tFHv6QvM8PvdOvNXMvR8yzvFyqokNN9P08bDN0-gydhXLs7NDj0fTd31pQy9SXxNI0Fd4Iv9MG7zl8R5JZnASc5bm2L7aIQ5hcQ7McWRQXmdliDLMDIY91qoMbVWASdT4iSwm0APyPE-so1vsRl_xeOgcJeYNY9butjcRtB2hoTRsbj5iNy3ZyOGmY1jd0CBzAL4KwM1_VRzN2nkeB4jCZQpt475Y5GwGNL5UoKVB6uH_Tb3pKJKuRH-m2wXCXHHRcTxi4w2Qv3dlT7meY5fcVUrCqNOeNwZ-viQk86fsxuFY5vqU7twtVZ-MXcT3KRNVeBlq3e_5fLClzpFd3yurm-ZW1J7bEAO3eOL4DJUhyCWG_3m0pZxIPUr9QNdMQq_TlUXhSWZysOmBHSv3Cecfk8qJXYdZLtpT12dhp8SrJoXxK2rWGHcLDShJ7_VIfrajtSncqE_36Gl31nrlJDwQGW3q7cavRMd8k8BFMs_m75g6DtCDp_IM8esiEK23SI6ceaL6IB5Z0WZijs2XHnOLWtC-KpkfzeN7AKd451tNJIMHu_wOSGG4DDtv5AEyQbMrNOzeDyp-8cJ_yAESpqPy2sp263UQw6acIyR9G2B-7Xl2ZERMi1iSwIGC9wZW2jlBGud3rk_98KqYO38hRk1A4q7UQAu_T0xGymEt2Vb13CQmJn5FGh57WHOugotMjzh6AUay2-dR0P9iIFs8pU_jxSr327xBcPlSi4g0HSnxNh5pfP9tndaKIRHuLKY6hgA_FLCKmAEsnNCaFcaF3aZQFJ7WIwCVmedMfFWmdSTRIajCsT83nwSWlWDuq9CaUWU9L_C4-IMoBz3oDCCo88LEYPqgUUHvp52anLpZWhGuqBQ-Nooe7cPDs6iGETtECrMXBWLTkfyK4CUVpeC4T0qffYNVftU0Q7UxlE0a8PM1vI_5eBejYem8PIxLMLiYuQWLu6w1jabQhvcuFnv6NJXQy7Q8RdGnpYEwEK_E3wU0u5jCcgQnxamLBhq426yMg7IwMbg07qofyFLmzpEc9jhSBj39A8Y15-lrlj6CX47O1UzaRob0JfszdzBdkGlKYWZ6sYP8L223F1rmcLRiati2H0G0WA3905E1xIeVmk6stDLP-c8Y-av9aIYzTvDaPW-nLrbcnueypchB2Tj6IAc_Dg4TfZXnfyxj_UYsbvL-B4tIDk51z6oM6XtiV6L9cuAZbb52e06q8hKs2Boa-oWDEO78GRex4NNqry-G7gFpMk5GyhqL-e5OHs3-Mv5UcRKwGRVkcnVs27AzjZkLXbaruvtyhIn93uHhldRRaoj4vSvzdK7zkJrszaNJX7CCQNry03aD202niZgu69hbRRs7YyO30_Ih4s3pOcwPSI2EFJDwPllJYFJzFXrch0bdwDso7wY451wP7hPyZxm0ehlGflqyTCs9nm3Nz3t67i7_mvh444PcmL6ullyrKgO6FxjRVTJ8jYkbzCBq0xfWQOsiaG2WvBeaZAg9LKF-eAlfjv-BKkfThiyOoaTLp5AEpkjGBsBIylokO8dOo_cC7jXmrttcoDSXnkPWnpeq032qt9j3FB127d-PFCvniFAQujOoMPZQoI8XOOjocinzsQs4FeJhekNBoFRzjw0FohBHnfgzyN4M8c8pEj9kaCTFHtlVXToh758bjO_0vZsiY_9_rxBW4Ud_kDQ77pa3R5K-6OlMuVH7c77yQ5O1bQaEuw9RbTiIZKjUcFuLunq4_JJUWkbNz4y4YdbbnbVBPb8TUP_TcY1qfwB9pdEY2y5gGbJ3qGSn6oel7_PYH8xyZ2Q9GxWsA5IWfm1aWZOUMwvoncVQpoN_KWzyEZ4L6SnnOnxtxhk6MDuYet20IIwZk0quCGVVpTZzMUYRqISI70Sj-DRZNLU9JySM97mvI04U043xr3jZCaBDp7UsiZPWXD43ezV-I6JiY7KIbbRageheK_1V6HwiYMrC7Pb66lu7MVOEFtZcFpyAylsm2r3qUXDWuDElIBGFp3oe9qDWn-xb99ZcS2RdS1aqGoEv0Wzk11OXRuUUV2bGIXZ91HowGOzRZuKiW5Ib9P0Bf2nUSqtnKTBRHdM-Dn68ureVLuhsFbgPOe5QxADuAw8AiMXAJ6AoRdM-Rypr_kPimq5Uwgml1SIxoGZvVwgA_xv-6_4dzGHJmVjFggfDVjPuHd9m5ckl55iC0EHhwTLg2473G3llXHjd8gLTzEn37Q8OKheOSi2dahXuDEaOe-CTc5ul-g8GRw8HItlogUsGmDRfF2p3NJwnWK3RdhbnoSTZ9eePcrU8UKvQbN_aapFavCWEViXIezWPTNR9oUj4XR9y9wS3M8AQLFQqMJf4QKaILZurrNptPMH-7gkGZ0pRJUpxC57TexI5o9TydrCJ-FPoF34ZGpZYQWkhBxWU6mOLqn4V_xP7d7zUDbF06rARHVTgVBuoybEHUk6wwMMROIzS8Pe8-D4kaijUkaYMANy-_n_coyEWP3-NCcp1bsxNGZFXaG8jLCTm0BiVNsY6luPcnB0nD5ef-fH7hOlTKmOGAvfUHwKZOTry4jNCfAoN9VVLwyLigjNsj-snWdqx8E_VZtskU92SQQKK1bvNmKSLKty8Asgg1a6ur9HPkXeZDsoZokycj9fCPF9tuJMkQlvgvmrwd-zB3hiMV-MrOFE68JyoQbwa5UGXcF8PEDirm0sTpYAulAfjXo5P-Q3RnLfNqoY2qY_x3D7UiWRJwmNxMTZVDHwYXLjUWHwUMF05uFJldtjDZeWxNOaxGAMbvN1_lIUSnlC6mrssY8d-DcOwuNyyb6A8iOKmV2M_Y4yHzpr-GbkEHVjcyvRwnyeTho_gtCOJqG6ICjGTXHZlaM334to_6nY0zG9qSuNHwfpQ9UGN0HCiLoOLfOrva832miqLMnbQbIyLbJ2CRLvWbip_yNtVHbB-KWxfD92yQISy_zz6sIu47TrORw3iZmoss8vUQ7OqkIV-hq5jgLRcQqvjAYtGakc7xuoLZUfR019OtUw9kfMK00lNeY0bXC5Etwlc-PDfvnL9i6oKu97UeuSqVpzLu3UHmTRLQTKDozZRvcgsw_sqnMfDYcPSook2e5SbGlZnWkxz7rNL-GNT2bWUdYDvsBnyC6w-YdIIJwdVlQRcBD8o_LrnTPaXlxDB9RSyblgaR_3GbNRQ1vsoUoUW1AhIASGbnmzr_oJsdPT-qjv-f6KIyXxi3Blo9SXEjTzuyU1azmKdzpcVFjBsyYU65hY5M6bB-Ur4cXxtXhndMtROAKzj56sfrAFmOgCliTdg4z91F79wQUpK3U5eA6IPmaQhTbj3Emxi0iOeAcZ4ostgd9GT_kolO_jSu08fwJE5-Z5BgTSu6FhrEG8CVatIXX9_a6I4sB_iGylpon7tVCHpkrwY2gkf5j2CXfQTN4QmvU-Utov8dGkZHVOPBxG4LTyOVdoNoUUWXRqZ75GG85ImYVjs1zqEYutBGx8V0wYVhhPRt7stOKMtZuk-kqx7eGcoDqSeg==
+        id: rs_08878b9ae73ae3ca0069db66462b348195921eb1ff6c2922f9
+        summary: []
+        type: reasoning
+      - code: "# Create a CSV file with numbers 1 to 5 and their squares\r\nimport csv\r\nimport pandas as pd\r\n\r\nfilepath
+          = '/mnt/data/numbers_squares.csv'\r\nrows = [(i, i*i) for i in range(1, 6)]\r\n\r\nwith open(filepath, 'w', newline='')
+          as f:\r\n    writer = csv.writer(f)\r\n    writer.writerow(['number', 'square'])\r\n    writer.writerows(rows)\r\n\r\n#
+          Display a preview of the CSV\r\npd.read_csv(filepath)"
+        container_id: cntr_69db6645a3e88190aa856cd9e259c1e7078ceb1b33d2c731
+        id: ci_08878b9ae73ae3ca0069db664b61d08195a136d44214a8ebe1
+        outputs:
+        - logs: |2-
+               number  square
+            0       1       1
+            1       2       4
+            2       3       9
+            3       4      16
+            4       5      25
+          type: logs
+        status: completed
+        type: code_interpreter_call
+      - content:
+        - annotations:
+          - container_id: cntr_69db6645a3e88190aa856cd9e259c1e7078ceb1b33d2c731
+            end_index: 143
+            file_id: cfile_69db6650a6fc8191919d27a79b8e1633
+            filename: numbers_squares.csv
+            start_index: 106
+            type: container_file_citation
+          logprobs: []
+          text: |-
+            I've created the CSV file with numbers 1 to 5 and their squares.
+
+            Download the CSV: [numbers_squares.csv](sandbox:/mnt/data/numbers_squares.csv)
+          type: output_text
+        id: msg_08878b9ae73ae3ca0069db664f24008195a82f76a113996820
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - container:
+          type: auto
+        type: code_interpreter
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 1341
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 652
+        output_tokens_details:
+          reasoning_tokens: 448
+        total_tokens: 1993
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      cookie:
+      - __cf_bm=VXtKIZQJnr5yAdV_daSyd4.h6V.JuB6yt1nWm1Jql5k-1775986244.7038014-1.0.1.1-OpaNHo2ZFS.cK5mrP6.OzuGkGxmOmviXncknjzPPyqGucxjtUbygnx2qIc8O_r7OrjncpMWJXonRhXxtYy21ZTNukAGRyFLfzR_HQywplu4Muc7mNIocMvHvw2.4OUea
+      host:
+      - api.openai.com
+    method: GET
+    uri: https://api.openai.com/v1/containers/cntr_69db6645a3e88190aa856cd9e259c1e7078ceb1b33d2c731/files/cfile_69db6650a6fc8191919d27a79b8e1633
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '254'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-lejylkyjyvnucwqwg6ukehns
+      openai-processing-ms:
+      - '666'
+      openai-project:
+      - proj_StfCERTWb3NYVdXZh90HL3gV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      bytes: null
+      container_id: cntr_69db6645a3e88190aa856cd9e259c1e7078ceb1b33d2c731
+      created_at: 1775986256
+      id: cfile_69db6650a6fc8191919d27a79b8e1633
+      object: container.file
+      path: /mnt/data/numbers_squares.csv
+      source: assistant
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      cookie:
+      - __cf_bm=VXtKIZQJnr5yAdV_daSyd4.h6V.JuB6yt1nWm1Jql5k-1775986244.7038014-1.0.1.1-OpaNHo2ZFS.cK5mrP6.OzuGkGxmOmviXncknjzPPyqGucxjtUbygnx2qIc8O_r7OrjncpMWJXonRhXxtYy21ZTNukAGRyFLfzR_HQywplu4Muc7mNIocMvHvw2.4OUea
+      host:
+      - api.openai.com
+    method: GET
+    uri: https://api.openai.com/v1/containers/cntr_69db6645a3e88190aa856cd9e259c1e7078ceb1b33d2c731/files/cfile_69db6650a6fc8191919d27a79b8e1633/content
+  response:
+    body:
+      string: "number,square\r\n1,1\r\n2,4\r\n3,9\r\n4,16\r\n5,25\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename="file.csv"; filename*=UTF-8''numbers_squares.csv
+      content-length:
+      - '42'
+      openai-organization:
+      - user-lejylkyjyvnucwqwg6ukehns
+      openai-processing-ms:
+      - '682'
+      openai-project:
+      - proj_StfCERTWb3NYVdXZh90HL3gV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    status:
+      code: 200
+      message: OK
+version: 1

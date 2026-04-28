@@ -1,0 +1,236 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '363'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Create a CSV file with the numbers 1 to 5 and their squares
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: true
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-20250514","id":"msg_016jw5hDEqMaCtnGR43MQf3R","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":791,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"}}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants me to create a CSV"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" file with numbers 1 to 5 and their squares. This is a simple task that involves:\n1. Creating data with"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" numbers 1-5 and their corresponding squares\n2. Writing this data to a CSV file\n\nI should use the code_execution tool for this since they want me"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to generate a file as output. The CSV should have two columns -"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" one for the number and one for its square."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EskECmIIDBgCKkCNMfpdkMhcqe6TMnTa0axxVgnmGYVn+ltX++HHrH9gdVTtqwHf97RRHQ68d4TR/uJzAhCX9vbhLsVjeNCNG8BAMhhjbGF1ZGUtc29ubmV0LTQtMjAyNTA1MTQ4ABIMhd71CKHQu6WLEDf0Ggy0/dc09FEEm1uDIvUiMK/RPSvUCviHsHW9toV1IVtVC4pmfTKrWNTFmdr3AlDjRSzYBYfLdOT5UvL2Rj08bCqUA+/Ui1AZEbhgdj4Ii5IyKhajSuTUpfX/dyhwcv1on4Ph3NbEUCkWdW7V2wZNEbvDRUlJlgMEGruAiCkUDvPAF7lvYQ2hddIw/5ZhvTdwXLVXtLG9xsdKRc2qKczDk45BuUoRs7YGMOV5MRLJGQWwGRaJKmcoeVVcaTs8q7wdRotNvrPv+vKOoV8Ak6Ypt7+H77zc7hNE+7xhYPPzcr2LCvEXiRHj82CL0cjhzkTKr9DThiW/l3DBjR4vloawBCC0WZhjRuoHrTvsOAIfvBJY/kmCJaGz1+079mWigk7ZbJrKYZqdG4dkG/kHQxTjbqwvFvDc90TRGeRjHkjENhUTnpVE/TqvmXhw1AgKRAZ9uPt6ffUHPFGuD2DQDMwemB/UhrfxP1xsBRL6iiEzkcg2vCGZ058ZyGutRYsNqhabF4/NeFQ0Troi1DJ0ekxFDxscPYWejpcnrG0can5jlUN1h07pbLyhF0nVOvjR7P0VxtdYXFzV8Ndqb4AUuMOyKjDFQEVFdVU/zu/IPPg9gZNlkzgkQ2uUGAE="}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll create a CSV file with the numbers 1 to 5 and their squares for you."}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01MKtbi9tRAhEC5r93WcQYx5","name":"code_execution","input":{}}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"code\": \"import csv\\nimport os\\n\\n# Create data with numbers 1-5 and their squares\\ndata = []\\nfor i in range("}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"1, 6):\\n    data.append([i, i**2])\\n\\n# Write to CSV file\\noutput_file = os.path.join(os.environ['OUTPUT_DIR'], 'numbers_and"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"_squares.csv')\\n\\nwith open(output_file, 'w', newline='') as csvfile:\\n    writer = csv.writer(csvfile)\\n    \\n    # Write header\\n    writer.writerow(['Number', 'Square'])\\n    "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    # Write data\\n    writer.writerows(data)\\n\\nprint(\\\"CSV file created successfully!\\\")\\nprint(\\\"\\\\nContents of the file:\\\")\\nprint(\\\""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"Number,Square\\\")\\nfor row in data:\\n    print(f\\\"{row[0]},{row[1]}\\\")"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"code_execution_tool_result","tool_use_id":"srvtoolu_01MKtbi9tRAhEC5r93WcQYx5","content":{"type":"code_execution_result","stdout":"CSV file created successfully!\n\nContents of the file:\nNumber,Square\n1,1\n2,4\n3,9\n4,16\n5,25","stderr":"","return_code":0,"content":[{"type":"code_execution_output","file_id":"file_011CZyeGS48WveNXDNAjTNEV"}],"abort_reason":null}}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"Perfect! I've created a CSV file"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" called \"numbers_and_squares.csv\" with the numbers 1 to 5 in the first column and their corresponding squares in the second column. The file includes"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":":\n\n- A header row with \"Number\" and \"Square\"\n- 5 data rows showing:"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"\n  - 1, 1 (1²)\n  - 2, 4 (2²)\n  - 3, 9 (3²)\n  - "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"4, 16 (4²)\n  - 5, 25 (5²)\n\nThe CSV file has been saved and is ready for download."} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_011CZyeFrqrfMkLKLS8nUqH6","expires_at":"2026-04-12T10:30:37.955097Z"}},"usage":{"input_tokens":2006,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":523,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}             }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=1190
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      cookie:
+      - _cfuvid=2pYQVLEp5_9BbcB04fK01ZiX4_dAEw6PLPl4v_7GOdA-1775986229.7650788-1.0.1.1-qXSemDYlVGeWr5ZvT_w1anei6sWrYFyjodrr3I3kLcE
+      host:
+      - api.anthropic.com
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_011CZyeGS48WveNXDNAjTNEV/content?beta=true
+  response:
+    body:
+      string: "Number,Square\r\n1,1\r\n2,4\r\n3,9\r\n4,16\r\n5,25\r\n"
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''numbers_and_squares.csv
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/csv
+      server-timing:
+      - x-originResponse;dur=269
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      cookie:
+      - _cfuvid=3eiEB3h5npBqeIo5jG7i6s.qB0EFVM1sVQFBkW.jRQs-1775986241.1900623-1.0.1.1-jVF9935UOLhbq9g2DU9V.EgL7h9.kEx5z9Cd18ZNY9g
+      host:
+      - api.anthropic.com
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_011CZyeGS48WveNXDNAjTNEV?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '204'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=91
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-04-12T09:30:37.638000Z'
+      downloadable: true
+      filename: numbers_and_squares.csv
+      id: file_011CZyeGS48WveNXDNAjTNEV
+      mime_type: text/csv
+      size_bytes: 42
+      type: file
+    status:
+      code: 200
+      message: OK
+version: 1
+...
