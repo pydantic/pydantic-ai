@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import AnyUrl
 from typing_extensions import Self, assert_never
 
-from pydantic_ai import _mcp_util, messages
+from pydantic_ai import messages
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
@@ -34,6 +34,8 @@ try:
         TextResourceContents,
     )
 
+    # `_mcp_util` itself imports `mcp`, so it has to live inside the dependency guard.
+    from pydantic_ai import _mcp_util
     from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
 except ImportError as _import_error:
@@ -259,11 +261,14 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         else:
             return_value = _map_fastmcp_tool_results(parts=assistant_content)
 
-        # FastMCP's `wrap_result` marker is an internal detail — drop it before exposing meta to the app.
-        sanitized_meta = (
-            {k: v for k, v in call_tool_result.meta.items() if k != 'fastmcp'} if call_tool_result.meta else None
-        )
-        tool_return_metadata = _mcp_util.build_tool_return_metadata(sanitized_meta or None, user_only)
+        # FastMCP populates `meta = {'fastmcp': {'wrap_result': True}}` for tools without an output
+        # schema; that's an implementation detail of the wire format, not user metadata. Strip the
+        # `fastmcp` key, then collapse `{}` to `None` so a sanitization-emptied dict doesn't end up as
+        # `ToolReturn.metadata['meta']`.
+        sanitized_meta: dict[str, Any] | None = None
+        if call_tool_result.meta:
+            sanitized_meta = {k: v for k, v in call_tool_result.meta.items() if k != 'fastmcp'} or None
+        tool_return_metadata = _mcp_util.build_tool_return_metadata(sanitized_meta, user_only)
         if tool_return_metadata is None:
             return return_value
         return messages.ToolReturn(return_value=return_value, metadata=tool_return_metadata)

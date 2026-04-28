@@ -690,14 +690,14 @@ class TestFastMCPToolsetMetadata:
         fastmcp_toolset: FastMCPToolset[None],
         run_context: RunContext[None],
     ):
-        from pydantic_ai import _mcp_util, messages
+        from pydantic_ai import messages
 
         async with fastmcp_toolset:
             tools = await fastmcp_toolset.get_tools(run_context)
             tool = tools['user_only']
             result = await fastmcp_toolset.call_tool('user_only', {'reason': 'shown to user'}, run_context, tool)
         assert isinstance(result, messages.ToolReturn)
-        assert result.return_value == _mcp_util.USER_ONLY_PLACEHOLDER_TEXT
+        assert result.return_value == 'Tool executed successfully without producing model-visible content.'
         assert result.metadata == snapshot(
             {
                 'user_content': [

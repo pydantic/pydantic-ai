@@ -1195,8 +1195,9 @@ class BaseToolReturnPart:
         for item in items:
             if is_multi_modal_content(item):
                 result.append(item)
-            elif isinstance(item, str):
-                result.append(item)
+            elif isinstance(item, str | TextContent):
+                # `TextContent.metadata` is application-only; only the plain text reaches the model.
+                result.append(item if isinstance(item, str) else item.content)
             elif mode == 'str':
                 result.append(tool_return_ta.dump_json(item).decode())
             else:
@@ -1211,8 +1212,9 @@ class BaseToolReturnPart:
         value, _ = self._unwrap_data()
         if value is None:
             return ''
-        if isinstance(value, str):
-            return value
+        if isinstance(value, str | TextContent):
+            # `TextContent.metadata` is application-only; only the plain text reaches the model.
+            return value if isinstance(value, str) else value.content
         return tool_return_ta.dump_json(value).decode()
 
     def model_response_object(self) -> dict[str, Any]:
@@ -1224,6 +1226,9 @@ class BaseToolReturnPart:
         value, _ = self._unwrap_data()
         if value is None:
             return {}
+        # `TextContent.metadata` is application-only; only the plain text reaches the model.
+        if isinstance(value, TextContent):
+            value = value.content
         json_content = tool_return_ta.dump_python(value, mode='json')
         if _utils.is_str_dict(json_content):
             return json_content

@@ -1423,11 +1423,13 @@ def _attach_meta(
     item: str | messages.TextContent | messages.BinaryContent,
     extra_meta: dict[str, Any],
 ) -> messages.TextContent | messages.BinaryContent:
-    """Merge `extra_meta` into the metadata of a single content item, lifting bare strings to `TextContent`."""
+    """Merge `extra_meta` into the metadata of a single content item, lifting bare strings to `TextContent`.
+
+    Returns a new instance — the caller's content (which may be cached or shared) is never mutated.
+    """
     if isinstance(item, str):
         return messages.TextContent(content=item, metadata=dict(extra_meta))
-    item.metadata = _mcp_util.merge_meta(item.metadata, extra_meta)
-    return item
+    return replace(item, metadata=_mcp_util.merge_meta(item.metadata, extra_meta))
 
 
 CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]

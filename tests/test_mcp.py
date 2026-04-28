@@ -24,7 +24,6 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
-    _mcp_util,
     messages,
 )
 from pydantic_ai.agent import Agent
@@ -147,7 +146,7 @@ async def test_tool_audience_user_only_all_yields_placeholder():
     async with server:
         result = await server.direct_call_tool('get_user_only_audience', {'reason': 'displayed inline'})
         assert isinstance(result, messages.ToolReturn)
-        assert result.return_value == _mcp_util.USER_ONLY_PLACEHOLDER_TEXT
+        assert result.return_value == 'Tool executed successfully without producing model-visible content.'
         assert result.metadata == snapshot(
             {
                 'user_content': [
