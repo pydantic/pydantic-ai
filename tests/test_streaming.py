@@ -3068,6 +3068,37 @@ async def test_output_tool_validation_failure_events():
     )
 
 
+async def test_output_function_model_retry_in_stream():
+    """`ModelRetry` from a `ToolOutput` function during `run_stream()` must surface as
+    `UnexpectedModelBehavior` (caused by `ModelRetry`), not propagate as `ToolRetryError`.
+
+    Regression test for an earlier version of `ToolManager.execute_output_tool_call` that
+    unconditionally wrapped `ModelRetry` from the output function as `ToolRetryError`,
+    which `result.validate_response_output` doesn't catch in the streaming path.
+    """
+
+    async def stream_final_result(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name='final_result', json_args='{"value": "anything"}')}
+
+    def reject(value: str) -> str:
+        raise ModelRetry('please try again')
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_final_result),
+        output_type=ToolOutput(reject, name='final_result'),
+        output_retries=0,
+    )
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+    # The cause must be ModelRetry, not ToolRetryError — `validate_response_output`
+    # only catches `(ValidationError, ModelRetry)` in the streaming path.
+    assert isinstance(exc_info.value.__cause__, ModelRetry)
+
+
 async def test_stream_structured_output():
     class CityLocation(BaseModel):
         city: str

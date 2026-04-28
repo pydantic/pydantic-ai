@@ -617,9 +617,12 @@ class ToolManager(Generic[AgentDepsT]):
                 result = await processor.hook_execute(
                     output, None, run_context=validated.ctx, wrap_validation_errors=False
                 )
-            except ModelRetry as e:
-                # Wrap as ToolRetryError; retry tracking is done by the outer handler
-                raise self._wrap_error_as_retry(name, validated.call, e) from e
+            except ModelRetry:
+                # When wrap_validation_errors=True, run_output_process_hooks below wraps
+                # ModelRetry as ToolRetryError (caught by the outer handler for retry tracking).
+                # When False (streaming, see result.py:validate_response_output), ModelRetry
+                # must propagate unwrapped so the streaming handler can catch it.
+                raise
             # Output validators run inside do_process so wrap_output_process wraps the
             # complete pipeline. Validators use wrap_validation_errors=False — the outer
             # run_output_process_hooks handles wrapping ModelRetry as ToolRetryError.
