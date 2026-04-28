@@ -51,6 +51,7 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -81,7 +82,6 @@ from ..toolsets._dynamic import (
 )
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
-from ..toolsets.prepared import PreparedToolset
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -203,8 +203,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
-    _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
@@ -406,6 +404,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
+        if prepare_tools is not None:
+            capabilities.append(PrepareTools(prepare_tools))
+        if prepare_output_tools is not None:
+            capabilities.append(PrepareOutputTools(prepare_output_tools))
 
         _inject_auto_capabilities(capabilities)
 
@@ -445,9 +447,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
 
         self._cap_model_settings = self._root_capability.get_model_settings()
-
-        self._prepare_tools = prepare_tools
-        self._prepare_output_tools = prepare_output_tools
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset and self._output_toolset.max_retries is None:
@@ -2431,9 +2430,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset: AbstractToolset[AgentDepsT] = CombinedToolset(toolsets)
 
-        if self._prepare_tools:
-            toolset = PreparedToolset(toolset, self._prepare_tools)
-
         # Capability wrapper toolsets (including ToolSearch and CodeMode) are
         # applied here via get_wrapper_toolset. ToolSearch is auto-injected
         # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
@@ -2442,8 +2438,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset

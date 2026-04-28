@@ -29,7 +29,7 @@ from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
-from .prepare_tools import PrepareTools
+from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import (
     HistoryProcessor,  # pyright: ignore[reportDeprecated]
@@ -93,6 +93,7 @@ __all__ = [
     'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',
+    'PrepareOutputTools',
     'PrepareTools',
     'ProcessEventStream',
     'ProcessHistory',

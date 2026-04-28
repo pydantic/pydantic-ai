@@ -5091,6 +5091,104 @@ class TestPrepareToolsCapability:
 
         assert PrepareTools.get_serialization_name() is None
 
+    async def test_prepare_tools_rejects_added_tools(self):
+        """`prepare_func` may filter or modify tools but cannot add or rename."""
+        from dataclasses import replace as dc_replace
+
+        from pydantic_ai.capabilities import PrepareTools
+        from pydantic_ai.exceptions import UserError
+
+        async def rename(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [dc_replace(td, name='renamed') for td in tool_defs]
+
+        agent = Agent('test', capabilities=[PrepareTools(rename)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot add or rename'):
+            await agent.run('hello')
+
+
+class TestPrepareOutputToolsCapability:
+    async def test_filters_output_tools(self):
+        """`PrepareOutputTools` capability filters output tools using a callable."""
+        from pydantic_ai.capabilities import PrepareOutputTools
+
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return None
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response(f'output_tools: {len(info.output_tools)}')
+
+        agent = Agent(FunctionModel(model_fn), output_type=str, capabilities=[PrepareOutputTools(disable_all)])
+
+        result = await agent.run('hello')
+        assert result.output == 'output_tools: 0'
+
+    async def test_only_sees_output_tools(self):
+        """`PrepareOutputTools` only receives output tools — function tools route to `PrepareTools`."""
+        from pydantic_ai.capabilities import PrepareOutputTools
+
+        seen_kinds: list[str] = []
+
+        async def capture(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            seen_kinds.extend(td.kind for td in tool_defs)
+            return tool_defs
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 1}', tool_call_id='c1')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[PrepareOutputTools(capture)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        await agent.run('hello')
+        assert seen_kinds == ['output']
+
+    def test_not_serializable(self):
+        """`PrepareOutputTools` opts out of spec serialization."""
+        from pydantic_ai.capabilities import PrepareOutputTools
+
+        assert PrepareOutputTools.get_serialization_name() is None
+
+
+class TestAgentPrepareArgInjection:
+    """The Agent `prepare_tools` / `prepare_output_tools` constructor args are
+    sugar for `PrepareTools` / `PrepareOutputTools` capabilities — verify they
+    show up in `root_capability` and apply the same way."""
+
+    def test_prepare_tools_arg_injects_capability(self):
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def noop(
+            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition]:  # pragma: no cover
+            return tool_defs
+
+        agent = Agent('test', prepare_tools=noop)
+        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareTools)]
+        assert len(injected) == 1
+        assert injected[0].prepare_func is noop
+
+    def test_prepare_output_tools_arg_injects_capability(self):
+        from pydantic_ai.capabilities import PrepareOutputTools
+
+        async def noop(
+            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition]:  # pragma: no cover
+            return tool_defs
+
+        agent = Agent('test', output_type=str, prepare_output_tools=noop)
+        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareOutputTools)]
+        assert len(injected) == 1
+        assert injected[0].prepare_func is noop
+
 
 class TestOverrideWithSpec:
     async def test_override_with_spec_instructions_and_model(self):
