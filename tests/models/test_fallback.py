@@ -231,6 +231,35 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                             'final_result': {'type': 'object'},
                         },
                     },
+                    'logfire.metrics': {
+                        'gen_ai.client.token.usage': {
+                            'details': [
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'function',
+                                        'gen_ai.request.model': 'function:success_response:',
+                                        'gen_ai.response.model': 'function:success_response:',
+                                        'gen_ai.system': 'function',
+                                        'gen_ai.token.type': 'input',
+                                    },
+                                    'total': 51,
+                                },
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'function',
+                                        'gen_ai.request.model': 'function:success_response:',
+                                        'gen_ai.response.model': 'function:success_response:',
+                                        'gen_ai.system': 'function',
+                                        'gen_ai.token.type': 'output',
+                                    },
+                                    'total': 1,
+                                },
+                            ],
+                            'total': 52,
+                        }
+                    },
                 },
             },
         ]
@@ -346,6 +375,35 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'final_result': {'type': 'object'},
                         },
+                    },
+                    'logfire.metrics': {
+                        'gen_ai.client.token.usage': {
+                            'details': [
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'function',
+                                        'gen_ai.request.model': 'function::success_response_stream',
+                                        'gen_ai.response.model': 'function::success_response_stream',
+                                        'gen_ai.system': 'function',
+                                        'gen_ai.token.type': 'input',
+                                    },
+                                    'total': 50,
+                                },
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'function',
+                                        'gen_ai.request.model': 'function::success_response_stream',
+                                        'gen_ai.response.model': 'function::success_response_stream',
+                                        'gen_ai.system': 'function',
+                                        'gen_ai.token.type': 'output',
+                                    },
+                                    'total': 2,
+                                },
+                            ],
+                            'total': 52,
+                        }
                     },
                 },
             },
@@ -1010,6 +1068,35 @@ Don't include any text or Markdown fencing before or after.
                             'gen_ai.system_instructions': {'type': 'array'},
                             'final_result': {'type': 'object'},
                         },
+                    },
+                    'logfire.metrics': {
+                        'gen_ai.client.token.usage': {
+                            'details': [
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'function',
+                                        'gen_ai.request.model': 'function:prompted_output_func:',
+                                        'gen_ai.response.model': 'function:prompted_output_func:',
+                                        'gen_ai.system': 'function',
+                                        'gen_ai.token.type': 'input',
+                                    },
+                                    'total': 51,
+                                },
+                                {
+                                    'attributes': {
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.provider.name': 'function',
+                                        'gen_ai.request.model': 'function:prompted_output_func:',
+                                        'gen_ai.response.model': 'function:prompted_output_func:',
+                                        'gen_ai.system': 'function',
+                                        'gen_ai.token.type': 'output',
+                                    },
+                                    'total': 4,
+                                },
+                            ],
+                            'total': 55,
+                        }
                     },
                 },
             },

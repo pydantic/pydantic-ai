@@ -2070,6 +2070,18 @@ async def test_logfire_plugin(client: Client):
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
 
+    # Multi-project tokens (logfire>=4.24) are a list; the plugin should still export
+    # metrics to the first project's endpoint.
+    def setup_logfire_multi_token() -> Logfire:
+        instance = logfire.configure(local=True)
+        instance.config.token = ['test-a', 'test-b']
+        instance.config.send_to_logfire = True
+        return instance
+
+    plugin = LogfirePlugin(setup_logfire_multi_token)
+    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert new_client.service_client.config.runtime is not None
+
 
 hitl_agent = Agent(
     model,
