@@ -1542,6 +1542,57 @@ def test_anthropic_tool_search_result_error_block_mapping():
     assert part.metadata is None
 
 
+def test_anthropic_build_tool_search_replay_block_error_branch():
+    """Replay reconstruction must round-trip an error result that the parse-time
+    mapper stashed on ``provider_details`` back into the ``tool_search_tool_result_error``
+    inner block — otherwise a transient provider error on turn N would silently
+    flip into a fake successful empty-search on turn N+1's resend."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import BuiltinToolReturnPart
+    from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
+
+    return_part = BuiltinToolReturnPart(
+        provider_name='anthropic',
+        tool_name='tool_search',
+        tool_call_id='srv_err',
+        content={'tools': []},
+        provider_details={'error_code': 'unavailable', 'error_message': 'temporary outage'},
+    )
+    block = _build_tool_search_replay_block(return_part, 'srv_err')
+    assert block == {
+        'tool_use_id': 'srv_err',
+        'type': 'tool_search_tool_result',
+        'content': {
+            'type': 'tool_search_tool_result_error',
+            'error_code': 'unavailable',
+            'error_message': 'temporary outage',
+        },
+    }
+
+
+def test_anthropic_build_tool_search_replay_block_missing_error_message():
+    """`error_message` is optional on the wire; reconstruction must default to
+    an empty string rather than dropping the field (Anthropic rejects partial error
+    blocks)."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import BuiltinToolReturnPart
+    from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
+
+    return_part = BuiltinToolReturnPart(
+        provider_name='anthropic',
+        tool_name='tool_search',
+        tool_call_id='srv_err',
+        content={'tools': []},
+        provider_details={'error_code': 'unavailable'},
+    )
+    block = _build_tool_search_replay_block(return_part, 'srv_err')
+    assert block['content'] == {
+        'type': 'tool_search_tool_result_error',
+        'error_code': 'unavailable',
+        'error_message': '',
+    }
+
+
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
 )

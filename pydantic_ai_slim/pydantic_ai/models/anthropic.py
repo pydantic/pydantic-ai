@@ -1956,19 +1956,17 @@ def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_acti
     return [match['name'] for match in parsed['tools']]
 
 
-def _build_tool_search_replay_block(response_part: BuiltinToolReturnPart, tool_use_id: str) -> Any:  # pragma: lax no cover  # fmt: skip
+def _build_tool_search_replay_block(response_part: BuiltinToolReturnPart, tool_use_id: str) -> Any:
     """Reconstruct an Anthropic tool-search result block for history replay.
 
     Reads the cross-provider :class:`ToolSearchReturn` off ``content`` and any error
     fields the parse-time mapper stashed on ``provider_details``. Returned as a plain
     dict cast to ``Any`` because ``BetaToolSearchToolResultBlockParam`` isn't in the
-    ``BetaContentBlockParam`` union yet. ``pragma: lax no cover`` because CI's
-    coverage tracer keeps eliding statements from this body across matrices.
+    ``BetaContentBlockParam`` union yet.
     """
     err = response_part.provider_details or {}
-    inner: dict[str, Any]
     if err.get('error_code') is not None:
-        inner = {
+        inner: dict[str, Any] = {
             'type': 'tool_search_tool_result_error',
             'error_code': err['error_code'],
             'error_message': err.get('error_message', ''),
@@ -1987,7 +1985,7 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
 }
 
 
-def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:  # pragma: lax no cover  # fmt: skip
+def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
         return BuiltinToolCallPart(
