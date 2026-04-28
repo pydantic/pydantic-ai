@@ -89,11 +89,11 @@ try:
     from mistralai.client.types import UNSET, OptionalNullable as MistralOptionalNullable
     from mistralai.client.types.basemodel import Unset as MistralUnset
     from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: lax no cover
+except ImportError as _import_error:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
-    ) from e
+    ) from _import_error
 
 
 @contextmanager
