@@ -866,6 +866,7 @@ class OpenRouterModel(OpenAIChatModel):
         has_tool_cache_point = bool(
             model_settings
             and model_settings.get('openrouter_cache_tool_definitions')
+            and model_request_parameters.tool_defs
             and self._cache_profile.openrouter_supports_tool_cache
         )
         self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)

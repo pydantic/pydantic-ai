@@ -1482,6 +1482,46 @@ async def test_openrouter_limit_cache_points_anthropic() -> None:
     assert any('cache_control' in cast(dict[str, Any], p) for p in new_content)
 
 
+async def test_openrouter_limit_cache_points_no_tool_budget_without_tools() -> None:
+    """openrouter_cache_tool_definitions should only reserve a slot when tools exist."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(
+        openrouter_cache_instructions=True,
+        openrouter_cache_tool_definitions=True,
+    )
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(content=['Old context', CachePoint(), 'Old question']),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Middle context', CachePoint(), 'Middle question']),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Recent context', CachePoint(), 'Recent question']),
+            ]
+        ),
+    ]
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), model_settings=settings
+    )
+
+    user_messages = [m for m in mapped if m.get('role') == 'user']
+    assert len(user_messages) == 3
+
+    for msg in user_messages:
+        content = msg.get('content')
+        assert isinstance(content, list)
+        assert any('cache_control' in cast(dict[str, Any], p) for p in content)
+
+
 async def test_openrouter_limit_cache_points_exceeds_budget() -> None:
     """When system + tool cache points alone exceed the limit, a UserError is raised."""
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
