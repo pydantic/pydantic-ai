@@ -295,25 +295,26 @@ def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> 
     return None
 
 
-_GLA_SERVICE_TIERS: tuple[str, ...] = ('standard', 'flex', 'priority')
+_GlaServiceTier = Literal['standard', 'flex', 'priority']
+_GLA_VALUE_MAP: dict[str, _GlaServiceTier] = {
+    'standard': 'standard',
+    'default': 'standard',
+    'flex': 'flex',
+    'priority': 'priority',
+}
 
 
-def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> str | None:
+def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServiceTier | None:
     """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
 
-    Checks the deprecated `google_service_tier` first (for back-compat, with warning),
-    then the top-level `service_tier`. Maps `'default'` → `'standard'`; drops any value
-    that isn't valid for GLA (including `'auto'`, which signals "let the server decide").
+    The deprecated `google_service_tier` wins (with warning); otherwise the top-level
+    `service_tier` is mapped to the GLA value space (`'default'` → `'standard'`,
+    `'flex'`/`'priority'` pass through, `'auto'` and Vertex-only values are dropped).
     """
-    raw = _get_deprecated_google_service_tier(model_settings) or model_settings.get('service_tier')
-    if raw is None:
-        return None
-    lowered = raw.lower()
-    if lowered == 'default':
-        return 'standard'
-    if lowered in _GLA_SERVICE_TIERS:
-        return lowered
-    # 'auto' (omit) and Vertex-only values fall through here.
+    if deprecated := _get_deprecated_google_service_tier(model_settings):
+        return _GLA_VALUE_MAP.get(deprecated.lower())
+    if unified := model_settings.get('service_tier'):
+        return _GLA_VALUE_MAP.get(unified)
     return None
 
 
@@ -749,11 +750,11 @@ class GoogleModel(Model[Client]):
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
-        service_tier_str: str | None = None
+        gla_service_tier: _GlaServiceTier | None = None
         if self.system == 'google-vertex':
             headers.update(_google_vertex_service_tier_headers(_resolve_vertex_service_tier(model_settings)))
         else:
-            service_tier_str = _resolve_gla_service_tier(model_settings)
+            gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
@@ -785,8 +786,8 @@ class GoogleModel(Model[Client]):
             image_config=image_config,
         )
 
-        if service_tier_str is not None:
-            config['service_tier'] = cast(_GoogleSDKServiceTier, service_tier_str)
+        if gla_service_tier is not None:
+            config['service_tier'] = cast(_GoogleSDKServiceTier, gla_service_tier)
 
         # Validate logprobs settings
         logprobs_requested = model_settings.get('google_logprobs')
