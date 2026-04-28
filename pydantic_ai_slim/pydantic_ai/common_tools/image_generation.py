@@ -31,7 +31,10 @@ __all__ = (
 # Known image-only model names that don't support the conversational Agent loop
 # required by the subagent fallback, mapped to suggested LLM alternatives.
 _IMAGE_ONLY_MODELS: dict[str, str] = {
+    'gpt-image-2': 'openai-responses:gpt-5.5',
+    'gpt-image-1.5': 'openai-responses:gpt-5.5',
     'gpt-image-1': 'openai-responses:gpt-5.4',
+    'gpt-image-1-mini': 'openai-responses:gpt-5.4',
     'dall-e-3': 'openai-responses:gpt-5.4',
     'dall-e-2': 'openai-responses:gpt-5.4',
     'imagen-3.0-generate-002': 'google-gla:gemini-3-pro-image-preview',
