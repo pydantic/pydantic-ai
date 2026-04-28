@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 if TYPE_CHECKING:
@@ -48,11 +48,18 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        deferred = [cap for cap in self.deferred_capabilities if not cap._loaded]  # type: ignore[reportPrivateUsage]
-        if not deferred:
+        for cap in self.deferred_capabilities:
+            if cap._loaded:  # type: ignore[reportPrivateUsage]
+                toolset = cap.wrapped.get_toolset()
+                if isinstance(toolset, AbstractToolset):
+                    toolset = cast(AbstractToolset[AgentDepsT], toolset)
+                    all_tools.update(await toolset.get_tools(ctx))
+
+        unloaded = [cap for cap in self.deferred_capabilities if not cap._loaded]  # type: ignore[reportPrivateUsage]
+        if not unloaded:
             return all_tools
 
-        catalog = '\n'.join(f'- {cap.wrapped.id}: {cap.wrapped.description}' for cap in deferred)
+        catalog = '\n'.join(f'- {cap.wrapped.id}: {cap.wrapped.description}' for cap in unloaded)
 
         load_tool_def = ToolDefinition(
             name=_LOAD_CAPABILITY_NAME,
@@ -85,9 +92,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         for cap in self.deferred_capabilities:
             if cap.wrapped.id == capability_id:
                 cap.load()
-                instructions = (
-                    cap.wrapped.get_instructions()
-                )  # Loading a capability should provide instructions on how to use this capability
+                instructions = cap.wrapped.get_instructions()
                 if instructions is None:
                     return f'Capability {capability_id!r} loaded (no additional instructions).'
                 if isinstance(instructions, str):
