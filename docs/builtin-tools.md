@@ -383,8 +383,10 @@ agent = Agent(
     'openai-responses:gpt-5.2',
     builtin_tools=[
         ImageGenerationTool(
+            action='generate',
             background='transparent',
             input_fidelity='high',
+            model='gpt-image-2',
             moderation='low',
             output_compression=100,
             output_format='png',
@@ -405,6 +407,11 @@ _(This example is complete, it can be run "as is")_
 OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
 Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
 results in an error, and if you also set `size` it must match the computed value.
+
+The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
+image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
+`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
 
