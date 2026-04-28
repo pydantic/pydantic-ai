@@ -27,6 +27,7 @@ from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
+    BaseToolCallPart,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -34,7 +35,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     SystemPromptPart,
-    ToolCallPart,
     UserContent,
     UserPromptPart,
 )
@@ -267,13 +267,15 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           Non-HTTP schemes like `s3://` or `gs://` cause the model provider to fetch
           the object using the server-side IAM role, so they should only be accepted
           from trusted frontends.
-        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history
-          that don't have a matching entry in `deferred_tool_results`. Tool calls are
-          produced by the model on the server side, so an unresolved tool call at the
-          end of client-supplied history doesn't correspond to a paused agent run and
-          shouldn't be executed. Tool calls that correspond to a resolution in
-          `deferred_tool_results` are preserved so that human-in-the-loop resumption
-          continues to work.
+        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
+          [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] entries at
+          the end of the history that don't have a matching entry in
+          `deferred_tool_results`. Tool calls are produced by the model on the server
+          side, so an unresolved tool call at the end of client-supplied history doesn't
+          correspond to a paused agent run and shouldn't be executed. Tool calls that
+          correspond to a resolution in `deferred_tool_results` are preserved so that
+          human-in-the-loop resumption continues to work. If stripping leaves the final
+          response with no parts, the response is dropped from history entirely.
         """
         resolved_tool_call_ids: set[str] = set()
         if deferred_tool_results is not None:
@@ -305,11 +307,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             elif isinstance(message, ModelResponse) and index == last_index:
                 new_response_parts: list[ModelResponsePart] = []
                 for part in message.parts:
-                    if isinstance(part, ToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+                    if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
                         dangling_tool_call_names.append(part.tool_name)
                         continue
                     new_response_parts.append(part)
-                sanitized.append(replace(message, parts=new_response_parts))
+                if new_response_parts:
+                    sanitized.append(replace(message, parts=new_response_parts))
+                # Otherwise drop the final response entirely so we don't leave an empty
+                # `ModelResponse(parts=[])` in history.
             else:
                 sanitized.append(message)
 

@@ -1064,6 +1064,50 @@ def test_sanitize_messages_keeps_tool_calls_resolved_by_deferred_results():
     assert [type(p).__name__ for p in response.parts] == ['ToolCallPart']
 
 
+def test_sanitize_messages_drops_response_left_empty_after_stripping():
+    """If the last `ModelResponse` consists entirely of dangling tool calls, the whole
+    response is dropped from history rather than being left as an empty placeholder.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 'prod'}, tool_call_id='call-1')]),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*refresh_cache'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert len(sanitized) == 1
+    assert isinstance(sanitized[0], ModelRequest)
+
+
+def test_sanitize_messages_strips_dangling_builtin_tool_calls():
+    """Builtin tool calls are also model-emitted, so a dangling `BuiltinToolCallPart` at
+    the end of client-supplied history is treated the same as a `ToolCallPart`.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Run it')]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Looking it up'),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution', args={'code': 'print(1)'}, tool_call_id='builtin-1'
+                    ),
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*code_execution'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    assert [type(p).__name__ for p in response.parts] == ['TextPart']
+
+
 def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
     """Only the *last* message is checked for dangling tool calls; completed tool exchanges earlier
     in the history are legitimate context and must be preserved verbatim.
@@ -1086,12 +1130,16 @@ def test_sanitize_messages_keeps_tool_calls_in_middle_of_history():
 
 
 async def test_run_stream_strips_dangling_tool_calls_from_client_history():
-    """End-to-end: a client-submitted history ending in an unresolved tool call does not trigger
-    tool execution; the dangling tool call is stripped before the agent sees the history.
+    """End-to-end: a client-submitted history ending in an unresolved tool call does not
+    drive tool execution from that call's arguments. The dangling tool call is stripped
+    before the agent sees the history.
     """
     executed: list[dict[str, Any]] = []
 
-    agent: Agent[None, str] = Agent(model=TestModel())
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
 
     @agent.tool_plain
     def refresh_cache(key: int) -> str:

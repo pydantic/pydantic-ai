@@ -4487,13 +4487,16 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
 
 
 async def test_client_submitted_dangling_tool_calls_not_executed() -> None:
-    """A client-submitted history ending with an unresolved tool call does not trigger
-    tool execution; the dangling tool call is stripped with a warning before the agent
-    runs.
+    """A client-submitted history ending with an unresolved tool call does not drive
+    tool execution from that call's arguments. The dangling tool call is stripped with
+    a warning before the agent runs.
     """
     executed: list[dict[str, Any]] = []
 
-    agent = Agent(model=TestModel())
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     @agent.tool_plain
     def refresh_cache(key: str) -> str:
