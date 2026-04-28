@@ -51,7 +51,6 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     _response_id: str = ''
     _text_item_id: str = ''
     _output_index: int = 0
-    _content_part_added: bool = False
     _message_item_added: bool = False
     _sequence_number: int = 0
     _error: bool = False
@@ -167,9 +166,6 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
                 output_index=self._output_index,
                 sequence_number=self._next_seq(),
             )
-            self._message_item_added = True
-
-        if not self._content_part_added:
             yield ResponseContentPartAddedEvent(
                 type='response.content_part.added',
                 item_id=self._text_item_id,
@@ -178,7 +174,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
                 part=ResponseOutputText(type='output_text', text='', annotations=[]),
                 sequence_number=self._next_seq(),
             )
-            self._content_part_added = True
+            self._message_item_added = True
 
         if part.content:
             self._accumulated_text.append(part.content)
@@ -217,26 +213,23 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
             return
 
         full_text = ''.join(self._accumulated_text)
-        if self._content_part_added:
-            yield ResponseTextDoneEvent(
-                type='response.output_text.done',
-                item_id=self._text_item_id,
-                output_index=self._output_index,
-                content_index=0,
-                text=full_text,
-                logprobs=[],
-                sequence_number=self._next_seq(),
-            )
-            yield ResponseContentPartDoneEvent(
-                type='response.content_part.done',
-                item_id=self._text_item_id,
-                output_index=self._output_index,
-                content_index=0,
-                part=ResponseOutputText(type='output_text', text=full_text, annotations=[]),
-                sequence_number=self._next_seq(),
-            )
-            self._content_part_added = False
-
+        yield ResponseTextDoneEvent(
+            type='response.output_text.done',
+            item_id=self._text_item_id,
+            output_index=self._output_index,
+            content_index=0,
+            text=full_text,
+            logprobs=[],
+            sequence_number=self._next_seq(),
+        )
+        yield ResponseContentPartDoneEvent(
+            type='response.content_part.done',
+            item_id=self._text_item_id,
+            output_index=self._output_index,
+            content_index=0,
+            part=ResponseOutputText(type='output_text', text=full_text, annotations=[]),
+            sequence_number=self._next_seq(),
+        )
         yield ResponseOutputItemDoneEvent(
             type='response.output_item.done',
             item=ResponseOutputMessage(
