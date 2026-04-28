@@ -505,7 +505,7 @@ Instructions can also use [template strings](agent-spec.md#template-strings) (`T
 
 [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] returns [model settings](agent.md#model-run-settings) as a dict or a callable for per-step settings.
 
-When model settings need to vary per step — for example, enabling thinking only on retry — return a callable:
+When model settings need to vary per step — for example, enabling thinking only on retry, or forcing a specific [`tool_choice`](tools-advanced.md#dynamic-tool-choice-via-capabilities) until a tool has been called — return a callable:
 
 ```python {title="dynamic_settings.py"}
 from dataclasses import dataclass

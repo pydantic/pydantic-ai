@@ -1138,6 +1138,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         run_model_settings = model_settings if model_settings_override is None else None
 
+        # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
+        # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
+        # and are trusted to adapt across steps; static dict values would lock every step into a
+        # tool call and prevent the agent from producing a final response.
+        baseline_settings: ModelSettings | None = model_used.settings
+        if not callable(agent_model_settings):
+            baseline_settings = merge_model_settings(baseline_settings, agent_model_settings)
+        if not callable(run_model_settings):
+            baseline_settings = merge_model_settings(baseline_settings, run_model_settings)
+        if baseline_settings:
+            tool_choice = baseline_settings.get('tool_choice')
+            if tool_choice == 'required' or isinstance(tool_choice, list):
+                raise exceptions.UserError(
+                    f'`tool_choice={tool_choice!r}` prevents the agent from producing a final response '
+                    f'because output tools are excluded. Use `ToolOrOutput` to combine specific function '
+                    f"tools with output capability, return a callable from a capability's "
+                    f'`get_model_settings()` to vary `tool_choice` per step, or use '
+                    f'`pydantic_ai.direct.model_request` for single-shot model calls.'
+                )
+
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):

@@ -1,0 +1,104 @@
+interactions:
+- request:
+    body:
+      messages:
+      - content: Get weather for Paris and summarize
+        role: user
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    headers:
+      content-type:
+      - application/json
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"47d-HyNYO0J+/j5wNkpwOkuvPWFmLlw"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris"}'
+              name: get_weather
+            id: call_c67bb6b901354ca19bd1b70d
+            index: 0
+            type: function
+          - function:
+              arguments: '{"city": "Paris", "summary": "Weather in Paris"}'
+              name: final_result
+            id: call_1113747bb7de47ce8bffe3e9
+            index: 1
+            type: function
+        seed: null
+      created: 1769718283
+      id: oVGwnHs-3pDw3Z-9c5b745fa8d8d690
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 65
+        prompt_tokens: 720
+        total_tokens: 785
+    status:
+      code: 200
+      message: OK
+version: 1

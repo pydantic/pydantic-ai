@@ -419,6 +419,21 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
     vcr.before_record_request = scrub_aws_account_id
 
+    # Normalize Bedrock hostnames to ignore region differences
+    # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
+    bedrock_host_pattern = re.compile(r'bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com')
+
+    def host_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        host1 = r1.host  # pyright: ignore[reportUnknownVariableType]
+        host2 = r2.host  # pyright: ignore[reportUnknownVariableType]
+        # Normalize Bedrock hosts by removing region
+        host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
+        host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
+        if host1_normalized != host2_normalized:
+            raise AssertionError(f'{host1} != {host2}')
+
+    vcr.register_matcher('host', host_matcher)
+
 
 def pytest_addoption(parser: Any) -> None:
     parser.addoption(
@@ -508,6 +523,29 @@ async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClie
     for client in track_httpx_clients.values():
         if not client.is_closed:
             await client.aclose()
+
+
+try:
+    from huggingface_hub.inference._providers._common import (
+        _fetch_inference_provider_mapping as _hf_provider_mapping_func,  # pyright: ignore[reportPrivateUsage]
+    )
+except (ImportError, AttributeError):
+    _hf_provider_mapping_func = None
+
+
+@pytest.fixture(autouse=True)
+def clear_huggingface_provider_cache():
+    """Clear HuggingFace SDK's LRU cache after each test.
+
+    The huggingface_hub library caches _fetch_inference_provider_mapping() with
+    @lru_cache(maxsize=None), causing issues with VCR cassettes. The first test
+    records the GET request, but subsequent tests skip it because the result is
+    cached. This fixture ensures a fresh cache state for subsequent tests.
+    """
+    yield
+
+    if _hf_provider_mapping_func is not None:
+        _hf_provider_mapping_func.cache_clear()
 
 
 @pytest.fixture(autouse=True, scope='session')
@@ -654,6 +692,7 @@ def _patch_hf_provider_mappings():
 
     models: list[tuple[str, str, str]] = [
         ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
     ]
