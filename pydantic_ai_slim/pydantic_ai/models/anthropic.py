@@ -239,10 +239,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_messages: bool | Literal['5m', '1h']
-    """Deprecated: use `anthropic_cache` instead.
+    """Whether to add `cache_control` to the last message content block.
 
-    Behaves the same as `anthropic_cache`: uses automatic caching where supported,
-    falls back to per-block caching on Bedrock and Vertex. Emits a deprecation warning.
+    When enabled, this adds per-block `cache_control` to the last content block in the
+    final message. This is useful for Anthropic-compatible providers and gateways that
+    support explicit per-block caching but don't support Anthropic's top-level automatic
+    caching parameter.
+
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     Cannot be combined with `anthropic_cache`.
     """
 
@@ -1155,6 +1159,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
+        # Add cache_control to the last message content if anthropic_cache_messages is enabled.
+        if anthropic_messages and (cache_messages := model_settings.get('anthropic_cache_messages')):
+            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            message = anthropic_messages[-1]
+            content = message['content']
+            if isinstance(content, str):  # pragma: no cover
+                message['content'] = [
+                    BetaTextBlockParam(
+                        text=content,
+                        type='text',
+                        cache_control=self._build_cache_control(ttl),
+                    )
+                ]
+            else:
+                content_blocks = cast(list[BetaContentBlockParam], content)
+                if content_blocks and 'cache_control' not in cast(dict[str, Any], content_blocks[-1]):
+                    self._add_cache_control_to_last_param(content_blocks, ttl)
+
         # Build system prompt blocks: each instruction part becomes a separate text block.
         # When anthropic_cache_instructions is enabled, the cache point goes after the last
         # static instruction (or at the end if all instructions are static).
@@ -1302,14 +1324,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if auto_cache and cache_messages:
             raise UserError('`anthropic_cache` and `anthropic_cache_messages` cannot both be enabled.')
-
-        if cache_messages:
-            warnings.warn(
-                '`anthropic_cache_messages` is deprecated, use `anthropic_cache` instead',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            auto_cache = cache_messages
 
         if not auto_cache:
             return None, None
