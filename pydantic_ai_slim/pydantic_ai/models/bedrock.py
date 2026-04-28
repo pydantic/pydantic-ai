@@ -1214,11 +1214,10 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_response_id: str | None = None
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
-        return (BotoCoreError,)
+        return (BotoCoreError, ClientError)
 
     async def close_stream(self) -> None:
-        # Bedrock's EventStream.close() is synchronous.
-        self._event_stream.close()
+        await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
