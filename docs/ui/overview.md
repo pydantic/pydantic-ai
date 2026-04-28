@@ -4,10 +4,11 @@ If you're building a chat app or other interactive frontend for an AI agent, you
 
 While your frontend could use Pydantic AI's [`ModelRequest`][pydantic_ai.messages.ModelRequest] and [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] directly, you'll typically want to use a UI event stream protocol that's natively supported by your frontend framework.
 
-Pydantic AI natively supports two UI event stream protocols:
+Pydantic AI natively supports three UI event stream protocol integrations:
 
 - [Agent-User Interaction (AG-UI) Protocol](./ag-ui.md)
 - [Vercel AI Data Stream Protocol](./vercel-ai.md)
+- [OpenAI Responses Protocol](./responses.md)
 
 These integrations are implemented as subclasses of the abstract [`UIAdapter`][pydantic_ai.ui.UIAdapter] class, so they also serve as a reference for integrating with other UI event stream protocols.
 

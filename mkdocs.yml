@@ -117,6 +117,7 @@ nav:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
+          - OpenAI Responses: ui/responses.md
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
@@ -193,6 +194,7 @@ nav:
           - api/toolsets.md
           - api/ui/ag_ui.md
           - api/ui/base.md
+          - api/ui/responses.md
           - api/ui/vercel_ai.md
           - api/usage.md
       - pydantic_evals:
