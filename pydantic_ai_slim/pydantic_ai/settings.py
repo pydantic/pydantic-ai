@@ -23,10 +23,36 @@ that don't support it, `'minimal'` -> `'low'` on providers without a minimal lev
 ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
 """Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
 
-- `'auto'`: The provider's default behavior (the field is omitted from the request).
-- `'default'`: Default service tier (e.g. OpenAI's `"default"`, Google GLA's `"standard"`).
-- `'flex'`: Flexible / lower-priority service tier with lower costs.
-- `'priority'`: Higher-priority service tier with lower latency or higher limits.
+Values:
+
+- `'auto'`: Let the provider decide — typically means "use a higher tier (scale credits, priority capacity)
+  when available, otherwise standard." On providers without a server-side auto concept the field is
+  omitted so the provider's natural default applies.
+- `'default'`: Explicitly request the provider's standard tier — opts out of any server-side
+  auto-promotion to premium tiers.
+- `'flex'`: Lower-cost, latency-tolerant tier where the provider offers one. Silently ignored on
+  providers that don't (e.g. Anthropic).
+- `'priority'`: Higher-priority / lower-latency tier where the provider offers one. Silently ignored
+  on providers that don't.
+
+Per-provider mapping:
+
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google (Vertex AI) |
+|---|---|---|---|---|---|
+| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ |
+| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ |
+| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
+| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
+
+On Vertex AI the unified field maps only to safe PT-with-spillover variants so customers with
+Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
+[`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier]
+with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
+(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Vertex's PT routing tiers) are reachable
+only through the per-provider field.
+
+Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
+`google_vertex_service_tier`) always take precedence over this unified field when set.
 """
 
 
@@ -225,10 +251,10 @@ class ModelSettings(TypedDict, total=False):
     service_tier: ServiceTier
     """The cross-provider service tier to use for the model request.
 
-    Each provider maps this to its own service-tier concept where one exists; see
-    [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value set. Provider-specific
-    settings (e.g., `openai_service_tier`, `google_vertex_service_tier`) take precedence
-    over this unified field.
+    See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
+    the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
+    `anthropic_service_tier`, `bedrock_service_tier`, `google_vertex_service_tier`)
+    take precedence over this unified field when set.
 
     Supported by:
 

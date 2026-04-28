@@ -155,16 +155,30 @@ agent = Agent(model)
 
 #### Service tier (`service_tier`, `google_vertex_service_tier`)
 
-You can control the service tier (priority and pricing) using the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field.
+The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field works on both Google subsystems, with [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] available for finer Vertex routing control. The provider-specific field wins when both are set.
 
-- On **Gemini API (GLA)**, this controls traffic priority (e.g. `'flex'`, `'priority'`).
-- On **Vertex AI**, this sets the default routing behavior.
+**Gemini API (GLA)** — sent as the request's `service_tier` field:
 
-**Vertex AI-specific tiers**
+| `service_tier` | Sent to Gemini API |
+|---|---|
+| `'auto'` | _(omitted — server default)_ |
+| `'default'` | `'standard'` |
+| `'flex'` | `'flex'` |
+| `'priority'` | `'priority'` |
 
-For granular control over [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) pricing on Vertex AI, use the [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+**Vertex AI** — sent as HTTP routing headers; `'flex'` and `'priority'` always pick the **PT-with-spillover** variant, so customers with [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput) (PT) keep using their reserved capacity first:
 
-This sets optional HTTP headers to control routing:
+| `service_tier` | Vertex routing headers | Effective behavior |
+|---|---|---|
+| `'auto'` / `'default'` | _(none)_ | PT first, then standard on-demand spillover |
+| `'flex'` | `X-Vertex-AI-LLM-Shared-Request-Type: flex` | PT first, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover |
+| `'priority'` | `X-Vertex-AI-LLM-Shared-Request-Type: priority` | PT first, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover |
+
+To bypass PT entirely (or use it exclusively, or any of the other Vertex-specific routing combinations) set [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] directly — the unified field is intentionally limited to the safe PT-with-spillover variants.
+
+**Vertex AI — full set of routing values**
+
+The full [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] values map to these HTTP headers:
 
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`).
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).

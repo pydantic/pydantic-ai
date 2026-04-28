@@ -283,11 +283,13 @@ class GoogleModelSettings(ModelSettings, total=False):
 def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
     """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
     if (deprecated := model_settings.get('google_service_tier')) is not None:
+        # stacklevel=2 points at the resolver (caller of this helper); the warning text already
+        # names the field so users can identify the source from the message itself.
         warnings.warn(
             '`google_service_tier` is deprecated; use `google_vertex_service_tier` for Vertex AI '
             'or the top-level `service_tier` for the Gemini API (GLA).',
             DeprecationWarning,
-            stacklevel=3,
+            stacklevel=2,
         )
         return deprecated
     return None
