@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, cast
 
+from pydantic import ConfigDict, with_config
 from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 
+from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
@@ -29,12 +31,24 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._model import RequestParams
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
     temporalize_toolset as _default_temporalize_toolset,
 )
+
+
+@dataclass
+@with_config(ConfigDict(arbitrary_types_allowed=True))
+class RequestParams:
+    """Serializable arguments for the model-request Temporal activity."""
+
+    messages: list[_messages.ModelMessage]
+    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
+    model_settings: dict[str, Any] | None
+    model_request_parameters: ModelRequestParameters
+    serialized_run_context: Any
+    model_id: str | None = None
 
 
 @dataclass(init=False)

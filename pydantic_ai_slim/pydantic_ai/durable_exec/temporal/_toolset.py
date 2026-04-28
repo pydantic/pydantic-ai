@@ -14,7 +14,7 @@ from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperTo
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.messages import ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import DynamicToolset
 
 from ._run_context import TemporalRunContext
 

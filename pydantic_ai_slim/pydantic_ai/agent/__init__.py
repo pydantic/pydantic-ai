@@ -75,11 +75,11 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
-from ..toolsets._dynamic import (
+from ..toolsets.combined import CombinedToolset
+from ..toolsets.dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from .abstract import (

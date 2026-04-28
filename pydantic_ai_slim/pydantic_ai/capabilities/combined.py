@@ -13,8 +13,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset, DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability

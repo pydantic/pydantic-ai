@@ -9,7 +9,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets.function import FunctionToolsetTool
+from pydantic_ai.toolsets import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext, deserialize_run_context
 

@@ -4,10 +4,8 @@ import functools
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
@@ -22,21 +20,18 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._durability import RequestParams
 from ._run_context import TemporalRunContext, deserialize_run_context
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-
-@dataclass
-@with_config(ConfigDict(arbitrary_types_allowed=True))
-class RequestParams:
-    messages: list[ModelMessage]
-    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
-    model_settings: dict[str, Any] | None
-    model_request_parameters: ModelRequestParameters
-    serialized_run_context: Any
-    model_id: str | None = None
+__all__ = [
+    'CompletedStreamedResponse',
+    'RequestParams',
+    'TemporalModel',
+    'TemporalProviderFactory',
+]
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]

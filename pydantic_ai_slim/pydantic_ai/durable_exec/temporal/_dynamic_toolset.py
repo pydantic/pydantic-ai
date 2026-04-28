@@ -10,8 +10,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from pydantic_ai.toolsets import TOOL_SCHEMA_VALIDATOR, DynamicToolset
 
 from ._run_context import TemporalRunContext, deserialize_run_context
 

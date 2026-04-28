@@ -34,7 +34,7 @@ from pydantic_ai.messages import InstructionPart, ModelRequest, ModelResponse, T
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot

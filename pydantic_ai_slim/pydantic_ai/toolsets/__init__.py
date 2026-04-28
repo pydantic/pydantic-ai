@@ -1,14 +1,14 @@
 from typing import Union
 
 from .._run_context import AgentDepsT
-from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
 from .deferred_loading import DeferredLoadingToolset
-from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
+from .dynamic import DynamicToolset, ToolsetFunc
+from .external import TOOL_SCHEMA_VALIDATOR, DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
 from .filtered import FilteredToolset
-from .function import FunctionToolset
+from .function import FunctionToolset, FunctionToolsetTool
 from .include_return_schemas import IncludeReturnSchemasToolset
 from .prefixed import PrefixedToolset
 from .prepared import PreparedToolset
@@ -20,21 +20,24 @@ AgentToolset = Union[AbstractToolset[AgentDepsT], ToolsetFunc[AgentDepsT]]  # no
 """A toolset or a factory function that creates a toolset from a run context."""
 
 __all__ = (
+    'TOOL_SCHEMA_VALIDATOR',
     'AbstractToolset',
     'AgentToolset',
-    'ToolsetFunc',
-    'ToolsetTool',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'DeferredLoadingToolset',
     'DeferredToolset',
+    'DynamicToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',
+    'FunctionToolsetTool',
     'IncludeReturnSchemasToolset',
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
     'SetMetadataToolset',
+    'ToolsetFunc',
+    'ToolsetTool',
     'WrapperToolset',
 )

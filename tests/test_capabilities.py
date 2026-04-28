@@ -76,8 +76,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.toolsets._dynamic import ToolsetFunc
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
