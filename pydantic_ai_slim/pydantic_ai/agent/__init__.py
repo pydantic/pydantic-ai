@@ -21,6 +21,7 @@ from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_ai._spec import load_from_registry
+from pydantic_ai.capabilities.deferred import DeferredCapability
 
 from .. import (
     _agent_graph,
@@ -402,6 +403,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
         capabilities = list(capabilities or [])
+        for i, cap in enumerate(capabilities):
+            if cap.defer_loading:
+                capabilities[i] = DeferredCapability(wrapped=cap)
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
