@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._adapter import StateDeps, StateHandler, UIAdapter
+from ._adapter import DepsFactory, StateDeps, StateHandler, UIAdapter
 from ._event_stream import SSE_CONTENT_TYPE, NativeEvent, OnCompleteFunc, UIEventStream
 from ._messages_builder import MessagesBuilder
 
@@ -13,6 +13,7 @@ __all__ = [
     'UIAdapter',
     'UIEventStream',
     'SSE_CONTENT_TYPE',
+    'DepsFactory',
     'StateDeps',
     'StateHandler',
     'NativeEvent',

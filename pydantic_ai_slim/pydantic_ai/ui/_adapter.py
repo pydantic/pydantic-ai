@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
@@ -13,6 +14,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    TypeAlias,
     cast,
     runtime_checkable,
 )
@@ -44,7 +46,19 @@ __all__ = [
     'UIAdapter',
     'StateHandler',
     'StateDeps',
+    'DepsFactory',
 ]
+
+
+DepsFactory: TypeAlias = Callable[['Request'], Any]
+"""Callback that produces per-request `deps` from the incoming Starlette `Request`.
+
+Either sync or async. When passed to [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request]
+or one of the `*App` constructors, it takes precedence over the shared `deps` argument.
+
+Useful for gateways that need to scope deps per request (e.g. authenticate the
+incoming `Authorization` header into a tenant id).
+"""
 
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
@@ -409,6 +423,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
+        deps_factory: Callable[[Request], DispatchDepsT | Awaitable[DispatchDepsT]] | None = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
@@ -436,6 +451,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps`. Useful for gateway
+                scenarios where deps are scoped per authenticated tenant.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -460,6 +478,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 'Please install the `starlette` package to use `dispatch_request()` method, '
                 'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
             ) from e
+
+        if deps_factory is not None:
+            produced = deps_factory(request)
+            deps = await produced if inspect.isawaitable(produced) else cast(DispatchDepsT, produced)
 
         try:
             # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright

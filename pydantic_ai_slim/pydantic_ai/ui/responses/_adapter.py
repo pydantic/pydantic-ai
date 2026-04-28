@@ -17,6 +17,7 @@ from ...messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
 )
@@ -96,6 +97,9 @@ def _parse_user_content_part(part: dict[str, Any]) -> UserContent | None:
         file_data = part.get('file_data')
         if isinstance(file_data, str) and file_data.startswith('data:'):
             return BinaryContent.from_data_uri(file_data)
+        file_id = part.get('file_id')
+        if isinstance(file_id, str) and file_id:
+            return UploadedFile(file_id=file_id, provider_name='openai')
         return None
 
     return None
@@ -119,7 +123,31 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
         return raw_data  # pyright: ignore[reportReturnType]
 
     def build_event_stream(self) -> UIEventStream[ResponseCreateParamsStreaming, Any, AgentDepsT, OutputDataT]:
-        return ResponsesEventStream(self.run_input, accept=self.accept)
+        return ResponsesEventStream(
+            self.run_input,
+            accept=self.accept,
+            frontend_tool_names=self.frontend_tool_names,
+        )
+
+    @cached_property
+    def frontend_tool_names(self) -> frozenset[str]:
+        """Names of tools the client declared in the request `tools` array.
+
+        Used by the event stream to distinguish frontend tool calls (which surface
+        as `function_call` output items the client must round-trip) from backend
+        agent-registered tool calls (which run server-side and are suppressed).
+        """
+        tools = self.run_input.get('tools')
+        if not isinstance(tools, list):
+            return frozenset()
+        names: set[str] = set()
+        for raw_tool in tools:
+            if not is_str_dict(raw_tool) or raw_tool.get('type') != 'function':
+                continue
+            name = raw_tool.get('name')
+            if isinstance(name, str):
+                names.add(name)
+        return frozenset(names)
 
     @cached_property
     def messages(self) -> list[ModelMessage]:

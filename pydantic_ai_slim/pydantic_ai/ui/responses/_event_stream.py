@@ -10,11 +10,22 @@ from typing import Any, Literal
 try:
     from openai.types.responses import (
         Response as ResponseObject,
+        ResponseCodeInterpreterCallCompletedEvent,
+        ResponseCodeInterpreterCallInProgressEvent,
+        ResponseCodeInterpreterToolCall,
         ResponseCompletedEvent,
         ResponseContentPartAddedEvent,
         ResponseContentPartDoneEvent,
         ResponseCreatedEvent,
+        ResponseFileSearchCallCompletedEvent,
+        ResponseFileSearchCallInProgressEvent,
+        ResponseFileSearchToolCall,
+        ResponseFunctionCallArgumentsDeltaEvent,
+        ResponseFunctionCallArgumentsDoneEvent,
         ResponseFunctionToolCall,
+        ResponseFunctionWebSearch,
+        ResponseImageGenCallCompletedEvent,
+        ResponseImageGenCallInProgressEvent,
         ResponseOutputItemAddedEvent,
         ResponseOutputItemDoneEvent,
         ResponseOutputMessage,
@@ -22,8 +33,12 @@ try:
         ResponseTextDeltaEvent,
         ResponseTextDoneEvent,
         ResponseUsage,
+        ResponseWebSearchCallCompletedEvent,
+        ResponseWebSearchCallInProgressEvent,
     )
     from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
+    from openai.types.responses.response_function_web_search import ActionSearch
+    from openai.types.responses.response_output_item import ImageGenerationCall
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -32,6 +47,8 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 from ...messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -44,9 +61,23 @@ from .. import UIEventStream
 __all__ = ['ResponsesEventStream']
 
 
+_BuiltinItem = (
+    ResponseFunctionWebSearch | ResponseCodeInterpreterToolCall | ResponseFileSearchToolCall | ImageGenerationCall
+)
+
+
 @dataclass
 class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the OpenAI Responses protocol."""
+
+    frontend_tool_names: frozenset[str] = field(default_factory=frozenset[str])
+    """Names of tools the client declared in the request `tools` array.
+
+    `ToolCallPart`s for tools NOT in this set are server-executed (agent-registered)
+    and are suppressed from the wire — vanilla SDK clients should not see them as
+    `function_call` items, since the SDK contract treats those as requests for the
+    client to act and the agent already ran them.
+    """
 
     _response_id: str = ''
     _text_item_id: str = ''
@@ -55,6 +86,12 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     _sequence_number: int = 0
     _error: bool = False
     _accumulated_text: list[str] = field(default_factory=list[str])
+    _open_function_calls: dict[str, tuple[ResponseFunctionToolCall, int]] = field(
+        default_factory=dict[str, tuple[ResponseFunctionToolCall, int]]
+    )
+    _open_builtin_calls: dict[str, tuple[_BuiltinItem, int]] = field(
+        default_factory=dict[str, tuple[_BuiltinItem, int]]
+    )
 
     @property
     def content_type(self) -> str:
@@ -245,39 +282,240 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
 
         self._message_item_added = False
         self._accumulated_text = []
+        self._text_item_id = self.new_message_id()
         self._output_index += 1
 
     async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[Any]:
-        # If a message item is still open, finalise it before starting a tool-call output item.
+        if part.tool_name not in self.frontend_tool_names:
+            # Backend (agent-registered) tools are server-executed; emitting a `function_call`
+            # output item would mislead vanilla SDK clients into thinking they owe a
+            # `function_call_output` follow-up. Suppress entirely.
+            return
+
         async for ev in self._close_open_message_item():
             yield ev
 
-        tool_call_item = ResponseFunctionToolCall(
+        item_id = self.new_message_id()
+        item = ResponseFunctionToolCall(
+            id=item_id,
             type='function_call',
             call_id=part.tool_call_id,
             name=part.tool_name,
-            arguments=part.args_as_json_str(),
+            arguments='',
+            status='in_progress',
         )
+        output_index = self._output_index
+        self._open_function_calls[part.tool_call_id] = (item, output_index)
 
         yield ResponseOutputItemAddedEvent(
             type='response.output_item.added',
-            item=tool_call_item,
-            output_index=self._output_index,
+            item=item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+
+        if part.args:
+            initial = part.args_as_json_str()
+            item.arguments = initial
+            yield ResponseFunctionCallArgumentsDeltaEvent(
+                type='response.function_call_arguments.delta',
+                item_id=item_id,
+                output_index=output_index,
+                delta=initial,
+                sequence_number=self._next_seq(),
+            )
+
+    async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[Any]:
+        tool_call_id = delta.tool_call_id
+        if not tool_call_id or tool_call_id not in self._open_function_calls:
+            return
+        delta_text = delta.args_delta if isinstance(delta.args_delta, str) else ''
+        if not delta_text:
+            return
+        item, output_index = self._open_function_calls[tool_call_id]
+        item.arguments += delta_text
+        yield ResponseFunctionCallArgumentsDeltaEvent(
+            type='response.function_call_arguments.delta',
+            item_id=item.id or '',
+            output_index=output_index,
+            delta=delta_text,
+            sequence_number=self._next_seq(),
+        )
+
+    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[Any]:
+        async for ev in self._finalize_function_call(part.tool_call_id, final_args=part.args_as_json_str()):
+            yield ev
+
+    async def _finalize_function_call(self, tool_call_id: str, *, final_args: str) -> AsyncIterator[Any]:
+        if tool_call_id not in self._open_function_calls:
+            return
+        item, output_index = self._open_function_calls.pop(tool_call_id)
+        item.arguments = final_args
+        item.status = 'completed'
+
+        yield ResponseFunctionCallArgumentsDoneEvent(
+            type='response.function_call_arguments.done',
+            item_id=item.id or '',
+            name=item.name,
+            output_index=output_index,
+            arguments=final_args,
             sequence_number=self._next_seq(),
         )
         yield ResponseOutputItemDoneEvent(
             type='response.output_item.done',
-            item=tool_call_item,
-            output_index=self._output_index,
+            item=item,
+            output_index=output_index,
             sequence_number=self._next_seq(),
         )
         self._output_index += 1
 
-    async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[Any]:
-        # Tool call arguments are sent in full at start; streaming deltas are not surfaced.
+    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[Any]:
+        item = self._build_builtin_item(part, status='in_progress')
+        if item is None:
+            return
+
+        async for ev in self._close_open_message_item():
+            yield ev
+
+        output_index = self._output_index
+        self._open_builtin_calls[part.tool_call_id] = (item, output_index)
+
+        yield ResponseOutputItemAddedEvent(
+            type='response.output_item.added',
+            item=item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+        async for ev in self._builtin_in_progress_event(part.tool_name, item, output_index):
+            yield ev
+
+    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[Any]:
+        # `BuiltinToolReturnPart` carries the result; closing the item is deferred to that handler.
         return
         yield  # Make this an async generator
 
-    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[Any]:
-        return
-        yield  # Make this an async generator
+    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[Any]:
+        if part.tool_call_id not in self._open_builtin_calls:
+            return
+
+        item, output_index = self._open_builtin_calls.pop(part.tool_call_id)
+        item.status = 'completed'
+
+        async for ev in self._builtin_completed_event(part.tool_name, item, output_index):
+            yield ev
+        yield ResponseOutputItemDoneEvent(
+            type='response.output_item.done',
+            item=item,
+            output_index=output_index,
+            sequence_number=self._next_seq(),
+        )
+        self._output_index += 1
+
+    @staticmethod
+    def _build_builtin_item(
+        part: BuiltinToolCallPart, *, status: Literal['in_progress', 'completed']
+    ) -> _BuiltinItem | None:
+        item_id = part.tool_call_id
+        match part.tool_name:
+            case 'web_search':
+                return ResponseFunctionWebSearch(
+                    id=item_id,
+                    type='web_search_call',
+                    status=status,
+                    action=ActionSearch(type='search', query=''),
+                )
+            case 'code_execution':
+                return ResponseCodeInterpreterToolCall(
+                    id=item_id,
+                    type='code_interpreter_call',
+                    status=status,
+                    container_id='',
+                )
+            case 'file_search':
+                return ResponseFileSearchToolCall(
+                    id=item_id,
+                    type='file_search_call',
+                    status=status,
+                    queries=[],
+                )
+            case 'image_generation':
+                return ImageGenerationCall(
+                    id=item_id,
+                    type='image_generation_call',
+                    status=status,
+                )
+            case _:
+                return None
+
+    async def _builtin_in_progress_event(
+        self, tool_name: str, item: _BuiltinItem, output_index: int
+    ) -> AsyncIterator[Any]:
+        item_id = item.id
+        seq = self._next_seq()
+        match tool_name:
+            case 'web_search':
+                yield ResponseWebSearchCallInProgressEvent(
+                    type='response.web_search_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'code_execution':
+                yield ResponseCodeInterpreterCallInProgressEvent(
+                    type='response.code_interpreter_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'file_search':
+                yield ResponseFileSearchCallInProgressEvent(
+                    type='response.file_search_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case _:
+                # 'image_generation' is the only remaining mapped kind; `_build_builtin_item`
+                # returns None for any other name so this default arm is unreachable for
+                # those — and reachable only for image_generation here.
+                yield ResponseImageGenCallInProgressEvent(
+                    type='response.image_generation_call.in_progress',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+
+    async def _builtin_completed_event(
+        self, tool_name: str, item: _BuiltinItem, output_index: int
+    ) -> AsyncIterator[Any]:
+        item_id = item.id
+        seq = self._next_seq()
+        match tool_name:
+            case 'web_search':
+                yield ResponseWebSearchCallCompletedEvent(
+                    type='response.web_search_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'code_execution':
+                yield ResponseCodeInterpreterCallCompletedEvent(
+                    type='response.code_interpreter_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case 'file_search':
+                yield ResponseFileSearchCallCompletedEvent(
+                    type='response.file_search_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )
+            case _:
+                yield ResponseImageGenCallCompletedEvent(
+                    type='response.image_generation_call.completed',
+                    item_id=item_id,
+                    output_index=output_index,
+                    sequence_number=seq,
+                )

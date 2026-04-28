@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Generic
 
@@ -52,6 +52,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        deps_factory: Callable[[Request], AgentDepsT | Awaitable[AgentDepsT]] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
@@ -89,6 +90,9 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps` — useful for gateway
+                scenarios where each request's deps are derived from headers (e.g. tenant/auth).
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -129,9 +133,9 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         async def run_agent(request: Request) -> Response:
             """Endpoint to run the agent with the provided input data."""
             # `dispatch_request` will store the frontend state from the request on `deps.state` (if it implements the `StateHandler` protocol),
-            # so we need to copy the deps to avoid different requests mutating the same deps object.
+            # so when no `deps_factory` is provided we copy the shared deps to avoid different requests mutating the same object.
             nonlocal deps
-            if isinstance(deps, StateHandler):  # pragma: no branch
+            if deps_factory is None and isinstance(deps, StateHandler):  # pragma: no branch
                 deps = replace(deps)
 
             return await AGUIAdapter[AgentDepsT, OutputDataT].dispatch_request(
@@ -144,6 +148,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 deferred_tool_results=deferred_tool_results,
                 model=model,
                 deps=deps,
+                deps_factory=deps_factory,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,

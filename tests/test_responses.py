@@ -15,6 +15,8 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -27,18 +29,21 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 from .conftest import IsDatetime, IsSameStr, try_import
 
 with try_import() as imports_successful:
     from starlette.applications import Starlette
+    from starlette.requests import Request
     from starlette.testclient import TestClient
 
     from pydantic_ai.ui.responses import ResponsesAdapter
     from pydantic_ai.ui.responses._event_stream import ResponsesEventStream
+    from pydantic_ai.ui.responses.app import gateway
 
 pytestmark = [
     pytest.mark.anyio,
@@ -304,8 +309,8 @@ async def test_load_messages_round_trip() -> None:
     )
 
 
-async def test_streams_tool_call_as_function_call_output_item() -> None:
-    """Frontend-tool calls emerge as `function_call` output items (the SDK literal must match)."""
+async def test_streams_frontend_tool_call_with_spec_event_sequence() -> None:
+    """Frontend-tool calls emit the OpenAI spec sequence: item.added (empty args) → arguments.delta → arguments.done → item.done (full args)."""
     body = json.dumps(
         {
             'model': 'test',
@@ -326,13 +331,40 @@ async def test_streams_tool_call_as_function_call_output_item() -> None:
 
     events = await _collect_events(adapter)
 
-    function_call_items = [e['item'] for e in events if e.get('item', {}).get('type') == 'function_call']
-    assert function_call_items
-    assert function_call_items[0] == snapshot(
+    function_call_added = [
+        e for e in events if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'function_call'
+    ]
+    function_call_done = [
+        e for e in events if e['type'] == 'response.output_item.done' and e['item'].get('type') == 'function_call'
+    ]
+    args_delta = [e for e in events if e['type'] == 'response.function_call_arguments.delta']
+    args_done = [e for e in events if e['type'] == 'response.function_call_arguments.done']
+
+    assert len(function_call_added) == 1
+    assert function_call_added[0]['item'] == snapshot(
         {
+            'id': IsSameStr(),
+            'arguments': '',
+            'call_id': 'call_1',
+            'name': 'get_weather',
+            'status': 'in_progress',
+            'type': 'function_call',
+        }
+    )
+
+    assert [e['delta'] for e in args_delta] == ['{"location":"Paris"}']
+    assert len(args_done) == 1
+    assert args_done[0]['arguments'] == '{"location":"Paris"}'
+    assert args_done[0]['name'] == 'get_weather'
+
+    assert len(function_call_done) == 1
+    assert function_call_done[0]['item'] == snapshot(
+        {
+            'id': IsSameStr(),
             'arguments': '{"location":"Paris"}',
             'call_id': 'call_1',
             'name': 'get_weather',
+            'status': 'completed',
             'type': 'function_call',
         }
     )
@@ -425,6 +457,33 @@ async def test_user_image_url() -> None:
     assert image.url == 'https://example.com/cat.png'
 
 
+async def test_input_file_with_file_id_passes_through_as_uploaded_file() -> None:
+    """An `input_file` referencing a `file_id` is parsed as `UploadedFile(provider_name='openai', file_id=...)`."""
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': [
+                {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_file', 'file_id': 'file-abc123'}],
+                }
+            ],
+        }
+    ).encode()
+    run_input = ResponsesAdapter.build_run_input(body)
+    agent = Agent(model=FunctionModel(stream_function=_comprehensive_stream))
+    adapter = ResponsesAdapter[None, str](agent=agent, run_input=run_input)
+
+    [request] = adapter.messages
+    assert isinstance(request, ModelRequest)
+    [user_part] = request.parts
+    assert isinstance(user_part, UserPromptPart)
+    [uploaded] = user_part.content
+    assert uploaded == UploadedFile(file_id='file-abc123', provider_name='openai')
+
+
 def test_to_responses_returns_app() -> None:
     """`Agent.to_responses()` returns a Starlette app mounting `POST /v1/responses`."""
     agent = Agent('test')
@@ -512,6 +571,7 @@ def test_load_messages_kitchen_sink() -> None:
                     {'type': 'input_image', 'image_url': 'https://example.com/cat.png'},
                     {'type': 'input_file', 'file_data': 'data:application/pdf;base64,JVBERg=='},
                     {'type': 'input_file', 'file_id': 'file-abc'},
+                    {'type': 'input_file'},
                     {'type': 'unknown_part', 'value': 'x'},
                 ],
             },
@@ -542,6 +602,7 @@ def test_load_messages_kitchen_sink() -> None:
                             'hello',
                             ImageUrl(url='https://example.com/cat.png'),
                             BinaryContent(data=b'%PDF', media_type='application/pdf'),
+                            UploadedFile(file_id='file-abc', provider_name='openai'),
                         ],
                         timestamp=IsDatetime(),
                     ),
@@ -588,6 +649,16 @@ def test_malformed_tools_array_filters_out_invalid_entries() -> None:
     assert isinstance(toolset, ExternalToolset)
     assert [t.name for t in toolset.tool_defs] == ['good_tool']
     assert toolset.tool_defs[0].parameters_json_schema == {}
+    # Frontend tool names exposed to the event stream for backend/frontend disambiguation.
+    assert adapter.frontend_tool_names == frozenset({'good_tool'})
+
+
+def testfrontend_tool_names_empty_when_no_tools() -> None:
+    """Adapters without a `tools` array have an empty frontend-tool-names set, so all tool calls are backend."""
+    adapter = _adapter_for({'model': 'test', 'stream': True, 'input': 'hi'})
+    assert adapter.frontend_tool_names == frozenset()
+    adapter_dict_tools = _adapter_for({'model': 'test', 'stream': True, 'input': 'hi', 'tools': 'not-a-list'})
+    assert adapter_dict_tools.frontend_tool_names == frozenset()
 
 
 @dataclass
@@ -598,10 +669,8 @@ class _CountingDeps:
 
 def test_state_handler_deps_are_replaced_per_request() -> None:
     """When `deps` implements `StateHandler`, each request gets a fresh copy via `replace`."""
-    captured: list[int] = []
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        captured.append(id(info))
         yield 'ok'
 
     agent = Agent(model=FunctionModel(stream_function=stream), deps_type=_CountingDeps)
@@ -658,14 +727,13 @@ async def test_text_part_with_empty_content_emits_no_delta() -> None:
     assert done['text'] == 'hello world'
 
 
-async def test_tool_call_with_no_open_message_item() -> None:
-    """A tool call before any text emits the function_call without first closing a message item."""
+async def test_frontend_tool_call_with_no_open_message_item() -> None:
+    """A frontend tool call before any text emits the function_call without first closing a message item."""
 
     async def tool_first(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-            yield {0: DeltaToolCall(name='ping', json_args='{}', tool_call_id='c1')}
-        else:
-            yield 'done'
+        # The agent stops on the frontend tool call (DeferredToolRequests), so a second turn
+        # never fires — no `else` branch needed.
+        yield {0: DeltaToolCall(name='ping', json_args='{}', tool_call_id='c1')}
 
     agent = Agent(model=FunctionModel(stream_function=tool_first))
     body = json.dumps(
@@ -680,20 +748,21 @@ async def test_tool_call_with_no_open_message_item() -> None:
     adapter = ResponsesAdapter[None, str](agent=agent, run_input=run_input)
 
     events = await _collect_events(adapter)
-    function_call_items = [e['item'] for e in events if e.get('item', {}).get('type') == 'function_call']
-    assert function_call_items
-    assert function_call_items[0]['name'] == 'ping'
+    function_call_added = [
+        e['item']
+        for e in events
+        if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'function_call'
+    ]
+    assert len(function_call_added) == 1
+    assert function_call_added[0]['name'] == 'ping'
 
 
-async def test_text_then_tool_closes_open_message_item() -> None:
-    """Text followed by a tool call closes the message item before emitting the function_call."""
+async def test_text_then_frontend_tool_closes_open_message_item() -> None:
+    """Text followed by a frontend tool call closes the message item before emitting the function_call."""
 
     async def text_then_tool(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
-            yield 'thinking...'
-            yield {0: DeltaToolCall(name='ping', json_args='{}', tool_call_id='c1')}
-        else:
-            yield 'done'
+        yield 'thinking...'
+        yield {0: DeltaToolCall(name='ping', json_args='{}', tool_call_id='c1')}
 
     agent = Agent(model=FunctionModel(stream_function=text_then_tool))
     body = json.dumps(
@@ -709,11 +778,18 @@ async def test_text_then_tool_closes_open_message_item() -> None:
 
     events = await _collect_events(adapter)
     event_types = [e['type'] for e in events]
-    # Text item is emitted, closed (with text done), then tool call follows.
     text_done_idx = event_types.index('response.output_text.done')
-    output_done_idx = event_types.index('response.output_item.done')
-    function_call_idx = next(i for i, e in enumerate(events) if e.get('item', {}).get('type') == 'function_call')
-    assert text_done_idx < output_done_idx < function_call_idx
+    msg_done_idx = next(
+        i
+        for i, e in enumerate(events)
+        if e['type'] == 'response.output_item.done' and e['item'].get('type') == 'message'
+    )
+    function_call_idx = next(
+        i
+        for i, e in enumerate(events)
+        if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'function_call'
+    )
+    assert text_done_idx < msg_done_idx < function_call_idx
 
 
 def test_extract_text_content_skips_non_text_parts_in_lists() -> None:
@@ -779,10 +855,16 @@ def _bare_run_input() -> dict[str, Any]:
     return {'model': 'test', 'stream': True, 'input': 'x'}
 
 
+def _bare_event_stream(*, frontend_tool_names: frozenset[str] = frozenset()) -> ResponsesEventStream[None, str]:
+    return ResponsesEventStream[None, str](
+        run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
+        frontend_tool_names=frontend_tool_names,
+    )
+
+
 async def test_back_to_back_text_parts_keep_message_item_open() -> None:
-    """Two TextParts back-to-back: the first PartEndEvent has `next_part_kind='text'`, so the
-    message item stays open; the second PartStartEvent re-enters with state already set."""
-    event_stream = ResponsesEventStream[None, str](run_input=_bare_run_input())  # pyright: ignore[reportArgumentType]
+    """Two TextParts back-to-back share the message item via `followed_by_text=True`."""
+    event_stream = _bare_event_stream()
 
     async def parts() -> AsyncIterator[Any]:
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
@@ -795,7 +877,6 @@ async def test_back_to_back_text_parts_keep_message_item_open() -> None:
     events = await _collect_from_stream(event_stream, parts())
     deltas = [e['delta'] for e in events if e['type'] == 'response.output_text.delta']
     assert deltas == ['Hello', ' world', 'Goodbye', ' world']
-    # Only one item.added/item.done pair — the back-to-back TextParts share the message item.
     item_added = [e for e in events if e['type'] == 'response.output_item.added']
     item_done = [e for e in events if e['type'] == 'response.output_item.done']
     assert len(item_added) == 1
@@ -806,27 +887,20 @@ async def test_back_to_back_text_parts_keep_message_item_open() -> None:
 
 async def test_after_stream_closes_unclosed_message_item() -> None:
     """If the run ends mid-text without a PartEndEvent (e.g., crash), `after_stream` finalises the open item."""
-    event_stream = ResponsesEventStream[None, str](run_input=_bare_run_input())  # pyright: ignore[reportArgumentType]
+    event_stream = _bare_event_stream()
 
     async def truncated() -> AsyncIterator[Any]:
         yield PartStartEvent(index=0, part=TextPart(content='partial'))
-        # Stream ends without PartEndEvent
 
     events = await _collect_from_stream(event_stream, truncated())
     event_types = [e['type'] for e in events]
-    # after_stream still emits the closing events for the open message.
     assert 'response.output_text.done' in event_types
     assert event_types[-1] == 'response.completed'
 
 
-async def test_tool_call_after_open_text_closes_item_first() -> None:
-    """When a tool call follows an unclosed text part, the message item is closed before the function_call.
-
-    This exercises the defensive close path in `handle_tool_call_start`: in normal operation
-    `handle_text_end` closes the item, but if a tool call arrives without a preceding PartEndEvent,
-    the tool-call handler must finalise the item itself.
-    """
-    event_stream = ResponsesEventStream[None, str](run_input=_bare_run_input())  # pyright: ignore[reportArgumentType]
+async def test_frontend_tool_call_after_open_text_closes_item_first() -> None:
+    """A frontend tool call following an unclosed text part finalises the message before emitting the function_call."""
+    event_stream = _bare_event_stream(frontend_tool_names=frozenset({'f'}))
 
     async def text_then_tool_no_end() -> AsyncIterator[Any]:
         yield PartStartEvent(index=0, part=TextPart(content='thinking'))
@@ -835,29 +909,487 @@ async def test_tool_call_after_open_text_closes_item_first() -> None:
     events = await _collect_from_stream(event_stream, text_then_tool_no_end())
     event_types = [e['type'] for e in events]
     text_done_idx = event_types.index('response.output_text.done')
-    item_done_idx = next(
+    msg_done_idx = next(
         i
         for i, e in enumerate(events)
         if e['type'] == 'response.output_item.done' and e['item'].get('type') == 'message'
     )
-    function_call_idx = next(i for i, e in enumerate(events) if e.get('item', {}).get('type') == 'function_call')
-    assert text_done_idx < item_done_idx < function_call_idx
+    function_call_idx = next(
+        i
+        for i, e in enumerate(events)
+        if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'function_call'
+    )
+    assert text_done_idx < msg_done_idx < function_call_idx
 
 
-async def test_tool_call_delta_is_a_no_op() -> None:
-    """ToolCallPartDelta events must be accepted without crashing and without emitting deltas."""
-    event_stream = ResponsesEventStream[None, str](run_input=_bare_run_input())  # pyright: ignore[reportArgumentType]
+async def test_tool_call_arguments_stream_as_deltas() -> None:
+    """Args streamed via PartDelta produce `response.function_call_arguments.delta` events."""
+    event_stream = _bare_event_stream(frontend_tool_names=frozenset({'f'}))
 
     async def deltas() -> AsyncIterator[Any]:
         yield PartStartEvent(index=0, part=ToolCallPart(tool_name='f', args='', tool_call_id='c1'))
-        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"x":1}', tool_call_id='c1'))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"x":', tool_call_id='c1'))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='1}', tool_call_id='c1'))
         yield PartEndEvent(index=0, part=ToolCallPart(tool_name='f', args='{"x":1}', tool_call_id='c1'))
 
     events = await _collect_from_stream(event_stream, deltas())
+    delta_events = [e for e in events if e['type'] == 'response.function_call_arguments.delta']
+    assert [e['delta'] for e in delta_events] == ['{"x":', '1}']
+    done_events = [e for e in events if e['type'] == 'response.function_call_arguments.done']
+    assert len(done_events) == 1
+    assert done_events[0]['arguments'] == '{"x":1}'
+
+
+async def test_tool_call_delta_without_open_call_is_ignored() -> None:
+    """Delta events for a tool_call_id with no preceding start are silently dropped."""
+    event_stream = _bare_event_stream(frontend_tool_names=frozenset({'f'}))
+
+    async def orphan_delta() -> AsyncIterator[Any]:
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='unknown'))
+
+    events = await _collect_from_stream(event_stream, orphan_delta())
+    assert not any(e['type'].startswith('response.function_call_arguments') for e in events)
+
+
+async def test_tool_call_delta_with_empty_text_is_skipped() -> None:
+    """Empty/non-string `args_delta` shouldn't emit a delta event."""
+    event_stream = _bare_event_stream(frontend_tool_names=frozenset({'f'}))
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='f', args='', tool_call_id='c1'))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='c1'))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'k': 'v'}, tool_call_id='c1'))
+        yield PartEndEvent(index=0, part=ToolCallPart(tool_name='f', args='', tool_call_id='c1'))
+
+    events = await _collect_from_stream(event_stream, parts())
+    delta_events = [e for e in events if e['type'] == 'response.function_call_arguments.delta']
+    assert delta_events == []
+
+
+async def test_tool_call_delta_without_tool_call_id_is_skipped() -> None:
+    """A `ToolCallPartDelta` without a `tool_call_id` cannot be matched and is silently skipped."""
+    event_stream = _bare_event_stream(frontend_tool_names=frozenset({'f'}))
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='f', args='', tool_call_id='c1'))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{"x":1}', tool_call_id=None))
+        yield PartEndEvent(index=0, part=ToolCallPart(tool_name='f', args='{"x":1}', tool_call_id='c1'))
+
+    events = await _collect_from_stream(event_stream, parts())
+    delta_events = [e for e in events if e['type'] == 'response.function_call_arguments.delta']
+    assert delta_events == []
+
+
+async def test_backend_tool_is_invisible_to_client() -> None:
+    """A backend (agent-registered) tool runs server-side and emits no `function_call` events."""
+
+    async def stream_with_backend_tool(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            yield {0: DeltaToolCall(name='lookup_user', json_args='{"user_id":"u_42"}', tool_call_id='b_1')}
+        else:
+            yield 'Alice is the answer.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_with_backend_tool))
+
+    @agent.tool_plain
+    def lookup_user(user_id: str) -> str:
+        return 'Alice'
+
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'Who is u_42?'}).encode()
+    run_input = ResponsesAdapter.build_run_input(body)
+    adapter = ResponsesAdapter[None, str](agent=agent, run_input=run_input)
+
+    events = await _collect_events(adapter)
+    item_types = {e['item']['type'] for e in events if e.get('item')}
+    assert 'function_call' not in item_types
+    args_events = [e for e in events if e['type'].startswith('response.function_call_arguments')]
+    assert args_events == []
+    deltas = [e['delta'] for e in events if e['type'] == 'response.output_text.delta']
+    assert deltas == ['Alice is the answer.']
+
+
+async def test_backend_tool_end_event_is_silently_ignored() -> None:
+    """The `tool_call_end` for a suppressed backend call must be a no-op (no orphan args.done)."""
+    event_stream = _bare_event_stream(frontend_tool_names=frozenset())
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='backend', args='{}', tool_call_id='c1'))
+        yield PartEndEvent(index=0, part=ToolCallPart(tool_name='backend', args='{}', tool_call_id='c1'))
+
+    events = await _collect_from_stream(event_stream, parts())
+    args_done = [e for e in events if e['type'].startswith('response.function_call_arguments')]
+    assert args_done == []
+    item_added = [
+        e for e in events if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'function_call'
+    ]
+    assert item_added == []
+
+
+@pytest.mark.parametrize(
+    ('tool_kind', 'item_type', 'in_progress_event', 'completed_event'),
+    [
+        (
+            'web_search',
+            'web_search_call',
+            'response.web_search_call.in_progress',
+            'response.web_search_call.completed',
+        ),
+        (
+            'code_execution',
+            'code_interpreter_call',
+            'response.code_interpreter_call.in_progress',
+            'response.code_interpreter_call.completed',
+        ),
+        (
+            'file_search',
+            'file_search_call',
+            'response.file_search_call.in_progress',
+            'response.file_search_call.completed',
+        ),
+        (
+            'image_generation',
+            'image_generation_call',
+            'response.image_generation_call.in_progress',
+            'response.image_generation_call.completed',
+        ),
+    ],
+)
+async def test_builtin_tool_emits_dedicated_events(
+    tool_kind: str, item_type: str, in_progress_event: str, completed_event: str
+) -> None:
+    """Each supported builtin tool kind maps to its dedicated OpenAI event family + output item type."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[BuiltinToolCallsReturns | str]:
+        yield {
+            0: BuiltinToolCallPart(
+                tool_name=tool_kind,
+                args='{}',
+                tool_call_id='b_1',
+                provider_name='function',
+            )
+        }
+        yield {
+            1: BuiltinToolReturnPart(
+                tool_name=tool_kind,
+                content={'ok': True},
+                tool_call_id='b_1',
+                provider_name='function',
+            )
+        }
+        yield 'Done.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream))
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'go'}).encode()
+    run_input = ResponsesAdapter.build_run_input(body)
+    adapter = ResponsesAdapter[None, str](agent=agent, run_input=run_input)
+
+    events = await _collect_events(adapter)
     event_types = [e['type'] for e in events]
-    # No delta event surfaced; the tool call is emitted via item.added + item.done.
-    assert 'response.function_call_arguments.delta' not in event_types
-    item_added = [e for e in events if e['type'] == 'response.output_item.added']
-    item_done = [e for e in events if e['type'] == 'response.output_item.done']
-    assert [e['item']['type'] for e in item_added] == ['function_call']
-    assert [e['item']['type'] for e in item_done] == ['function_call']
+    assert in_progress_event in event_types
+    assert completed_event in event_types
+    item_types = {e['item']['type'] for e in events if e.get('item')}
+    assert item_type in item_types
+    assert 'function_call' not in item_types
+
+    added = next(e for e in events if e['type'] == 'response.output_item.added' and e['item'].get('type') == item_type)
+    done = next(e for e in events if e['type'] == 'response.output_item.done' and e['item'].get('type') == item_type)
+    assert added['item']['status'] == 'in_progress'
+    assert done['item']['status'] == 'completed'
+
+
+async def test_builtin_tool_in_middle_of_text_closes_message_item() -> None:
+    """Text → builtin tool transition closes the message item before emitting the builtin output item."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[BuiltinToolCallsReturns | str]:
+        yield 'Searching... '
+        yield {0: BuiltinToolCallPart(tool_name='web_search', args='{}', tool_call_id='ws_1', provider_name='function')}
+        yield {
+            1: BuiltinToolReturnPart(tool_name='web_search', content={}, tool_call_id='ws_1', provider_name='function')
+        }
+        yield 'Found nothing.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream))
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'go'}).encode()
+    run_input = ResponsesAdapter.build_run_input(body)
+    adapter = ResponsesAdapter[None, str](agent=agent, run_input=run_input)
+
+    events = await _collect_events(adapter)
+    event_types = [e['type'] for e in events]
+    text_done_idx = event_types.index('response.output_text.done')
+    msg_done_idx = next(
+        i
+        for i, e in enumerate(events)
+        if e['type'] == 'response.output_item.done' and e['item'].get('type') == 'message'
+    )
+    web_search_idx = next(
+        i
+        for i, e in enumerate(events)
+        if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'web_search_call'
+    )
+    assert text_done_idx < msg_done_idx < web_search_idx
+
+
+async def test_builtin_tool_after_open_text_closes_item_first() -> None:
+    """A builtin tool call following an unclosed text part finalises the message before emitting the builtin item."""
+    event_stream = _bare_event_stream()
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(index=0, part=TextPart(content='thinking'))
+        yield PartStartEvent(
+            index=1,
+            part=BuiltinToolCallPart(tool_name='web_search', args='{}', tool_call_id='ws_1', provider_name='function'),
+        )
+
+    events = await _collect_from_stream(event_stream, parts())
+    event_types = [e['type'] for e in events]
+    text_done_idx = event_types.index('response.output_text.done')
+    web_search_idx = next(
+        i
+        for i, e in enumerate(events)
+        if e['type'] == 'response.output_item.added' and e['item'].get('type') == 'web_search_call'
+    )
+    assert text_done_idx < web_search_idx
+
+
+async def test_unknown_builtin_tool_kind_is_silently_suppressed() -> None:
+    """A `BuiltinToolCallPart` with an unmapped kind is dropped — no events, no item."""
+    event_stream = _bare_event_stream()
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(
+            index=0,
+            part=BuiltinToolCallPart(tool_name='unknown_kind', args='{}', tool_call_id='b_1', provider_name='function'),
+        )
+        yield PartEndEvent(
+            index=0,
+            part=BuiltinToolCallPart(tool_name='unknown_kind', args='{}', tool_call_id='b_1', provider_name='function'),
+        )
+
+    events = await _collect_from_stream(event_stream, parts())
+    item_types = {e['item']['type'] for e in events if e.get('item')}
+    # The unmapped kind produces no item.added/done at all.
+    assert item_types == set()
+
+
+async def test_builtin_tool_return_without_open_call_is_ignored() -> None:
+    """A builtin return for an id that was never opened (e.g., unmapped kind) is silently dropped."""
+    event_stream = _bare_event_stream()
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(
+            index=0,
+            part=BuiltinToolReturnPart(
+                tool_name='web_search', content={}, tool_call_id='orphan', provider_name='function'
+            ),
+        )
+
+    events = await _collect_from_stream(event_stream, parts())
+    item_types = {e['item']['type'] for e in events if e.get('item')}
+    assert 'web_search_call' not in item_types
+
+
+@dataclass
+class _Token:
+    value: str
+
+
+async def test_to_responses_deps_factory_called_per_request() -> None:
+    """`deps_factory` is called per request with the actual Starlette `Request`."""
+    captured: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok'
+
+    async def factory(request: Request) -> _Token:
+        token = request.headers.get('authorization', '').removeprefix('Bearer ')
+        captured.append(token)
+        return _Token(value=token)
+
+    agent = Agent(model=FunctionModel(stream_function=stream), deps_type=_Token)
+    app = agent.to_responses(deps=_Token(value=''), deps_factory=factory)
+
+    body = json.dumps(_bare_run_input()).encode()
+    with TestClient(app) as client:
+        for token in ('t1', 't2'):
+            with client.stream(
+                'POST', '/v1/responses', content=body, headers={'Authorization': f'Bearer {token}'}
+            ) as resp:
+                assert resp.status_code == 200
+                ''.join(resp.iter_text())
+
+    assert captured == ['t1', 't2']
+
+
+async def test_to_responses_deps_factory_sync_callable() -> None:
+    """A synchronous `deps_factory` is supported alongside async."""
+    captured: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok'
+
+    def factory(request: Request) -> _Token:
+        token = request.headers.get('x-tenant', '')
+        captured.append(token)
+        return _Token(value=token)
+
+    agent = Agent(model=FunctionModel(stream_function=stream), deps_type=_Token)
+    app = agent.to_responses(deps=_Token(value=''), deps_factory=factory)
+    body = json.dumps(_bare_run_input()).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body, headers={'X-Tenant': 'acme'}) as resp:
+            ''.join(resp.iter_text())
+    assert captured == ['acme']
+
+
+async def test_to_responses_deps_factory_takes_precedence_over_deps() -> None:
+    """When both `deps` and `deps_factory` are passed, the factory wins per request."""
+    captured: list[str] = []
+
+    @dataclass
+    class _Deps:
+        token: str
+
+    async def stream_with_capture(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        # The agent itself never sees deps; we just verify the factory was called.
+        yield 'ok'
+
+    def factory(request: Request) -> _Deps:
+        token = request.headers.get('x-tenant', 'unknown')
+        captured.append(token)
+        return _Deps(token=token)
+
+    agent = Agent(model=FunctionModel(stream_function=stream_with_capture), deps_type=_Deps)
+    shared = _Deps(token='SHARED')
+    app = agent.to_responses(deps=shared, deps_factory=factory)
+    body = json.dumps(_bare_run_input()).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body, headers={'X-Tenant': 'acme'}) as resp:
+            ''.join(resp.iter_text())
+    assert captured == ['acme']
+
+
+async def test_gateway_routes_by_model_field() -> None:
+    """`gateway()` dispatches `POST /v1/responses` to the agent named by the request `model` field."""
+
+    async def make_stream(marker: str):
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield marker
+
+        return stream
+
+    agent_a = Agent(model=FunctionModel(stream_function=await make_stream('SUPPORT_OUT')))
+    agent_b = Agent(model=FunctionModel(stream_function=await make_stream('CODER_OUT')))
+    app = gateway({'support': agent_a, 'coder': agent_b})
+
+    with TestClient(app) as client:
+        with client.stream(
+            'POST', '/v1/responses', content=json.dumps({'model': 'support', 'stream': True, 'input': 'x'}).encode()
+        ) as r:
+            text_a = ''.join(r.iter_text())
+        with client.stream(
+            'POST', '/v1/responses', content=json.dumps({'model': 'coder', 'stream': True, 'input': 'x'}).encode()
+        ) as r:
+            text_b = ''.join(r.iter_text())
+
+    assert 'SUPPORT_OUT' in text_a
+    assert 'SUPPORT_OUT' not in text_b
+    assert 'CODER_OUT' in text_b
+
+
+async def test_gateway_unknown_model_returns_404() -> None:
+    """Unknown `model` returns 404 with an OpenAI-shaped error envelope."""
+    # The agent is never invoked here — gateway short-circuits with 404 before dispatching.
+    app = gateway({'a': Agent('test')})
+    body = json.dumps({'model': 'does-not-exist', 'stream': True, 'input': 'x'}).encode()
+    with TestClient(app) as client:
+        resp = client.post('/v1/responses', content=body)
+    assert resp.status_code == 404
+    assert resp.json() == snapshot(
+        {
+            'error': {
+                'message': "The model 'does-not-exist' does not exist or you do not have access to it.",
+                'type': 'invalid_request_error',
+                'code': 'model_not_found',
+            }
+        }
+    )
+
+
+async def test_gateway_missing_model_field_returns_404() -> None:
+    """A request body without a string `model` field is treated as unknown model."""
+    app = gateway({'a': Agent('test')})
+    body = json.dumps({'stream': True, 'input': 'x'}).encode()
+    with TestClient(app) as client:
+        resp = client.post('/v1/responses', content=body)
+    assert resp.status_code == 404
+    assert resp.json()['error']['code'] == 'model_not_found'
+
+
+async def test_gateway_invalid_json_returns_400() -> None:
+    """A non-JSON body is rejected with a 400 and an OpenAI-shaped envelope."""
+    app = gateway({'a': Agent('test')})
+    with TestClient(app) as client:
+        resp = client.post('/v1/responses', content=b'not-json')
+    assert resp.status_code == 400
+    assert resp.json()['error']['code'] == 'invalid_json'
+
+
+async def test_gateway_non_object_body_returns_400() -> None:
+    """A JSON array (non-object) body is rejected with a 400."""
+    app = gateway({'a': Agent('test')})
+    with TestClient(app) as client:
+        resp = client.post('/v1/responses', content=b'[1, 2, 3]')
+    assert resp.status_code == 400
+    assert resp.json()['error']['code'] == 'invalid_request'
+
+
+async def test_gateway_models_list() -> None:
+    """`GET /v1/models` returns the configured agents in OpenAI's models-list shape."""
+    app = gateway({'support': Agent('test'), 'coder': Agent('test')})
+    with TestClient(app) as client:
+        resp = client.get('/v1/models')
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload['object'] == 'list'
+    assert [m['id'] for m in payload['data']] == ['support', 'coder']
+    assert all(m['object'] == 'model' for m in payload['data'])
+    assert all(m['owned_by'] == 'pydantic-ai' for m in payload['data'])
+    assert all(isinstance(m['created'], int) for m in payload['data'])
+
+
+async def test_gateway_owned_by_override() -> None:
+    """`owned_by` is configurable for org-specific listings."""
+    app = gateway({'a': Agent('test')}, owned_by='acme-corp')
+    with TestClient(app) as client:
+        resp = client.get('/v1/models')
+    assert all(m['owned_by'] == 'acme-corp' for m in resp.json()['data'])
+
+
+async def test_gateway_with_deps_factory() -> None:
+    """`gateway(deps_factory=...)` applies the factory to dispatched agents."""
+    captured: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok'
+
+    async def factory(request: Request) -> str:
+        token = request.headers.get('x-tenant', '')
+        captured.append(token)
+        return token
+
+    agent = Agent(model=FunctionModel(stream_function=stream), deps_type=str)
+    app = gateway({'a': agent}, deps_factory=factory)
+    body = json.dumps({'model': 'a', 'stream': True, 'input': 'x'}).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body, headers={'X-Tenant': 'acme'}) as resp:
+            ''.join(resp.iter_text())
+    assert captured == ['acme']
+
+
+async def test_to_ag_ui_accepts_deps_factory() -> None:
+    """`Agent.to_ag_ui` exposes `deps_factory` in parity with `to_responses`."""
+    agent = Agent('test')
+    app = agent.to_ag_ui(deps_factory=lambda _request: None)
+    assert isinstance(app, Starlette)

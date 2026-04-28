@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+import json
+import time
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Generic
 
 from typing_extensions import Self
 
 from pydantic_ai import DeferredToolResults
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage
@@ -26,7 +29,7 @@ try:
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
     from starlette.requests import Request
-    from starlette.responses import Response
+    from starlette.responses import JSONResponse, Response
     from starlette.routing import BaseRoute
     from starlette.types import ExceptionHandler, Lifespan
 except ImportError as e:  # pragma: no cover
@@ -34,6 +37,9 @@ except ImportError as e:  # pragma: no cover
         'Please install the `starlette` package to use `ResponsesApp`, '
         'you can use the `responses` optional group — `pip install "pydantic-ai-slim[responses]"`'
     ) from e
+
+
+__all__ = ['ResponsesApp', 'gateway']
 
 
 class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
@@ -49,6 +55,7 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        deps_factory: Callable[[Request], AgentDepsT | Awaitable[AgentDepsT]] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
@@ -83,6 +90,9 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps` — useful for gateway
+                scenarios where each request's deps are derived from headers (e.g. tenant/auth).
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -123,9 +133,9 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
         async def run_responses(request: Request) -> Response:
             """Endpoint to run the agent with the provided Responses request."""
             # `dispatch_request` will store the frontend state from the request on `deps.state` (if it implements the `StateHandler` protocol),
-            # so we need to copy the deps to avoid different requests mutating the same deps object.
+            # so when no `deps_factory` is provided we copy the shared deps to avoid different requests mutating the same object.
             nonlocal deps
-            if isinstance(deps, StateHandler):  # pragma: no branch
+            if deps_factory is None and isinstance(deps, StateHandler):  # pragma: no branch
                 deps = replace(deps)
 
             return await ResponsesAdapter[AgentDepsT, OutputDataT].dispatch_request(
@@ -136,6 +146,7 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 deferred_tool_results=deferred_tool_results,
                 model=model,
                 deps=deps,
+                deps_factory=deps_factory,
                 model_settings=model_settings,
                 usage_limits=usage_limits,
                 usage=usage,
@@ -146,3 +157,100 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
             )
 
         self.router.add_route('/v1/responses', run_responses, methods=['POST'])
+
+
+def gateway(
+    agents: Mapping[str, AbstractAgent[Any, Any]],
+    *,
+    deps_factory: Callable[[Request], Any | Awaitable[Any]] | None = None,
+    owned_by: str = 'pydantic-ai',
+    debug: bool = False,
+    routes: Sequence[BaseRoute] | None = None,
+    middleware: Sequence[Middleware] | None = None,
+    exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+    on_startup: Sequence[Callable[[], Any]] | None = None,
+    on_shutdown: Sequence[Callable[[], Any]] | None = None,
+    lifespan: Lifespan[Starlette] | None = None,
+) -> Starlette:
+    """Build an ASGI app that exposes multiple agents over the OpenAI Responses API.
+
+    The returned Starlette app mounts:
+
+    - `POST /v1/responses` — dispatches to the agent named by the request `model:` field;
+      returns a 404 with an OpenAI-shaped error envelope when no agent matches.
+    - `GET /v1/models` — lists the configured agents in OpenAI's models-list shape so SDKs
+      that introspect available models (e.g. `client.models.list()`) work against the gateway.
+
+    Vanilla `OpenAI` SDK clients can target the gateway and select agents via
+    `client.responses.create(model='<agent-name>', ...)`.
+
+    Args:
+        agents: Mapping of model id (used by clients in the request `model:` field) to agent.
+            Each agent's own configured model is used at runtime; the key here is just the
+            routing label.
+        deps_factory: Optional callback that produces per-request `deps` from the incoming
+            Starlette `Request`. Sync or async. Applied uniformly to every dispatched agent —
+            for per-agent deps shaping, mount separate `to_responses()` apps.
+        owned_by: String returned in the `owned_by` field of `/v1/models` entries.
+        debug: Boolean indicating if debug tracebacks should be returned on errors.
+        routes: A list of routes to serve incoming HTTP and WebSocket requests.
+        middleware: A list of middleware to run for every request.
+        exception_handlers: A mapping of either integer status codes, or exception class types
+            onto callables which handle the exceptions.
+        on_startup: A list of callables to run on application startup.
+        on_shutdown: A list of callables to run on application shutdown.
+        lifespan: A lifespan context function.
+
+    Returns:
+        A Starlette ASGI application routing OpenAI Responses traffic to the configured agents.
+    """
+    app = Starlette(
+        debug=debug,
+        routes=routes,
+        middleware=middleware,
+        exception_handlers=exception_handlers,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        lifespan=lifespan,
+    )
+
+    async def list_models(_: Request) -> Response:
+        created = int(time.time())
+        return JSONResponse(
+            {
+                'object': 'list',
+                'data': [{'id': name, 'object': 'model', 'created': created, 'owned_by': owned_by} for name in agents],
+            }
+        )
+
+    async def run_responses(request: Request) -> Response:
+        body = await request.body()
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            return _error_response('Request body must be valid JSON.', code='invalid_json', status_code=400)
+        if not is_str_dict(payload):
+            return _error_response('Request body must be a JSON object.', code='invalid_request', status_code=400)
+        model_name = payload.get('model')
+        if not isinstance(model_name, str) or model_name not in agents:
+            return _error_response(
+                f'The model {model_name!r} does not exist or you do not have access to it.',
+                code='model_not_found',
+                status_code=404,
+            )
+        return await ResponsesAdapter[Any, Any].dispatch_request(
+            request,
+            agent=agents[model_name],
+            deps_factory=deps_factory,
+        )
+
+    app.router.add_route('/v1/responses', run_responses, methods=['POST'])
+    app.router.add_route('/v1/models', list_models, methods=['GET'])
+    return app
+
+
+def _error_response(message: str, *, code: str, status_code: int) -> JSONResponse:
+    return JSONResponse(
+        {'error': {'message': message, 'type': 'invalid_request_error', 'code': code}},
+        status_code=status_code,
+    )

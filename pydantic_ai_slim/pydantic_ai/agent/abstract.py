@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
     from starlette.middleware import Middleware
+    from starlette.requests import Request
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
@@ -1495,6 +1496,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        deps_factory: Callable[[Request], AgentDepsT | Awaitable[AgentDepsT]] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
@@ -1543,6 +1545,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps` — useful for gateway
+                scenarios where each request's deps are derived from headers (e.g. tenant/auth).
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -1580,6 +1585,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deferred_tool_results=deferred_tool_results,
             model=model,
             deps=deps,
+            deps_factory=deps_factory,
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
@@ -1604,6 +1610,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        deps_factory: Callable[[Request], AgentDepsT | Awaitable[AgentDepsT]] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
@@ -1654,6 +1661,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps` — useful for gateway
+                scenarios where each request's deps are derived from headers (e.g. tenant/auth).
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -1681,6 +1691,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             deferred_tool_results=deferred_tool_results,
             model=model,
             deps=deps,
+            deps_factory=deps_factory,
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
