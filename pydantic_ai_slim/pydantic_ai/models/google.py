@@ -315,40 +315,46 @@ def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> str | None
     return None
 
 
-def _resolve_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleVertexServiceTier | ServiceTier:
-    """Resolve the tier to feed to `_google_vertex_service_tier_headers` on a Vertex AI request.
+# Mapping from cross-provider `ServiceTier` to the safe Vertex equivalent, used when the top-level
+# `service_tier` is the only signal available. `'flex'` / `'priority'` always pick the PT-with-spillover
+# variant (never `*_only`) so PT customers keep using their reserved capacity first; users who want to
+# bypass PT must set `google_vertex_service_tier` explicitly.
+_TOP_LEVEL_TO_VERTEX_SERVICE_TIER: dict[ServiceTier, GoogleVertexServiceTier] = {
+    'auto': 'pt_then_on_demand',
+    'default': 'pt_then_on_demand',
+    'flex': 'pt_then_flex',
+    'priority': 'pt_then_priority',
+}
+
+
+def _resolve_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleVertexServiceTier:
+    """Resolve the Vertex tier to use for this request.
 
     Per-provider `google_vertex_service_tier` wins, then the deprecated `google_service_tier`
-    (with warning), then the top-level `service_tier`; defaults to `'pt_then_on_demand'` so
-    Vertex's built-in PT-with-spillover behavior is the baseline.
+    (with warning), then the top-level `service_tier` mapped via
+    [`_TOP_LEVEL_TO_VERTEX_SERVICE_TIER`][]. Defaults to `'pt_then_on_demand'` so Vertex's
+    built-in PT-with-spillover behavior is the baseline.
     """
-    return (
-        model_settings.get('google_vertex_service_tier')
-        or _get_deprecated_google_service_tier(model_settings)
-        or model_settings.get('service_tier')
-        or 'pt_then_on_demand'
-    )
+    if vertex_tier := model_settings.get('google_vertex_service_tier'):
+        return vertex_tier
+    if deprecated := _get_deprecated_google_service_tier(model_settings):
+        return deprecated
+    if top_level := model_settings.get('service_tier'):
+        return _TOP_LEVEL_TO_VERTEX_SERVICE_TIER[top_level]
+    return 'pt_then_on_demand'
 
 
-def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier | ServiceTier) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing.
-
-    Accepts both the Vertex-specific values from [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier]
-    and the top-level [`ServiceTier`][pydantic_ai.settings.ServiceTier] values. `'flex'` and `'priority'`
-    are mapped to the safe PT-with-spillover equivalents (`'pt_then_flex'` / `'pt_then_priority'`) so
-    the top-level field behaves consistently across providers while still letting Vertex users with
-    Provisioned Throughput capacity use it first.
-    """
-    # No routing headers: Vertex's default spillover (PT → on-demand) already matches these semantics.
-    if service_tier in ('auto', 'default', 'pt_then_on_demand'):
+def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
+    if service_tier == 'pt_then_on_demand':
         return {}
     if service_tier == 'pt_only':
         return {'X-Vertex-AI-LLM-Request-Type': 'dedicated'}
     if service_tier == 'on_demand':
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
-    if service_tier in ('flex', 'pt_then_flex'):
+    if service_tier == 'pt_then_flex':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
-    if service_tier in ('priority', 'pt_then_priority'):
+    if service_tier == 'pt_then_priority':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
     if service_tier == 'flex_only':
         return {
