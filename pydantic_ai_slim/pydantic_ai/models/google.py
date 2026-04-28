@@ -296,8 +296,7 @@ def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> 
 
 
 _GlaServiceTier = Literal['standard', 'flex', 'priority']
-_GLA_VALUE_MAP: dict[str, _GlaServiceTier] = {
-    'standard': 'standard',
+_TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
     'default': 'standard',
     'flex': 'flex',
     'priority': 'priority',
@@ -307,14 +306,14 @@ _GLA_VALUE_MAP: dict[str, _GlaServiceTier] = {
 def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServiceTier | None:
     """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
 
-    The deprecated `google_service_tier` wins (with warning); otherwise the top-level
-    `service_tier` is mapped to the GLA value space (`'default'` → `'standard'`,
-    `'flex'`/`'priority'` pass through, `'auto'` and Vertex-only values are dropped).
+    The deprecated `google_service_tier` only covers Vertex-shaped values, so on GLA we
+    ignore it (after triggering the warning) and map the top-level `service_tier`
+    (`'default'` → `'standard'`, `'flex'`/`'priority'` pass through, `'auto'` is dropped
+    so the server picks the default).
     """
-    if deprecated := _get_deprecated_google_service_tier(model_settings):
-        return _GLA_VALUE_MAP.get(deprecated.lower())
+    _get_deprecated_google_service_tier(model_settings)
     if unified := model_settings.get('service_tier'):
-        return _GLA_VALUE_MAP.get(unified)
+        return _TOP_LEVEL_TO_GLA_SERVICE_TIER.get(unified)
     return None
 
 
