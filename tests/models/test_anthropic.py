@@ -559,36 +559,67 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
         pytest.param('1h', '1h', id='custom-1h'),
     ],
 )
-async def test_anthropic_cache_messages_deprecated_fallback_on_bedrock(
+async def test_anthropic_cache_messages_uses_per_block_cache_control(
     allow_model_requests: None,
     cache_value: bool | Literal['1h'],
     expected_ttl: str,
 ):
-    """Test that deprecated anthropic_cache_messages triggers per-block fallback on Bedrock."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    import anthropic
-    from anthropic import AsyncAnthropicBedrock
-
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
-    mock_client.base_url = 'https://bedrock.amazonaws.com'
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
+    mock_client = MockAnthropic.create_mock(c)
 
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_messages=cache_value))
 
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        result = await agent.run('Hello')
+    result = await agent.run('Hello')
     assert result.output == 'Response'
 
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is anthropic.omit
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] is OMIT
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Hello',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': expected_ttl},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_messages=True))
+
+    result = await agent.run(['Some context', CachePoint(ttl='1h')])
+    assert result.output == 'Response'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][-1]['content']
+    assert content == snapshot(
+        [{'text': 'Some context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
+    )
+
+
+async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=AnthropicModelSettings(anthropic_cache=True, anthropic_cache_messages=True),
+    )
+
+    with pytest.raises(UserError, match='`anthropic_cache` and `anthropic_cache_messages` cannot both be enabled'):
+        await agent.run('Hello')
 
 
 async def test_anthropic_cache_fallback_preserves_existing_cache_control(allow_model_requests: None):
@@ -1265,80 +1296,7 @@ async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthr
     )
 
 
-async def test_anthropic_cache_messages_deprecated(allow_model_requests: None):
-    """Test that anthropic_cache_messages is deprecated and maps to anthropic_cache."""
-    c = completion_message(
-        [BetaTextBlock(text='Response', type='text')],
-        usage=BetaUsage(input_tokens=10, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        system_prompt='System instructions to cache.',
-        model_settings=AnthropicModelSettings(
-            anthropic_cache_messages=True,
-        ),
-    )
-
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        await agent.run('User message')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # Should use top-level cache_control (server-side automatic caching)
-    assert completion_kwargs['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
-    # Messages should NOT have per-block cache_control
-    last_msg = completion_kwargs['messages'][-1]
-    for block in last_msg['content']:
-        assert 'cache_control' not in block
-
-
-async def test_anthropic_cache_messages_deprecated_custom_ttl(allow_model_requests: None):
-    """Test that deprecated anthropic_cache_messages passes through custom TTL."""
-    c = completion_message(
-        [BetaTextBlock(text='Response', type='text')],
-        usage=BetaUsage(input_tokens=10, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        system_prompt='System instructions.',
-        model_settings=AnthropicModelSettings(
-            anthropic_cache_messages='1h',
-        ),
-    )
-
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        await agent.run('User message')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
-
-
-async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
-    """Test that enabling both anthropic_cache and anthropic_cache_messages raises UserError."""
-    c = completion_message(
-        [BetaTextBlock(text='Response', type='text')],
-        usage=BetaUsage(input_tokens=10, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        system_prompt='System instructions.',
-        model_settings=AnthropicModelSettings(
-            anthropic_cache=True,
-            anthropic_cache_messages=True,
-        ),
-    )
-
-    with pytest.raises(UserError, match='cannot both be enabled'):
-        await agent.run('User message')
-
-
-async def test_limit_cache_points_with_deprecated_cache_messages(allow_model_requests: None):
-    """Test that deprecated anthropic_cache_messages maps to anthropic_cache for cache point limiting."""
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
@@ -1353,36 +1311,38 @@ async def test_limit_cache_points_with_deprecated_cache_messages(allow_model_req
         ),
     )
 
-    # anthropic_cache_messages now maps to anthropic_cache (top-level cache_control),
-    # which reduces the explicit cache point budget from 4 to 3.
-    # With 4 CachePoint markers, the oldest should be removed to fit budget of 3.
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        await agent.run(
-            [
-                'Context 1',
-                CachePoint(),  # Oldest, should be removed
-                'Context 2',
-                CachePoint(),  # Should be kept
-                'Context 3',
-                CachePoint(),  # Should be kept
-                'Context 4',
-                CachePoint(),  # Should be kept
-                'Question',
-            ]
-        )
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # oldest, trimmed because total cache points (4 explicit + 1 from cache_messages) exceeds the budget of 4
+            'Context 2',
+            CachePoint(),
+            'Context 3',
+            CachePoint(),
+            'Context 4',
+            CachePoint(),
+            'Question',
+        ]
+    )
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     messages = completion_kwargs['messages']
-    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['cache_control'] is OMIT
 
-    cache_count = 0
-    for msg in messages:
-        for block in msg['content']:
-            if 'cache_control' in block:
-                cache_count += 1
-
-    # Budget is 3 (reduced from 4 by automatic caching). 4 CachePoint markers means 1 removed.
-    assert cache_count == 3
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context 1', 'type': 'text'},
+                    {'text': 'Context 2', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Context 3', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Context 4', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            }
+        ]
+    )
 
 
 async def test_limit_cache_points_all_settings(allow_model_requests: None):
