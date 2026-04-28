@@ -409,7 +409,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Defer eager `infer_model` when a capability declares `resolve_model`,
         # so the capability gets to map raw model values (e.g. provider strings)
         # to `Model` instances inside `_get_model`.
-        if model is None or defer_model_check or self._root_capability.has_resolve_model:
+        if model is None or defer_model_check or self._root_capability.has_resolve_model_id:
             self._model = model
         else:
             self._model = models.infer_model(model)
@@ -1722,10 +1722,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_token = None
 
         if _utils.is_set(model):
-            # Defer eager `infer_model` when a capability declares `resolve_model`
-            # so the override goes through the same resolution pipeline as a raw
-            # `agent.run(model=...)` value would. Otherwise preserve fail-fast.
-            override_value = model if self._root_capability.has_resolve_model else models.infer_model(model)
+            # Defer eager `infer_model` for string overrides when a capability
+            # declares `resolve_model_id`, so the override goes through the same
+            # resolution pipeline as `agent.run(model=...)`. Otherwise preserve
+            # fail-fast (eagerly call `infer_model`).
+            if isinstance(model, str) and self._root_capability.has_resolve_model_id:
+                override_value: models.Model | models.KnownModelName | str = model
+            else:
+                override_value = models.infer_model(model)
             model_token = self._override_model.set(_utils.Some(override_value))
         else:
             model_token = None
@@ -2365,19 +2369,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
 
-        # Give capabilities a chance to map the raw value (e.g. provider strings)
-        # to a concrete `Model` before falling back to the default `infer_model`.
-        model_: models.Model | None = None
-        if self._root_capability.has_resolve_model:
-            model_ = self._root_capability.resolve_model(raw, agent=self)
-
-        if model_ is None:
+        # Give capabilities a chance to map a model-name string to a concrete `Model`
+        # via `resolve_model_id` before the default `infer_model` flow runs. The hook
+        # only fires for strings — pre-built `Model` instances pass through unchanged
+        # (per-request swaps live in `before_model_request`).
+        model_: models.Model
+        if isinstance(raw, str) and self._root_capability.has_resolve_model_id:
+            resolved = self._root_capability.resolve_model_id(raw, agent=self)
+            model_ = resolved if resolved is not None else models.infer_model(raw)
+        else:
             model_ = raw if isinstance(raw, models.Model) else models.infer_model(raw)
 
-        # Memoize on `self.model` only when we used the agent's default — keeps the raw
-        # value untouched if it's a string with capabilities, so per-call resolution can
-        # still fire under different overrides.
-        if model is None and not some_model and not self._root_capability.has_resolve_model:
+        # Memoize on `self.model` only when we used the agent's default and no
+        # capability owns string resolution — otherwise keep the raw string so per-call
+        # resolution can still fire under different overrides.
+        if model is None and not some_model and not self._root_capability.has_resolve_model_id:
             self.model = model_
 
         instrument = self.instrument

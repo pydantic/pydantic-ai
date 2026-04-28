@@ -4319,8 +4319,8 @@ async def test_durability_runtime_registered_model_is_used(client: Client):
     assert output == 'alt-response'
 
 
-def test_durability_resolve_model_uses_models_registry():
-    """resolve_model maps a registered model-id string to its registered Model instance."""
+def test_durability_resolve_model_id_uses_models_registry():
+    """resolve_model_id maps a registered model-id string to its registered Model instance."""
     primary = FunctionModel(_durability_model_fn, model_name='primary')
     alt = FunctionModel(_durability_model_fn, model_name='alt')
 
@@ -4330,27 +4330,23 @@ def test_durability_resolve_model_uses_models_registry():
     assert bound is not None
 
     # String matches a registered model → returns that exact instance.
-    assert bound.resolve_model('alt', agent=agent) is alt
-
-    # Pre-instantiated `Model` → defer (return None) so _get_model uses it as-is.
-    assert bound.resolve_model(primary, agent=agent) is None
-    assert bound.resolve_model(None, agent=agent) is None
+    assert bound.resolve_model_id('alt', agent=agent) is alt
 
     # String not in registry and no provider_factory → default infer_model path.
     # 'test' is the special string that always works without any provider config.
-    fallback = bound.resolve_model('test', agent=agent)
+    fallback = bound.resolve_model_id('test', agent=agent)
     assert fallback is not None
     assert fallback.model_id == 'test:test'
 
 
-def test_durability_resolve_model_uses_provider_factory():
-    """resolve_model with a provider_factory builds a Model from any provider:name string."""
+def test_durability_resolve_model_id_uses_provider_factory():
+    """resolve_model_id with a provider_factory builds a Model from any provider:name string."""
 
     class _StubProvider:
         def __init__(self, name: str) -> None:
             self.name = name
 
-    def _factory(name: str) -> Any:  # pragma: lax no cover - exercised via resolve_model
+    def _factory(name: str) -> Any:  # pragma: lax no cover - exercised via resolve_model_id
         return _StubProvider(name)
 
     primary = FunctionModel(_durability_model_fn, model_name='primary')
@@ -4362,7 +4358,7 @@ def test_durability_resolve_model_uses_provider_factory():
     # String not in registry → resolve via the provider_factory + infer_model path.
     # 'test' is the special string mapped to TestModel by default infer_model;
     # the resulting Model has model_id 'test:test'.
-    resolved = bound.resolve_model('test', agent=agent)
+    resolved = bound.resolve_model_id('test', agent=agent)
     assert resolved is not None
     assert resolved.model_id == 'test:test'
 

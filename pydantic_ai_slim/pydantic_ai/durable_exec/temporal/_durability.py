@@ -367,22 +367,19 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
     # --- Model resolution ---
 
-    def resolve_model(
+    def resolve_model_id(
         self,
-        model: Model | KnownModelName | str | None,
+        model_id: KnownModelName | str,
         *,
         agent: AbstractAgent[AgentDepsT, Any],
     ) -> Model | None:
-        """Map raw model values to `Model` instances using the optional `provider_factory`.
+        """Map a model-name string to a `Model` instance via the optional `provider_factory`.
 
-        Pre-instantiated `Model` instances pass through unchanged (caller owns their
-        lifecycle). Strings get resolved through the configured `provider_factory`
-        (or the default `infer_model`) so a workflow can accept arbitrary
-        `agent.run(model='openai:gpt-5.2')` values without pre-registering each one.
+        Strings get resolved through the configured `provider_factory` (or the default
+        `infer_model`) so a workflow can accept arbitrary `agent.run(model='openai:gpt-5.2')`
+        values without pre-registering each one in `models=`.
         """
-        if isinstance(model, Model) or model is None:
-            return None  # let `_get_model` use the value as-is
-        return self._resolve_model_id(model)
+        return self._resolve_model_id(model_id)
 
     def _find_model_id(self, model: Model) -> str | None:
         """Find the cross-activity identifier for a `Model` instance.

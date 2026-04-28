@@ -158,9 +158,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
 
     @property
-    def has_resolve_model(self) -> bool:
-        """Whether this capability (or any sub-capability) overrides resolve_model."""
-        return type(self).resolve_model is not AbstractCapability.resolve_model
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides resolve_model_id."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -265,36 +265,42 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def resolve_model(
+    def resolve_model_id(
         self,
-        model: Model | KnownModelName | str | None,
+        model_id: KnownModelName | str,
         *,
         agent: AbstractAgent[AgentDepsT, Any],
     ) -> Model | None:
-        """Resolve the raw model value the user passed into a `Model` instance, or return `None` to defer.
+        """Resolve a model-name string to a `Model` instance, or return `None` to defer.
 
-        Called from `Agent._get_model` before the default
-        [`models.infer_model`][pydantic_ai.models.infer_model] fallback. Receives the raw
-        value the user passed to the agent constructor, `agent.run(model=...)`, or
-        `agent.override(model=...)` — typically a `Model` instance or a model-name
-        string like `'openai:gpt-5.2'`.
+        Called from `Agent._get_model` only when the user passed a string (model
+        name) for the agent's model — at construction time, per-run via
+        `agent.run(model=...)`, or via `agent.override(model=...)`. Pre-built
+        `Model` instances and `None` skip this hook entirely.
 
-        Capabilities can:
+        Use this to:
 
-        - Translate strings to `Model` instances using a custom provider factory
-          (e.g. routing all model strings through a shared, pre-configured client).
-        - Hand pre-built `Model` instances back unchanged.
-        - Return `None` to defer to the next capability or the default
-          [`infer_model`][pydantic_ai.models.infer_model] flow.
+        - Map known names to pre-configured `Model` instances (e.g. a shared client
+          registry).
+        - Build a `Model` via a custom [`Provider`][pydantic_ai.providers.Provider]
+          factory (forwarding to [`infer_model`][pydantic_ai.models.infer_model]
+          with `provider_factory=...`).
+        - Defer (`return None`) so the next capability — or the default
+          [`infer_model`][pydantic_ai.models.infer_model] flow — handles it.
 
-        Composition follows middleware semantics: the outermost capability wraps last,
-        seeing whatever the inner capability returned (or the raw value if the inner
-        deferred). Implementations don't have to deal with chaining themselves —
-        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] handles it.
+        Per-request *swapping* of an already-resolved `Model` is a separate concern
+        and lives in [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
+        which receives a [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]
+        whose `.model` field can be reassigned.
+
+        Composition follows middleware semantics (each-layer-wraps): the outermost
+        capability wraps last, seeing whatever the inner capability returned.
+        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        handles the chaining.
 
         The hook is synchronous (matching `get_toolset` / `get_wrapper_toolset`) and
-        is called outside of any agent run, so it doesn't receive a `RunContext`.
-        Per-run capabilities cannot influence model resolution because resolution
+        runs outside of any agent run, so it doesn't receive a `RunContext`.
+        Per-run capabilities can't influence model resolution because resolution
         happens before [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run].
         """
         return None

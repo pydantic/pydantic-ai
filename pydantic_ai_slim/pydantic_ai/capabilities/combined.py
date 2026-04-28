@@ -127,29 +127,22 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    def resolve_model(
+    def resolve_model_id(
         self,
-        model: Model | KnownModelName | str | None,
+        model_id: KnownModelName | str,
         *,
         agent: AbstractAgent[AgentDepsT, Any],
     ) -> Model | None:
-        # Each-layer-wraps: outermost capability sees whatever the innermost left,
-        # mirroring `get_wrapper_toolset`. Pass forward the most-recent non-None
-        # `Model` so a downstream capability can wrap it; if no capability ever
-        # resolves a value, return None to defer to `infer_model`.
-        from pydantic_ai.models import Model as _Model
-
-        current = model
-        any_resolved = False
-        for capability in reversed(self.capabilities):
-            result = capability.resolve_model(current, agent=agent)
+        # First-non-None wins, in user-supplied order: the first capability in the
+        # `capabilities=[...]` list gets first crack at a string and any later
+        # capability only fires if every capability before it returned None.
+        # Per-request *wrapping* of a resolved Model is a separate concern handled
+        # by `before_model_request`, so each-layer-wraps semantics aren't needed.
+        for capability in self.capabilities:
+            result = capability.resolve_model_id(model_id, agent=agent)
             if result is not None:
-                current = result
-                any_resolved = True
-        if not any_resolved:
-            return None
-        assert isinstance(current, _Model)
-        return current
+                return result
+        return None
 
     # --- Tool preparation hook ---
 
