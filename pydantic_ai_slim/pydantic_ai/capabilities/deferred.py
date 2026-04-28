@@ -42,9 +42,11 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
         self._loaded = True
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        if not self._loaded and self.wrapped.id in parse_loaded_capabilities(ctx.messages):
-            self._loaded = True
-        return self
+        result = await super().for_run(ctx)
+        if isinstance(result, DeferredCapability) and not result._loaded:
+            if result.wrapped.id in parse_loaded_capabilities(ctx.messages):
+                result._loaded = True
+        return result
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         if not self._loaded:

@@ -166,16 +166,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         visitor(self)
 
     @property
-    def discovered(self) -> bool:
-        # This property needs to be True to reflect if a capability has been loaded
-        # Once it is loaded the information withheld within should be present for use
-
-        # How do I know if it is loaded?
-        # I need to set a certain property from within load_capability tool which I will expose
-
-        return False  # default random shit for now
-
-    @property
     def has_wrap_node_run(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_node_run."""
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
