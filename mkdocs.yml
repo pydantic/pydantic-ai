@@ -118,6 +118,7 @@ nav:
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
       - Agent2Agent (A2A): a2a.md
+      - Tool-Call Gating with Tessera: tessera.md
 
   - Related Packages:
       - clai: cli.md
