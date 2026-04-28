@@ -1,0 +1,164 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '554'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_user_country\",\"args\":
+        {},\"id\": \"zeq8pw5c\"},\"thoughtSignature\": \"EswECskEAb4+9vszSOSJFcX7HcWj42UcDRpqzTKd69hrO2bufTCQdKZs6Shy65Z1ZKRZyOuhOmbRhEkOq23rpA2p0sw2mKwvcUcLEIvHBr4Bta7awDi1kvohNCC/2L7vcN+ikJmChE/SwT7nved+3HZ2ekMHBSN7mlZexdS2OheIip8NjeCaypgl+guvGG9gfgyR3Sau6DUC+UhJKvZ+b5bhuNNTIjIwsECdYQVMjlyyRep6bP89FdCSR/C0q3y7Zyeo/4oS1i0GZLJu3EvasByNYzbcgoOZUon4GQdiUkyTfuTb0/N6q/S0bMZAN5CMByGhuYgZu4DQpLlcInBOLAZ0w0a72A0LuLgftzK4gkjA0AhzmYxw3uBSlgvclH3iFbb1+hmLg85gQ7M4be4eeFGA/KAtLru4UOhMpAKTRK1LMUiM18nGSI68D7AtQki8p3OMdI8dOewzgitVAFTxDvkeC7RJdMJBdZmQuRP3fimjZu+vr8vCe+szncc/vRtOLYmIqKsz8eH1T2/UFLX3srDfbbQqwTIQvFgZ0xGD8AbNz/iZswzha0cgl4XypyDpCl2q51NdOHTVuSU/QS4tDdnPj37/q03q/s5TNoLKrRUHjcZra1CIZGwVFi0fwU1uee80K1Oyss1chvB0k9JNi2UQagAZ13n3YpD3aNIzD/cT10MY2/PmwWQnOK+yMc0R4uG9JlhRKwHlAbfFI7K5hJV6IvUA6f4pBeuzLOfbkSs8+9cfMY9e3tdGUTsP3uB9TxHkNMSMCxpVFF9QNhtv\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 29,\"candidatesTokenCount\": 12,\"totalTokenCount\":
+        156,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 29}],\"thoughtsTokenCount\": 115},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"1snFaaeXKbjD-sAPtam9qQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        29,\"candidatesTokenCount\": 12,\"totalTokenCount\": 156,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        29}],\"thoughtsTokenCount\": 115},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"1snFaaeXKbjD-sAPtam9qQY\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1366
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1613'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: zeq8pw5c
+            name: get_user_country
+          thoughtSignature: EswECskEAb4-9vszSOSJFcX7HcWj42UcDRpqzTKd69hrO2bufTCQdKZs6Shy65Z1ZKRZyOuhOmbRhEkOq23rpA2p0sw2mKwvcUcLEIvHBr4Bta7awDi1kvohNCC_2L7vcN-ikJmChE_SwT7nved-3HZ2ekMHBSN7mlZexdS2OheIip8NjeCaypgl-guvGG9gfgyR3Sau6DUC-UhJKvZ-b5bhuNNTIjIwsECdYQVMjlyyRep6bP89FdCSR_C0q3y7Zyeo_4oS1i0GZLJu3EvasByNYzbcgoOZUon4GQdiUkyTfuTb0_N6q_S0bMZAN5CMByGhuYgZu4DQpLlcInBOLAZ0w0a72A0LuLgftzK4gkjA0AhzmYxw3uBSlgvclH3iFbb1-hmLg85gQ7M4be4eeFGA_KAtLru4UOhMpAKTRK1LMUiM18nGSI68D7AtQki8p3OMdI8dOewzgitVAFTxDvkeC7RJdMJBdZmQuRP3fimjZu-vr8vCe-szncc_vRtOLYmIqKsz8eH1T2_UFLX3srDfbbQqwTIQvFgZ0xGD8AbNz_iZswzha0cgl4XypyDpCl2q51NdOHTVuSU_QS4tDdnPj37_q03q_s5TNoLKrRUHjcZra1CIZGwVFi0fwU1uee80K1Oyss1chvB0k9JNi2UQagAZ13n3YpD3aNIzD_cT10MY2_PmwWQnOK-yMc0R4uG9JlhRKwHlAbfFI7K5hJV6IvUA6f4pBeuzLOfbkSs8-9cfMY9e3tdGUTsP3uB9TxHkNMSMCxpVFF9QNhtv
+        role: model
+      - parts:
+        - functionResponse:
+            id: zeq8pw5c
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"{\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 59,\"candidatesTokenCount\": 1,\"totalTokenCount\": 96,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 59}],\"thoughtsTokenCount\": 36},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"18nFaaz2H5aQjrEP2ruPIQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\n  \\\"city\\\":
+        \\\"Mexico City\\\",\\n  \\\"country\\\": \\\"Mexico\\\"\\n} \"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 59,\"candidatesTokenCount\": 21,\"totalTokenCount\": 116,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 59}],\"thoughtsTokenCount\": 36},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"18nFaaz2H5aQjrEP2ruPIQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\":
+        \"EvEBCu4BAb4+9vt67+Q3/ZKMpkDKnkKOg62DlUafHYxAlkUgZDQ4A/u2KuIpPDSzYi2L9ivbWqblWNHjXjrGBdrxevAwMwWFRHOXABgJDYU9KOd5rkPFJKQyVYCXGZQLAK/8c8K+fBsOjl9uzHnPE3HVUU7WWi04ZJlqXC9eUa2ZfxwASIBQANd8ILQZHE8KRsgPdhEagtnpIabyLkdy2U/H6wMPpCeZw68NbxCEp6+vOI+AMC3ISjUtTiGwLovA5ssBjyJknQY3jQ45+DVk/1kZh3f3hEoF9l/fOGP3pZRHBrEAxyNOmztgo5sdggowGjtC3A==\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 174,\"candidatesTokenCount\":
+        21,\"totalTokenCount\": 231,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 174}],\"thoughtsTokenCount\":
+        36},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"18nFaaz2H5aQjrEP2ruPIQ\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=833
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

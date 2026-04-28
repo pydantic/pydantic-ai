@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '317'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: what is 65465-6544 * 65464-6+1.02255
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: Be concise and always use Python to do calculations no matter how small.
+        role: user
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\":
+        \"result = 65465 - 6544 * 65464 - 6 + 1.02255\\nprint(result)\",\"id\": \"gzl5c0n7\"},\"thoughtSignature\": \"Er4ECrsEAQw51sfcLZcpEKOUNEU8Zkd0MY2khLQ8wqZbK0zlVpM+/8qfgrK93aYkVIiDRrAFF9vPQEyC7TJ3cg9DFHfOs8JMishGUxMfH2sqzkfBuxam+r1vxHizM+jitPOWesXhziHp+Dat2YVpUUIs+EVlQSWvD+WUFGag3O0g2VLYiYJqDadYIZaJFGTtHlvV5kJClGUTMvhfsHuxHJBjhb60icbUToex8c1rVo2/0LqoiICOn1QPTSyFD3sSj2IOyVifyd82+W7si30X9gVUUF/O0yYj5FYjnB2WbWGQEYjxvAFYCCMCf6XASDQM9UhEB4Uo5GSumYbydRk3I/x5rSJb3chDXO2Bh1STKqmjGOK54J8DpzbGmNUCFgxB9KyNk0yRC9o09EBs9fNlJUWqIjFAK+oBahrYvN45MHA+KTf4HVkNi6PMnwij0pUHtW+KL74EKXOZaLEOluQweXI40voxkJB3EnXE9otwx8LGYKXiseRb2Y61tBogAGkkVkAfUqmj38WtBgdM7TuJS360Nm1bRgUQLHKueq5Jh/dtKjPVEXtAOMPl4aivEth0V5e2W2z78qwo/q/q5LGi6FxMfgEZP/J2vTKqBTm2dU7yAaNE37ULv7hcy7hEq/Ag1gkBTFxj/PFtbdLciFLKJ9r3CQ7p2FjIvTWSeBLDjboQNuyp0i+mdsXGfpbvskJMMOQLA+ss1k3vq+DjEz5gfV4Rw+23SJGbyBWGGxJIXe+xSgnIapw7wpqNQV47DL5YDw==\"},{\"text\":
+        \"\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\":
+        51,\"totalTokenCount\": 264,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}],\"thoughtsTokenCount\":
+        167},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"codeExecutionResult\": {\"outcome\": \"OUTCOME_OK\",\"output\": \"-428330955.97745\\n\",\"id\":
+        \"gzl5c0n7\"}}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\": 46,\"totalTokenCount\": 46,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The result of\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"candidatesTokenCount\": 3,\"totalTokenCount\": 49,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" $65465 - 6544 \\\\times 654\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 21,\"totalTokenCount\": 67,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"64 - 6 + 1.02255$ is **-428,33\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 46,\"candidatesTokenCount\": 45,\"totalTokenCount\": 91,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"0,955.97745**.\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"candidatesTokenCount\": 57,\"totalTokenCount\": 103,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 213,\"candidatesTokenCount\": 57,\"totalTokenCount\": 696,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 213}],\"toolUsePromptTokenCount\": 426,\"toolUsePromptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 426}]},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"t4niacTjFofVz7IP8vf04A4\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1931
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1
