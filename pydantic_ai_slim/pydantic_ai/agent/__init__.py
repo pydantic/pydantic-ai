@@ -430,7 +430,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -441,10 +440,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
-
-        self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
-
-        self._cap_model_settings = self._root_capability.get_model_settings()
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -468,10 +463,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not isinstance(toolset, AbstractToolset)
         ]
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
-
-        # Capability-contributed toolsets (stored separately for per-run re-extraction)
-        cap_toolset = self._root_capability.get_toolset()
-        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
 
         self._event_stream_handler = event_stream_handler
 
@@ -501,6 +492,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
+
+        # Initialize capability-contributed fields before for_agent (which may access agent.toolsets)
+        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
+        self._cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
+        self._cap_builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
+        self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
+
+        # Let capabilities bind to this agent (discover model, name, toolsets, etc.)
+        self._root_capability = self._root_capability.for_agent(self)
+
+        # Extract capability-contributed configuration (after for_agent so caps can provide toolsets etc.)
+        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
+        self._cap_model_settings = self._root_capability.get_model_settings()
+        cap_toolset = self._root_capability.get_toolset()
+        if cap_toolset is not None:
+            self._cap_toolsets = [cap_toolset]
 
     @overload
     @classmethod

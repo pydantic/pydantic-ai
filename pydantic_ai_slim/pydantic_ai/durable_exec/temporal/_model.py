@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
-class _RequestParams:
+class RequestParams:
     messages: list[ModelMessage]
     # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
     model_settings: dict[str, Any] | None
@@ -82,7 +82,7 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
-        async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+        async def request_activity(params: RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -97,7 +97,7 @@ class TemporalModel(WrapperModel):
         # Union with None for backward compatibility with activity payloads created before deps was added
         self.request_activity.__annotations__['deps'] = deps_type | None
 
-        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
+        async def request_stream_activity(params: RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = deserialize_run_context(
@@ -153,7 +153,7 @@ class TemporalModel(WrapperModel):
         return await workflow.execute_activity(
             activity=self.request_activity,
             args=[
-                _RequestParams(
+                RequestParams(
                     messages=messages,
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
@@ -198,7 +198,7 @@ class TemporalModel(WrapperModel):
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,
             args=[
-                _RequestParams(
+                RequestParams(
                     messages=messages,
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,

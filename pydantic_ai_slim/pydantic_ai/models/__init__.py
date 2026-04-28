@@ -566,6 +566,13 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
+    capabilities_already_applied: bool = False
+    """Set to `True` by a capability (e.g. `TemporalDurability`) when it has already
+    run the capability chain's `wrap_run_event_stream` hooks against the live model
+    stream — for example, inside a durable execution activity. Signals to the outer
+    agent loop (`_stream_and_advance`) that it should not re-wrap the replayed stream.
+    """
+
 
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
@@ -989,6 +996,11 @@ class StreamedResponse(ABC):
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
+
+    capabilities_already_applied: bool = field(default=False, init=False)
+    """When `True`, the capability chain's `wrap_run_event_stream` hooks already ran
+    against the live stream (e.g. inside a durable execution activity) and the outer
+    agent loop should not re-wrap this replayed stream."""
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)

@@ -22,6 +22,7 @@ from ._toolset import (
     CallToolResult,
     GetToolsParams,
     TemporalWrapperToolset,
+    resolve_tool_activity_config,
 )
 
 
@@ -172,10 +173,13 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
+        tool_activity_config = resolve_tool_activity_config(tool, name, self.tool_activity_config)
+        if tool_activity_config is False:  # pragma: no cover
+            return await super().call_tool(name, tool_args, ctx, tool)
         activity_config: ActivityConfig = {
             'summary': f'call tool: {self.id}:{name}',
             **self.activity_config,
-            **self.tool_activity_config.get(name, {}),
+            **tool_activity_config,
         }
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return self._unwrap_call_tool_result(

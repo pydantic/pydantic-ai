@@ -50,6 +50,7 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -81,10 +82,12 @@ try:
 
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        DurabilityPlugin,
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,
+        TemporalDurability,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
@@ -2530,8 +2533,7 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
-# ============================================================================
-# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
+# =====================================================================# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
 # ============================================================================
 
@@ -4043,3 +4045,662 @@ async def test_text_content_serialization_in_workflow(client: Client):
                 run_id=IsStr(),
             )
         )
+
+
+# ==========================================
+# TemporalDurability capability tests
+# ==========================================
+
+
+def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Simple model function for durability tests that echoes the last user prompt."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart):
+                return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
+    return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
+
+
+_durability_fn_model = FunctionModel(_durability_model_fn)
+
+simple_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+simple_durable_agent = Agent(_durability_fn_model, name='durability_simple_agent', capabilities=[simple_durability])
+
+
+@workflow.defn
+class SimpleDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_simple_agent_run_in_workflow(client: Client):
+    """TemporalDurability routes model requests through activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(simple_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            SimpleDurableAgentWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=SimpleDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: What is the capital of Mexico?'
+
+
+# --- Durability with tools ---
+
+
+def _tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model function that calls `get_country` tool then returns the result."""
+    # Check if we already have a tool result
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'The country is: {part.content}')])
+
+    # First call: invoke the tool
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_country', args='{}')])
+
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+durability_country_toolset = FunctionToolset[Deps](tools=[get_country], id='durability_country')
+
+_tool_fn_model = FunctionModel(_tool_model_fn)
+
+complex_durability = TemporalDurability[Deps](deps_type=Deps, activity_config=BASE_ACTIVITY_CONFIG)
+complex_durable_agent = Agent(
+    _tool_fn_model,
+    deps_type=Deps,
+    toolsets=[durability_country_toolset],
+    capabilities=[complex_durability],
+    name='durability_complex_agent',
+)
+
+
+@workflow.defn
+class ComplexDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: Deps) -> str:
+        result = await complex_durable_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_durability_agent_with_tools_in_workflow(client: Client):
+    """TemporalDurability wraps toolsets and routes tool calls through activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ComplexDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(complex_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            ComplexDurableAgentWorkflow.run,
+            args=['What country?', Deps(country='France')],
+            id=ComplexDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'The country is: France'
+
+
+# --- Durability outside workflow (transparent passthrough) ---
+
+
+async def test_durability_outside_workflow_is_transparent():
+    """TemporalDurability is a no-op outside a workflow — calls pass through to the real model."""
+    result = await simple_durable_agent.run('Hello')
+    assert result.output == 'Echo: Hello'
+
+
+# --- Durability wrap_run disables threads ---
+
+
+_threads_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+_threads_agent = Agent(_durability_fn_model, name='sync_tool_test', capabilities=[_threads_durability])
+
+
+@workflow.defn
+class ThreadsDurableWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _threads_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_wrap_run_disables_threads(client: Client):
+    """wrap_run disables threads when inside a Temporal workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ThreadsDurableWorkflow],
+        plugins=[DurabilityPlugin(_threads_agent)],
+    ):
+        output = await client.execute_workflow(
+            ThreadsDurableWorkflow.run,
+            args=['test'],
+            id='ThreadsDurableWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: test'
+
+
+# --- Durability validation ---
+
+
+def test_durability_requires_agent_name():
+    """TemporalDurability raises UserError when agent has no name."""
+    durability = TemporalDurability()
+    with pytest.raises(UserError, match='unique `name`'):
+        Agent(_durability_fn_model, capabilities=[durability])
+
+
+def test_durability_requires_concrete_model():
+    """TemporalDurability raises UserError when agent has no concrete model."""
+    durability = TemporalDurability()
+    with pytest.raises(UserError, match='concrete `model`'):
+        Agent(name='test', capabilities=[durability])
+
+
+def test_durability_rejects_default_model_key():
+    """TemporalDurability raises UserError when 'default' is used in the models dict."""
+    with pytest.raises(UserError, match="'default' is reserved"):
+        Agent(
+            _durability_fn_model,
+            name='test',
+            capabilities=[TemporalDurability(models={'default': _durability_fn_model})],
+        )
+
+
+def test_durability_image_output_rejected():
+    """TemporalDurability rejects image output because of the 2MB payload limit."""
+    agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    with pytest.raises(UserError, match='Image output is not supported'):
+        bound._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(allow_image_output=True),
+        )
+
+
+# --- Model registry ---
+
+
+def test_durability_find_model_id_by_identity():
+    """_find_model_id matches models by identity."""
+    m1 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
+    m2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(content='hi')]))
+    agent = Agent(m1, name='test', capabilities=[TemporalDurability(models={'alt': m2})])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert bound._find_model_id(m1) is None  # default → None  # pyright: ignore[reportPrivateUsage]
+    assert bound._find_model_id(m2) == 'alt'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_temporal_activities():
+    """temporal_activities returns all registered activities after for_agent."""
+    agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    # 2 base activities (request, request_stream) + 1 for the agent's <agent> FunctionToolset
+    assert len(bound.temporal_activities) == 3
+
+
+def test_durability_temporal_activities_with_toolsets():
+    """temporal_activities includes toolset activities for agent's toolsets."""
+    agent = Agent(
+        _durability_fn_model,
+        name='test',
+        toolsets=[FunctionToolset(id='test_toolset')],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    # 2 base activities + 1 for <agent> FunctionToolset + 1 for test_toolset
+    assert len(bound.temporal_activities) == 4
+
+
+def test_durability_shared_instance_across_agents():
+    """Same TemporalDurability instance can be reused across multiple agents.
+
+    for_agent returns a new bound copy; the original stays pristine.
+    """
+    durability = TemporalDurability()
+    a1 = Agent(_durability_fn_model, name='a1', capabilities=[durability])
+    a2 = Agent(_durability_fn_model, name='a2', capabilities=[durability])
+    # Original is unbound
+    assert durability.name == ''
+    assert durability.temporal_activities == []
+    # Each agent has its own bound copy
+    b1 = TemporalDurability.from_agent(a1)
+    b2 = TemporalDurability.from_agent(a2)
+    assert b1 is not None and b2 is not None
+    assert b1 is not b2
+    assert b1.name == 'a1'
+    assert b2.name == 'a2'
+
+
+# --- _find_model_id rejects unregistered models ---
+
+
+_rt_primary_model = FunctionModel(_durability_model_fn, model_name='primary')
+_rt_alt_model = FunctionModel(
+    lambda messages, info: ModelResponse(parts=[TextPart(content='alt-response')]),
+    model_name='alt',
+)
+_rt_durability = TemporalDurability(models={'alt': _rt_alt_model}, activity_config=BASE_ACTIVITY_CONFIG)
+_rt_agent = Agent(_rt_primary_model, name='runtime_model_test', capabilities=[_rt_durability])
+
+
+@workflow.defn
+class RuntimeModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _rt_agent.run(prompt, model=_rt_alt_model)
+        return result.output
+
+
+async def test_durability_runtime_registered_model_is_used(client: Client):
+    """agent.run(model=registered_model) routes through the registered model's activity."""
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[RuntimeModelWorkflow], plugins=[DurabilityPlugin(_rt_agent)]
+    ):
+        output = await client.execute_workflow(
+            RuntimeModelWorkflow.run,
+            args=['ignored'],
+            id='RuntimeModelWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'alt-response'
+
+
+def test_durability_find_model_id_rejects_unregistered():
+    """_find_model_id raises UserError for models not registered by identity.
+
+    Runtime models (e.g. via `agent.run(model=...)` or `agent.override(model=...)`)
+    must be pre-registered so their activities are available on the worker. String
+    inference / model_id-string fallback is not supported inside workflows because
+    the worker cannot reach the provider to build a fresh model instance deterministically.
+    """
+    m1 = FunctionModel(_durability_model_fn, model_name='registered')
+    m_runtime = FunctionModel(_durability_model_fn, model_name='runtime')
+
+    agent = Agent(m1, name='model_reject_test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # Registered default model matches by identity → None
+    assert bound._find_model_id(m1) is None  # pyright: ignore[reportPrivateUsage]
+
+    # Unregistered model is rejected with a clear error
+    with pytest.raises(UserError, match='not registered with this TemporalDurability'):
+        bound._find_model_id(m_runtime)  # pyright: ignore[reportPrivateUsage]
+
+
+# --- _validate_per_run_capabilities rejects runtime-added classes ---
+
+
+def test_durability_rejects_runtime_added_capabilities():
+    """Per-run capabilities not seen at construction time are rejected.
+
+    Capability instances added via ``agent.run(capabilities=[...])`` bypass the
+    activity-registration step in ``for_agent``. The capability detects this by
+    snapshotting the bound chain's classes and comparing against ``ctx.root_capability``.
+    """
+    from pydantic_ai._run_context import RunContext
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.result import RunUsage
+
+    @dataclass
+    class _UnregisteredCap(AbstractCapability[None]):
+        pass
+
+    durability = TemporalDurability()
+    agent = Agent(_durability_fn_model, name='runtime_cap_test', capabilities=[durability])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    def make_ctx(root: AbstractCapability[Any]) -> RunContext[None]:
+        return RunContext[None](deps=None, model=_durability_fn_model, usage=RunUsage(), root_capability=root)
+
+    bound_chain = agent.root_capability
+    runtime_chain = CombinedCapability([*bound_chain.capabilities, _UnregisteredCap()])
+    with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+        bound._validate_per_run_capabilities(make_ctx(runtime_chain))  # pyright: ignore[reportPrivateUsage]
+
+    # Sanity: the bound chain alone passes validation.
+    bound._validate_per_run_capabilities(make_ctx(bound_chain))  # pyright: ignore[reportPrivateUsage]
+
+
+# --- get_serialization_name returns None ---
+
+
+def test_durability_get_serialization_name():
+    """TemporalDurability.get_serialization_name() returns None."""
+    assert TemporalDurability.get_serialization_name() is None
+
+
+def test_durability_plugin_requires_durability_capability():
+    """`DurabilityPlugin` raises a clear error when the agent has no `TemporalDurability`."""
+    plain_agent = Agent(_durability_fn_model, name='no_cap_agent')
+    with pytest.raises(UserError, match='no `TemporalDurability` capability'):
+        DurabilityPlugin(plain_agent)
+
+
+_pydantic_ai_agents_durable = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+_pydantic_ai_agents_agent = Agent(
+    _durability_fn_model,
+    name='pydantic_ai_agents_attr_test',
+    capabilities=[_pydantic_ai_agents_durable],
+)
+
+
+@workflow.defn
+class _BareAgentWorkflowViaAttribute:
+    __pydantic_ai_agents__ = [_pydantic_ai_agents_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _pydantic_ai_agents_agent.run(prompt)
+        return result.output
+
+
+async def test_pydantic_ai_plugin_discovers_bare_agent_with_durability(client: Client):
+    """`PydanticAIPlugin` registers activities from a bare `AbstractAgent` listed in `__pydantic_ai_agents__`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[_BareAgentWorkflowViaAttribute],
+    ):
+        output = await client.execute_workflow(
+            _BareAgentWorkflowViaAttribute.run,
+            args=['Discovered'],
+            id=_BareAgentWorkflowViaAttribute.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: Discovered'
+
+
+_missing_cap_agent = Agent(_durability_fn_model, name='no_cap_in_attr')
+
+
+@workflow.defn
+class _MissingCapWorkflow:
+    __pydantic_ai_agents__ = [_missing_cap_agent]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:  # pragma: no cover - configure_worker rejects before exec
+        result = await _missing_cap_agent.run(prompt)
+        return result.output
+
+
+async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: Client):
+    """`PydanticAIPlugin` raises a clear error when an agent in `__pydantic_ai_agents__` lacks `TemporalDurability`."""
+    with pytest.raises(UserError, match='no `TemporalDurability` capability'):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[_MissingCapWorkflow],
+        ):
+            pass  # pragma: no cover - error raised before reaching here
+
+
+# --- Toolset without ID raises UserError ---
+
+
+def test_durability_toolset_without_id_raises():
+    """TemporalDurability raises UserError for leaf toolsets without an ID."""
+    durability = TemporalDurability()
+    with pytest.raises(UserError, match='unique `id`'):
+        Agent(
+            _durability_fn_model,
+            name='no_id_test',
+            toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')])],
+            capabilities=[durability],
+        )
+
+
+# --- temporalize returning non-TemporalWrapperToolset (line 294->297 branch) ---
+
+
+def test_durability_non_temporal_wrapper_toolset_not_in_registry():
+    """When temporalize returns a non-TemporalWrapperToolset, it's not added to the registry."""
+    agent = Agent(
+        _durability_fn_model,
+        name='external_ts_test',
+        toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='ext_tool')], id='ext')],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    # ExternalToolset is not wrapped into a TemporalWrapperToolset by the default
+    # temporalize_toolset, so 'ext' should not appear in _temporal_toolsets_by_id.
+    assert 'ext' not in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+    # The agent's built-in <agent> FunctionToolset IS wrapped.
+    assert '<agent>' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+
+# --- get_wrapper_toolset returns None when no temporal toolsets ---
+
+
+def test_durability_get_wrapper_toolset_returns_none():
+    """get_wrapper_toolset returns None when _temporal_toolsets_by_id is empty."""
+    # Use a no-op temporalize_toolset_func so no toolsets get wrapped
+    agent = Agent(
+        _durability_fn_model,
+        name='no_wrap_test',
+        capabilities=[
+            TemporalDurability(
+                temporalize_toolset_func=lambda ts, prefix, config, tool_config, deps_type, rc_type, agent: ts,
+            )
+        ],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert len(bound._temporal_toolsets_by_id) == 0  # pyright: ignore[reportPrivateUsage]
+
+    dummy_toolset = FunctionToolset(id='dummy')
+    assert bound.get_wrapper_toolset(dummy_toolset) is None
+
+
+# --- get_wrapper_toolset swap returns unchanged toolset ---
+
+
+def test_durability_get_wrapper_toolset_swap_unchanged():
+    """get_wrapper_toolset's swap returns a toolset unchanged if its ID is not in the registry."""
+    agent = Agent(_durability_fn_model, name='swap_test', capabilities=[TemporalDurability()])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # Create a new toolset not registered with this durability
+    unregistered_toolset = FunctionToolset(id='unregistered')
+    result = bound.get_wrapper_toolset(unregistered_toolset)
+    # The toolset should be returned as-is since its ID is not in the registry
+    assert result is unregistered_toolset
+
+
+# --- Streaming in workflow (event_stream_handler) ---
+
+
+async def _stream_model_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'Stream'
+    yield 'ed '
+    yield 'response'
+
+
+_stream_fn_model = FunctionModel(_durability_model_fn, stream_function=_stream_model_fn)
+
+_stream_events_collected: list[AgentStreamEvent] = []
+
+
+async def _durability_event_stream_handler(
+    ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _stream_events_collected.append(event)
+
+
+_stream_durability = TemporalDurability(
+    event_stream_handler=_durability_event_stream_handler,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+_stream_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_stream_agent',
+    capabilities=[_stream_durability],
+)
+
+
+@workflow.defn
+class StreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _stream_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_streaming_in_workflow(client: Client):
+    """TemporalDurability routes model requests through streaming activity when event_stream_handler is set."""
+    _stream_events_collected.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StreamDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(_stream_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            StreamDurableAgentWorkflow.run,
+            args=['Hello streaming'],
+            id=StreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        # The non-streaming FunctionModel function is NOT used for the streaming activity;
+        # instead, request_stream_activity uses the stream_function path.
+        # The final response is assembled from the streamed chunks.
+        assert output == 'Streamed response'
+
+
+# --- ProcessEventStream capability fires live inside the activity ---
+
+_process_events_collected: list[AgentStreamEvent] = []
+
+
+async def _process_event_stream_handler(
+    ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent],
+) -> None:
+    async for event in stream:
+        _process_events_collected.append(event)
+
+
+_process_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+_process_durable_agent = Agent(
+    _stream_fn_model,
+    name='durability_process_agent',
+    capabilities=[
+        ProcessEventStream(_process_event_stream_handler),
+        _process_durability,
+    ],
+)
+
+
+@workflow.defn
+class ProcessStreamDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _process_durable_agent.run(prompt)
+        return result.output
+
+
+def test_durability_tool_metadata_disables_activity():
+    """Tool metadata={'temporal': False} disables activity wrapping for that tool."""
+
+    async def slow_tool() -> str:
+        return 'slow'
+
+    toolset = FunctionToolset[None](id='meta_toolset')
+    toolset.add_function(slow_tool, metadata={'temporal': False})
+
+    agent = Agent(
+        _durability_fn_model,
+        name='meta_disable_test',
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # Should have wrapped the toolset (capability discovered it at for_agent time);
+    # the per-tool skip is applied at call time via resolve_tool_activity_config.
+    assert 'meta_toolset' in bound._temporal_toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+
+def test_resolve_tool_activity_config_reads_metadata():
+    """Per-tool Temporal config from `tool_def.metadata['temporal']` takes priority."""
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.toolsets import ToolsetTool
+    from pydantic_ai_slim.pydantic_ai.durable_exec.temporal._toolset import resolve_tool_activity_config
+
+    metadata_config = ActivityConfig(start_to_close_timeout=timedelta(seconds=120))
+
+    fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
+
+    async def fn_tool() -> str:
+        return 'ok'
+
+    fn_toolset.add_function(fn_tool, metadata={'temporal': metadata_config})
+    tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': metadata_config})
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=tool_def,
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    # Metadata wins over the per-tool dict.
+    resolved = resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')})
+    assert resolved is metadata_config
+
+    # `False` in metadata also wins.
+    tool.tool_def.metadata = {'temporal': False}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
+
+
+async def test_durability_process_event_stream_fires_live_inside_activity(client: Client):
+    """ProcessEventStream (outer capability) sees live events emitted inside the Temporal activity.
+
+    With in-activity chain firing, the capability's handler runs against the real streamed
+    response — so multiple PartDeltaEvents come through (one per chunk). If the chain fired
+    on the replayed stream outside the activity instead, ProcessEventStream would see a
+    single synthetic delta with the full text.
+    """
+    _process_events_collected.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ProcessStreamDurableAgentWorkflow],
+        plugins=[DurabilityPlugin(_process_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            ProcessStreamDurableAgentWorkflow.run,
+            args=['Hello'],
+            id=ProcessStreamDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Streamed response'
+
+    delta_events = [
+        e for e in _process_events_collected if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
+    ]
+    text_chunks = [cast(TextPartDelta, e.delta).content_delta for e in delta_events]
+    # Live stream: the first chunk becomes the PartStartEvent's text; subsequent chunks
+    # are deltas. Synthetic replay would collapse all chunks into a single delta with
+    # the full text ('Streamed response').
+    assert text_chunks == ['ed ', 'response']

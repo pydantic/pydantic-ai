@@ -22,7 +22,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
@@ -191,6 +191,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         these to topologically sort its children at construction time.
         """
         return None
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use with this agent.
+
+        Called once at agent construction time, after the agent is fully
+        initialized (model, name, toolsets are all available). Override to
+        discover agent configuration and return a bound instance.
+
+        This runs before ``get_*()`` methods are called, so the returned
+        instance's ``get_toolset()``, ``get_instructions()``, etc. will be
+        used for the agent's initial configuration.
+
+        Default: return ``self`` (no agent-specific setup needed).
+        """
+        return self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.

@@ -489,6 +489,76 @@ class _SkipStreamedResponse(models.StreamedResponse):
         return self._response
 
 
+# --- Innermost model-call helpers ---
+#
+# Both the agent graph (ModelRequestNode) and durable execution capabilities
+# (TemporalDurability/DBOSDurability/PrefectDurability inside their
+# activity/step/task) need to invoke the model as the innermost operation of a
+# request. Routing both call sites through these helpers keeps the innermost
+# logic in one place — any future addition (telemetry, caching, error
+# translation) lands in both paths automatically.
+
+
+async def call_model(
+    model: models.Model,
+    request_context: ModelRequestContext,
+    run_context: RunContext[Any],
+) -> _messages.ModelResponse:
+    """Run the innermost non-streaming model request.
+
+    Re-exported as `pydantic_ai.durable_exec.call_model` for use by capabilities
+    that route the model request through an external durable system (Temporal,
+    DBOS, Prefect, ...). Call this from inside the activity / step / task to
+    perform the actual provider request.
+
+    Args:
+        model: The model to call.
+        request_context: The merged request context (messages, settings, parameters).
+        run_context: The current run context, made available via `get_current_run_context`.
+
+    Returns:
+        The model response.
+    """
+    with set_current_run_context(run_context):
+        return await model.request(
+            request_context.messages,
+            request_context.model_settings,
+            request_context.model_request_parameters,
+        )
+
+
+@asynccontextmanager
+async def open_model_stream(
+    model: models.Model,
+    request_context: ModelRequestContext,
+    run_context: RunContext[Any],
+) -> AsyncIterator[models.StreamedResponse]:
+    """Open the innermost streaming model request.
+
+    Re-exported as `pydantic_ai.durable_exec.open_model_stream` for use by
+    capabilities that route the model stream through an external durable
+    system. Call from inside the activity / step / task to drain the
+    `StreamedResponse` and (optionally) fire `wrap_run_event_stream` hooks
+    against live events before returning the assembled `ModelResponse`.
+
+    Args:
+        model: The model to call.
+        request_context: The merged request context.
+        run_context: The current run context.
+
+    Yields:
+        A `StreamedResponse` to iterate inside the durable boundary.
+    """
+    with set_current_run_context(run_context):
+        async with model.request_stream(
+            request_context.messages,
+            request_context.model_settings,
+            request_context.model_request_parameters,
+            run_context,
+        ) as sr:
+            yield sr
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -559,16 +629,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
-            with set_current_run_context(run_context):
-                async with req_ctx.model.request_stream(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
-                ) as sr:
-                    self._did_stream = True
-                    ctx.state.usage.requests += 1
-                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                    agent_stream_holder.append(agent_stream)
-                    stream_ready.set()
-                    await stream_done.wait()
+            async with open_model_stream(req_ctx.model, req_ctx, run_context) as sr:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                agent_stream_holder.append(agent_stream)
+                stream_ready.set()
+                await stream_done.wait()
             response = sr.get()
             _handler_response = response
             return response
@@ -615,8 +682,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
-            skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
-            agent_stream = self._build_agent_stream(ctx, skip_sr, model_request_parameters)
+            from .models.wrapper import ReplayStreamedResponse
+
+            replay_sr = ReplayStreamedResponse(
+                model_request_parameters,
+                model_response,
+                capabilities_already_applied=wrap_request_context.capabilities_already_applied,
+            )
+            agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream
             self.last_request_context = wrap_request_context
             await self._finish_handling(ctx, model_response)
@@ -704,12 +777,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
-            with set_current_run_context(run_context):
-                response = await req_ctx.model.request(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
-                )
-                _handler_response = response
-                return response
+            response = await call_model(req_ctx.model, req_ctx, run_context)
+            _handler_response = response
+            return response
 
         request_context = ModelRequestContext(
             model=model,
@@ -1254,6 +1324,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        root_capability=ctx.deps.root_capability,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

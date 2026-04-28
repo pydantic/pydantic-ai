@@ -9,7 +9,19 @@ from typing import Any
 from typing_extensions import Self
 
 from .._run_context import RunContext
-from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ..messages import (
+    ModelMessage,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+)
 from ..profiles import ModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -55,6 +67,74 @@ class CompletedStreamedResponse(StreamedResponse):
     @property
     def timestamp(self) -> datetime:
         return self.response.timestamp  # pragma: no cover
+
+
+class ReplayStreamedResponse(StreamedResponse):
+    """A `StreamedResponse` that replays a completed `ModelResponse` as synthetic stream events.
+
+    Unlike `CompletedStreamedResponse` which yields no events, this class converts each
+    response part into `PartStartEvent` + `PartDeltaEvent` + `PartEndEvent` sequences.
+    This allows streaming consumers (`event_stream_handler`, `run_stream_events`, etc.)
+    to work transparently when a capability short-circuits `wrap_model_request` and
+    returns a complete `ModelResponse` instead of calling the handler.
+
+    Primarily used by durable execution capabilities (Temporal, DBOS, Prefect) where
+    model requests are executed in activities/steps and only the final response is
+    returned, but streaming callers still expect events.
+    """
+
+    def __init__(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        response: ModelResponse,
+        *,
+        capabilities_already_applied: bool = False,
+    ):
+        super().__init__(model_request_parameters)
+        self.response = response
+        self.capabilities_already_applied = capabilities_already_applied
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for part in self.response.parts:
+            # Register the part with the parts manager (always returns PartStartEvent for new parts)
+            start_event = self._parts_manager.handle_part(vendor_part_id=None, part=part)
+            assert isinstance(start_event, PartStartEvent)
+            yield start_event
+
+            # Emit a delta with the full content
+            index = start_event.index
+            if isinstance(part, TextPart) and part.content:
+                yield PartDeltaEvent(index=index, delta=TextPartDelta(content_delta=part.content))
+            elif isinstance(part, ThinkingPart) and part.content:
+                yield PartDeltaEvent(index=index, delta=ThinkingPartDelta(content_delta=part.content))
+            elif isinstance(part, ToolCallPart):
+                yield PartDeltaEvent(
+                    index=index,
+                    delta=ToolCallPartDelta(args_delta=part.args),
+                )
+            # PartEndEvent is added automatically by StreamedResponse.__aiter__
+
+    def get(self) -> ModelResponse:
+        return self.response
+
+    def usage(self) -> RequestUsage:
+        return self.response.usage
+
+    @property
+    def model_name(self) -> str:
+        return self.response.model_name or ''
+
+    @property
+    def provider_name(self) -> str:
+        return self.response.provider_name or ''
+
+    @property
+    def provider_url(self) -> str | None:
+        return self.response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.response.timestamp
 
 
 @dataclass(init=False)
