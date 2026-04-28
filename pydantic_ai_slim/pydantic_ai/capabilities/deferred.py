@@ -41,6 +41,10 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
     def load(self) -> None:
         self._loaded = True
 
+    @property
+    def loaded(self) -> bool:
+        return self._loaded
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         result = await super().for_run(ctx)
         if isinstance(result, DeferredCapability) and not result._loaded:
@@ -86,7 +90,7 @@ class _GatedToolset(WrapperToolset[AgentDepsT]):
     deferred: DeferredCapability[AgentDepsT]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not self.deferred._loaded:  # type: ignore[reportPrivateUsage]
+        if not self.deferred.loaded:
             return {}
         return await self.wrapped.get_tools(ctx)
 

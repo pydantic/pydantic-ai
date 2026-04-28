@@ -51,7 +51,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        unloaded = [cap for cap in self.deferred_capabilities if not cap._loaded]  # type: ignore[reportPrivateUsage]
+        unloaded = [cap for cap in self.deferred_capabilities if not cap.loaded]
         if not unloaded:
             return all_tools
 
