@@ -1542,6 +1542,19 @@ def test_anthropic_tool_search_result_error_block_mapping():
     assert part.metadata is None
 
 
+def test_anthropic_extract_discovered_tool_names_malformed_content():
+    """Custom-callable replay must fall through to text formatting when the persisted
+    return content doesn't parse as a ``ToolSearchReturn`` — e.g. older history written
+    before the typed shape, or a hand-crafted return — rather than crashing or
+    fabricating an empty discovery."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai.models.anthropic import _extract_discovered_tool_names  # pyright: ignore[reportPrivateUsage]
+
+    malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
+    assert _extract_discovered_tool_names(malformed, custom_tool_search_active=True) is None
+
+
 def test_anthropic_build_tool_search_replay_block_error_branch():
     """Replay reconstruction must round-trip an error result that the parse-time
     mapper stashed on ``provider_details`` back into the ``tool_search_tool_result_error``
