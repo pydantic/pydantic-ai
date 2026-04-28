@@ -4487,21 +4487,17 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
 
 
 async def test_client_submitted_dangling_tool_calls_not_executed() -> None:
-    """A client-submitted history ending with an unresolved tool call does not drive
-    tool execution from that call's arguments. The dangling tool call is stripped with
-    a warning before the agent runs.
+    """A client-submitted history ending with an unresolved tool call has that tool call
+    stripped before the agent sees the history, so the agent never has the chance to
+    execute it.
     """
-    executed: list[dict[str, Any]] = []
+    captured: list[list[ModelMessage]] = []
 
-    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(list(messages))
         yield 'done'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
-
-    @agent.tool_plain
-    def refresh_cache(key: str) -> str:
-        executed.append({'key': key})
-        return 'refreshed'
 
     run_input = create_input(
         UserMessage(id='msg_1', content='Hi'),
@@ -4523,7 +4519,12 @@ async def test_client_submitted_dangling_tool_calls_not_executed() -> None:
         async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
-    assert executed == [], 'dangling client-submitted tool call must not be executed'
+    assert len(captured) == 1
+    history_seen_by_model = captured[0]
+    assert not any(
+        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
+        for message in history_seen_by_model
+    ), 'dangling client-submitted tool call leaked into the agent run'
 
 
 async def test_client_submitted_tool_call_resolved_by_deferred_results_runs() -> None:
