@@ -622,9 +622,13 @@ class GoogleModel(Model[Client]):
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools:
+            if (
+                model_request_parameters.function_tools
+                and not GoogleModelProfile.from_profile(self.profile).google_supports_tool_combination
+            ):
                 raise UserError(
-                    'Google does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                    'This model does not support `NativeOutput` and function tools at the same time. '
+                    'Use `output_type=ToolOutput(...)` instead.'
                 )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object

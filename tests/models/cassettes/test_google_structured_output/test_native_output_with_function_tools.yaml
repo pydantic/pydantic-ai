@@ -1,0 +1,184 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '554'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '956'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1975
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              id: 433twugp
+              name: get_user_country
+            thoughtSignature: EsICCr8CAb4+9vu3iLbkgBv3NM8MTZ8AY0qigLMvQw2c4zaPLTBVOjJIoxDi+HxhqumFkQACTbeY79Gdx577m9h8SHhP5ixCoHGc0Um8Dnhv2W4abbuVP/OSYelZzRXDWEX4O9JvHzC1V1gxx/OQYhwY5zipl3DLHFI/2yYlRxMsia2aeaqsc/3nafJ9LmItk54EyX2XYPhF0BDSE96auSJV9DCnDvHdXNZeXuSM96dNLi4hUFQfPAAainjD96vZcWtv9nNJBxnNR2u754x9Z5jh120fBm53l9Zu7PT9Jzwe9szpUUn9PTyzs2iqrgpC5DrkxBZkWQu/10LBIpK6iYGVTMtkiUfkRe9GDAACObOL+qI+THW2HsAhgIVs7+PjI2IkaTJf6MYSnbBl+Ya/6D4NttH3GUGN724uF9LwjPhnUOf+Mw==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: 1MnFaZLAD6Ky1MkP8Nrx4QQ
+      usageMetadata:
+        candidatesTokenCount: 12
+        promptTokenCount: 29
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 29
+        thoughtsTokenCount: 64
+        totalTokenCount: 105
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1261'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: 433twugp
+            name: get_user_country
+          thoughtSignature: EsICCr8CAb4-9vu3iLbkgBv3NM8MTZ8AY0qigLMvQw2c4zaPLTBVOjJIoxDi-HxhqumFkQACTbeY79Gdx577m9h8SHhP5ixCoHGc0Um8Dnhv2W4abbuVP_OSYelZzRXDWEX4O9JvHzC1V1gxx_OQYhwY5zipl3DLHFI_2yYlRxMsia2aeaqsc_3nafJ9LmItk54EyX2XYPhF0BDSE96auSJV9DCnDvHdXNZeXuSM96dNLi4hUFQfPAAainjD96vZcWtv9nNJBxnNR2u754x9Z5jh120fBm53l9Zu7PT9Jzwe9szpUUn9PTyzs2iqrgpC5DrkxBZkWQu_10LBIpK6iYGVTMtkiUfkRe9GDAACObOL-qI-THW2HsAhgIVs7-PjI2IkaTJf6MYSnbBl-Ya_6D4NttH3GUGN724uF9LwjPhnUOf-Mw==
+        role: model
+      - parts:
+        - functionResponse:
+            id: 433twugp
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '734'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=912
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: "{\n  \"city\": \"Mexico City\",\n  \"country\": \"Mexico\"\n} "
+            thoughtSignature: EsQBCsEBAb4+9vv+qq+pJIPjFrHh/p/G6JuOaDnnTsQnBqtCTMrral46e73Jd8X1nJfxxtexSiy9Jvz+hF5n51mXGWnyUrNfo4LEsH6opvfJjVMzcWg/qhdkNhkW1fc0U+EYNtbMPbFf1VrS/Tc57vOk6J8X3HoxuOq1H1v8SisuAYN+w69cIboxwvcETfGjhNdT+OKQ06Viy01GPPUUKLIZY6fwL4Idrvei8iq4GVnRh/4LlJvEka+GBcDIoDVIzamBqFjOfA==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: 1cnFaY76C47TjMcPkM6k0Qg
+      usageMetadata:
+        candidatesTokenCount: 21
+        promptTokenCount: 123
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 123
+        thoughtsTokenCount: 31
+        totalTokenCount: 175
+    status:
+      code: 200
+      message: OK
+version: 1

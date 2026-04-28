@@ -10,9 +10,10 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleModelProfile, google_model_profile
 
 from .._inline_snapshot import snapshot
 
@@ -193,11 +194,25 @@ def test_model_profile_gemini_2():
     assert profile.supports_json_schema_output is True
 
 
-def test_model_profile_gemini_3():
-    """Gemini 3.x models should support native output with builtin tools."""
+def test_model_profile_gemini_3_supports_tool_combination():
+    """Gemini 3.x models should support combining function declarations with builtin tools and `response_schema`."""
     profile = google_model_profile('gemini-3.0-pro')
-    assert profile is not None
-    assert profile.google_supports_native_output_with_builtin_tools is True  # type: ignore
+    assert isinstance(profile, GoogleModelProfile)
+    assert profile.google_supports_tool_combination is True
+
+
+def test_model_profile_gemini_2_does_not_support_tool_combination():
+    """Gemini 2.x models do not support the new tool combination capability."""
+    profile = google_model_profile('gemini-2.5-flash')
+    assert isinstance(profile, GoogleModelProfile)
+    assert profile.google_supports_tool_combination is False
+
+
+def test_deprecated_google_supports_native_output_with_builtin_tools_alias():
+    """The old field name still works but emits a DeprecationWarning and forwards to the new field."""
+    with pytest.warns(DeprecationWarning, match='google_supports_native_output_with_builtin_tools'):
+        profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
+    assert profile.google_supports_tool_combination is True
 
 
 def test_model_profile_image_model():
