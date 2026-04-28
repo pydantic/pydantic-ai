@@ -1201,9 +1201,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         if cache_messages := model_settings.get('anthropic_cache_messages'):
-            self._apply_message_cache_control(
-                anthropic_messages, '5m' if cache_messages is True else cache_messages
-            )
+            self._apply_message_cache_control(anthropic_messages, '5m' if cache_messages is True else cache_messages)
 
         # Build system prompt blocks: each instruction part becomes a separate text block.
         # When anthropic_cache_instructions is enabled, the cache point goes after the last
