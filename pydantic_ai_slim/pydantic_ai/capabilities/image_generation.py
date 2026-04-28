@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
+from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -72,7 +72,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     Supported by: OpenAI Responses.
     """
 
-    model: str | None
+    model: ImageGenerationModelName | None
     """The image generation model to use.
 
     Supported by: OpenAI Responses.
@@ -125,7 +125,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
         moderation: Literal['auto', 'low'] | None = None,
-        model: str | None = None,
+        model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
