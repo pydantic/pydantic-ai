@@ -1179,6 +1179,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             extra_capabilities.extend(capabilities)
         if extra_capabilities:
+            deferred: list[DeferredCapability[AgentDepsT]] = []
+            for i, cap in enumerate(extra_capabilities):
+                if cap.defer_loading:
+                    wrapped = DeferredCapability(wrapped=cap)
+                    extra_capabilities[i] = wrapped
+                    deferred.append(wrapped)
+            if deferred:
+                extra_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred))
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
