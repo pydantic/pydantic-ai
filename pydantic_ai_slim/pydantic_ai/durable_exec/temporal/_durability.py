@@ -25,7 +25,8 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.durable_exec import disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, infer_model
+from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -86,6 +87,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        provider_factory: Callable[[str], Provider[Any]] | None = None,
         deps_type: type[AgentDepsT] = type(None),
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
@@ -113,7 +115,14 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         Args:
             models: Optional additional models keyed by ID for runtime model
                 switching. The agent's primary model is always registered as
-                ``'default'``.
+                ``'default'``. Pre-instantiated `Model` instances passed at
+                runtime via `agent.run(model=instance)` are accepted as-is.
+            provider_factory: Optional factory used to instantiate a
+                [`Provider`][pydantic_ai.providers.Provider] from a provider
+                name when a model-name string (e.g. `'openai:gpt-5.2'`) is
+                passed at runtime via `agent.run(model=...)` /
+                `agent.override(model=...)`. Lets a workflow accept arbitrary
+                model strings without pre-registering each one in `models=`.
             deps_type: The type of the agent's dependencies, needed for Temporal
                 serialization of activity parameters.
             event_stream_handler: Optional handler for streaming events. When set,
@@ -146,6 +155,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self.run_context_type = run_context_type
         self._event_stream_handler = event_stream_handler
         self._extra_models = dict(models) if models else {}
+        self._provider_factory = provider_factory
         self._deps_type = deps_type
         self._temporalize_toolset_func = temporalize_toolset_func
 
@@ -357,30 +367,52 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
     # --- Model resolution ---
 
-    def _find_model_id(self, model: Model) -> str | None:
-        """Find the registry key for a Model instance by identity.
+    def resolve_model(
+        self,
+        model: Model | KnownModelName | str | None,
+        *,
+        agent: AbstractAgent[AgentDepsT, Any],
+    ) -> Model | None:
+        """Map raw model values to `Model` instances using the optional `provider_factory`.
 
-        Returns ``None`` for the default model or a string key for extra models.
-        Raises `UserError` if the model is not registered — runtime models must be
-        pre-registered via the `models=` constructor arg so their activities can be
-        dispatched on the worker.
+        Pre-instantiated `Model` instances pass through unchanged (caller owns their
+        lifecycle). Strings get resolved through the configured `provider_factory`
+        (or the default `infer_model`) so a workflow can accept arbitrary
+        `agent.run(model='openai:gpt-5.2')` values without pre-registering each one.
+        """
+        if isinstance(model, Model) or model is None:
+            return None  # let `_get_model` use the value as-is
+        return self._resolve_model_id(model)
+
+    def _find_model_id(self, model: Model) -> str | None:
+        """Find the cross-activity identifier for a `Model` instance.
+
+        Returns ``None`` for the agent's default model (no extra info needed),
+        a registry key when an instance from `models=` is being used, or the
+        model's own `model_id` string when the model was constructed at runtime
+        (via `resolve_model` / `provider_factory`). Activities use the result to
+        rebuild the same `Model` on the worker side via `_resolve_model_id`.
         """
         for model_id, registered in self._models_by_id.items():
             if registered is model:
                 return None if model_id == 'default' else model_id
-
-        raise UserError(
-            f'Model {model.model_id!r} is not registered with this TemporalDurability capability. '
-            'When overriding the model per-run with Temporal, pass a Model instance that was '
-            "registered via `TemporalDurability(models={'<id>': <model>})` so its activities "
-            'are available on the worker.'
-        )
+        # Runtime-built Model: round-trip via its model_id string. The worker
+        # rebuilds it the same way (registry lookup → provider_factory → default).
+        return model.model_id
 
     def _resolve_model_id(self, model_id: str | None) -> Model:
-        """Resolve a model ID to a Model instance (used inside activities)."""
+        """Resolve a model ID string to a `Model` instance.
+
+        Used both at runtime (to map raw user-provided strings via `resolve_model`)
+        and inside activities (to rebuild the same `Model` the workflow side built).
+        """
         if model_id is None:
             return self._models_by_id['default']
-        return self._models_by_id[model_id]
+        if model_id in self._models_by_id:
+            return self._models_by_id[model_id]
+        if self._provider_factory is not None:
+            return infer_model(model_id, provider_factory=self._provider_factory)
+        return infer_model(model_id)
 
     # --- Capability hooks ---
 

@@ -4319,27 +4319,74 @@ async def test_durability_runtime_registered_model_is_used(client: Client):
     assert output == 'alt-response'
 
 
-def test_durability_find_model_id_rejects_unregistered():
-    """_find_model_id raises UserError for models not registered by identity.
+def test_durability_resolve_model_uses_models_registry():
+    """resolve_model maps a registered model-id string to its registered Model instance."""
+    primary = FunctionModel(_durability_model_fn, model_name='primary')
+    alt = FunctionModel(_durability_model_fn, model_name='alt')
 
-    Runtime models (e.g. via `agent.run(model=...)` or `agent.override(model=...)`)
-    must be pre-registered so their activities are available on the worker. String
-    inference / model_id-string fallback is not supported inside workflows because
-    the worker cannot reach the provider to build a fresh model instance deterministically.
+    durability = TemporalDurability(models={'alt': alt}, activity_config=BASE_ACTIVITY_CONFIG)
+    agent = Agent(primary, name='resolve_registry_test', capabilities=[durability])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # String matches a registered model → returns that exact instance.
+    assert bound.resolve_model('alt', agent=agent) is alt
+
+    # Pre-instantiated `Model` → defer (return None) so _get_model uses it as-is.
+    assert bound.resolve_model(primary, agent=agent) is None
+    assert bound.resolve_model(None, agent=agent) is None
+
+    # String not in registry and no provider_factory → default infer_model path.
+    # 'test' is the special string that always works without any provider config.
+    fallback = bound.resolve_model('test', agent=agent)
+    assert fallback is not None
+    assert fallback.model_id == 'test:test'
+
+
+def test_durability_resolve_model_uses_provider_factory():
+    """resolve_model with a provider_factory builds a Model from any provider:name string."""
+
+    class _StubProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    def _factory(name: str) -> Any:  # pragma: lax no cover - exercised via resolve_model
+        return _StubProvider(name)
+
+    primary = FunctionModel(_durability_model_fn, model_name='primary')
+    durability = TemporalDurability(provider_factory=_factory, activity_config=BASE_ACTIVITY_CONFIG)
+    agent = Agent(primary, name='provider_factory_test', capabilities=[durability])
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+
+    # String not in registry → resolve via the provider_factory + infer_model path.
+    # 'test' is the special string mapped to TestModel by default infer_model;
+    # the resulting Model has model_id 'test:test'.
+    resolved = bound.resolve_model('test', agent=agent)
+    assert resolved is not None
+    assert resolved.model_id == 'test:test'
+
+
+def test_durability_find_model_id_falls_back_to_model_id_string():
+    """_find_model_id round-trips runtime-built models via their `model_id` string.
+
+    Pre-registered models (default and `models=` extras) match by identity. Runtime
+    models — built via `resolve_model`/`provider_factory` — aren't in the registry,
+    so we send their `model_id` string across the activity boundary; the worker
+    rebuilds them via the same `provider_factory` (or default `infer_model`).
     """
     m1 = FunctionModel(_durability_model_fn, model_name='registered')
-    m_runtime = FunctionModel(_durability_model_fn, model_name='runtime')
+    m_runtime = FunctionModel(_durability_model_fn, model_name='runtime-built')
 
-    agent = Agent(m1, name='model_reject_test', capabilities=[TemporalDurability()])
+    agent = Agent(m1, name='model_round_trip_test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
 
     # Registered default model matches by identity → None
     assert bound._find_model_id(m1) is None  # pyright: ignore[reportPrivateUsage]
 
-    # Unregistered model is rejected with a clear error
-    with pytest.raises(UserError, match='not registered with this TemporalDurability'):
-        bound._find_model_id(m_runtime)  # pyright: ignore[reportPrivateUsage]
+    # Unregistered runtime model: round-trip via its model_id string.
+    assert bound._find_model_id(m_runtime) == m_runtime.model_id  # pyright: ignore[reportPrivateUsage]
 
 
 # --- _validate_per_run_capabilities rejects runtime-added classes ---

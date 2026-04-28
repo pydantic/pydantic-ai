@@ -9551,3 +9551,95 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# --- resolve_model hook tests ---
+
+
+def _resolve_dummy_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='ok')])
+
+
+@dataclass
+class _StringResolver(AbstractCapability[Any]):
+    """Test capability that maps known strings to a fixed FunctionModel."""
+
+    target: FunctionModel
+
+    def resolve_model(self, model: Any, *, agent: Any) -> Any:
+        if isinstance(model, str) and model == 'magic-model':
+            return self.target
+        return None
+
+
+@dataclass
+class _PassThroughResolver(AbstractCapability[Any]):
+    """Test capability that always defers."""
+
+    seen: list[Any] = field(default_factory=list[Any])
+
+    def resolve_model(self, model: Any, *, agent: Any) -> Any:
+        self.seen.append(model)
+        return None
+
+
+async def test_resolve_model_maps_string_to_model() -> None:
+    """A capability's resolve_model maps a runtime string to a Model instance."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    agent = Agent(name='resolve_test', capabilities=[_StringResolver(target=target)])
+
+    result = await agent.run('hi', model='magic-model')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_returns_none_falls_back_to_infer_model() -> None:
+    """When all capabilities defer, _get_model uses the default infer_model path."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_pass', capabilities=[cap], defer_model_check=True)
+
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
+    assert cap.seen == ['test']
+
+
+def test_resolve_model_each_layer_wraps() -> None:
+    """When two capabilities declare resolve_model, the outer one sees the inner's result.
+
+    Mirrors get_wrapper_toolset semantics: outermost capability in user-supplied list
+    wraps last (sees what the inner capability produced).
+    """
+    inner_target = FunctionModel(_resolve_dummy_model_fn, model_name='inner')
+    outer_target = FunctionModel(_resolve_dummy_model_fn, model_name='outer')
+
+    @dataclass
+    class _OuterResolver(AbstractCapability[Any]):
+        seen: list[Any] = field(default_factory=list[Any])
+
+        def resolve_model(self, model: Any, *, agent: Any) -> Any:
+            self.seen.append(model)
+            # Always replace with outer_target — this should win because outer wraps last
+            return outer_target
+
+    outer = _OuterResolver()
+    inner = _StringResolver(target=inner_target)
+    combined = CombinedCapability([outer, inner])
+
+    agent = Agent(name='resolve_layered', capabilities=[outer, inner], defer_model_check=True)
+    result = combined.resolve_model('magic-model', agent=agent)
+    # Outer wraps last → outer wins, but it has seen what inner produced
+    assert result is outer_target
+    assert outer.seen == [inner_target]
+
+
+async def test_resolve_model_invoked_on_override() -> None:
+    """`agent.override(model=...)` routes the raw value through resolve_model."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='override-resolved')
+    cap = _StringResolver(target=target)
+
+    initial_model = FunctionModel(_resolve_dummy_model_fn, model_name='initial')
+    agent = Agent(initial_model, name='resolve_override', capabilities=[cap])
+
+    with agent.override(model='magic-model'):
+        result = await agent.run('hi')
+    assert result.output == 'ok'

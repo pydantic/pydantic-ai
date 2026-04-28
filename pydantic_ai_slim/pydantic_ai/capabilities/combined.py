@@ -21,7 +21,7 @@ from .abstract import AbstractCapability
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -126,6 +126,30 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
+
+    def resolve_model(
+        self,
+        model: Model | KnownModelName | str | None,
+        *,
+        agent: AbstractAgent[AgentDepsT, Any],
+    ) -> Model | None:
+        # Each-layer-wraps: outermost capability sees whatever the innermost left,
+        # mirroring `get_wrapper_toolset`. Pass forward the most-recent non-None
+        # `Model` so a downstream capability can wrap it; if no capability ever
+        # resolves a value, return None to defer to `infer_model`.
+        from pydantic_ai.models import Model as _Model
+
+        current = model
+        any_resolved = False
+        for capability in reversed(self.capabilities):
+            result = capability.resolve_model(current, agent=agent)
+            if result is not None:
+                current = result
+                any_resolved = True
+        if not any_resolved:
+            return None
+        assert isinstance(current, _Model)
+        return current
 
     # --- Tool preparation hook ---
 
