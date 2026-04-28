@@ -11165,6 +11165,57 @@ async def test_openai_responses_phase_skipped_when_profile_unsupported(allow_mod
     assert all('phase' not in m for m in assistant_messages)
 
 
+async def test_openai_responses_phase_round_trip_without_item_id(allow_model_requests: None):
+    """Phase travels via `EasyInputMessageParam` when item ids aren't being sent."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(
+                        list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    phase='final_answer',
+                ),
+            ]
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5.5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=False),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Working on it...',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'commentary'},
+                ),
+            ],
+            model_name='gpt-5.5',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    # No item id was sent, so we used EasyInputMessageParam — but phase still rides along.
+    assert [(m.get('id'), m.get('phase'), m.get('type')) for m in assistant_messages] == snapshot(
+        [(None, 'commentary', None)]
+    )
+
+
 async def test_openai_responses_phase_live(allow_model_requests: None, openai_api_key: str):
     """Real cassette: gpt-5.5 sets `phase` on the preamble (commentary) and the final answer."""
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
