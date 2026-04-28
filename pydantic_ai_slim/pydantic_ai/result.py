@@ -44,6 +44,25 @@ T = TypeVar('T')
 """An invariant TypeVar."""
 
 
+def _raise_if_content_filtered(message: _messages.ModelResponse) -> None:
+    if message.parts or message.finish_reason != 'content_filter':
+        return
+
+    details = message.provider_details or {}
+    body = _messages.ModelMessagesTypeAdapter.dump_json([message]).decode()
+
+    if reason := details.get('finish_reason'):
+        error_message = f"Content filter triggered. Finish reason: '{reason}'"
+    elif reason := details.get('block_reason'):
+        error_message = f"Content filter triggered. Block reason: '{reason}'"
+    elif refusal := details.get('refusal'):
+        error_message = f'Content filter triggered. Refusal: {refusal!r}'
+    else:  # pragma: no cover
+        error_message = 'Content filter triggered.'
+
+    raise exceptions.ContentFilterError(error_message, body=body)
+
+
 @dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
@@ -190,6 +209,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        _raise_if_content_filtered(message)
         final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover

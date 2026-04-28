@@ -227,6 +227,26 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'failed': 'error',
 }
 
+
+def _normalize_responses_content_filter_parts(
+    parts: list[ModelResponsePart],
+    finish_reason: FinishReason | None,
+    provider_details: dict[str, Any],
+) -> tuple[list[ModelResponsePart], dict[str, Any]]:
+    """Convert Responses API text refusals into empty content plus refusal metadata."""
+    if finish_reason != 'content_filter' or 'refusal' in provider_details:
+        return parts, provider_details
+
+    refusal_parts = [part.content for part in parts if isinstance(part, TextPart)]
+    if refusal_parts and len(refusal_parts) == len(parts):
+        normalized_details = provider_details.copy()
+        normalized_details.pop('finish_reason', None)
+        normalized_details['refusal'] = ''.join(refusal_parts)
+        return [], normalized_details
+
+    return parts, provider_details
+
+
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
     '1:1': '1024x1024',
     '2:3': '1024x1536',
@@ -1841,6 +1861,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = 'content_filter'
             provider_details.pop('finish_reason', None)
             provider_details['refusal'] = refusal_text
+        else:
+            items, provider_details = _normalize_responses_content_filter_parts(items, finish_reason, provider_details)
 
         return ModelResponse(
             parts=items,
@@ -3230,6 +3252,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+
+    def get(self) -> ModelResponse:
+        parts, provider_details = _normalize_responses_content_filter_parts(
+            self._parts_manager.get_parts(), self.finish_reason, self.provider_details or {}
+        )
+        return ModelResponse(
+            parts=parts,
+            model_name=self.model_name,
+            timestamp=self.timestamp,
+            usage=self.usage(),
+            provider_name=self.provider_name,
+            provider_url=self.provider_url,
+            provider_response_id=self.provider_response_id,
+            provider_details=provider_details or None,
+            finish_reason=self.finish_reason,
+        )
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)

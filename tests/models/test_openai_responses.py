@@ -61,6 +61,7 @@ with try_import() as imports_successful:
     from openai import AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses.response import IncompleteDetails
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -10373,6 +10374,41 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
     assert response_msg['provider_details']['refusal'] == "I can't help with that request."
 
 
+async def test_openai_responses_text_content_filter_non_streaming(allow_model_requests: None):
+    """Test that text-only content-filter responses raise ContentFilterError."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_001',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text="I can't help with that request.", type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='incomplete',
+                type='message',
+            )
+        ]
+    ).model_copy(update={'status': 'incomplete', 'incomplete_details': IncompleteDetails(reason='content_filter')})
+
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError,
+        match=re.escape('Content filter triggered. Refusal: "I can\'t help with that request."'),
+    ) as exc_info:
+        await agent.run('harmful prompt')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I can't help with that request."
+
+
 async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
     base_response = resp.Response(
@@ -10429,6 +10465,100 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
             response=base_response.model_copy(update={'status': 'completed'}),
             type='response.completed',
             sequence_number=6,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError, match='Content filter triggered') as exc_info:
+        async with agent.run_stream('harmful prompt'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I can't help with that."
+
+
+async def test_openai_responses_text_content_filter_streaming(allow_model_requests: None):
+    """Test that text-only streamed content-filter responses raise ContentFilterError."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta="I can't help with that.",
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text="I can't help with that.",
+            type='response.output_text.done',
+            sequence_number=5,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text="I can't help with that.", type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='incomplete',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=6,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(
+                update={'status': 'incomplete', 'incomplete_details': IncompleteDetails(reason='content_filter')}
+            ),
+            type='response.completed',
+            sequence_number=7,
         ),
     ]
 

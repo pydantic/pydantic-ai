@@ -768,12 +768,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
-                            yield StreamedRunResult(
+                            streamed_run_result = StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
                                 stream,
                                 on_complete,
                             )
+                            try:
+                                yield streamed_run_result
+                            finally:
+                                if not streamed_run_result.is_complete:
+                                    await streamed_run_result._marked_completed(streamed_run_result.response)  # pyright: ignore[reportPrivateUsage]
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
