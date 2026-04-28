@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._deferred_capability import DeferredCapabilityToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from .abstract import AbstractCapability, CapabilityOrdering
 from .wrapper import WrapperCapability
@@ -48,9 +52,14 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
         return self.wrapped.get_model_settings()
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        if not self._loaded:
+        toolset = self.wrapped.get_toolset()
+        if toolset is None:
             return None
-        return self.wrapped.get_toolset()
+        if isinstance(toolset, AbstractToolset):
+            wrapped = cast(AbstractToolset[AgentDepsT], toolset)
+        else:
+            wrapped = DynamicToolset[AgentDepsT](toolset_func=toolset)
+        return _GatedToolset(wrapped=wrapped, deferred=self)
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         if not self._loaded:
@@ -61,6 +70,23 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
         if not self._loaded:
             return None
         return self.wrapped.get_wrapper_toolset(toolset)
+
+
+@dataclass
+class _GatedToolset(WrapperToolset[AgentDepsT]):
+    """Toolset that lives in the chain from setup but returns empty tools until loaded."""
+
+    deferred: DeferredCapability[AgentDepsT]
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        if not self.deferred._loaded:  # type: ignore[reportPrivateUsage]
+            return {}
+        return await self.wrapped.get_tools(ctx)
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
 
 @dataclass
