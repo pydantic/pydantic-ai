@@ -371,30 +371,32 @@ When a tool result has none of these, the call returns the bare value as before 
 
 After a tool call, the metadata flows through to [`ToolReturnPart.metadata`][pydantic_ai.messages.ToolReturnPart.metadata] in the run's message history, so the application can read it without intercepting the call:
 
-```python {title="mcp_tool_result_metadata.py" test="skip"}
+```python {title="mcp_tool_result_metadata.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import TextContent, ToolReturnPart
 
-server = MCPServerStdio('python', args=['-m', 'my_mcp_server'])
-agent = Agent('openai:gpt-5', toolsets=[server])
 
-result = await agent.run('Run the analysis tool and summarize the result.')
+async def inspect_metadata():
+    server = MCPServerStdio('python', args=['-m', 'my_mcp_server'])
+    agent = Agent('openai:gpt-5', toolsets=[server])
 
-for message in result.all_messages():
-    for part in getattr(message, 'parts', []):
-        if not isinstance(part, ToolReturnPart):
-            continue
+    result = await agent.run('Run the analysis tool and summarize the result.')
 
-        # Tool-level _meta and audience-filtered content live here.
-        if isinstance(part.metadata, dict):
-            request_id = part.metadata.get('meta', {}).get('request_id')
-            user_only_blocks = part.metadata.get('user_content', [])
+    for message in result.all_messages():
+        for part in getattr(message, 'parts', []):
+            if not isinstance(part, ToolReturnPart):
+                continue
 
-        # Per-block _meta rides on the typed content itself.
-        for item in part.content_items(mode='raw'):
-            if isinstance(item, TextContent) and item.metadata:
-                logged_at = item.metadata.get('logged_at')
+            # Tool-level _meta and audience-filtered content live here.
+            if isinstance(part.metadata, dict):
+                request_id = part.metadata.get('meta', {}).get('request_id')
+                user_only_blocks = part.metadata.get('user_content', [])
+
+            # Per-block _meta rides on the typed content itself.
+            for item in part.content_items(mode='raw'):
+                if isinstance(item, TextContent) and item.metadata:
+                    logged_at = item.metadata.get('logged_at')
 ```
 
 ## Resources
