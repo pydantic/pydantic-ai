@@ -2838,8 +2838,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
-            # from the `output_item.added`/`output_item.done` events and merged into the
-            # corresponding `TextPart.provider_details` on `output_text.done`.
+            # from the `output_item.added` event and merged into the corresponding
+            # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
 
             if self._provider_timestamp is not None:  # pragma: no branch
