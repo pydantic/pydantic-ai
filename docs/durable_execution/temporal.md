@@ -200,13 +200,12 @@ from typing import Any
 
 from temporalio import workflow
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.durable_exec.temporal import TemporalAgent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers import Provider
-from pydantic_ai.tools import RunContext
 
 
 @dataclass

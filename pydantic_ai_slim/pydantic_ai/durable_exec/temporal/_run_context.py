@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
@@ -20,6 +23,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
+        self.__dict__.setdefault('agent', None)
         setattr(
             self,
             '__dataclass_fields__',
@@ -60,3 +64,23 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
         """Deserialize the run context from a `dict[str, Any]`."""
         return cls(**ctx, deps=deps)
+
+
+def deserialize_run_context(
+    run_context_type: type[TemporalRunContext[Any]],
+    serialized: dict[str, Any],
+    *,
+    deps: Any,
+    agent: AbstractAgent[Any, Any] | None,
+) -> RunContext[Any]:
+    """Deserialize a run context and attach the agent instance.
+
+    This is a helper used internally by the Temporal wrappers. It calls the
+    (potentially user-overridden) `TemporalRunContext.deserialize_run_context`
+    and then sets `agent` on the result, so custom subclasses don't need to
+    know about the `agent` parameter.
+    """
+    ctx = run_context_type.deserialize_run_context(serialized, deps=deps)
+    if agent is not None:
+        ctx.__dict__['agent'] = agent
+    return ctx

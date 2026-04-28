@@ -19,13 +19,13 @@ from ._output import (
     TextOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             try:
                 yield await self.validate_response_output(response, allow_partial=True)
-            except ValidationError:
+            except (ValidationError, exceptions.ModelRetry):
                 pass
 
         if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
@@ -196,51 +196,68 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         output_tool_name = final_result_event.tool_name
 
-        if self._output_schema.toolset and output_tool_name is not None:
-            tool_call = next(
-                (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                None,
-            )
-            if tool_call is None:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+        try:
+            if self._output_schema.toolset and output_tool_name is not None:
+                tool_call = next(
+                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
+                    None,
                 )
-            return await self._tool_manager.handle_call(
-                tool_call, allow_partial=allow_partial, wrap_validation_errors=False
-            )
-        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
-            if not self._output_schema.allows_deferred_tools:
-                raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                if tool_call is None:
+                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                    )
+                # Output tools can't be deferred, so `handle_call` here always
+                # returns the validated output (never `ToolDenied`).
+                return cast(
+                    OutputDataT,
+                    await self._tool_manager.handle_call(
+                        tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                    ),
                 )
-            return cast(OutputDataT, deferred_tool_requests)
-        elif self._output_schema.allows_image and message.images:
-            return cast(OutputDataT, message.images[0])
-        elif text_processor := self._output_schema.text_processor:
-            text = ''
-            for part in message.parts:
-                if isinstance(part, _messages.TextPart):
-                    text += part.content
-                elif isinstance(part, _messages.BuiltinToolCallPart):
-                    # Text parts before a built-in tool call are essentially thoughts,
-                    # not part of the final result output, so we reset the accumulated text
-                    text = ''
+            elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
+                if not self._output_schema.allows_deferred_tools:
+                    raise exceptions.UserError(
+                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                    )
+                return cast(OutputDataT, deferred_tool_requests)
+            elif self._output_schema.allows_image and message.images:
+                result_data = cast(OutputDataT, message.images[0])
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
+                    )
+                return result_data
+            elif text_processor := self._output_schema.text_processor:
+                text = ''
+                for part in message.parts:
+                    if isinstance(part, _messages.TextPart):
+                        text += part.content
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
 
-            result_data = await text_processor.process(
-                text,
-                run_context=replace(self._run_ctx, partial_output=allow_partial),
-                allow_partial=allow_partial,
-                wrap_validation_errors=False,
-            )
-            for validator in self._output_validators:
-                result_data = await validator.validate(
-                    result_data, replace(self._run_ctx, partial_output=allow_partial)
+                result_data = await text_processor.process(
+                    text,
+                    run_context=replace(self._run_ctx, partial_output=allow_partial),
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
                 )
-            return result_data
-        else:
-            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                'Invalid response, unable to process text output'
-            )
+                for validator in self._output_validators:
+                    result_data = await validator.validate(
+                        result_data, replace(self._run_ctx, partial_output=allow_partial)
+                    )
+                return result_data
+            else:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    'Invalid response, unable to process text output'
+                )
+        except (ValidationError, exceptions.ModelRetry) as e:
+            if not allow_partial:
+                raise exceptions.UnexpectedModelBehavior(
+                    'Output validation failed during streaming, and retries are not supported in `run_stream()`'
+                ) from e
+            raise
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
@@ -401,9 +418,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -659,9 +676,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.all_messages_json(output_tool_return_content=output_tool_return_content)
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.

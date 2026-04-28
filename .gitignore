@@ -20,7 +20,12 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
+CLAUDE.local.md
+.agents/*
+!.agents/skills/
+.agents/skills/*
 .claude/*
+!.claude/plans/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
@@ -28,3 +33,4 @@ node_modules/
 .github/.review-context/
 /.cursor/
 /.devcontainer/
+.claude/plans/

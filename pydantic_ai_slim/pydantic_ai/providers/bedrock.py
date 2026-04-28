@@ -43,6 +43,16 @@ class BedrockModelProfile(ModelProfile):
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
+
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
+    """Which thinking API shape to use for unified thinking translation.
+
+    - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
+    - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
+    - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `None`: No unified thinking support.
+    """
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
@@ -116,6 +126,8 @@ class BedrockProvider(Provider[BaseClient]):
                     bedrock_send_back_thinking_parts=True,
                     bedrock_supports_prompt_caching=True,
                     bedrock_supports_tool_caching=True,
+                    bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+                    bedrock_thinking_variant='anthropic',
                 ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
                 # We don't currently support native structured output with Bedrock.
                 # See https://github.com/pydantic/pydantic-ai/issues/4209.
@@ -128,6 +140,14 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'openai': lambda _mn: BedrockModelProfile(
+                bedrock_thinking_variant='openai',
+                supports_thinking=True,
+            ),
+            'qwen': lambda mn: BedrockModelProfile(
+                bedrock_thinking_variant='qwen',
+                supports_thinking='qwq' in mn or 'qwen3' in mn,
+            ),
         }
 
         # Split the model name into parts

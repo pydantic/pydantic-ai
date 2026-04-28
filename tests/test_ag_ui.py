@@ -2,48 +2,61 @@
 
 from __future__ import annotations
 
+import importlib.metadata
+import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from dirty_equals import IsStr
 from pydantic import BaseModel
 
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
+    FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
+    capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -58,19 +71,25 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
         ActivityMessage,
         AssistantMessage,
+        AudioInputContent,
         BaseEvent,
         BinaryInputContent,
         CustomEvent,
         DeveloperMessage,
+        DocumentInputContent,
         EventType,
         FunctionCall,
+        ImageInputContent,
+        InputContentDataSource,
+        InputContentUrlSource,
         Message,
+        ReasoningMessage,
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
@@ -79,6 +98,7 @@ with try_import() as imports_successful:
         ToolCall,
         ToolMessage,
         UserMessage,
+        VideoInputContent,
     )
     from ag_ui.encoder import EventEncoder
     from starlette.requests import Request
@@ -93,6 +113,11 @@ with try_import() as imports_successful:
         run_ag_ui,
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
+    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
 pytestmark = [
@@ -140,15 +165,23 @@ def simple_result() -> Any:
     )
 
 
+def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
+    from_request_parameters = inspect.signature(AGUIAdapter.from_request).parameters
+
+    assert 'manage_system_prompt' in from_request_parameters
+    assert from_request_parameters['manage_system_prompt'].default == 'server'
+
+
 async def run_and_collect_events(
     agent: Agent[AgentDepsT, OutputDataT],
     *run_inputs: RunAgentInput,
     deps: AgentDepsT = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    ag_ui_version: Literal['0.1.10', '0.1.13'] = '0.1.10',
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        async for event in run_ag_ui(agent, run_input, ag_ui_version=ag_ui_version, deps=deps, on_complete=on_complete):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -350,7 +383,10 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    events = await run_and_collect_events(agent, run_input)
+    # The frontend-sent `SystemMessage` is stripped by the default server mode; verify
+    # that doesn't change the event stream (which is driven by the assistant's output).
+    with pytest.warns(UserWarning, match='manage_system_prompt'):
+        events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -1059,8 +1095,7 @@ async def test_thinking() -> None:
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'THINKING_START', 'timestamp': IsInt()},
-            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            # Part 0: empty thinking — skipped (no content, no metadata)
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
@@ -1080,11 +1115,16 @@ async def test_thinking() -> None:
                 'delta': ' and some more',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            # Part 1: "Thinking about the weather"
             {'type': 'THINKING_START', 'timestamp': IsInt()},
             {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking '},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'about the weather'},
             {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            # Part 2: empty thinking — skipped (no content, no metadata)
+            # Part 3: "Thinking about the meaning of life"
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
             {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
             {
                 'type': 'THINKING_TEXT_MESSAGE_CONTENT',
@@ -1092,12 +1132,11 @@ async def test_thinking() -> None:
                 'delta': 'Thinking about the meaning of life',
             },
             {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
+            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            # Part 4: "Thinking about the universe"
+            {'type': 'THINKING_START', 'timestamp': IsInt()},
             {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
-            {
-                'type': 'THINKING_TEXT_MESSAGE_CONTENT',
-                'timestamp': IsInt(),
-                'delta': 'Thinking about the universe',
-            },
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking about the universe'},
             {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
             {'type': 'THINKING_END', 'timestamp': IsInt()},
             {
@@ -1106,6 +1145,790 @@ async def test_thinking() -> None:
                 'threadId': thread_id,
                 'runId': run_id,
             },
+        ]
+    )
+
+
+async def test_thinking_with_signature() -> None:
+    """Test that ReasoningEncryptedValueEvent is emitted with thinking metadata."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='Thinking deeply', signature='sig_abc123')}
+        yield 'Here is my response'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Think about something'),
+    )
+
+    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.13')
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (reasoning_id := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': reasoning_id,
+                'role': 'reasoning',
+            },
+            {
+                'type': 'REASONING_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': reasoning_id,
+                'delta': 'Thinking deeply',
+            },
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': reasoning_id,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Here is my response',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
+async def test_thinking_consecutive_signatures() -> None:
+    """Test that consecutive ThinkingParts each preserve their own metadata via separate REASONING blocks."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='First thought', signature='sig_aaa')}
+        yield {1: DeltaThinkingPart(content='Second thought', signature='sig_bbb')}
+        yield {2: DeltaThinkingPart(content='Third thought', signature='sig_ccc')}
+        yield 'Final answer'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Think deeply'),
+    )
+
+    events = await run_and_collect_events(agent, run_input, ag_ui_version='0.1.13')
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            # Part 0: signature=sig_aaa
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r0 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r0,
+                'role': 'reasoning',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r0, 'delta': 'First thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r0},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r0,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r0},
+            # Part 1: signature=sig_bbb
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r1 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r1,
+                'role': 'reasoning',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Second thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r1,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r1},
+            # Part 2: signature=sig_ccc
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r2 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r2,
+                'role': 'reasoning',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r2, 'delta': 'Third thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r2},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r2,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r2},
+            # Text response
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Final answer',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
+def test_reasoning_message_thinking_roundtrip() -> None:
+    """Test that ReasoningMessage converts to ThinkingPart with metadata from encrypted_value."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(
+                id='reasoning-1',
+                content='Let me think about this...',
+                encrypted_value=json.dumps(
+                    {
+                        'id': 'thinking-1',
+                        'signature': 'sig_abc123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'some': 'details'},
+                    }
+                ),
+            ),
+            AssistantMessage(id='msg-1', content='Here is my response'),
+        ]
+    )
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Let me think about this...',
+                        id='thinking-1',
+                        signature='sig_abc123',
+                        provider_name='anthropic',
+                        provider_details={'some': 'details'},
+                    ),
+                    TextPart(content='Here is my response'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_reasoning_events_with_all_metadata() -> None:
+    """Test that REASONING_* events emit encryptedValue with all metadata fields."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(
+        content='Thinking content',
+        id='thinking-123',
+        signature='sig_xyz',
+        provider_name='anthropic',
+        provider_details={'model': 'claude-sonnet-4-5'},
+    )
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thinking content'},
+            {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"id": "thinking-123", "signature": "sig_xyz", "provider_name": "anthropic", "provider_details": {"model": "claude-sonnet-4-5"}}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+def test_activity_message_other_types_ignored() -> None:
+    """Test that ActivityMessage with other activity types are ignored."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ActivityMessage(
+                id='activity-1',
+                activity_type='some_other_activity',
+                content={'foo': 'bar'},
+            ),
+            AssistantMessage(id='msg-1', content='Response'),
+        ]
+    )
+
+    assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
+
+
+@pytest.mark.parametrize(
+    'encrypted_value',
+    [
+        pytest.param('not valid json{{{', id='invalid-json'),
+        pytest.param('"just a string"', id='non-dict-string'),
+        pytest.param('[1, 2, 3]', id='non-dict-list'),
+        pytest.param('42', id='non-dict-number'),
+    ],
+)
+def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
+    """Test that malformed or non-dict encrypted_value is handled gracefully."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(id='r-1', content='Thinking...', encrypted_value=encrypted_value),
+            AssistantMessage(id='msg-1', content='Done'),
+        ]
+    )
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[ThinkingPart(content='Thinking...'), TextPart(content='Done')],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_activity_message_file_part_missing_url() -> None:
+    """Test that ActivityMessage(pydantic_ai_file) with empty url raises ValueError."""
+    with pytest.raises(ValueError, match='must have a non-empty url'):
+        AGUIAdapter.load_messages(
+            [
+                ActivityMessage(
+                    id='activity-1',
+                    activity_type='pydantic_ai_file',
+                    content={'url': '', 'media_type': 'image/png'},
+                ),
+            ],
+            preserve_file_data=True,
+        )
+
+
+_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, BuiltinToolReturnPart, SystemPromptPart)
+
+
+def _sync_part_timestamps(
+    original_part: ModelRequestPart | ModelResponsePart,
+    new_part: ModelRequestPart | ModelResponsePart,
+) -> None:
+    """Sync timestamp attribute if both parts are request parts (which carry timestamps)."""
+    if isinstance(new_part, _TIMESTAMPED_PARTS) and isinstance(original_part, _TIMESTAMPED_PARTS):
+        object.__setattr__(new_part, 'timestamp', original_part.timestamp)
+
+
+def _sync_timestamps(original: list[ModelMessage], reloaded: list[ModelMessage]) -> None:
+    """Sync timestamps between original and reloaded messages for comparison."""
+    for o, n in zip(original, reloaded):
+        if isinstance(n, ModelResponse) and isinstance(o, ModelResponse):
+            n.timestamp = o.timestamp
+            for op, np in zip(o.parts, n.parts):
+                _sync_part_timestamps(op, np)
+        elif isinstance(n, ModelRequest) and isinstance(o, ModelRequest):  # pragma: no branch
+            for op, np in zip(o.parts, n.parts):
+                _sync_part_timestamps(op, np)
+
+
+def test_dump_load_roundtrip_basic() -> None:
+    """Test that load_messages(dump_messages(msgs)) preserves basic messages."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful'), UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_thinking() -> None:
+    """Test full round-trip for thinking parts with all metadata."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='Deep thoughts...',
+                    id='think-001',
+                    signature='sig_xyz',
+                    provider_name='anthropic',
+                    provider_details={'model': 'claude-sonnet-4-5'},
+                ),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_tools() -> None:
+    """Test full round-trip for tool calls and returns."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='result')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
+    """Test round-trip preserves multiple ThinkingParts with their metadata."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think hard')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='First thought', id='think-1', signature='sig_1'),
+                ThinkingPart(content='Second thought', id='think-2', signature='sig_2'),
+                TextPart(content='Final answer'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_binary_content() -> None:
+    """Test round-trip for binary content in user prompts (images, documents, etc.)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Describe this image',
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'raw image data', media_type='image/jpeg'),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='I see an image.')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+@pytest.mark.parametrize(
+    'original',
+    [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+                ModelResponse(
+                    parts=[
+                        FilePart(
+                            content=BinaryImage(data=b'generated file content', media_type='image/png'),
+                            id='file-001',
+                            provider_name='openai',
+                            provider_details={'model': 'gpt-image'},
+                        ),
+                        TextPart(content='Here is your generated image.'),
+                    ]
+                ),
+            ],
+            id='full-attrs',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate')]),
+                ModelResponse(
+                    parts=[
+                        FilePart(content=BinaryImage(data=b'minimal file', media_type='image/png')),
+                        TextPart(content='Done'),
+                    ]
+                ),
+            ],
+            id='minimal-attrs',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate image only')]),
+                ModelResponse(parts=[FilePart(content=BinaryImage(data=b'only file', media_type='image/png'))]),
+            ],
+            id='file-only',
+        ),
+    ],
+)
+def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
+    """Test round-trip for FilePart variants: full attributes, minimal, and file-only response.
+
+    Note: BinaryImage is used because from_data_uri() returns BinaryImage for image/* media types.
+    """
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_builtin_tool_return() -> None:
+    """Test round-trip for builtin tool calls with their return values.
+
+    Note: The round-trip reorders parts within ModelResponse because AG-UI's AssistantMessage
+    has separate content and tool_calls fields. TextPart comes first (from content), then
+    BuiltinToolCallPart (from tool_calls), then BuiltinToolReturnPart (from subsequent ToolMessage).
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for info')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Based on the search...'),
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    content='Search results here',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_builtin_tool_call_without_return() -> None:
+    """Test that BuiltinToolCallPart without a matching BuiltinToolReturnPart still dumps correctly."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for info')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_orphan',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages)
+
+    assert len(ag_ui_msgs) == 2
+    assistant_msg = ag_ui_msgs[1]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    assert len(assistant_msg.tool_calls) == 1
+    assert assistant_msg.tool_calls[0].id == 'pyd_ai_builtin|anthropic|call_orphan'
+
+
+def test_dump_load_roundtrip_cache_point() -> None:
+    """Test that CachePoint is filtered out during round-trip (it's metadata only)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Hello', CachePoint(), 'world']),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+
+
+def test_dump_load_roundtrip_uploaded_file() -> None:
+    """Test that UploadedFile is filtered out during round-trip (opaque provider file_id)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=['Hello', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'world']
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+
+
+def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
+    """Test round-trip for RetryPromptPart with tool_name (converted to ToolMessage with error)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_1',
+                    content='Invalid args',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='OK')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping)
+    assert len(reloaded) == 4
+    assert isinstance(reloaded[2], ModelRequest)
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, ToolReturnPart)
+    assert retry_part.tool_name == 'my_tool'
+    assert retry_part.tool_call_id == 'call_1'
+
+
+def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
+    """Test round-trip for RetryPromptPart without tool_name (converted to UserMessage)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+        ModelRequest(parts=[RetryPromptPart(content='Please try again')]),
+        ModelResponse(parts=[TextPart(content='OK')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # RetryPromptPart without tool becomes UserPromptPart on reload
+    # Content is formatted by RetryPromptPart.model_response()
+    assert len(reloaded) == 4
+    assert isinstance(reloaded[2], ModelRequest)
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, UserPromptPart)
+    assert 'Please try again' in str(retry_part.content)
+
+
+def test_file_part_dropped_by_default() -> None:
+    """Test that FilePart is silently dropped when preserve_file_data=False (default).
+
+    dump_messages drops FilePart from output, and load_messages ignores
+    ActivityMessage(pydantic_ai_file) — both without raising errors.
+    """
+    messages_with_file: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryImage(data=b'image data', media_type='image/png')),
+                TextPart(content='Here is your image.'),
+            ]
+        ),
+    ]
+
+    # dump_messages drops FilePart by default
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages_with_file)
+    assert not any(isinstance(m, ActivityMessage) and m.activity_type == 'pydantic_ai_file' for m in ag_ui_msgs)
+
+    # load_messages ignores ActivityMessage(pydantic_ai_file) by default
+    ag_ui_msgs_with_activity = AGUIAdapter.dump_messages(messages_with_file, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs_with_activity)
+    assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts)
+
+
+def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
+    """Test round-trip for response with text interleaved around tool calls.
+
+    When text appears after tool calls, the flush pattern splits them into
+    separate AssistantMessages to preserve ordering on round-trip.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do things')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Before tools'),
+                ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                TextPart(content='After tools'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    # Text before tools shares an AssistantMessage with the tool call;
+    # text after tools gets its own AssistantMessage.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {'role': 'user', 'content': 'Do things'},
+            {
+                'role': 'assistant',
+                'content': 'Before tools',
+                'tool_calls': [
+                    {
+                        'id': 'call_1',
+                        'type': 'function',
+                        'function': {'name': 'search', 'arguments': '{"q": "test"}'},
+                    },
+                ],
+            },
+            {'role': 'assistant', 'content': 'After tools'},
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # Round-trip splits into two ModelResponses due to the two AssistantMessages
+    assert reloaded == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Do things', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Before tools'),
+                    ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                    TextPart(content='After tools'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_reasoning_events_empty_content_with_metadata() -> None:
+    """Test REASONING_* events for ThinkingPart with no content but with metadata.
+
+    This exercises the path in handle_thinking_end where _reasoning_started is False
+    (no content was streamed) but encrypted metadata is present — e.g. redacted thinking.
+    """
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(
+        content='',
+        id='think_redacted',
+        signature='sig_redacted',
+    )
+
+    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(part)]
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"id": "think_redacted", "signature": "sig_redacted"}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+@pytest.mark.vcr()
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    agent: Agent[None, str] = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 1+1? Reply in one word.')
+    original = result.all_messages()
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is 1+1? Reply in one word.', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
+                        signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='Two'),
+                ],
+                timestamp=IsDatetime(),
+            ),
         ]
     )
 
@@ -1591,7 +2414,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
     assert messages[1].run_id is None
     assert messages[2].run_id == run_result.run_id
     assert messages[3].run_id == run_result.run_id
-    assert run_result.new_messages() == messages[-2:]
+    assert run_result.new_messages() == messages[-1:]
 
 
 async def test_callback_async() -> None:
@@ -1760,37 +2583,19 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            ImageUrl(
-                                url='http://example.com/image.png', _media_type='image/png', media_type='image/png'
-                            )
-                        ],
+                        content=[ImageUrl(url='http://example.com/image.png', _media_type='image/png')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            VideoUrl(
-                                url='http://example.com/video.mp4', _media_type='video/mp4', media_type='video/mp4'
-                            )
-                        ],
+                        content=[VideoUrl(url='http://example.com/video.mp4', _media_type='video/mp4')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            AudioUrl(
-                                url='http://example.com/audio.mp3', _media_type='audio/mpeg', media_type='audio/mpeg'
-                            )
-                        ],
+                        content=[AudioUrl(url='http://example.com/audio.mp3', _media_type='audio/mpeg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=[
-                            DocumentUrl(
-                                url='http://example.com/doc.pdf',
-                                _media_type='application/pdf',
-                                media_type='application/pdf',
-                            )
-                        ],
+                        content=[DocumentUrl(url='http://example.com/doc.pdf', _media_type='application/pdf')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -2574,3 +3379,1110 @@ async def test_handle_ag_ui_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+
+
+def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
+    """Test UploadedFile round-trips via ActivityMessage when preserve_file_data=True."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Describe this file',
+                        UploadedFile(
+                            file_id='file-abc123',
+                            provider_name='anthropic',
+                            media_type='application/pdf',
+                            vendor_metadata={'source': 'upload'},
+                            identifier='my-doc.pdf',
+                        ),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='I see a PDF.')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    # Verify ActivityMessage was emitted
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activity_msgs) == 1
+    assert activity_msgs[0].activity_type == 'pydantic_ai_uploaded_file'
+    assert activity_msgs[0].content['file_id'] == 'file-abc123'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+
+    # The text and UploadedFile come back as separate UserPromptParts
+    request_parts = [p for msg in reloaded if isinstance(msg, ModelRequest) for p in msg.parts]
+    user_parts = [p for p in request_parts if isinstance(p, UserPromptPart)]
+    assert len(user_parts) == 2
+
+    # First UserPromptPart has the text
+    assert user_parts[0].content == 'Describe this file'
+
+    # Second UserPromptPart has the UploadedFile
+    assert isinstance(user_parts[1].content, list)
+    uploaded = user_parts[1].content[0]
+    assert isinstance(uploaded, UploadedFile)
+    assert uploaded.file_id == 'file-abc123'
+    assert uploaded.provider_name == 'anthropic'
+    assert uploaded.media_type == 'application/pdf'
+    assert uploaded.vendor_metadata == {'source': 'upload'}
+    assert uploaded.identifier == 'my-doc.pdf'
+
+
+@pytest.mark.parametrize(
+    'version,expected_reasoning',
+    [
+        pytest.param('0.1.10', snapshot([]), id='v010-drops-thinking'),
+        pytest.param(
+            '0.1.13',
+            snapshot(
+                [{'content': 'Deep thoughts...', 'encrypted_value': '{"signature": "sig_xyz"}', 'role': 'reasoning'}]
+            ),
+            id='v013-includes-reasoning',
+        ),
+    ],
+)
+def test_dump_messages_thinking_version_gated(version: str, expected_reasoning: list[Any]) -> None:
+    """Test that dump_messages drops ThinkingPart at <0.1.13 and emits ReasoningMessage at >=0.1.13."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Deep thoughts...', signature='sig_xyz'),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version=version)
+    reasoning_msgs = [m for m in ag_ui_msgs if isinstance(m, ReasoningMessage)]
+    assert [m.model_dump(exclude={'id'}) for m in reasoning_msgs] == expected_reasoning
+    assert any(isinstance(m, AssistantMessage) and m.content == 'Conclusion' for m in ag_ui_msgs)
+
+
+async def test_tool_return_with_files():
+    """Test that tool returns with files include file descriptions in the output."""
+
+    async def event_generator():
+        # Content with text and file - files property extracts BinaryContent from the list
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_image',
+                content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
+                tool_call_id='call_1',
+            )
+        )
+        # Content with only a FileUrl - files property returns [ImageUrl]
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_url',
+                content=ImageUrl(url='https://example.com/image.jpg'),
+                tool_call_id='call_2',
+            )
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Analyze images'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    tool_results = [e for e in events if e.get('type') == 'TOOL_CALL_RESULT']
+    assert tool_results == snapshot(
+        [
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_1',
+                'content': 'Image analysis result\n[File: image/png]',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_2',
+                'content': '[File: https://example.com/image.jpg]',
+                'role': 'tool',
+            },
+        ]
+    )
+
+
+# region: Coverage — event_stream thinking version branches
+
+
+async def test_thinking_events_v010_with_content() -> None:
+    """Test v0.1.10 THINKING_* events for ThinkingPart with content."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+
+    part = ThinkingPart(content='Some thoughts', signature='sig_abc')
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Some thoughts'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+        ]
+    )
+
+
+async def test_thinking_events_v010_empty_content() -> None:
+    """Test v0.1.10 early return when ThinkingPart has no content."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+
+    part = ThinkingPart(content='', signature='sig_abc')
+
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert events == []
+
+
+async def test_thinking_delta_v013() -> None:
+    """Test v0.1.13 REASONING_* events emitted via handle_thinking_delta."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    start_part = ThinkingPart(content='')
+    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(start_part)]
+
+    delta = ThinkingPartDelta(content_delta='chunk1')
+    async for e in event_stream.handle_thinking_delta(delta):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'chunk1'},
+        ]
+    )
+
+
+async def test_thinking_end_v013_no_content_no_metadata() -> None:
+    """Test v0.1.13 early return when ThinkingPart has no content and no encrypted metadata."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(content='')
+
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert events == []
+
+
+async def test_thinking_delta_v013_after_content_start() -> None:
+    """Test v0.1.13 delta skips START/MESSAGE_START when reasoning already started."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    start_part = ThinkingPart(content='initial')
+    events = [e async for e in event_stream.handle_thinking_start(start_part)]
+
+    delta = ThinkingPartDelta(content_delta='more')
+    events.extend([e async for e in event_stream.handle_thinking_delta(delta)])
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'initial'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'more'},
+        ]
+    )
+
+
+async def test_thinking_end_v010_with_content() -> None:
+    """Test v0.1.10 end emits TextMessageEnd when content was streamed, and ThinkingStart when not started."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+
+    # Case 1: start with content → _reasoning_started=True, _reasoning_text=True
+    # end should emit TextMessageEnd + ThinkingEnd
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+    part = ThinkingPart(content='text')
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'text'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+        ]
+    )
+
+    # Case 2: start with empty content → _reasoning_started=False
+    # end with content → hits ThinkingStartEvent at line 246
+    event_stream2 = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.10')
+    empty_part = ThinkingPart(content='')
+    events2 = [e async for e in event_stream2.handle_thinking_start(empty_part)]
+
+    full_part = ThinkingPart(content='non-empty')
+    events2.extend([e async for e in event_stream2.handle_thinking_end(full_part)])
+
+    assert [e.model_dump(exclude_none=True) for e in events2] == snapshot(
+        [
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_END'},
+        ]
+    )
+
+
+async def test_thinking_end_v013_no_encrypted_metadata() -> None:
+    """Test v0.1.13 end skips encrypted_value event when part has no signature or metadata."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(content='text')
+    events = [e async for e in event_stream.handle_thinking_start(part)]
+    events.extend([e async for e in event_stream.handle_thinking_end(part)])
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'text'},
+            {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+# endregion
+
+# region: Coverage — encrypted_metadata branch gap
+
+
+async def test_thinking_encrypted_metadata_partial_fields() -> None:
+    """Test thinking_encrypted_metadata with signature but no provider_name."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE, ag_ui_version='0.1.13')
+
+    part = ThinkingPart(content='Thoughts', signature='sig_only')
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thoughts'},
+            {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"signature": "sig_only"}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+# endregion
+
+# region: Coverage — adapter uploaded file edge cases
+
+
+def test_load_messages_uploaded_file_missing_fields() -> None:
+    """Test load_messages raises ValueError for malformed pydantic_ai_uploaded_file ActivityMessage."""
+    with pytest.raises(ValueError, match='must have non-empty file_id and provider_name'):
+        AGUIAdapter.load_messages(
+            [ActivityMessage(id='msg_1', activity_type='pydantic_ai_uploaded_file', content={})],
+            preserve_file_data=True,
+        )
+
+
+def test_dump_messages_uploaded_file_with_vendor_metadata() -> None:
+    """Test dump_messages includes vendor_metadata in ActivityMessage when present on UploadedFile."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-xyz',
+                            provider_name='openai',
+                            media_type='text/plain',
+                            vendor_metadata={'custom': 'data'},
+                        ),
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert [m.model_dump() for m in activity_msgs] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_uploaded_file',
+                'content': {
+                    'file_id': 'file-xyz',
+                    'provider_name': 'openai',
+                    'media_type': 'text/plain',
+                    'identifier': '6f0bbc',
+                    'vendor_metadata': {'custom': 'data'},
+                },
+            }
+        ]
+    )
+
+
+def test_dump_messages_uploaded_file_without_vendor_metadata() -> None:
+    """Test dump_messages omits vendor_metadata from ActivityMessage when None on UploadedFile."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-xyz',
+                            provider_name='openai',
+                            media_type='text/plain',
+                        ),
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert [m.model_dump() for m in activity_msgs] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_uploaded_file',
+                'content': {
+                    'file_id': 'file-xyz',
+                    'provider_name': 'openai',
+                    'media_type': 'text/plain',
+                    'identifier': '6f0bbc',
+                },
+            }
+        ]
+    )
+
+
+# endregion
+
+
+# region: Coverage — parse_ag_ui_version validation + TextContent + detect fallback
+
+
+def test_parse_ag_ui_version_invalid() -> None:
+    """Test that parse_ag_ui_version raises UserError for malformed input."""
+    with pytest.raises(UserError, match="Invalid AG-UI version 'latest'"):
+        parse_ag_ui_version('latest')
+
+    with pytest.raises(UserError, match="Invalid AG-UI version ''"):
+        parse_ag_ui_version('')
+
+
+def test_parse_ag_ui_version_prerelease() -> None:
+    """Test that parse_ag_ui_version strips pre-release suffixes."""
+    assert parse_ag_ui_version('0.1.13a1') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.13b2') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.13rc1') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.13.dev0') == snapshot((0, 1, 13))
+    assert parse_ag_ui_version('0.1.x') == snapshot((0, 1))
+
+
+def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that detect_ag_ui_version returns '0.1.10' when package is not found."""
+
+    def _raise_not_found(_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError()
+
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._utils.importlib.metadata.version', _raise_not_found)
+    assert detect_ag_ui_version() == snapshot('0.1.10')
+
+
+def test_detect_ag_ui_version_old(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that detect_ag_ui_version returns the raw installed version string."""
+
+    def _return_old_version(_name: str) -> str:
+        return '0.1.10'
+
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._utils.importlib.metadata.version', _return_old_version)
+    assert detect_ag_ui_version() == snapshot('0.1.10')
+
+
+def test_dump_messages_text_content() -> None:
+    """Test that TextContent in UserPromptPart is converted to TextInputContent."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[TextContent(content='hello')])]),
+    ]
+
+    result = AGUIAdapter.dump_messages(messages)
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [{'role': 'user', 'content': 'hello'}]
+    )
+
+
+# region multimodal and coverage tests
+
+
+@pytest.mark.parametrize(
+    'input_content,expected_type',
+    [
+        pytest.param(
+            ImageInputContent(
+                source=InputContentUrlSource(type='url', value='https://example.com/photo.jpg', mime_type='image/jpeg')
+            ),
+            ImageUrl(url='https://example.com/photo.jpg', media_type='image/jpeg'),
+            id='image-url',
+        ),
+        pytest.param(
+            AudioInputContent(
+                source=InputContentUrlSource(type='url', value='https://example.com/clip.mp3', mime_type='audio/mpeg')
+            ),
+            AudioUrl(url='https://example.com/clip.mp3', media_type='audio/mpeg'),
+            id='audio-url',
+        ),
+        pytest.param(
+            VideoInputContent(
+                source=InputContentUrlSource(type='url', value='https://example.com/vid.mp4', mime_type='video/mp4')
+            ),
+            VideoUrl(url='https://example.com/vid.mp4', media_type='video/mp4'),
+            id='video-url',
+        ),
+        pytest.param(
+            DocumentInputContent(
+                source=InputContentUrlSource(
+                    type='url', value='https://example.com/doc.pdf', mime_type='application/pdf'
+                )
+            ),
+            DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+            id='document-url',
+        ),
+    ]
+    if imports_successful()
+    else [],
+)
+def test_load_multimodal_url_sources(
+    input_content: ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent,
+    expected_type: ImageUrl | AudioUrl | VideoUrl | DocumentUrl,
+) -> None:
+    """Test that typed multimodal URL input content is converted to the correct Pydantic AI URL type."""
+    messages = AGUIAdapter.load_messages([UserMessage(id='msg-1', content=[input_content])])
+    assert len(messages) == 1
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert len(request.parts) == 1
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert isinstance(part.content, list)
+    assert len(part.content) == 1
+    assert part.content[0] == expected_type
+
+
+def test_load_multimodal_data_source() -> None:
+    """Test that multimodal data source input content is converted to BinaryContent."""
+    messages = AGUIAdapter.load_messages(
+        [
+            UserMessage(
+                id='msg-1',
+                content=[
+                    ImageInputContent(
+                        source=InputContentDataSource(type='data', value='aGVsbG8=', mime_type='image/png')
+                    )
+                ],
+            )
+        ]
+    )
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[BinaryContent(data=b'hello', media_type='image/png')], timestamp=IsDatetime()
+                    ),
+                ]
+            )
+        ]
+    )
+
+
+def test_dump_messages_multimodal_url() -> None:
+    """Test that media URLs are dumped as typed multimodal content with ag_ui_version >= 0.1.15."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img.png', media_type='image/png')])]
+        ),
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'source': {
+                            'type': 'url',
+                            'value': 'https://example.com/img.png',
+                            'mime_type': 'image/png',
+                        },
+                        'type': 'image',
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_dump_messages_legacy_binary_content() -> None:
+    """Test that media URLs and BinaryContent are dumped as BinaryInputContent with ag_ui_version < 0.1.15."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/img.png', media_type='image/png'),
+                        BinaryContent(data=b'raw data', media_type='image/jpeg'),
+                    ]
+                )
+            ]
+        ),
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'binary', 'url': 'https://example.com/img.png', 'mime_type': 'image/png'},
+                    {'type': 'binary', 'data': 'cmF3IGRhdGE=', 'mime_type': 'image/jpeg'},
+                ],
+            }
+        ]
+    )
+
+
+def test_load_messages_unknown_type_warns() -> None:
+    """Test that an unknown AG-UI message type emits a warning and is skipped."""
+
+    class UnknownMessage(BaseModel):
+        id: str
+        role: str = 'unknown'
+
+    with pytest.warns(UserWarning, match='AG-UI message type UnknownMessage is not yet implemented; skipping.'):
+        messages = AGUIAdapter.load_messages([UnknownMessage(id='msg-1')])  # pyright: ignore[reportArgumentType]
+
+    assert messages == []
+
+
+# endregion
+
+
+# region: System prompt tests
+
+
+async def test_system_prompt_with_ag_ui_adapter():
+    """Test that system prompts are included when using AGUIAdapter on first message."""
+
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_dynamic_system_prompt_with_ag_ui_adapter():
+    """Test that dynamic system prompts are included when using AGUIAdapter on first message."""
+
+    agent = Agent(model=TestModel())
+
+    @agent.system_prompt
+    def dynamic_prompt(ctx: RunContext[None]) -> str:
+        return 'Dynamic system prompt'
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Dynamic system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_by_default():
+    """Test that frontend system prompts are stripped and a warning emitted when `manage_system_prompt='server'`."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Agent system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_no_agent_prompt():
+    """Test that frontend system prompts are stripped even when there's no agent system prompt."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_only_request_dropped():
+    """Test that a `ModelRequest` containing only `SystemPromptParts` is dropped entirely when filtering."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        AssistantMessage(
+            id='msg_assistant',
+            content='Previous response',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='manage_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Previous response')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt():
+    """Test that frontend system prompts are kept and agent prompt skipped when `manage_system_prompt='client'`."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
+    """Test that frontend system prompts are used when `manage_system_prompt='client'` and agent has no system_prompt."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
+    """Test that client-managed frontend system prompts are preserved across multi-turn conversations."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[
+            SystemMessage(
+                id='msg_sys',
+                content='Frontend system prompt',
+            ),
+            UserMessage(
+                id='msg_1',
+                content='First message',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                content='First response',
+            ),
+            UserMessage(
+                id='msg_3',
+                content='Second message',
+            ),
+        ],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=57, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_client_mode_does_not_reinject_agent_system_prompt():
+    """In `manage_system_prompt='client'`, the agent's configured prompt is not injected when
+    the frontend sends none — frontend ownership means the frontend is responsible for any
+    system prompt. To get fallback-to-configured behavior anyway, callers can add the
+    [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to the
+    agent.
+    """
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, manage_system_prompt='client')
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_system_prompt_reinjected_with_ag_ui_history():
+    """Test that system prompts ARE reinjected on followup messages via UI adapters."""
+
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[
+            UserMessage(
+                id='msg_1',
+                content='First message',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                content='First response',
+            ),
+            UserMessage(
+                id='msg_3',
+                content='Second message',
+            ),
+        ],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    with capture_run_messages() as messages:
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+# endregion
