@@ -12159,6 +12159,48 @@ class TestOutputHookErrorPaths:
         assert call_count == 2
         assert len(error_log) == 1
         assert error_log[0] == 'validate_error: ValidationError'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='not valid json')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'json_invalid',
+                                    'loc': (),
+                                    'msg': 'Invalid JSON: expected ident at line 1 column 2',
+                                    'input': 'not valid json',
+                                    'ctx': {'error': 'expected ident at line 1 column 2'},
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 42}')],
+                    usage=RequestUsage(input_tokens=81, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_on_output_process_error_recovery(self):
         """on_output_process_error can recover from output function failure."""
@@ -12189,6 +12231,40 @@ class TestOutputHookErrorPaths:
         )
         result = agent.run_sync('hello')
         assert result.output == 'recovered value'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": 42}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_composed_on_output_validate_error_chain(self):
         """Multiple capabilities' on_output_validate_error hooks chain correctly."""
@@ -12236,6 +12312,48 @@ class TestOutputHookErrorPaths:
         # Both error hooks should have been called (reverse order per composition)
         assert 'second_error' in error_log
         assert 'first_error' in error_log
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='invalid')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'json_invalid',
+                                    'loc': (),
+                                    'msg': 'Invalid JSON: expected value at line 1 column 1',
+                                    'input': 'invalid',
+                                    'ctx': {'error': 'expected value at line 1 column 1'},
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 1}')],
+                    usage=RequestUsage(input_tokens=81, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_composed_on_output_process_error_chain(self):
         """Multiple capabilities' on_output_process_error hooks chain correctly."""
@@ -12278,6 +12396,40 @@ class TestOutputHookErrorPaths:
         )
         result = agent.run_sync('hello')
         assert result.output == 'recovered_by_first'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": 42}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_hooks_output_validate_error_decorator(self):
         """Test on_output_validate_error via Hooks decorator API."""
@@ -12306,6 +12458,48 @@ class TestOutputHookErrorPaths:
         )
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=99)
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='bad json')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'json_invalid',
+                                    'loc': (),
+                                    'msg': 'Invalid JSON: expected value at line 1 column 1',
+                                    'input': 'bad json',
+                                    'ctx': {'error': 'expected value at line 1 column 1'},
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 99}')],
+                    usage=RequestUsage(input_tokens=81, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_hooks_output_process_error_decorator(self):
         """Test on_output_process_error via Hooks decorator API."""
@@ -12336,6 +12530,40 @@ class TestOutputHookErrorPaths:
         )
         result = agent.run_sync('hello')
         assert result.output == 'fallback result'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": 10}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_tool_output_validate_error_hook_not_triggered_on_valid_data(self):
         """For tool output with valid data, on_output_validate_error does not fire."""
@@ -12437,6 +12665,48 @@ class TestDefaultOutputErrorHooks:
         result = agent.run_sync('hello')
         assert result.output == MyOutput(value=7)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='not json')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'json_invalid',
+                                    'loc': (),
+                                    'msg': 'Invalid JSON: expected ident at line 1 column 2',
+                                    'input': 'not json',
+                                    'ctx': {'error': 'expected ident at line 1 column 2'},
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 7}')],
+                    usage=RequestUsage(input_tokens=81, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     def test_default_on_output_process_error_reraises(self):
         """Default on_output_process_error re-raises the error."""
