@@ -78,7 +78,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput
+from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
@@ -4028,6 +4028,9 @@ class TestPrepareOutputToolsHook:
     async def test_filter_output_tools(self):
         """Capability can hide output tools from the model."""
 
+        class Out(BaseModel):
+            value: str
+
         @dataclass
         class HideCap(AbstractCapability[Any]):
             async def prepare_output_tools(
@@ -4038,7 +4041,11 @@ class TestPrepareOutputToolsHook:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response(f'output_tools: {len(info.output_tools)}')
 
-        agent = Agent(FunctionModel(model_fn), output_type=str, capabilities=[HideCap()])
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, ToolOutput(Out, name='out')],
+            capabilities=[HideCap()],
+        )
 
         result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
@@ -5153,13 +5160,20 @@ class TestPrepareOutputToolsCapability:
         """`PrepareOutputTools` capability filters output tools using a callable."""
         from pydantic_ai.capabilities import PrepareOutputTools
 
+        class Out(BaseModel):
+            value: str
+
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return make_text_response(f'output_tools: {len(info.output_tools)}')
 
-        agent = Agent(FunctionModel(model_fn), output_type=str, capabilities=[PrepareOutputTools(disable_all)])
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, ToolOutput(Out, name='out')],
+            capabilities=[PrepareOutputTools(disable_all)],
+        )
 
         result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
@@ -7101,6 +7115,41 @@ class TestHooksCapability:
 
         await agent.run('call tool')
         assert tool_called
+
+    async def test_prepare_output_tools_hook(self):
+        """`on.prepare_output_tools` filters output tool definitions — model only sees the
+        non-filtered ones."""
+        hooks = Hooks()
+
+        @hooks.on.prepare_output_tools
+        async def hide_secret(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [td for td in tool_defs if td.name != 'secret_output']
+
+        seen_output_tools: list[str] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            seen_output_tools.extend(td.name for td in info.output_tools)
+            # Call the only remaining (non-filtered) output tool
+            return ModelResponse(parts=[ToolCallPart('public_output', {'value': 'ok'})])
+
+        class SecretOutput(BaseModel):
+            value: str
+
+        class PublicOutput(BaseModel):
+            value: str
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[
+                ToolOutput(SecretOutput, name='secret_output'),
+                ToolOutput(PublicOutput, name='public_output'),
+            ],
+            capabilities=[hooks],
+        )
+        result = await agent.run('hello')
+        assert isinstance(result.output, PublicOutput)
+        assert seen_output_tools == ['public_output']
 
     async def test_tool_validate_hooks(self):
         """Exercise before/after/wrap tool_validate and on_tool_validate_error."""
@@ -12041,58 +12090,48 @@ class TestOutputHookEdgeCases:
         assert any('before_process' in entry for entry in log)
 
     def test_no_capability_fast_path_structured_raw_validation_error(self):
-        """Direct `ObjectOutputProcessor.process(..., wrap_validation_errors=False)` — used by
-        streaming paths without retries — must let `ValidationError` propagate unwrapped.
+        """`ObjectOutputProcessor.hook_validate` — used by streaming paths without retries —
+        must let `ValidationError` propagate unwrapped.
         """
-        import asyncio
-
         from pydantic_ai._output import ObjectOutputProcessor
 
         processor = ObjectOutputProcessor(output=MyOutput)
 
-        async def run():
-            ctx = RunContext(
-                deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
-                prompt='test',
-                run_step=0,
-                retry=0,
-                max_retries=3,
-                trace_include_content=False,
-                tracer=NoOpTracer(),
-                instrumentation_version=0,
-            )
-            return await processor.process('not valid json', run_context=ctx, wrap_validation_errors=False)
-
+        ctx = RunContext(
+            deps=None,
+            model=None,  # type: ignore
+            usage=None,  # type: ignore
+            prompt='test',
+            run_step=0,
+            retry=0,
+            max_retries=3,
+            trace_include_content=False,
+            tracer=NoOpTracer(),
+            instrumentation_version=0,
+        )
         with pytest.raises(ValidationError):
-            asyncio.get_event_loop().run_until_complete(run())
+            processor.hook_validate('not valid json', run_context=ctx)
 
     def test_no_capability_fast_path_union_raw_validation_error(self):
-        """Same as above but for `UnionOutputProcessor.process`."""
-        import asyncio
-
+        """Same as above but for `UnionOutputProcessor.hook_validate`."""
         from pydantic_ai._output import UnionOutputProcessor
 
         processor = UnionOutputProcessor(outputs=[MyOutput])
 
-        async def run():
-            ctx = RunContext(
-                deps=None,
-                model=None,  # type: ignore
-                usage=None,  # type: ignore
-                prompt='test',
-                run_step=0,
-                retry=0,
-                max_retries=3,
-                trace_include_content=False,
-                tracer=NoOpTracer(),
-                instrumentation_version=0,
-            )
-            return await processor.process('not valid json', run_context=ctx, wrap_validation_errors=False)
-
+        ctx = RunContext(
+            deps=None,
+            model=None,  # type: ignore
+            usage=None,  # type: ignore
+            prompt='test',
+            run_step=0,
+            retry=0,
+            max_retries=3,
+            trace_include_content=False,
+            tracer=NoOpTracer(),
+            instrumentation_version=0,
+        )
         with pytest.raises(ValidationError):
-            asyncio.get_event_loop().run_until_complete(run())
+            processor.hook_validate('not valid json', run_context=ctx)
 
     def test_output_toolset_call_tool_raises(self):
         """`OutputToolset.call_tool` exists only to satisfy `AbstractToolset` — output tools go

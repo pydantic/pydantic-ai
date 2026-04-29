@@ -817,18 +817,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
-    @abstractmethod
-    async def process(
-        self,
-        data: str,
-        *,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Process an output message, performing validation and (if necessary) calling the output function."""
-        raise NotImplementedError()
-
     def validate(
         self,
         data: str | dict[str, Any] | None,
@@ -991,43 +979,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 strict=strict,
             )
         )
-
-    async def process(
-        self,
-        data: str | dict[str, Any] | None,
-        *,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Process an output message, performing validation and (if necessary) calling the output function.
-
-        Args:
-            data: The output data to validate.
-            run_context: The current run context.
-            allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Either the validated output data (left) or a retry message (right).
-        """
-        try:
-            output = self.validate(
-                data,
-                allow_partial=allow_partial,
-                validation_context=run_context.validation_context,
-            )
-        except ValidationError as e:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=e.errors(include_url=False),
-                )
-                raise ToolRetryError(m) from e
-            raise
-
-        output = await self.call(output, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
-
-        return output
 
     def validate(
         self,
@@ -1391,30 +1342,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 return _UnionValidatedOutput(kind=kind, data=value)
         return None
 
-    async def process(
-        self,
-        data: str,
-        *,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        try:
-            wrapper = self.validate(
-                data,
-                allow_partial=allow_partial,
-                validation_context=run_context.validation_context,
-            )
-        except ValidationError as e:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=e.errors(include_url=False),
-                )
-                raise ToolRetryError(m) from e
-            raise
-
-        return await self.call(wrapper, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
-
     def get_output_context(
         self,
         schema: OutputSchema[Any],
@@ -1437,17 +1364,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
 
 class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
-    async def process(
-        self,
-        data: str,
-        *,
-        run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        return cast(OutputDataT, data)
-
     def get_output_context(
         self,
         schema: OutputSchema[Any],
@@ -1502,19 +1418,6 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
         return await execute_traced_output_function(
             self._function_schema, run_context=run_context, args=args, wrap_validation_errors=wrap_validation_errors
         )
-
-    async def process(
-        self,
-        data: str,
-        *,
-        run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        validated = self.validate(data)
-        result = await self.call(validated, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
-        return cast(OutputDataT, result)
 
     def get_output_context(
         self,
