@@ -84,6 +84,7 @@ async def handle_ag_ui_request(
             output validators since output validators would expect an argument that matches the agent's output type.
         message_history: History of the conversation so far.
         deferred_tool_results: Optional results for deferred tool calls in the message history.
+        conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
         model: Optional model to use for this run, required if `model` was not set when creating the agent.
         deps: Optional dependencies to use for this run.
         model_settings: Optional settings to use for this model's request.
@@ -160,6 +161,7 @@ def run_ag_ui(
             output validators since output validators would expect an argument that matches the agent's output type.
         message_history: History of the conversation so far.
         deferred_tool_results: Optional results for deferred tool calls in the message history.
+        conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
         model: Optional model to use for this run, required if `model` was not set when creating the agent.
         deps: Optional dependencies to use for this run.
         model_settings: Optional settings to use for this model's request.

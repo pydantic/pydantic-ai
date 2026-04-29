@@ -569,6 +569,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
@@ -579,6 +580,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -592,6 +594,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
@@ -602,11 +605,13 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
@@ -617,6 +622,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -638,6 +644,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
@@ -648,6 +655,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -660,6 +668,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -706,6 +715,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -718,6 +728,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -731,6 +742,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -744,6 +756,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -763,6 +776,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -773,6 +787,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -924,6 +939,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -936,6 +952,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -948,6 +965,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
@@ -957,6 +975,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1016,6 +1035,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1032,6 +1052,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1338,6 +1359,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
@@ -1350,6 +1372,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1414,6 +1437,7 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1436,6 +1460,7 @@ Okay, here we go. Someone's asking a pretty straightforward arithmetic question.
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='lghYaaSmK7eomtkP_KDT6A0',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1460,6 +1485,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1483,6 +1509,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
                 provider_details={'finish_reason': 'STOP'},
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1547,6 +1574,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
@@ -1560,6 +1588,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1572,6 +1601,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1591,6 +1621,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1603,6 +1634,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1636,6 +1668,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -1649,6 +1682,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1661,6 +1695,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1680,6 +1715,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1692,6 +1728,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1724,6 +1761,7 @@ IT'S THE CAPITAL OF MEXICO AND ONE OF THE LARGEST METROPOLITAN AREAS IN THE WORL
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1745,6 +1783,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1799,6 +1838,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1821,6 +1861,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1854,6 +1895,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1881,6 +1923,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1910,6 +1953,7 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1927,6 +1971,7 @@ async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1962,6 +2007,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -1975,6 +2021,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1987,6 +2034,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2000,6 +2048,7 @@ async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gem
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2033,6 +2082,7 @@ async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemin
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2052,6 +2102,7 @@ async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemin
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
