@@ -4,10 +4,9 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from copy import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from types import NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
@@ -22,6 +21,7 @@ from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,
     NativeOutput,
+    OutputContext,
     OutputDataT,
     OutputMode,
     OutputObjectDefinition,
@@ -37,7 +37,7 @@ from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
-    pass
+    from .capabilities.abstract import AbstractCapability, RawOutput
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -74,8 +74,300 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
+def _build_output_handlers(
+    processor: BaseOutputProcessor[OutputDataT],
+    *,
+    run_context: RunContext[AgentDepsT],
+    allow_partial: bool,
+    wrap_validation_errors: bool,
+) -> tuple[
+    Callable[[RawOutput], Awaitable[Any]],
+    Callable[[Any], Awaitable[Any]],
+]:
+    """Build validate and process handlers that delegate to `processor.hook_validate`/`hook_execute`.
+
+    Output hooks see the **semantic value** (what the model was asked to produce), not the
+    internal dict-wrapped shape used by Pydantic validation. Each processor decides what its
+    semantic value looks like via its `hook_validate`/`hook_execute` methods, and opaque
+    per-invocation state (e.g. the resolved union member) flows through the closure.
+    """
+    state: Any = None
+
+    async def do_validate(data: RawOutput) -> Any:
+        nonlocal state
+        semantic, state = processor.hook_validate(data, run_context=run_context, allow_partial=allow_partial)
+        return semantic
+
+    async def do_process(output: Any) -> Any:
+        return await processor.hook_execute(
+            output, state, run_context=run_context, wrap_validation_errors=wrap_validation_errors
+        )
+
+    return do_validate, do_process
+
+
+def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]`.
+
+    `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
+    (here `list`), so union output resolution still matches the collection type when the
+    element type can't be checked at runtime.
+    """
+    try:
+        return isinstance(value, type_)
+    except TypeError:
+        origin = get_origin(type_)
+        return origin is not None and isinstance(value, origin)
+
+
+def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+    if isinstance(e, ValidationError):
+        content: list[Any] | str = e.errors(include_url=False, include_context=False)
+    else:
+        content = e.message
+    m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
+    if run_context.tool_call_id:
+        m.tool_call_id = run_context.tool_call_id
+    return ToolRetryError(m)
+
+
+async def run_output_validate_hooks(
+    capability: AbstractCapability[AgentDepsT],
+    *,
+    run_context: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    output: RawOutput,
+    do_validate: Callable[[RawOutput], Awaitable[Any]],
+    allow_partial: bool = False,
+    wrap_validation_errors: bool = True,
+) -> Any:
+    """Run the output validate hooks around `do_validate`.
+
+    Validate hooks only fire for structured output that needs parsing.
+
+    `ValidationError` and `ModelRetry` from any hook (before, after, wrap, on_error) are
+    caught by the outer handler and converted to `ToolRetryError` when
+    `wrap_validation_errors` is True. When False (streaming), errors propagate as-is.
+    """
+    try:
+        output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
+
+        try:
+            validated = await capability.wrap_output_validate(
+                run_context, output_context=output_context, output=output, handler=do_validate
+            )
+        except (ValidationError, ModelRetry) as e:
+            if allow_partial:
+                if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
+                    raise _make_retry_prompt(e, run_context) from e
+                raise
+            try:
+                validated = await capability.on_output_validate_error(
+                    run_context, output_context=output_context, output=output, error=e
+                )
+            except (ValidationError, ModelRetry) as hook_error:
+                if wrap_validation_errors:
+                    raise _make_retry_prompt(hook_error, run_context) from hook_error
+                raise
+
+        return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
+    except ToolRetryError:
+        raise  # Already wrapped, propagate
+    except (ValidationError, ModelRetry) as e:
+        # ValidationError or ModelRetry from before_output_validate or after_output_validate
+        # (e.g. a user hook that does additional Pydantic validation on the validated output)
+        if wrap_validation_errors:
+            raise _make_retry_prompt(e, run_context) from e
+        raise
+
+
+async def run_output_process_hooks(
+    capability: AbstractCapability[AgentDepsT],
+    *,
+    run_context: RunContext[AgentDepsT],
+    output_context: OutputContext,
+    output: Any,
+    do_process: Callable[[Any], Awaitable[Any]],
+    wrap_validation_errors: bool = True,
+) -> Any:
+    """Run the output process hooks around `do_process`.
+
+    Process hooks fire for all output types (text, structured, image) — in every mode,
+    including tool output.
+
+    `ValidationError` and `ModelRetry` from any hook (before, after, wrap, on_error) are caught
+    by the outer handler and converted to `ToolRetryError` when `wrap_validation_errors` is True.
+    When False (streaming), errors propagate as-is.
+    """
+    try:
+        output = await capability.before_output_process(run_context, output_context=output_context, output=output)
+
+        try:
+            result = await capability.wrap_output_process(
+                run_context, output_context=output_context, output=output, handler=do_process
+            )
+        except ToolRetryError:
+            raise  # Control flow, not error
+        except ModelRetry:
+            raise  # Propagate to outer handler, skip on_output_process_error
+        except Exception as e:
+            # If the error hook itself raises ValidationError/ModelRetry, it propagates out
+            # to the outer handler below, where it's wrapped as ToolRetryError if needed.
+            result = await capability.on_output_process_error(
+                run_context, output_context=output_context, output=output, error=e
+            )
+
+        return await capability.after_output_process(run_context, output_context=output_context, output=result)
+    except ToolRetryError:
+        raise  # Already wrapped, propagate
+    except (ValidationError, ModelRetry) as e:
+        # ValidationError or ModelRetry from before_output_process, after_output_process, or
+        # on_output_process_error (e.g. a user hook doing additional Pydantic validation).
+        if wrap_validation_errors:
+            raise _make_retry_prompt(e, run_context) from e
+        raise
+
+
+async def run_none_process_hooks(
+    *,
+    capability: AbstractCapability[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+    schema: OutputSchema[Any],
+    wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+) -> Any:
+    """Run output process hooks for a `None` result (empty model response with `allows_none`).
+
+    Output validators run inside process hooks, matching the text/structured/image paths.
+    """
+    output_context = OutputContext(
+        mode='text',
+        output_type=type(None),
+        object_def=None,
+        has_function=False,
+        allows_text=schema.allows_text,
+        allows_image=schema.allows_image,
+        allows_deferred_tools=schema.allows_deferred_tools,
+    )
+
+    async def do_process(output: Any) -> Any:
+        result = output
+        for validator in output_validators:
+            result = await validator.validate(result, run_context)
+        return result
+
+    return await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=None,
+        do_process=do_process,
+        wrap_validation_errors=wrap_validation_errors,
+    )
+
+
+async def run_image_process_hooks(
+    image: _messages.BinaryImage,
+    *,
+    capability: AbstractCapability[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+    schema: OutputSchema[Any],
+    wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+) -> Any:
+    """Run output process hooks for image output (no validate hooks — nothing to parse).
+
+    Output validators run inside process hooks, consistent with text/structured output.
+    """
+    output_context = OutputContext(
+        mode='image',
+        output_type=_messages.BinaryImage,
+        object_def=None,
+        has_function=False,
+        allows_text=schema.allows_text,
+        allows_image=True,
+        allows_deferred_tools=schema.allows_deferred_tools,
+    )
+
+    async def do_process(output: Any) -> Any:
+        result = output
+        for validator in output_validators:
+            result = await validator.validate(result, run_context)
+        return result
+
+    return await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=image,
+        do_process=do_process,
+        wrap_validation_errors=wrap_validation_errors,
+    )
+
+
+async def run_output_with_hooks(
+    processor: BaseOutputProcessor[OutputDataT],
+    *,
+    text: str,
+    run_context: RunContext[AgentDepsT],
+    capability: AbstractCapability[AgentDepsT],
+    schema: OutputSchema[Any],
+    allow_partial: bool = False,
+    wrap_validation_errors: bool = True,
+    output_validators: Sequence[OutputValidator[AgentDepsT, Any]] = (),
+) -> OutputDataT:
+    """Process output text through the processor with capability output hooks.
+
+    Validate hooks only fire for structured output (BaseObjectOutputProcessor) where
+    real parsing occurs. Process hooks fire for all output types.
+
+    Output validators (`@agent.output_validator`) run inside process hooks, ensuring
+    `wrap_output_process` wraps the complete output pipeline.
+    """
+    output_context = processor.get_output_context(schema)
+    do_validate, base_do_process = _build_output_handlers(
+        processor, run_context=run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+    )
+
+    # Wrap output validators into do_process so they run inside wrap_output_process.
+    # Validators use wrap_validation_errors=False — the outer run_output_process_hooks
+    # handles wrapping ModelRetry as ToolRetryError when appropriate.
+    async def do_process(output: Any) -> Any:
+        result = await base_do_process(output)
+        for validator in output_validators:
+            result = await validator.validate(result, run_context)
+        return result
+
+    if isinstance(processor, BaseObjectOutputProcessor):
+        # Structured output: fire validate hooks (real parsing) then process hooks
+        validated = await run_output_validate_hooks(
+            capability,
+            run_context=run_context,
+            output_context=output_context,
+            output=text,
+            do_validate=do_validate,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+        )
+    else:
+        # Text output: no real validation, just pass through the text
+        validated = await do_validate(text)
+
+    result = await run_output_process_hooks(
+        capability,
+        run_context=run_context,
+        output_context=output_context,
+        output=validated,
+        do_process=do_process,
+        wrap_validation_errors=wrap_validation_errors,
+    )
+
+    return cast(OutputDataT, result)
+
+
 async def execute_traced_output_function(
     function_schema: _function_schema.FunctionSchema,
+    *,
     run_context: RunContext[AgentDepsT],
     args: dict[str, Any],
     wrap_validation_errors: bool = True,
@@ -174,43 +466,23 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         self,
         result: T,
         run_context: RunContext[AgentDepsT],
-        wrap_validation_errors: bool = True,
     ) -> T:
-        """Validate a result but calling the function.
+        """Run the validator function on `result`.
 
-        Args:
-            result: The result data after Pydantic validation the message content.
-            run_context: The current run context.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Result of either the validated result data (ok) or a retry message (Err).
+        Propagates `ModelRetry` raised by the user's validator unwrapped; the caller
+        (`run_output_process_hooks`, `stream_text`, etc.) decides whether to wrap in
+        `ToolRetryError` for retry handling or re-raise.
         """
         if self._takes_ctx:
             args = run_context, result
         else:
             args = (result,)
 
-        try:
-            if self._is_async:
-                function = cast(Callable[[Any], Awaitable[T]], self.function)
-                result_data = await function(*args)
-            else:
-                function = cast(Callable[[Any], T], self.function)
-                result_data = await _utils.run_in_executor(function, *args)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                    tool_name=run_context.tool_name,
-                )
-                if run_context.tool_call_id:  # pragma: no cover
-                    m.tool_call_id = run_context.tool_call_id
-                raise ToolRetryError(m) from r
-            else:
-                raise r
-        else:
-            return result_data
+        if self._is_async:
+            function = cast(Callable[[Any], Awaitable[T]], self.function)
+            return await function(*args)
+        function = cast(Callable[[Any], T], self.function)
+        return await _utils.run_in_executor(function, *args)
 
 
 @dataclass(kw_only=True)
@@ -542,16 +814,76 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
 
 
 class BaseOutputProcessor(ABC, Generic[OutputDataT]):
-    @abstractmethod
-    async def process(
+    def validate(
         self,
-        data: str,
+        data: str | dict[str, Any] | None,
+        *,
+        allow_partial: bool = False,
+        validation_context: Any | None = None,
+    ) -> Any:
+        """Validate/parse raw output. Default: identity (returns data as-is)."""
+        return data
+
+    async def call(
+        self,
+        output: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Execute output function on validated output. Default: identity (returns output as-is)."""
+        return output
+
+    def hook_validate(
+        self,
+        data: str | dict[str, Any] | None,
         *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        """Validate raw data and return `(semantic_value, state)`.
+
+        `semantic_value` is what output hooks see — the logical value the model was asked to
+        produce (e.g., `MyModel(...)`, `42`, the input to a single-arg output function).
+        `state` is opaque per-invocation data that `hook_execute` needs to complete processing
+        (e.g., the resolved union member), or `None` if unused.
+
+        Default: runs `self.validate()` and returns the result as the semantic value.
+        """
+        validated = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
+        return validated, None
+
+    async def hook_execute(
+        self,
+        semantic: Any,
+        state: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Process an output message, performing validation and (if necessary) calling the output function."""
+    ) -> Any:
+        """Execute the post-validation stage on a (possibly hook-modified) semantic value.
+
+        `state` is the second element of the tuple returned by `hook_validate`.
+        Default: calls `self.call()` with the semantic value.
+        """
+        return await self.call(semantic, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
+
+    @abstractmethod
+    def get_output_context(
+        self,
+        schema: OutputSchema[Any],
+        *,
+        mode: OutputMode | None = None,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        """Return context information about this processor for output hooks.
+
+        `schema` provides the run-wide output configuration (what the schema accepts).
+        `mode` overrides the reported mode for the current dispatch path (e.g. `'tool'`
+        when validating an output tool call within an `'auto'` schema); defaults to
+        `schema.mode`.
+        """
         raise NotImplementedError()
 
 
@@ -562,6 +894,10 @@ class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 @dataclass(init=False)
 class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
+    output_type: type[Any] | None = None
+    """The resolved semantic output type (e.g. `MyModel`, `int`). For output functions,
+    this is the function's *input* type — i.e. what the model produces — not its return
+    type. `None` only for processors without a resolvable input type."""
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
@@ -574,12 +910,22 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
+        self.output_type = None
+
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
             self.validator = self._function_schema.validator
             json_schema = self._function_schema.json_schema
             json_schema['description'] = self._function_schema.description
+
+            # Extract the function's input type (what the model produces) for output_type
+            type_hints = _utils.get_function_type_hints(output)
+            for hint_name, hint_type in type_hints.items():  # pragma: no branch
+                if hint_name != 'return' and not _function_schema._is_call_ctx(hint_type):  # pyright: ignore[reportPrivateUsage]
+                    self.output_type = hint_type
+                    break
         else:
+            self.output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
             if _utils.is_model_like(output):
@@ -631,43 +977,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             )
         )
 
-    async def process(
-        self,
-        data: str | dict[str, Any] | None,
-        *,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Process an output message, performing validation and (if necessary) calling the output function.
-
-        Args:
-            data: The output data to validate.
-            run_context: The current run context.
-            allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
-
-        Returns:
-            Either the validated output data (left) or a retry message (right).
-        """
-        if isinstance(data, str):
-            data = _utils.strip_markdown_fences(data)
-
-        try:
-            output = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
-        except ValidationError as e:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=e.errors(include_url=False),
-                )
-                raise ToolRetryError(m) from e
-            else:
-                raise
-
-        output = await self.call(output, run_context, wrap_validation_errors)
-
-        return output
-
     def validate(
         self,
         data: str | dict[str, Any] | None,
@@ -675,6 +984,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         allow_partial: bool = False,
         validation_context: Any | None = None,
     ) -> dict[str, Any]:
+        if isinstance(data, str):
+            data = _utils.strip_markdown_fences(data)
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
             return self.validator.validate_json(
@@ -688,6 +999,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     async def call(
         self,
         output: dict[str, Any],
+        *,
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
     ) -> Any:
@@ -696,10 +1008,104 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         if self._function_schema:
             output = await execute_traced_output_function(
-                self._function_schema, run_context, output, wrap_validation_errors
+                self._function_schema,
+                run_context=run_context,
+                args=output,
+                wrap_validation_errors=wrap_validation_errors,
             )
 
         return output
+
+    @property
+    def hook_unwrap_key(self) -> str | None:
+        """The internal envelope key around a single semantic value, or `None`.
+
+        Output hooks see the **semantic value** the model was asked to produce (e.g. a
+        `MyModel` instance, `42`, or the dict the user is producing as `dict[str, str]`).
+        Pydantic validation works in dict-shape (`{'response': 42}`, `{'data': my_dict}`)
+        for primitive and function-arg cases, so this property returns the key to peel off
+        at the hook boundary and re-add when calling the inner processor.
+
+        - `outer_typed_dict_key` — set when wrapping a bare primitive (`output_type=int`,
+          `output_type=dict[str, str]`, etc.) so the model produces `{'response': value}`.
+          The wrapper key is purely a transport detail; the value's own structure is
+          unchanged.
+        - `FunctionSchema.single_field_name` — set when the output function takes exactly
+          one value-carrying arg (`def f(x: SomeType)`). The wrapper key is the arg name.
+
+        Returns `None` for bare `BaseModel` outputs and multi-arg output functions, where
+        the validated value is the semantic value as-is (no envelope to peel).
+        """
+        if self.outer_typed_dict_key is not None:
+            return self.outer_typed_dict_key
+        if self._function_schema is not None:
+            return self._function_schema.single_field_name
+        return None
+
+    def hook_validate(
+        self,
+        data: str | dict[str, Any] | None,
+        *,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+    ) -> tuple[Any, Any]:
+        validated = self.validate(data, allow_partial=allow_partial, validation_context=run_context.validation_context)
+        if (k := self.hook_unwrap_key) is None:
+            return validated, None
+        return validated[k], None
+
+    async def hook_execute(
+        self,
+        semantic: Any,
+        state: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        # Re-wrap the (possibly hook-modified) semantic value into the internal dict shape `call()` expects.
+        # No idempotency check: for `output_type=dict[...]`, the semantic value can itself be a dict
+        # that happens to contain the unwrap key.
+        if (k := self.hook_unwrap_key) is not None:
+            semantic = {k: semantic}
+        return await self.call(semantic, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
+
+    def get_output_context(
+        self,
+        schema: OutputSchema[Any],
+        *,
+        mode: OutputMode | None = None,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        return OutputContext(
+            mode=mode if mode is not None else schema.mode,
+            output_type=self.output_type,
+            object_def=self.object_def,
+            has_function=self._function_schema is not None,
+            tool_call=tool_call,
+            tool_def=tool_def,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
+        )
+
+
+@dataclass
+class _UnionValidatedOutput:
+    """Internal wrapper returned by `UnionOutputProcessor.validate()`.
+
+    Holds the resolved union member's kind key and the **semantic value** already
+    unwrapped by the inner processor (e.g. a `MyModel` instance or an `int`, not a
+    `{'response': ...}` dict). `UnionOutputProcessor.call()` uses `kind` to find the
+    right inner processor and rewraps `data` back into that processor's internal dict
+    shape before delegating.
+
+    This keeps `self._processors` lookup internal to the union processor — callers
+    (validate hooks, `hook_validate`) get clean semantic data without private access.
+    """
+
+    kind: str
+    data: Any
 
 
 @dataclass
@@ -799,52 +1205,181 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             )
         )
 
-    async def process(
+    def validate(
         self,
-        data: str,
+        data: str | dict[str, Any] | None,
+        *,
+        allow_partial: bool = False,
+        validation_context: Any | None = None,
+    ) -> _UnionValidatedOutput:
+        """Validate the union envelope, resolve the kind, and return the inner semantic value.
+
+        The returned wrapper holds the kind key and the unwrapped semantic value (not the
+        inner processor's dict form). `call()` rewraps before delegating to the inner
+        processor.
+        """
+        union_validated: UnionOutputModel = self._union_processor.validate(  # pyright: ignore[reportAssignmentType]
+            data, allow_partial=allow_partial, validation_context=validation_context
+        )
+
+        result = union_validated.result
+        kind: str = result.kind
+        inner_data: dict[str, Any] = result.data
+
+        # Pydantic validation ensures kind is always valid, so KeyError can't happen.
+        inner = self._processors[kind]
+        inner_validated = inner.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
+        # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
+        # expect — e.g. a `MyModel` instance or an `int`, not `{'response': 42}`.
+        if (k := inner.hook_unwrap_key) is not None:
+            inner_validated = inner_validated[k]
+        return _UnionValidatedOutput(kind=kind, data=inner_validated)
+
+    async def call(
+        self,
+        output: _UnionValidatedOutput,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Delegate to the inner processor resolved by the kind key in the wrapper.
+
+        Rewraps the semantic `data` into the inner processor's dict shape before calling,
+        inverting the unwrap in `validate()`.
+        """
+        inner = self._processors[output.kind]
+        inner_args: Any = output.data
+        if (k := inner.hook_unwrap_key) is not None:
+            inner_args = {k: inner_args}
+        return await inner.call(inner_args, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
+
+    def hook_validate(
+        self,
+        data: str | dict[str, Any] | None,
         *,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        union_object = await self._union_processor.process(
-            data,
-            run_context=run_context,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
+    ) -> tuple[Any, Any]:
+        # `validate()` already unwraps to semantic, so no private `_processors` access here.
+        union_validated = self.validate(
+            data, allow_partial=allow_partial, validation_context=run_context.validation_context
         )
+        return union_validated.data, union_validated.kind
 
-        result = union_object.result
-        kind = result.kind
-        inner_data = result.data
-        try:
-            processor = self._processors[kind]
-        except KeyError as e:  # pragma: no cover
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=f'Invalid kind: {kind}')
-                raise ToolRetryError(m) from e
-            else:
-                raise
+    async def hook_execute(
+        self,
+        semantic: Any,
+        state: Any,
+        *,
+        run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Dispatch the (possibly hook-modified) semantic value to the right inner processor.
 
-        return await processor.process(
-            inner_data,
-            run_context=run_context,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
+        If `state` (the resolved kind from `hook_validate`) is set and the semantic value's
+        type still matches that inner's `output_type`, use that kind. Otherwise — hook swapped
+        the value for a different union member, or we're on the error-recovery path with no
+        kind — resolve by `isinstance` so the output function still runs for the new type.
+        """
+        kind: str | None = state
+        if kind is not None:
+            inner = self._processors[kind]
+            if self._semantic_matches_inner(inner, semantic):
+                return await self.call(
+                    _UnionValidatedOutput(kind=kind, data=semantic),
+                    run_context=run_context,
+                    wrap_validation_errors=wrap_validation_errors,
+                )
+            # Type mismatch — hook returned a different union member than validation resolved.
+            # Fall through to resolve-by-type so we reach the right inner processor.
+        match = self._resolve_inner_for_value(semantic)
+        if match is not None:
+            return await self.call(match, run_context=run_context, wrap_validation_errors=wrap_validation_errors)
+        # Value doesn't match any union member — pass through unmodified. The output function
+        # (if any) doesn't run. Users hitting this should inspect their hook return type.
+        return semantic
+
+    @staticmethod
+    def _semantic_matches_inner(inner: ObjectOutputProcessor[Any], semantic: Any) -> bool:
+        """Check whether `semantic` matches the shape `inner` expects to receive.
+
+        - **Multi-arg output function** (`def f(x: int, y: str) -> Foo`): no unwrap key, so
+          `semantic` is the validated dict of args. `inner.output_type` is the first arg's
+          type, which can't be compared against the dict, so just check `isinstance(dict)`.
+        - **Single-value cases** (BaseModel, single-arg function, primitives): `semantic`
+          is the unwrapped value, so isinstance against `inner.output_type` is correct.
+        """
+        # Both inners are `ObjectOutputProcessor` (same module), so `_function_schema` is internal,
+        # not external; pyright's private-usage warning is a false positive here.
+        fn_schema = inner._function_schema  # pyright: ignore[reportPrivateUsage]
+        if fn_schema is not None and fn_schema.single_field_name is None:
+            return isinstance(semantic, dict)
+        if inner.output_type is None:
+            return False  # pragma: no cover
+        return _isinstance_maybe_generic(semantic, inner.output_type)
+
+    def _resolve_inner_for_value(self, value: Any) -> _UnionValidatedOutput | None:
+        """Find the inner processor whose `output_type` matches `value`.
+
+        Used on the error-recovery and type-mismatch paths in `hook_execute`. Returns a
+        `_UnionValidatedOutput` ready for `call()`, or `None` if no inner type matches.
+
+        Multi-arg output function inners are skipped: their `output_type` is the first
+        arg's type, not the dict shape `value` would have, so isinstance can't pick
+        them out unambiguously. The kind-trust path in `hook_execute` already handles
+        the normal multi-arg case (no swap).
+        """
+        for kind, inner in self._processors.items():
+            if inner.output_type is None:  # pragma: no cover
+                continue
+            fn_schema = inner._function_schema  # pyright: ignore[reportPrivateUsage]
+            if fn_schema is not None and fn_schema.single_field_name is None:
+                continue  # multi-arg — see docstring
+            if _isinstance_maybe_generic(value, inner.output_type):
+                return _UnionValidatedOutput(kind=kind, data=value)
+        return None
+
+    def get_output_context(
+        self,
+        schema: OutputSchema[Any],
+        *,
+        mode: OutputMode | None = None,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        return OutputContext(
+            mode=mode if mode is not None else schema.mode,
+            output_type=None,
+            object_def=self.object_def,
+            has_function=any(p._function_schema is not None for p in self._processors.values()),  # pyright: ignore[reportPrivateUsage]
+            tool_call=tool_call,
+            tool_def=tool_def,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
 
 class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
-    async def process(
+    def get_output_context(
         self,
-        data: str,
+        schema: OutputSchema[Any],
         *,
-        run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        return cast(OutputDataT, data)
+        mode: OutputMode | None = None,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        return OutputContext(
+            mode=mode if mode is not None else schema.mode,
+            output_type=str,
+            object_def=None,
+            has_function=False,
+            tool_call=tool_call,
+            tool_def=tool_def,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
+        )
 
 
 @dataclass(init=False)
@@ -868,24 +1403,37 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 
         self._str_argument_name = argument_name
 
-    async def process(
+    async def call(
         self,
-        data: str,
+        output: Any,
         *,
         run_context: RunContext[AgentDepsT],
-        validation_context: Any | None = None,
-        allow_partial: bool = False,
         wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        args = {self._str_argument_name: data}
-        data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
+    ) -> Any:
+        """Execute the text output function."""
+        args = {self._str_argument_name: output}
+        return await execute_traced_output_function(
+            self._function_schema, run_context=run_context, args=args, wrap_validation_errors=wrap_validation_errors
+        )
 
-        return await super().process(
-            data,
-            run_context=run_context,
-            validation_context=validation_context,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
+    def get_output_context(
+        self,
+        schema: OutputSchema[Any],
+        *,
+        mode: OutputMode | None = None,
+        tool_call: _messages.ToolCallPart | None = None,
+        tool_def: ToolDefinition | None = None,
+    ) -> OutputContext:
+        return OutputContext(
+            mode=mode if mode is not None else schema.mode,
+            output_type=str,
+            object_def=None,
+            has_function=True,
+            tool_call=tool_call,
+            tool_def=tool_def,
+            allows_text=schema.allows_text,
+            allows_image=schema.allows_image,
+            allows_deferred_tools=schema.allows_deferred_tools,
         )
 
 
@@ -902,10 +1450,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     _max_retries_overrides: dict[str, int]
     """Per-tool max_retries overrides from `ToolOutput(max_retries=N)`."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
-    _output_retry_count: int
-    """Current global output retry count, snapshotted from `ctx.retry` in `for_run_step`."""
-    _output_max_retries: int
-    """Global output max retries, snapshotted from `self.max_retries` in `for_run_step`."""
 
     @classmethod
     def build(
@@ -997,8 +1541,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self._max_retries_overrides = max_retries_overrides or {}
         self.output_validators = output_validators or []
-        self._output_retry_count = 0
-        self._output_max_retries = 0
 
     @property
     def id(self) -> str | None:
@@ -1009,14 +1551,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return "the agent's output tools"
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # copy() instead of replace() because @dataclass(init=False) with a custom __init__
-        # whose param names differ from field names (e.g. field `_tool_defs` vs param `tool_defs`)
-        # makes replace() pass unrecognized kwargs to __init__.
-        assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
-        new = copy(self)
-        new._output_retry_count = ctx.retry
-        new._output_max_retries = self.max_retries
-        return new
+        return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         assert self.max_retries is not None, 'Agent must set OutputToolset.max_retries before the run'
@@ -1034,12 +1569,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
-        if self.output_validators:
-            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self._output_max_retries)
-            for validator in self.output_validators:
-                output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
-        return output
+        # Output tools are handled by ToolManager.validate_output_tool_call/execute_output_tool_call,
+        # not through the normal toolset.call_tool path.
+        raise NotImplementedError('Output tools use validate_output_tool_call/execute_output_tool_call')
 
 
 @overload
