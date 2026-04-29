@@ -1874,6 +1874,35 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
 
 
 @workflow.defn
+class SimpleAgentWorkflowWithOverrideBuiltinTools:
+    @workflow.run
+    async def run(self, prompt: str) -> None:
+        with simple_temporal_agent.override(builtin_tools=[WebSearchTool()]):
+            pass
+
+
+async def test_temporal_agent_override_builtin_tools_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithOverrideBuiltinTools],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'Builtin tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+            ),
+        ):
+            await client.execute_workflow(
+                SimpleAgentWorkflowWithOverrideBuiltinTools.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithOverrideBuiltinTools.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+@workflow.defn
 class SimpleAgentWorkflowWithOverrideDeps:
     @workflow.run
     async def run(self, prompt: str) -> str:

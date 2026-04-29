@@ -1092,6 +1092,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
+            if _utils.is_set(builtin_tools):
+                raise UserError(
+                    'Builtin tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                )
 
         with super().override(
             name=name,
