@@ -988,6 +988,26 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
                 )
 
+                # Raise ContentFilterError for any response flagged by the content filter,
+                # regardless of whether the model returned partial text alongside it.
+                # Some providers (e.g. Azure OpenAI) return text parts with finish_reason='content_filter'
+                # when the response is cut mid-generation, so the previous is_empty gate caused the
+                # error to be silently swallowed and the partial text treated as a valid response.
+                if self.model_response.finish_reason == 'content_filter':
+                    details = self.model_response.provider_details or {}
+                    body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
+
+                    if reason := details.get('finish_reason'):
+                        message = f"Content filter triggered. Finish reason: '{reason}'"
+                    elif reason := details.get('block_reason'):
+                        message = f"Content filter triggered. Block reason: '{reason}'"
+                    elif refusal := details.get('refusal'):
+                        message = f'Content filter triggered. Refusal: {refusal!r}'
+                    else:
+                        message = 'Content filter triggered.'
+
+                    raise exceptions.ContentFilterError(message, body=body)
+
                 if is_empty or is_thinking_only:
                     # No actionable output was returned by the model.
 
@@ -996,22 +1016,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                         )
-
-                    # Check for content filter on empty response
-                    if is_empty and self.model_response.finish_reason == 'content_filter':
-                        details = self.model_response.provider_details or {}
-                        body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
-
-                        if reason := details.get('finish_reason'):
-                            message = f"Content filter triggered. Finish reason: '{reason}'"
-                        elif reason := details.get('block_reason'):
-                            message = f"Content filter triggered. Block reason: '{reason}'"
-                        elif refusal := details.get('refusal'):
-                            message = f'Content filter triggered. Refusal: {refusal!r}'
-                        else:  # pragma: no cover
-                            message = 'Content filter triggered.'
-
-                        raise exceptions.ContentFilterError(message, body=body)
 
                     # If the output type allows None, an empty response is a valid result.
                     if is_empty and output_schema.allows_none:
