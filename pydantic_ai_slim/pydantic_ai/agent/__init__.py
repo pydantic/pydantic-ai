@@ -1327,6 +1327,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if run_span.is_recording():
                     ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
                     ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
+                    ctx = _otel_set_baggage('gen_ai.conversation.id', state.conversation_id, context=ctx)
                     token = _otel_attach(ctx)
                     stack.callback(_otel_detach, token)
                 await stack.enter_async_context(

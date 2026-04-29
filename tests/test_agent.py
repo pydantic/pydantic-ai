@@ -3559,6 +3559,34 @@ def test_agent_conversation_id_available_in_run_context() -> None:
     assert all(cid == 'conv-from-ctx' for cid in captured)
 
 
+async def test_agent_conversation_id_surfaces_on_iter_and_async_stream() -> None:
+    """`conversation_id` is reachable from `AgentRun` and `StreamedRunResult`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+
+    async with agent.iter('hi', conversation_id='conv-iter') as agent_run:
+        assert agent_run.conversation_id == 'conv-iter'
+        async for _ in agent_run:
+            pass
+
+    async with agent.run_stream('hi', conversation_id='conv-async-stream') as stream:
+        assert stream.conversation_id == 'conv-async-stream'
+        await stream.get_output()
+
+
+def test_agent_conversation_id_surfaces_on_sync_stream() -> None:
+    """`conversation_id` is reachable from `StreamedRunResultSync`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+    result = agent.run_stream_sync('hi', conversation_id='conv-sync-stream')
+    assert result.conversation_id == 'conv-sync-stream'
+
+
+async def test_agent_run_result_conversation_id_property() -> None:
+    """`AgentRunResult.conversation_id` returns the run's conversation ID."""
+    agent = Agent(TestModel(custom_output_text='ok'))
+    result = await agent.run('hi', conversation_id='conv-result')
+    assert result.conversation_id == 'conv-result'
+
+
 async def test_agent_run_result_metadata_available() -> None:
     agent = Agent(
         TestModel(custom_output_text='metadata output'),
