@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.messages import ModelRequest, PendingMessage, PendingMessagePriority
 from pydantic_ai.tools import RunContext
@@ -68,7 +69,12 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         drained = _drain_by_priority(ctx.pending_messages, 'steering')
         if drained:
             parts = [part for msg in drained for part in msg.parts]
-            steering_request = ModelRequest(parts=parts)
+            # Stamp explicitly: ModelRequestNode.run() only stamps `self.request` (the
+            # current node's request). The agent graph also fixes up `messages[-1]`
+            # before calling the model, but relying on that is fragile — another
+            # capability could append after us. Stamp at construction so the
+            # persisted history always has timestamp/run_id, regardless of order.
+            steering_request = ModelRequest(parts=parts, timestamp=now_utc(), run_id=ctx.run_id)
             request_context.messages.append(steering_request)
             ctx.messages.append(steering_request)
         return request_context
