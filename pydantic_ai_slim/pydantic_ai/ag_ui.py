@@ -69,6 +69,7 @@ async def handle_ag_ui_request(
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
     manage_system_prompt: Literal['server', 'client'] = 'server',
+    allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -95,6 +96,8 @@ async def handle_ag_ui_request(
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
         manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+        allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
+            [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -117,6 +120,7 @@ async def handle_ag_ui_request(
         toolsets=toolsets,
         on_complete=on_complete,
         manage_system_prompt=manage_system_prompt,
+        allowed_file_url_schemes=allowed_file_url_schemes,
     )
 
 
@@ -140,6 +144,7 @@ def run_ag_ui(
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
     manage_system_prompt: Literal['server', 'client'] = 'server',
+    allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -167,6 +172,8 @@ def run_ag_ui(
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
         manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+        allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
+            [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
@@ -178,6 +185,7 @@ def run_ag_ui(
         ag_ui_version=ag_ui_version,
         preserve_file_data=preserve_file_data,
         manage_system_prompt=manage_system_prompt,
+        allowed_file_url_schemes=allowed_file_url_schemes,
     )
     return adapter.encode_stream(
         adapter.run_stream(

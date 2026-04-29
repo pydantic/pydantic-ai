@@ -143,6 +143,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6] = 5,
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
@@ -152,6 +153,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             sdk_version=sdk_version,
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
             **kwargs,
         )
 
@@ -178,6 +180,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
@@ -201,6 +204,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             builtin_tools=builtin_tools,
             on_complete=on_complete,
             manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
             **kwargs,
         )
 
