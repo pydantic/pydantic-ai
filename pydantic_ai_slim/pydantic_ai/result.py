@@ -17,6 +17,8 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    run_image_process_hooks,
+    run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
 from .messages import ModelResponseStreamEvent
@@ -29,6 +31,7 @@ from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
 __all__ = (
@@ -53,6 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
+    _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -206,8 +210,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_call(
-                    tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+                return await self._tool_manager.handle_output_tool_call(
+                    tool_call,
+                    schema=self._output_schema,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -216,12 +223,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     )
                 return cast(OutputDataT, deferred_tool_requests)
             elif self._output_schema.allows_image and message.images:
-                result_data = cast(OutputDataT, message.images[0])
-                for validator in self._output_validators:
-                    result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial), wrap_validation_errors=False
-                    )
-                return result_data
+                return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
                 for part in message.parts:
@@ -232,17 +234,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
 
-                result_data = await text_processor.process(
-                    text,
-                    run_context=replace(self._run_ctx, partial_output=allow_partial),
+                run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+                return await run_output_with_hooks(
+                    text_processor,
+                    text=text,
+                    run_context=run_ctx,
+                    capability=self._root_capability,
+                    schema=self._output_schema,
                     allow_partial=allow_partial,
                     wrap_validation_errors=False,
+                    output_validators=self._output_validators,
                 )
-                for validator in self._output_validators:
-                    result_data = await validator.validate(
-                        result_data, replace(self._run_ctx, partial_output=allow_partial)
-                    )
-                return result_data
             else:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     'Invalid response, unable to process text output'
@@ -253,6 +255,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
             raise
+
+    async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
+        """Run process hooks (including output validators) for image output."""
+        run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+        return cast(
+            OutputDataT,
+            await run_image_process_hooks(
+                image,
+                capability=self._root_capability,
+                run_context=run_ctx,
+                schema=self._output_schema,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            ),
+        )
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
