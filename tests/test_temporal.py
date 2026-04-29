@@ -1414,6 +1414,67 @@ def test_temporal_wrapper_visit_and_replace():
     assert result is temporal_function_toolset
 
 
+async def test_temporal_wrapper_get_tools_strips_args_validator_func_in_workflow():
+    """TemporalWrapperToolset.get_tools should strip args_validator_func when inside a workflow.
+
+    This prevents I/O-performing validators from running in Temporal's deterministic
+    workflow sandbox. The validator is instead called inside the activity.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.exceptions import ModelRetry
+
+    agent_with_validator = Agent(TestModel(), name='validator_agent')
+
+    def my_validator(ctx: RunContext[None], city: str) -> None:
+        # Simulate a validator that would perform I/O (e.g. platform.uname())
+        if city == 'invalid':
+            raise ModelRetry('Invalid city')
+
+    @agent_with_validator.tool_plain(args_validator=my_validator)
+    def get_weather_validated(city: str) -> str:
+        """Get weather for a city."""
+        return f'sunny in {city}'
+
+    temporal = TemporalAgent(agent_with_validator, activity_config=BASE_ACTIVITY_CONFIG)
+
+    toolsets = temporal._toolsets  # pyright: ignore[reportPrivateUsage]
+    temporal_function_toolsets = [ts for ts in toolsets if isinstance(ts, TemporalFunctionToolset)]
+    assert len(temporal_function_toolsets) >= 1
+    temporal_toolset = temporal_function_toolsets[-1]  # last one has the registered tool
+
+    # Find a dummy run context
+    from pydantic_ai._run_context import RunContext as RC
+
+    ctx = RC(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt='',
+        messages=[],
+        run_id='test',
+        retries={},
+        run_step=0,
+        max_retries=1,
+        tracer=None,
+        trace_include_content=False,
+        instrumentation_version=None,
+        toolset=None,
+    )
+
+    # Outside workflow: args_validator_func should be preserved
+    tools_outside = await temporal_toolset.get_tools(ctx)
+    assert 'get_weather_validated' in tools_outside
+    assert tools_outside['get_weather_validated'].args_validator_func is my_validator
+
+    # Inside workflow: args_validator_func should be stripped
+    with patch('pydantic_ai.durable_exec.temporal._toolset.workflow.in_workflow', return_value=True):
+        tools_inside = await temporal_toolset.get_tools(ctx)
+    assert 'get_weather_validated' in tools_inside
+    assert tools_inside['get_weather_validated'].args_validator_func is None
+
+
 async def test_temporal_agent_run(allow_model_requests: None):
     result = await simple_temporal_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')

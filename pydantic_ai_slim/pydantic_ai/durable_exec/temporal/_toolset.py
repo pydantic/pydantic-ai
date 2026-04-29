@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, Tag, with_config
@@ -109,6 +110,18 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         # Temporalized toolsets cannot be swapped out after the fact.
         return self
 
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await self.wrapped.get_tools(ctx)
+        if workflow.in_workflow():
+            # Strip args_validator_func from tools in workflow context so that validators
+            # performing I/O are not invoked inside the deterministic workflow sandbox.
+            # The validator is instead called inside the activity via _call_tool_in_activity.
+            tools = {
+                name: replace(tool, args_validator_func=None) if tool.args_validator_func is not None else tool
+                for name, tool in tools.items()
+            }
+        return tools
+
     async def __aenter__(self) -> Self:
         if not workflow.in_workflow():  # pragma: no cover
             await self.wrapped.__aenter__()
@@ -165,6 +178,10 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         """
         toolset = toolset or self.wrapped
         args_dict = tool.args_validator.validate_python(tool_args)
+        if tool.args_validator_func is not None:
+            result = tool.args_validator_func(ctx, **args_dict)
+            if inspect.isawaitable(result):
+                await result
         return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
 
 
