@@ -339,7 +339,9 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
     result = await agent.run('What is the capital of Germany?', message_history=result.all_messages())
@@ -357,7 +359,9 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -370,7 +374,9 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -392,7 +398,9 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no 
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -424,7 +432,9 @@ async def test_request_async_model(mock_async_model: OutlinesModel) -> None:
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -477,7 +487,9 @@ async def test_instructions_async_model(mock_async_model: OutlinesModel) -> None
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -537,7 +549,9 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -570,7 +584,9 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -628,7 +644,9 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no c
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
