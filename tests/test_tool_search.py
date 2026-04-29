@@ -968,6 +968,53 @@ async def test_tool_search_toolset_ignores_malformed_content_history():
     assert 'crypto_price' not in tools
 
 
+async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
+    """Pre-typed-content versions of this toolset wrote discovered tool names to
+    ``ToolReturnPart.metadata['discovered_tools']`` instead of the typed
+    :class:`ToolSearchReturn` on ``content``. Persisted histories from those versions
+    must still surface their discoveries on resume; otherwise an agent reloaded from
+    a saved transcript would re-emit ``search_tools`` and the user would see a
+    duplicated discovery turn."""
+    toolset = _create_function_toolset()
+    searchable = ToolSearchToolset(wrapped=toolset)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content='legacy text return',
+                    metadata={'discovered_tools': ['stock_price', 'crypto_price']},
+                ),
+            ]
+        ),
+        # Malformed legacy: not a list, ignored.
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content='another',
+                    metadata={'discovered_tools': 'not a list'},
+                ),
+            ]
+        ),
+        # Malformed legacy: list with non-string entries; the string ones are still picked up.
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content='third',
+                    metadata={'discovered_tools': [123, 'calculate_mortgage', None]},
+                ),
+            ]
+        ),
+    ]
+    ctx = _build_run_context(None, messages=messages)
+
+    tools = await searchable.get_tools(ctx)
+    assert {'stock_price', 'crypto_price', 'calculate_mortgage'} <= set(tools)
+
+
 async def test_deferred_loading_toolset_marks_all_tools():
     """Test that DeferredLoadingToolset marks all tools for deferred loading when tool_names is None."""
     toolset: FunctionToolset[None] = FunctionToolset()
