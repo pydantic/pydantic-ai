@@ -11,6 +11,12 @@ from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
+from ._output import (
+    OutputSchema,
+    OutputToolset,
+    run_output_process_hooks,
+    run_output_validate_hooks,
+)
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import (
     ApprovalRequired,
@@ -21,8 +27,8 @@ from .exceptions import (
     ToolRetryError,
     UnexpectedModelBehavior,
 )
-from .messages import ToolCallPart
-from .tools import ToolDefinition
+from .messages import ToolCallPart, ToolReturn
+from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
 
@@ -55,7 +61,15 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     args_valid: bool
     """Whether argument validation (schema + custom validator) passed."""
     validated_args: dict[str, Any] | None = None
-    """The validated arguments if validation passed, None otherwise."""
+    """The validated arguments if validation passed, `None` otherwise.
+
+    For regular tool calls, always a `dict[str, Any]` matching the tool schema. For
+    output tool calls, this holds what the tool's `args_validator` produced — a dict
+    for primitive / multi-arg outputs (e.g. `{'response': 42}`), or the model instance
+    for bare `BaseModel` outputs (the dict typing is a mild lie in that case, preserved
+    for consistency with regular tool calls). Output-tool semantic unwrapping happens
+    inside `execute_output_tool_call` at the output hook boundary, not here.
+    """
     validation_error: ToolRetryError | None = None
     """The validation error if validation failed, None otherwise."""
 
@@ -283,7 +297,7 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Run execution with before/wrap/after tool_execute hooks."""
         assert validated.tool is not None
@@ -323,8 +337,10 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_result = await cap.after_tool_execute(
                     ctx, call=call, tool_def=tool_def, args=args, result=tool_result
                 )
-            except ModelRetry as e:
-                # Hook raised ModelRetry — convert to ToolRetryError for retry handling
+            except (ValidationError, ModelRetry) as e:
+                # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
+                # doing additional Pydantic validation on args/result) — convert to
+                # ToolRetryError for retry handling.
                 name = call.tool_name
                 self._check_max_retries(name, validated.tool.max_retries, e)
                 self.failed_tools.add(name)
@@ -334,12 +350,71 @@ class ToolManager(Generic[AgentDepsT]):
 
         return tool_result
 
+    def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
+        """Resolve tool name to ResolvedTool, raising ModelRetry for unknown tools."""
+        if self.tools is None or self.ctx is None:
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+
+        name = call.tool_name
+        tool = self.tools.get(name)
+        if tool is None:
+            if self.tools:
+                msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+            else:
+                msg = 'No tools available.'
+            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+        return name, tool
+
+    def _make_validation_success(
+        self,
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT] | None,
+        ctx: RunContext[AgentDepsT],
+        validated_args: dict[str, Any] | None,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Build a successful `ValidatedToolCall`. Counterpart to `_make_validation_failure`."""
+        return ValidatedToolCall(
+            call=call,
+            tool=tool,
+            ctx=ctx,
+            args_valid=True,
+            validated_args=validated_args,
+            validation_error=None,
+        )
+
+    def _make_validation_failure(
+        self,
+        name: str,
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT] | None,
+        ctx: RunContext[AgentDepsT],
+        error: ToolRetryError | ValidationError | ModelRetry,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Handle validation failure: check retries, mark failed, wrap error.
+
+        Only called on the non-streaming path (`wrap_validation_errors=True`); streaming
+        lets errors propagate without going through this helper.
+        """
+        max_retries = tool.max_retries if tool is not None else self.default_max_retries
+        cause = (
+            error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
+        )
+        self._check_max_retries(name, max_retries, cause)
+        self.failed_tools.add(name)
+        validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
+        return ValidatedToolCall(
+            call=call,
+            tool=tool,
+            ctx=ctx,
+            args_valid=False,
+            validated_args=None,
+            validation_error=validation_error,
+        )
+
     async def validate_tool_call(
         self,
         call: ToolCallPart,
         *,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         approved: bool = False,
         metadata: Any = None,
     ) -> ValidatedToolCall[AgentDepsT]:
@@ -352,74 +427,27 @@ class ToolManager(Generic[AgentDepsT]):
 
         Args:
             call: The tool call part to validate.
-            allow_partial: Whether to allow partial validation of the tool arguments.
-            wrap_validation_errors: Whether to wrap validation errors in ToolRetryError.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
 
         Returns:
             ValidatedToolCall with validation results, ready for execution via execute_tool_call().
         """
-        if self.tools is None or self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        name = call.tool_name
-        tool = self.tools.get(name)
+        assert self.ctx is not None
         ctx = self.ctx
+        tool: ToolsetTool[AgentDepsT] | None = None
 
         try:
-            if tool is None:
-                if self.tools:
-                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
-                else:
-                    msg = 'No tools available.'
-                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
-
-            ctx = self._build_tool_context(
-                call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata
-            )
-
-            validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=allow_partial)
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=True,
-                validated_args=validated_args,
-                validation_error=None,
-            )
+            _name, tool = self._resolve_tool(call)
+            ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
+            validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
+            return self._make_validation_success(call, tool, ctx, validated_args)
         except SkipToolValidation as e:
-            if tool is None:
-                raise ValueError('Cannot skip validation for unknown tool')  # pragma: no cover
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=True,
-                validated_args=e.validated_args,
-                validation_error=None,
-            )
+            assert tool is not None
+            # Hook asked us to skip validation entirely; accept the args it provided.
+            return self._make_validation_success(call, tool, ctx, e.validated_args)
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else self.default_max_retries
-            self._check_max_retries(name, max_retries, e)
-
-            if not allow_partial:
-                # If we're validating partial arguments, we don't want to count this as a failed tool as it may still succeed once the full arguments are received.
-                self.failed_tools.add(name)
-
-            if not wrap_validation_errors:
-                raise
-
-            validation_error = self._wrap_error_as_retry(name, call, e)
-
-            return ValidatedToolCall(
-                call=call,
-                tool=tool,
-                ctx=ctx,
-                args_valid=False,
-                validated_args=None,
-                validation_error=validation_error,
-            )
+            return self._make_validation_failure(call.tool_name, call, tool, ctx, e)
 
     async def execute_tool_call(
         self,
@@ -443,15 +471,211 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        # Only count function tools in usage.tool_calls (output tools are validation, not tool calls)
-        usage = None if (validated.tool is not None and validated.tool.tool_def.kind == 'output') else self.ctx.usage
-        return await self._execute_tool_call_impl(validated, usage=usage)
+        return await self._execute_tool_call_impl(validated, usage=self.ctx.usage)
+
+    # --- Output tool methods (output hooks, no tool hooks) ---
+
+    async def validate_output_tool_call(
+        self,
+        call: ToolCallPart,
+        *,
+        schema: OutputSchema[Any],
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+    ) -> ValidatedToolCall[AgentDepsT]:
+        """Validate output tool args through output validate hooks (skipping tool hooks).
+
+        Output tools use output hooks for validation instead of tool hooks. The Pydantic
+        schema validation is used as the inner handler wrapped by output validate hooks.
+
+        `schema` is the run's output schema; it's forwarded to
+        [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
+        of what the schema accepts.
+
+        Raises:
+            UnexpectedModelBehavior: If max retries exceeded.
+        """
+        assert self.ctx is not None
+        # Output tool names are pre-classified by _classify_tool_calls, so _resolve_tool
+        # should never fail here. The assert documents this invariant.
+        name, tool = self._resolve_tool(call)
+        assert isinstance(tool.toolset, OutputToolset), f'Expected output tool, got {type(tool.toolset).__name__}'
+        ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
+
+        toolset = tool.toolset
+        processor = toolset.processors[name]
+        output_context = processor.get_output_context(schema, mode='tool', tool_call=call, tool_def=tool.tool_def)
+
+        # Output hooks see the semantic value (what the model was asked to produce), not the
+        # internal dict-wrapped form. This differs from tool call validation hooks, which see
+        # `dict[str, Any]` tool args — the schema contract the model satisfies.
+        # `processor.hook_validate` runs Pydantic validation and unwraps; output tools are
+        # always `ObjectOutputProcessor` (never union), so the opaque state is always `None`.
+        async def do_validate(args: str | dict[str, Any]) -> Any:
+            semantic, _state = processor.hook_validate(args, run_context=ctx, allow_partial=allow_partial)
+            return semantic
+
+        cap = self.root_capability
+        assert cap is not None, 'validate_output_tool_call requires root_capability'
+
+        try:
+            raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
+            semantic_value = await run_output_validate_hooks(
+                cap,
+                run_context=ctx,
+                output_context=output_context,
+                output=raw_args,
+                do_validate=do_validate,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+            # Rewrap the (possibly hook-modified) semantic value into the dict shape that
+            # matches the tool's schema — `ValidatedToolCall.validated_args` is the
+            # schema-contract form, consistent with regular tool calls. The semantic
+            # unwrap happens again in `execute_output_tool_call` at the output hook boundary.
+            # No unwrap key → `validated_args` holds the validated object itself (e.g. a
+            # `BaseModel` instance); typed as `dict[str, Any] | None` for consistency with
+            # tool calls, matching pre-refactor behavior.
+            if (k := processor.hook_unwrap_key) is not None:
+                validated_args: dict[str, Any] | None = {k: semantic_value}
+            else:
+                validated_args = semantic_value
+            return self._make_validation_success(call, tool, ctx, validated_args)
+        except (ToolRetryError, ValidationError, ModelRetry) as e:
+            if not wrap_validation_errors:
+                raise
+            return self._make_validation_failure(name, call, tool, ctx, e)
+
+    async def execute_output_tool_call(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+        *,
+        schema: OutputSchema[Any],
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Execute output tool through output process hooks (skipping tool hooks).
+
+        Output validators run inside process hooks (inside wrap_output_process), ensuring
+        the complete output pipeline is wrapped. Validators see the global output retry
+        context (from self.ctx), not the per-tool context, matching the text output path.
+
+        `schema` is the run's output schema; it's forwarded to
+        [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
+        of what the schema accepts.
+
+        Raises:
+            ToolRetryError: If execution or output validation fails.
+            UnexpectedModelBehavior: If max retries exceeded.
+        """
+        assert validated.args_valid
+        assert validated.tool is not None
+        # validated_args may be None for `output_type=int | None` (legitimate semantic value),
+        # so we rely on args_valid above rather than asserting validated_args is not None
+        assert self.ctx is not None
+
+        name = validated.call.tool_name
+        toolset = validated.tool.toolset
+        assert isinstance(toolset, OutputToolset)
+
+        tool = validated.tool
+        processor = toolset.processors[name]
+        output_context = processor.get_output_context(
+            schema, mode='tool', tool_call=validated.call, tool_def=tool.tool_def
+        )
+
+        # Unwrap the dict-shaped `validated_args` back to the semantic value that output hooks
+        # see. Inverse of the rewrap in `validate_output_tool_call`. For `BaseModel` outputs,
+        # `validated_args` already holds the instance (no unwrap key), so this is a passthrough.
+        if (k := processor.hook_unwrap_key) is not None:
+            assert isinstance(validated.validated_args, dict)
+            semantic_value: Any = validated.validated_args[k]
+        else:
+            semantic_value = validated.validated_args
+
+        # Output validators see the *global* output-retry budget (`max_result_retries`), so the same
+        # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
+        # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-#4687 override) on
+        # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
+        # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
+        # `max_result_retries`, the validator's `ctx.last_attempt` can fire before the run actually
+        # terminates. Tracked in #5238 — revisiting cleanly needs broader thought about
+        # `ctx.retry`/`ctx.retries[name]` semantics and is intentionally out of scope here.
+        assert toolset.max_retries is not None
+        validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=toolset.max_retries)
+
+        async def do_process(output: Any) -> Any:
+            # `processor.hook_execute` re-wraps the semantic value into the dict shape
+            # `processor.call()` expects, then runs the output function (if any).
+            # Output tools are always `ObjectOutputProcessor` (never union), so `state` is `None`.
+            try:
+                result = await processor.hook_execute(
+                    output, None, run_context=validated.ctx, wrap_validation_errors=False
+                )
+            except ModelRetry:
+                # When wrap_validation_errors=True, run_output_process_hooks below wraps
+                # ModelRetry as ToolRetryError (caught by the outer handler for retry tracking).
+                # When False (streaming, see result.py:validate_response_output), ModelRetry
+                # must propagate unwrapped so the streaming handler can catch it.
+                raise
+            # Output validators run inside do_process so wrap_output_process wraps the
+            # complete pipeline. Validators use wrap_validation_errors=False — the outer
+            # run_output_process_hooks handles wrapping ModelRetry as ToolRetryError.
+            for validator in toolset.output_validators:
+                result = await validator.validate(result, validator_ctx)
+            return result
+
+        cap = self.root_capability
+        assert cap is not None, 'execute_output_tool_call requires root_capability'
+        try:
+            result = await run_output_process_hooks(
+                cap,
+                run_context=validated.ctx,
+                output_context=output_context,
+                output=semantic_value,
+                do_process=do_process,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+        except ToolRetryError as e:
+            cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
+            self._check_max_retries(name, tool.max_retries, cause)
+            self.failed_tools.add(name)
+            raise
+
+        return result
+
+    async def handle_output_tool_call(
+        self,
+        call: ToolCallPart,
+        *,
+        schema: OutputSchema[Any],
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+    ) -> Any:
+        """Handle an output tool call using output hooks (not tool hooks).
+
+        Convenience method combining validate_output_tool_call and execute_output_tool_call.
+        Used by the streaming path in result.py.
+        """
+        validated = await self.validate_output_tool_call(
+            call,
+            schema=schema,
+            allow_partial=allow_partial,
+            wrap_validation_errors=wrap_validation_errors,
+        )
+        if not validated.args_valid:  # pragma: no cover — caller (result.py) uses wrap_validation_errors=False
+            assert validated.validation_error is not None
+            raise validated.validation_error
+        return await self.execute_output_tool_call(
+            validated,
+            schema=schema,
+            wrap_validation_errors=wrap_validation_errors,
+        )
 
     async def _execute_tool_call_impl(
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Execute a validated tool call without tracing, with capability hooks.
 
@@ -472,8 +696,7 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             tool_result = await self._run_execute_hooks(validated, usage=usage)
         except SkipToolExecution as e:
-            if usage is not None:  # pragma: no branch — agent always passes usage
-                usage.tool_calls += 1
+            usage.tool_calls += 1
             return e.result
 
         return tool_result
@@ -482,13 +705,14 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         validated: ValidatedToolCall[AgentDepsT],
         *,
-        usage: RunUsage | None = None,
+        usage: RunUsage,
     ) -> Any:
         """Execute a validated tool call without hooks or tracing."""
         assert validated.tool is not None
         assert validated.validated_args is not None
 
         name = validated.call.tool_name
+
         try:
             tool_result = await self.toolset.call_tool(
                 name,
@@ -501,36 +725,146 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        if usage is not None:
-            usage.tool_calls += 1
+        usage.tool_calls += 1
 
         return tool_result
 
     async def handle_call(
         self,
         call: ToolCallPart,
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
         *,
         approved: bool = False,
         metadata: Any = None,
-    ) -> Any:
+    ) -> ToolDenied | ToolReturn[Any] | Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
         This is a convenience method that combines validate_tool_call() and execute_tool_call().
 
+        If the tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred], the capability handler
+        (if any) is invoked to resolve it inline; otherwise the exception propagates.
+
         Args:
             call: The tool call part to handle.
-            allow_partial: Whether to allow partial validation of the tool arguments.
-            wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
+
+        Returns:
+            The tool's return value on success — possibly a [`ToolReturn`][pydantic_ai.messages.ToolReturn]
+            wrapper if the tool or handler supplied one.
+
+            A [`ToolDenied`][pydantic_ai.tools.ToolDenied] instance if a
+            [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+            handler denied the call. **Callers must `isinstance`-check the result**
+            before treating it as a successful tool return — `ToolDenied` is *not* a
+            valid tool result and the message string alone is indistinguishable from
+            a real return value. Surfacing the denial (e.g. recording
+            `ToolReturnPart(outcome='denied')` in message history, or raising inside
+            a sandbox) is the caller's responsibility.
+
+        Raises:
+            ToolRetryError: The handler requested a retry, or the (re-)executed tool
+                raised `ModelRetry`.
+            CallDeferred / ApprovalRequired: No handler resolved the call, or the
+                approved tool re-raised a deferral.
         """
         validated = await self.validate_tool_call(
             call,
-            allow_partial=allow_partial,
-            wrap_validation_errors=wrap_validation_errors,
             approved=approved,
             metadata=metadata,
         )
-        return await self.execute_tool_call(validated)
+        try:
+            return await self.execute_tool_call(validated)
+        except (CallDeferred, ApprovalRequired) as exc:
+            return await self._resolve_single_deferred(call, exc)
+
+    async def resolve_deferred_tool_calls(
+        self,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        """Invoke the capability handler to resolve deferred tool calls.
+
+        Args:
+            requests: The deferred tool requests to resolve.
+
+        Returns:
+            `DeferredToolResults` with results for some or all calls, or `None` if
+            no handler is available or the handler declined to handle the requests.
+        """
+        if self.root_capability is None or self.ctx is None:
+            return None  # pragma: no cover
+        return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+
+    async def _resolve_single_deferred(
+        self,
+        call: ToolCallPart,
+        exc: CallDeferred | ApprovalRequired,
+    ) -> ToolDenied | ToolReturn[Any] | Any:
+        """Resolve a single deferred tool call inline using the capability handler.
+
+        Dispatches the handler's result for `call` on the same set of
+        [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] variants as the
+        batch path in `_agent_graph._call_tool`, but returns a raw tool-like value
+        (what the tool "would have returned") rather than a message-history part.
+
+        NOTE: keep the dispatch branches here in sync with
+        [`_call_tool`][pydantic_ai._agent_graph._call_tool] — both paths must accept the
+        full [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] surface.
+
+        Returns:
+            For approved calls, the raw tool return (possibly a `ToolReturn` wrapper).
+            For external-call results, the value the handler supplied verbatim (plain
+            value or `ToolReturn`).
+            For denied calls, the [`ToolDenied`][pydantic_ai.tools.ToolDenied] instance
+            from the handler — callers must `isinstance`-check before treating the
+            return value as a successful tool result.
+
+        Raises:
+            ToolRetryError: Handler requested a retry via `ModelRetry` or `RetryPromptPart`,
+                or the approved tool re-raised `ModelRetry`.
+            CallDeferred / ApprovalRequired: Handler couldn't resolve the call, or the
+                approved tool re-raised a deferral.
+        """
+        requests = DeferredToolRequests(
+            approvals=[call] if isinstance(exc, ApprovalRequired) else [],
+            calls=[call] if isinstance(exc, CallDeferred) else [],
+            metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
+        )
+        deferred_results = await self.resolve_deferred_tool_calls(requests)
+        if deferred_results is None:
+            raise exc
+
+        # Normalize via to_tool_call_results(): bool → ToolApproved/ToolDenied,
+        # plain external values → ToolReturn(value).
+        tool_call_result = deferred_results.to_tool_call_results().get(call.tool_call_id)
+        if tool_call_result is None:
+            raise exc
+
+        if isinstance(tool_call_result, ToolDenied):
+            # Surface the denial as a return value, not an exception. Callers must
+            # `isinstance`-check the result of `handle_call` to distinguish a denial
+            # from a successful tool return.
+            return tool_call_result
+        if isinstance(tool_call_result, ToolApproved):
+            validate_call = call
+            if tool_call_result.override_args is not None:
+                validate_call = replace(call, args=tool_call_result.override_args)
+            call_metadata = deferred_results.metadata.get(call.tool_call_id)
+            validated = await self.validate_tool_call(validate_call, approved=True, metadata=call_metadata)
+            return await self.execute_tool_call(validated)
+        if isinstance(tool_call_result, ModelRetry):
+            raise ToolRetryError(
+                _messages.RetryPromptPart(
+                    content=tool_call_result.message,
+                    tool_name=call.tool_name,
+                    tool_call_id=call.tool_call_id,
+                )
+            )
+        if isinstance(tool_call_result, _messages.RetryPromptPart):
+            tool_call_result.tool_name = call.tool_name
+            tool_call_result.tool_call_id = call.tool_call_id
+            raise ToolRetryError(tool_call_result)
+        # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
+        # the handler's original value verbatim so handle_call's contract — "what the
+        # tool would have returned" — is preserved for plain-vs-wrapped inputs.
+        return deferred_results.calls[call.tool_call_id]

@@ -284,7 +284,6 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'Paris.',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
