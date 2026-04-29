@@ -249,7 +249,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         build_run_context(ctx),
                         run_step=ctx.state.run_step + 1,
                         retry=ctx.state.retries,
-                        max_retries=ctx.deps.max_result_retries,
+                        max_retries=ctx.deps.tool_manager.default_max_retries,
                     )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
                     if last_message.tool_calls:
@@ -764,7 +764,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context = replace(
             run_context,
             retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
         # This will raise errors for any tool name conflicts.
@@ -945,14 +945,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
         default=None, init=False, repr=False
     )
+    _stream_error: BaseException | None = field(default=None, init=False, repr=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         async with self.stream(ctx):
             pass
-        assert self._next_node is not None, 'the stream should set `self._next_node` before it ends'
-        return self._next_node
+        if self._next_node is not None:
+            return self._next_node
+        # If the stream raised an error that was caught by an external consumer
+        # (e.g. UIEventStream.transform_stream), _next_node will not have been set.
+        # Re-raise the original error instead of a confusing assertion.
+        if self._stream_error is not None:
+            raise self._stream_error.with_traceback(self._stream_error.__traceback__)
+        raise exceptions.AgentRunError('the stream should set `self._next_node` before it ends')  # pragma: no cover
 
     @asynccontextmanager
     async def stream(
@@ -1119,8 +1126,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             self._events_iterator = _run_stream()
 
-        async for event in self._events_iterator:
-            yield event
+        try:
+            async for event in self._events_iterator:
+                yield event
+        except BaseException as e:
+            self._stream_error = e
+            raise
 
     async def _handle_tool_calls(
         self,
@@ -1131,7 +1142,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         run_context = replace(
             run_context,
             retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
         # This will raise errors for any tool name conflicts

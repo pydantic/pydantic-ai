@@ -2750,7 +2750,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
