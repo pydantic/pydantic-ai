@@ -949,6 +949,60 @@ print(counter.count)
 #> 0
 ```
 
+### Dynamically building a capability
+
+Capabilities can be built dynamically ahead of each agent run using a function that takes the agent [`RunContext`][pydantic_ai.tools.RunContext] and returns a capability or `None`. This is useful when the capability — its instructions, model settings, hooks, or contributed toolset — depends on information specific to a run, like its [dependencies](./dependencies.md).
+
+To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or [`agent.run()`][pydantic_ai.Agent.run]. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, builtin tools, and hooks all flow through normally.
+
+```python {title="dynamic_capability.py"}
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Skill(AbstractCapability[str]):
+    """Per-user skill loaded from a database at run time."""
+
+    name: str
+    role: Literal['admin', 'guest']
+
+    def get_instructions(self) -> str:
+        return f'You can use the {self.name} skill (role: {self.role}).'
+
+
+# Pretend this comes from a database keyed by user.
+SKILLS = {
+    'alice': Skill(name='refunds', role='admin'),
+    'bob': Skill(name='lookup', role='guest'),
+}
+
+
+def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
+    return SKILLS.get(ctx.deps)
+
+
+agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
+
+result = agent.run_sync('hi', deps='alice')
+print(result.all_messages()[0].instructions)
+#> You can use the refunds skill (role: admin).
+```
+
+_(This example is complete, it can be run "as is")_
+
+To return more than one capability from a single factory, wrap them in a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability].
+
+!!! note "Durable execution (Temporal, DBOS, Prefect)"
+
+    A dynamic capability whose resolved capability contributes only instructions, model settings, builtin tools, hooks, or `prepare_tools`/`get_wrapper_toolset` (i.e. no `get_toolset()` of its own) works seamlessly with durable execution — the factory runs in the workflow alongside the rest of the agent loop. This covers the common "load this user's skill from the database and add its instructions" pattern.
+
+    However, dynamic capabilities that contribute their own toolset via `get_toolset()` are not yet supported with durable execution. The toolset is only known at run time, so it bypasses the durable wrapper's construction-time toolset registration and would attempt I/O directly inside the workflow. As a workaround, register the toolsets statically via `Agent(toolsets=[...])` (where they get wrapped properly) and have the dynamic capability reference them indirectly — e.g. via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] to scope which tools are visible per-run, rather than constructing the toolset inside the factory. Full support is tracked in a follow-on issue.
+
 ### Composition and middleware semantics
 
 When multiple capabilities are passed to an agent, they are composed into a single [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] that follows **middleware semantics** — the same pattern used by web frameworks like Django and Starlette:
