@@ -1103,88 +1103,92 @@ async def test_tool_search_toolset_custom_search_fn_still_emits_managed_variants
     assert _SEARCH_TOOLS_NAME in tools
 
 
+@pytest.mark.vcr
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
 )
-async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None):
-    """End-to-end: Anthropic's native BM25 search populates `BuiltinToolCallPart`
-    and `BuiltinToolReturnPart`, resolves into a follow-up call of the discovered
-    tool, and round-trips through history without dropping the tool search blocks."""
+async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """End-to-end against live Anthropic: native BM25 server-side tool search
+    populates `BuiltinToolCallPart` / `BuiltinToolReturnPart`, the model invokes
+    the discovered deferred tool by its plain name, and the wire request carries
+    `defer_loading: true` on the corpus tools and the `tool_search_tool_bm25`
+    builtin.
+    """
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import (
-        BetaContentBlock,
-        BetaServerToolUseBlock,
-        BetaTextBlock,
-        BetaToolSearchToolResultBlock,
-        BetaToolUseBlock,
-        BetaUsage,
-    )
-    from anthropic.types.beta.beta_server_tool_use_block import BetaDirectCaller
-    from anthropic.types.beta.beta_tool_reference_block import BetaToolReferenceBlock
-    from anthropic.types.beta.beta_tool_search_tool_search_result_block import (
-        BetaToolSearchToolSearchResultBlock,
-    )
+    from pathlib import Path
+
+    import yaml
 
     from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    from .models.test_anthropic import MockAnthropic, completion_message
-
-    search_call: BetaContentBlock = BetaServerToolUseBlock(
-        id='srv_1',
-        name='tool_search_tool_bm25',
-        input={'query': 'exchange rate'},
-        type='server_tool_use',
-        caller=BetaDirectCaller(type='direct'),
-    )
-    search_result: BetaContentBlock = BetaToolSearchToolResultBlock(
-        tool_use_id='srv_1',
-        type='tool_search_tool_result',
-        content=BetaToolSearchToolSearchResultBlock(
-            tool_references=[BetaToolReferenceBlock(tool_name='get_exchange_rate', type='tool_reference')],
-            type='tool_search_tool_search_result',
-        ),
-    )
-    tool_call: BetaContentBlock = BetaToolUseBlock(
-        id='call_1',
-        name='get_exchange_rate',
-        input={'from_currency': 'USD', 'to_currency': 'EUR'},
-        type='tool_use',
-    )
-
-    first = completion_message([search_call, search_result, tool_call], BetaUsage(input_tokens=5, output_tokens=10))
-    second = completion_message(
-        [BetaTextBlock(text='1 USD = 0.92 EUR.', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock([first, second])
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
         return f'1 {from_currency} = 0.92 {to_currency}'
 
-    result = await agent.run('What is the USD to EUR rate?')
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    result = await agent.run('What is the current USD to EUR exchange rate?')
+
     parts_by_kind: list[type] = [type(p) for m in result.all_messages() for p in m.parts]
     assert BuiltinToolCallPart in parts_by_kind
     assert BuiltinToolReturnPart in parts_by_kind
 
-    # The model's follow-up tool call for the discovered tool dispatches successfully —
-    # the toolset exposes deferred tools by their plain name on the native path so the
-    # dispatch doesn't fall through to an "unknown tool" retry.
-    returns = [
+    # The model's follow-up tool call for the discovered tool dispatches by its plain
+    # name — the toolset exposes deferred tools as their regular variant on the native
+    # path so the dispatch doesn't fall through to an "unknown tool" retry.
+    rate_returns = [
         p
         for m in result.all_messages()
         for p in m.parts
         if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
     ]
-    assert len(returns) == 1
-    assert returns[0].content == '1 USD = 0.92 EUR'
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+    # Wire-level checks against the live cassette.
+    cassette_path = (
+        Path(__file__).parent / 'cassettes' / 'test_tool_search' / 'test_anthropic_native_tool_search_round_trip.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+
+    # Initial request: deferred tools ship with `defer_loading: true`, and the BM25
+    # builtin is registered alongside.
+    first_request = cast(dict[str, Any], interactions[0]['request']['parsed_body'])
+    deferred_names = {
+        cast(str, t['name'])
+        for t in cast(list[dict[str, Any]], first_request['tools'])
+        if t.get('defer_loading') is True
+    }
+    assert deferred_names == {'get_exchange_rate', 'stock_lookup'}
+    builtin_tool_types = {
+        cast(str, t.get('type'))
+        for t in cast(list[dict[str, Any]], first_request['tools'])
+        if cast(str, t.get('type', '')).startswith('tool_search_tool_')
+    }
+    assert builtin_tool_types == {'tool_search_tool_bm25_20251119'}
+
+    # Provisional beta header is rejected by the API — confirm we don't send it.
+    assert 'tool-search-tool-2025-11-19' not in (first_request.get('betas') or [])
+
+    # First response contains the server-side tool search round trip.
+    first_response_blocks = cast(list[dict[str, Any]], interactions[0]['response']['parsed_body']['content'])
+    assert any(
+        b.get('type') == 'server_tool_use' and b.get('name') == 'tool_search_tool_bm25' for b in first_response_blocks
+    )
+    assert any(b.get('type') == 'tool_search_tool_result' for b in first_response_blocks)
 
 
 @pytest.mark.vcr
@@ -1293,34 +1297,50 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     assert tool_reference_names == {'get_exchange_rate'}
 
 
-async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None):
+@pytest.mark.vcr
+async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None, anthropic_api_key: str) -> None:
     """`ToolSearch(strategy='regex')` registers the regex variant of Anthropic's
-    native tool search tool rather than the default BM25 variant."""
+    native tool search tool rather than BM25, and the live API accepts the request.
+    """
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from pathlib import Path
+
+    import yaml
 
     from pydantic_ai.capabilities import ToolSearch
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
-
-    response = completion_message(
-        [BetaTextBlock(text='ok', type='text')],
-        BetaUsage(input_tokens=5, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(response)
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
+        """Look up the current exchange rate between two currencies."""
         return f'1 {from_currency} = 0.92 {to_currency}'
 
-    await agent.run('hi')
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    tool_types = [t.get('type') for t in kwargs['tools'] if isinstance(t, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+    await agent.run('hi, just say hello')
+
+    # The live request carries the regex variant — the mock-only assertion here would
+    # only validate that we generate the correct parameter shape, not that Anthropic
+    # accepts it.
+    cassette_path = (
+        Path(__file__).parent
+        / 'cassettes'
+        / 'test_tool_search'
+        / 'test_anthropic_native_tool_search_regex_strategy.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+    request_body = cast(dict[str, Any], interactions[0]['request']['parsed_body'])
+    tool_types = [
+        cast(str, t.get('type')) for t in cast(list[dict[str, Any]], request_body['tools']) if isinstance(t, dict)
+    ]
     assert 'tool_search_tool_regex_20251119' in tool_types
+    assert 'tool_search_tool_bm25_20251119' not in tool_types
+    # Live API returned 2xx — the absence of a 4xx is the strongest signal that the
+    # request shape (no beta header, regex variant) is accepted.
+    assert interactions[0]['response']['status']['code'] == 200
 
 
 async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_requests: None):
@@ -1608,37 +1628,24 @@ def test_anthropic_build_tool_search_replay_block_missing_error_message():
     }
 
 
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
-)
-async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
-    """End-to-end: OpenAI Responses native tool_search populates
-    `BuiltinToolCallPart` and `BuiltinToolReturnPart`; sending the resulting history
-    back round-trips the tool search parts via `_map_messages` and emits
-    `defer_loading: true` on the corpus function tool."""
+def test_openai_map_tool_search_call_unit():
+    """Unit-level: `_map_tool_search_call` and `_build_tool_search_return_part` produce
+    populated metadata for various output shapes — useful as a fast deterministic
+    gate without burning a live API call. The end-to-end live cassette in
+    `test_openai_native_tool_search_round_trip` exercises the same functions with
+    real provider responses."""
     from openai.types.responses import (
         FunctionTool,
-        ResponseFunctionToolCall,
-        ResponseOutputMessage,
-        ResponseOutputText,
         ResponseToolSearchCall,
         ResponseToolSearchOutputItem,
     )
 
     from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
     from pydantic_ai.models.openai import (
-        OpenAIResponsesModel,
         _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
-
-    # Unit-level: `_map_tool_search_call` paired with output produces populated metadata.
     call = ResponseToolSearchCall(
         id='ts_1',
         arguments={'query': 'exchange rate'},
@@ -1687,67 +1694,95 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None):
     mixed = _build_tool_search_return_part('call_mix', 'completed', mixed_output, 'openai')
     assert mixed.content == {'tools': [{'name': 'real', 'description': ''}]}
 
-    # End-to-end: run an agent with a deferred tool, let the mock emit a tool search
-    # call + output followed by a regular function call, then verify the history round-trips.
-    tool_call = ResponseFunctionToolCall(
-        id='fnc_1',
-        call_id='fnc_call_1',
-        name='get_exchange_rate',
-        arguments='{"from_currency": "USD", "to_currency": "EUR"}',
-        status='completed',
-        type='function_call',
-    )
-    final_message = ResponseOutputMessage(
-        id='msg_1',
-        role='assistant',
-        status='completed',
-        type='message',
-        content=[ResponseOutputText(type='output_text', text='1 USD = 0.92 EUR.', annotations=[])],
-    )
-    first = response_message([call, output, tool_call])
-    second = response_message([final_message])
 
-    mock_client = MockOpenAIResponses.create_mock([first, second])
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+@pytest.mark.vcr
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_native_tool_search_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end against live OpenAI Responses: native server-executed `tool_search`
+    populates `BuiltinToolCallPart` / `BuiltinToolReturnPart`, the model invokes the
+    discovered deferred tool by its plain name, and the second-turn replay carries
+    `defer_loading: true` on the corpus function tool plus a `tool_search_call` item.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent: Agent[None, str] = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
         return f'1 {from_currency} = 0.92 {to_currency}'
 
-    result = await agent.run('What is USD to EUR?')
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    result = await agent.run('What is the current USD to EUR exchange rate?')
+
     assert any(
         isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search'
         for m in result.all_messages()
         for p in m.parts
     )
     assert any(
-        isinstance(p, BuiltinToolReturnPart)
-        and p.content == {'tools': [{'name': 'get_exchange_rate', 'description': ''}]}
+        isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'tool_search'
         for m in result.all_messages()
         for p in m.parts
     )
 
-    # The model's follow-up tool call for the discovered tool dispatches successfully —
-    # the toolset exposes deferred tools by their plain name on the native path.
-    returns = [
+    rate_returns = [
         p
         for m in result.all_messages()
         for p in m.parts
         if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
     ]
-    assert len(returns) == 1
-    assert returns[0].content == '1 USD = 0.92 EUR'
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
-    # Second request replays the history — confirms `defer_loading: true` was set on
-    # the corpus tool AND that the native `tool_search_call` param was preserved.
-    kwargs = get_mock_responses_kwargs(mock_client)
-    second_tools = kwargs[1]['tools']
-    deferred_fn = next(t for t in second_tools if t.get('type') == 'function' and t.get('name') == 'get_exchange_rate')
-    assert deferred_fn.get('defer_loading') is True
-    second_input = kwargs[1]['input']
-    second_types = [item.get('type') for item in second_input if isinstance(item, dict)]  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-    assert 'tool_search_call' in second_types
+    # Wire-level checks against the live cassette.
+    cassette_path = (
+        Path(__file__).parent / 'cassettes' / 'test_tool_search' / 'test_openai_native_tool_search_round_trip.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+
+    # Initial request: deferred tools ship with `defer_loading: true`, and the native
+    # `tool_search` builtin is registered alongside.
+    first_request = cast(dict[str, Any], interactions[0]['request']['parsed_body'])
+    deferred_names = {
+        cast(str, t['name'])
+        for t in cast(list[dict[str, Any]], first_request['tools'])
+        if t.get('defer_loading') is True
+    }
+    assert deferred_names == {'get_exchange_rate', 'stock_lookup'}
+    assert any(t.get('type') == 'tool_search' for t in cast(list[dict[str, Any]], first_request['tools']))
+    # Second-turn replay carries the native tool_search_call back; the deferred corpus
+    # is preserved with `defer_loading: true`.
+    second_request = cast(dict[str, Any], interactions[1]['request']['parsed_body'])
+    second_input_types = {
+        cast(str, item.get('type'))
+        for item in cast(list[dict[str, Any]], second_request['input'])
+        if isinstance(item, dict)
+    }
+    assert 'tool_search_call' in second_input_types
+    second_deferred = {
+        cast(str, t['name'])
+        for t in cast(list[dict[str, Any]], second_request['tools'])
+        if t.get('defer_loading') is True
+    }
+    assert 'get_exchange_rate' in second_deferred
 
 
 @pytest.mark.vcr
