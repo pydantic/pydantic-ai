@@ -159,6 +159,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     to be set so the capability can be discovered in the load catalog.
     """
 
+    description: str | None = field(default=None, kw_only=True)
+    """Human-readable description of this capability.
+
+    Required when `defer_loading=True` so the model can decide whether to load it
+    from the `load_capability` catalog. Override
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
+    instead to compute it dynamically.
+    """
+
     def __post_init__(self) -> None:
         if self.defer_loading:
             if not self.id:
