@@ -98,6 +98,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'ollama',
         'openrouter',
         'ovhcloud',
+        'perplexity',
         'sambanova',
         'together',
         'vercel',

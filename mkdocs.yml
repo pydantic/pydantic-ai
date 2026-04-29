@@ -42,6 +42,7 @@ nav:
           - models/mistral.md
           - models/ollama.md
           - models/openrouter.md
+          - models/perplexity.md
           - models/zai.md
       - Tools & Toolsets:
           - tools.md
