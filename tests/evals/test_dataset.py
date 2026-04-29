@@ -875,6 +875,26 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
 
+async def test_serialization_to_yaml_preserves_unicode(tmp_path: Path):
+    dataset = Dataset[TaskInput, TaskOutput](
+        name='unicode',
+        cases=[
+            Case(
+                inputs=TaskInput(query='Привет'),
+                expected_output=TaskOutput(answer='Здравствуйте'),
+            )
+        ],
+    )
+    yaml_path = tmp_path / 'test_cases.yaml'
+
+    dataset.to_file(yaml_path)
+
+    content = yaml_path.read_text(encoding='utf-8')
+    assert 'Привет' in content
+    assert 'Здравствуйте' in content
+    assert '\\u041f' not in content
+
+
 async def test_deserializing_without_name(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
 ):
