@@ -1,0 +1,194 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body: {}
+    uri: https://api.openai.com/v1/conversations
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '131'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '76'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1777431487
+      id: conv_010000000000000000000000000000000000000000000000
+      metadata: {}
+      object: conversation
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      conversation: conv_010000000000000000000000000000000000000000000000
+      input:
+      - content: The local-only code is LOCAL-PAI-5222.
+        role: user
+      - content: Understood.
+        role: assistant
+      - content: What is the local-only code?
+        role: user
+      instructions: Follow the user instructions exactly. When asked for a code, reply only with that code.
+      model: gpt-4.1
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1458'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1575'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1777431489
+      conversation:
+        id: conv_010000000000000000000000000000000000000000000000
+      created_at: 1777431488
+      error: null
+      frequency_penalty: 0.0
+      id: resp_01000000000000000000000000000000000000000000000000
+      incomplete_details: null
+      instructions: Follow the user instructions exactly. When asked for a code, reply only with that code.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: LOCAL-PAI-5222
+          type: output_text
+        id: msg_01000000000000000000000000000000000000000000000000
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 60
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 68
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/conversations/conv_010000000000000000000000000000000000000000000000
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '183'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: conv_010000000000000000000000000000000000000000000000
+      object: conversation.deleted
+    status:
+      code: 200
+      message: OK
+version: 1

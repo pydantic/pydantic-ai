@@ -61,7 +61,6 @@ with try_import() as imports_successful:
     from openai import AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
-    from openai.types.responses.response import Conversation
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -103,24 +102,6 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
     if vector_store is not None:
         await async_client.vector_stores.delete(vector_store.id)
     await async_client.close()
-
-
-def _text_response_output(text: str = 'done', *, item_id: str = 'msg_001') -> Any:
-    return ResponseOutputMessage(
-        id=item_id,
-        content=cast(list[Content], [ResponseOutputText(text=text, type='output_text', annotations=[])]),
-        role='assistant',
-        status='completed',
-        type='message',
-    )
-
-
-def _conversation_response(
-    output_items: list[Any], *, conversation_id: str = 'conv_123', response_id: str = '123'
-) -> Any:
-    return response_message(output_items).model_copy(
-        update={'id': response_id, 'conversation': Conversation(id=conversation_id)}
-    )
 
 
 def test_openai_responses_model(env: TestEnv):
@@ -2784,183 +2765,138 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     )
 
 
-async def test_openai_conversation_id_request_and_response_metadata(allow_model_requests: None):
-    c = _conversation_response([_text_response_output('done')], conversation_id='conv_123')
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
+async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: None, openai_api_key: str):
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+    conversation_id: str | None = None
+    try:
+        conversation = await async_client.conversations.create()
+        conversation_id = conversation.id
 
-    result = await agent.run('Hello', model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_123'))
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly. When asked for a code, reply only with that code.',
+        )
+        result = await agent.run(
+            'Remember this exact code for later in this conversation: CONV-PAI-5222. Reply exactly: stored',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
 
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert 'previous_response_id' not in kwargs
-    last = result.all_messages()[-1]
-    assert isinstance(last, ModelResponse)
-    assert last.provider_details == snapshot(
-        {'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc), 'conversation_id': 'conv_123'}
-    )
+        assert result.output == snapshot('stored')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
 
+        result = await agent.run(
+            'What exact code did I ask you to remember? Reply with only the code.',
+            message_history=[response],
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        )
 
-async def test_openai_conversation_id_same_conversation_trims_history(allow_model_requests: None):
-    c = _conversation_response([_text_response_output('next')], conversation_id='conv_123')
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-    history = [
-        ModelRequest(parts=[UserPromptPart(content='Original question')]),
-        ModelResponse(
-            parts=[TextPart(content='Stored answer')],
-            model_name='gpt-4o',
-            provider_name='openai',
-            provider_details={'conversation_id': 'conv_123'},
-        ),
-    ]
-
-    await agent.run(
-        'Follow-up',
-        message_history=history,
-        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_123'),
-    )
-
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert kwargs['input'] == snapshot([{'role': 'user', 'content': 'Follow-up'}])
+        assert result.output == snapshot('CONV-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+    finally:
+        if conversation_id is not None:
+            await async_client.conversations.delete(conversation_id)
+        await async_client.close()
 
 
-async def test_openai_conversation_id_different_conversation_does_not_trim_history(allow_model_requests: None):
-    c = _conversation_response([_text_response_output('next')], conversation_id='conv_new')
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-    history = [
-        ModelRequest(parts=[UserPromptPart(content='Original question')]),
-        ModelResponse(
-            parts=[TextPart(content='Stored answer')],
-            model_name='gpt-4o',
-            provider_name='openai',
-            provider_details={'conversation_id': 'conv_old'},
-        ),
-    ]
+async def test_openai_conversation_id_preserves_mismatched_history(allow_model_requests: None, openai_api_key: str):
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+    conversation_id: str | None = None
+    try:
+        conversation = await async_client.conversations.create()
+        conversation_id = conversation.id
 
-    await agent.run(
-        'Follow-up',
-        message_history=history,
-        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_new'),
-    )
-
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_new'
-    assert kwargs['input'] == snapshot(
-        [
-            {'role': 'user', 'content': 'Original question'},
-            {'role': 'assistant', 'content': 'Stored answer'},
-            {'role': 'user', 'content': 'Follow-up'},
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly. When asked for a code, reply only with that code.',
+        )
+        history = [
+            ModelRequest(parts=[UserPromptPart(content='The local-only code is LOCAL-PAI-5222.')]),
+            ModelResponse(
+                parts=[TextPart(content='Understood.')],
+                model_name='claude-sonnet-4-5',
+                provider_name='anthropic',
+                provider_details={'conversation_id': conversation_id},
+            ),
         ]
-    )
+
+        result = await agent.run(
+            'What is the local-only code?',
+            message_history=history,
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('LOCAL-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+    finally:
+        if conversation_id is not None:
+            await async_client.conversations.delete(conversation_id)
+        await async_client.close()
 
 
-async def test_openai_conversation_id_different_provider_does_not_trim_history(allow_model_requests: None):
-    c = _conversation_response([_text_response_output('next')], conversation_id='conv_123')
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-    history = [
-        ModelRequest(parts=[UserPromptPart(content='Original question')]),
-        ModelResponse(
-            parts=[TextPart(content='Stored answer')],
-            model_name='claude-sonnet-4-5',
-            provider_name='anthropic',
-            provider_details={'conversation_id': 'conv_123'},
-        ),
-    ]
+async def test_openai_conversation_id_auto_without_history(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='Follow the user instructions exactly.')
 
-    await agent.run(
-        'Follow-up',
-        message_history=history,
-        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_123'),
-    )
-
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert kwargs['input'] == snapshot(
-        [
-            {'role': 'user', 'content': 'Original question'},
-            {'role': 'assistant', 'content': 'Stored answer'},
-            {'role': 'user', 'content': 'Follow-up'},
-        ]
-    )
-
-
-async def test_openai_conversation_id_auto_resolves_from_history(allow_model_requests: None):
-    c = _conversation_response([_text_response_output('next')], conversation_id='conv_123')
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-    history = [
-        ModelRequest(parts=[UserPromptPart(content='Original question')]),
-        ModelResponse(
-            parts=[TextPart(content='Stored answer')],
-            model_name='gpt-4o',
-            provider_name='openai',
-            provider_details={'conversation_id': 'conv_123'},
-        ),
-    ]
-
-    await agent.run(
-        'Follow-up',
-        message_history=history,
+    result = await agent.run(
+        'Reply exactly: no conversation',
         model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
     )
 
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert kwargs['input'] == snapshot([{'role': 'user', 'content': 'Follow-up'}])
+    assert result.output == snapshot('no conversation')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert 'conversation_id' not in response.provider_details
 
 
-async def test_openai_conversation_id_auto_without_history_sends_no_conversation(allow_model_requests: None):
-    c = response_message([_text_response_output('done')])
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
+async def test_openai_conversation_id_tool_call_continuation(allow_model_requests: None, openai_api_key: str):
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+    conversation_id: str | None = None
+    try:
+        conversation = await async_client.conversations.create()
+        conversation_id = conversation.id
 
-    await agent.run('Hello', model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'))
-
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert 'conversation' not in kwargs
-    assert kwargs['input'] == snapshot([{'role': 'user', 'content': 'Hello'}])
-
-
-async def test_openai_conversation_id_auto_with_no_new_messages_does_not_add_empty_input(
-    allow_model_requests: None,
-):
-    c = _conversation_response([_text_response_output('next')], conversation_id='conv_123')
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    messages: list[ModelRequest | ModelResponse] = [
-        ModelResponse(
-            parts=[TextPart(content='Stored answer')],
-            model_name='gpt-4o',
-            provider_name='openai',
-            provider_details={'conversation_id': 'conv_123'},
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Use the provided tool when the user asks for the conversation code.',
         )
-    ]
 
-    await model.request(
-        messages,
-        OpenAIResponsesModelSettings(openai_conversation_id='auto'),
-        ModelRequestParameters(),
-    )
+        @agent.tool_plain
+        def get_conversation_code() -> str:
+            return 'TOOL-PAI-5222'
 
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert kwargs['input'] == snapshot([])
+        result = await agent.run(
+            'Call get_conversation_code and reply with only the returned code.',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('TOOL-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+    finally:
+        if conversation_id is not None:
+            await async_client.conversations.delete(conversation_id)
+        await async_client.close()
 
 
-async def test_openai_conversation_id_conflicts_with_previous_response_id(allow_model_requests: None):
-    c = response_message([_text_response_output('done')])
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+async def test_openai_conversation_id_conflicts_with_previous_response_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
 
     with pytest.raises(
@@ -2975,108 +2911,34 @@ async def test_openai_conversation_id_conflicts_with_previous_response_id(allow_
         )
 
 
-async def test_openai_conversation_id_auto_continues_after_tool_call(allow_model_requests: None):
-    c = _conversation_response(
-        [_text_response_output('42', item_id='msg_final')],
-        conversation_id='conv_123',
-        response_id='resp_final',
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content='What is the meaning of life?')]),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='get_meaning_of_life',
-                    args='{}',
-                    tool_call_id='call_123',
-                    id='fc_123',
-                    provider_name='openai',
-                )
-            ],
-            model_name='gpt-4o',
-            provider_name='openai',
-            provider_details={'conversation_id': 'conv_123'},
-            provider_response_id='resp_tool',
-        ),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_meaning_of_life',
-                    content=42,
-                    tool_call_id='call_123',
-                )
-            ]
-        ),
-    ]
+async def test_openai_conversation_id_streaming_provider_details(allow_model_requests: None, openai_api_key: str):
+    async_client = AsyncOpenAI(api_key=openai_api_key)
+    conversation_id: str | None = None
+    try:
+        conversation = await async_client.conversations.create()
+        conversation_id = conversation.id
 
-    response = await model.request(
-        messages,
-        OpenAIResponsesModelSettings(openai_conversation_id='auto'),
-        ModelRequestParameters(),
-    )
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly.',
+        )
 
-    assert response.text == '42'
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert kwargs['input'] == snapshot([{'type': 'function_call_output', 'call_id': 'call_123', 'output': '42'}])
+        async with agent.run_stream(
+            'Reply exactly: streamed',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        ) as result:
+            output = await result.get_output()
 
-
-async def test_openai_conversation_id_auto_continues_after_tool_retry(allow_model_requests: None):
-    c = _conversation_response(
-        [_text_response_output('fixed', item_id='msg_final')],
-        conversation_id='conv_123',
-        response_id='resp_final',
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content='What is the meaning of life?')]),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='get_meaning_of_life',
-                    args='{"bad": true}',
-                    tool_call_id='call_123',
-                    id='fc_123',
-                    provider_name='openai',
-                )
-            ],
-            model_name='gpt-4o',
-            provider_name='openai',
-            provider_details={'conversation_id': 'conv_123'},
-            provider_response_id='resp_tool',
-        ),
-        ModelRequest(
-            parts=[
-                RetryPromptPart(
-                    content='Wrong arguments.',
-                    tool_name='get_meaning_of_life',
-                    tool_call_id='call_123',
-                )
-            ]
-        ),
-    ]
-
-    response = await model.request(
-        messages,
-        OpenAIResponsesModelSettings(openai_conversation_id='auto'),
-        ModelRequestParameters(),
-    )
-
-    assert response.text == 'fixed'
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['conversation'] == 'conv_123'
-    assert kwargs['input'] == snapshot(
-        [
-            {
-                'type': 'function_call_output',
-                'call_id': 'call_123',
-                'output': 'Wrong arguments.\n\nFix the errors and try again.',
-            }
-        ]
-    )
+        assert output == snapshot('streamed')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+    finally:
+        if conversation_id is not None:
+            await async_client.conversations.delete(conversation_id)
+        await async_client.close()
 
 
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
@@ -10934,91 +10796,6 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
                 run_id=IsStr(),
             ),
         ]
-    )
-
-
-async def test_openai_conversation_id_streaming_provider_details(allow_model_requests: None):
-    base_response = resp.Response(
-        id='resp_001',
-        model='gpt-4o',
-        object='response',
-        created_at=1704067200,
-        output=[],
-        parallel_tool_calls=True,
-        tool_choice='auto',
-        tools=[],
-        conversation=Conversation(id='conv_123'),
-    )
-
-    stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
-        resp.ResponseOutputItemAddedEvent(
-            item=ResponseOutputMessage(
-                id='msg_001',
-                content=[],
-                role='assistant',
-                status='in_progress',
-                type='message',
-            ),
-            output_index=0,
-            type='response.output_item.added',
-            sequence_number=1,
-        ),
-        resp.ResponseContentPartAddedEvent(
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
-            type='response.content_part.added',
-            sequence_number=2,
-        ),
-        resp.ResponseTextDeltaEvent(
-            content_index=0,
-            delta='Hello!',
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.delta',
-            sequence_number=3,
-            logprobs=[],
-        ),
-        resp.ResponseTextDoneEvent(
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            text='Hello!',
-            type='response.output_text.done',
-            sequence_number=4,
-            logprobs=[],
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=_text_response_output('Hello!', item_id='msg_001'),
-            output_index=0,
-            type='response.output_item.done',
-            sequence_number=5,
-        ),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=6,
-        ),
-    ]
-
-    mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-
-    async with agent.run_stream('Hello') as result:
-        output = await result.get_output()
-
-    assert output == snapshot('Hello!')
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.provider_details == snapshot(
-        {
-            'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-            'conversation_id': 'conv_123',
-            'finish_reason': 'completed',
-        }
     )
 
 
