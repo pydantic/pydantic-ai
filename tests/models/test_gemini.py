@@ -988,6 +988,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1065,6 +1066,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

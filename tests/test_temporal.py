@@ -2186,6 +2186,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2218,6 +2219,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2237,6 +2239,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2262,6 +2265,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2314,6 +2318,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2341,6 +2346,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2353,6 +2359,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2380,6 +2387,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_response_id=IsStr(),
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2392,6 +2400,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -2413,6 +2422,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2818,6 +2828,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[UserPromptPart(content='analyze', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='analyze_data', args={}, tool_call_id=IsStr())],
@@ -2825,6 +2836,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 model_name='function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2839,6 +2851,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -2846,6 +2859,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 model_name='function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2938,6 +2952,7 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
                 parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_agent_name', args={}, tool_call_id=IsStr())],
@@ -2945,6 +2960,7 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
                 model_name='function:_ctx_agent_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2957,6 +2973,7 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -2964,6 +2981,7 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
                 model_name='function:_ctx_agent_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3935,6 +3953,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -3948,6 +3967,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -3968,6 +3988,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -3979,6 +4000,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4041,5 +4063,6 @@ async def test_text_content_serialization_in_workflow(client: Client):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         )

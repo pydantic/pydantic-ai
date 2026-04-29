@@ -1643,6 +1643,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

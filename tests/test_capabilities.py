@@ -12997,6 +12997,7 @@ class TestStreamingOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )

@@ -777,7 +777,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 if parts:
                                     messages.append(
                                         _messages.ModelRequest(
-                                            parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
+                                            parts,
+                                            run_id=graph_ctx.state.run_id,
+                                            conversation_id=graph_ctx.state.conversation_id,
+                                            timestamp=_utils.now_utc(),
                                         )
                                     )
 

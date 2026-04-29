@@ -5970,7 +5970,7 @@ def test_dynamic_false_no_reevaluate():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='request',
+                                kind='request',
                 conversation_id=IsStr(),
             ),
             ModelResponse(
@@ -5979,7 +5979,7 @@ def test_dynamic_false_no_reevaluate():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='response',
+                                kind='response',
                 conversation_id=IsStr(),
             ),
         ]
@@ -6002,7 +6002,7 @@ def test_dynamic_false_no_reevaluate():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='request',
+                                kind='request',
                 conversation_id=IsStr(),
             ),
             ModelResponse(
@@ -6011,14 +6011,14 @@ def test_dynamic_false_no_reevaluate():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='response',
+                                kind='response',
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='request',
+                                kind='request',
                 conversation_id=IsStr(),
             ),
             ModelResponse(
@@ -6027,7 +6027,7 @@ def test_dynamic_false_no_reevaluate():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='response',
+                                kind='response',
                 conversation_id=IsStr(),
             ),
         ]
@@ -6066,7 +6066,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='request',
+                                kind='request',
                 conversation_id=IsStr(),
             ),
             ModelResponse(
@@ -6075,7 +6075,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='response',
+                                kind='response',
                 conversation_id=IsStr(),
             ),
         ]
@@ -6099,7 +6099,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='request',
+                                kind='request',
                 conversation_id=IsStr(),
             ),
             ModelResponse(
@@ -6108,14 +6108,14 @@ def test_dynamic_true_reevaluate_system_prompt():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='response',
+                                kind='response',
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='request',
+                                kind='request',
                 conversation_id=IsStr(),
             ),
             ModelResponse(
@@ -6124,7 +6124,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
-                kind='response',
+                                kind='response',
                 conversation_id=IsStr(),
             ),
         ]

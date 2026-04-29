@@ -2599,6 +2599,7 @@ async def test_google_url_input(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -2611,6 +2612,7 @@ async def test_google_url_input(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2643,6 +2645,7 @@ async def test_google_url_input_force_download(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -2655,6 +2658,7 @@ async def test_google_url_input_force_download(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6827,6 +6831,7 @@ async def test_google_vertex_service_tier_flex(
                 parts=[UserPromptPart(content='Reply with exactly: OK', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6849,6 +6854,7 @@ async def test_google_vertex_service_tier_flex(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6872,6 +6878,7 @@ async def test_google_vertex_service_tier_flex_stream(
                 parts=[UserPromptPart(content='Reply with exactly: OK', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6894,6 +6901,7 @@ async def test_google_vertex_service_tier_flex_stream(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
