@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from opentelemetry.trace import StatusCode, Tracer
-from pydantic import ValidationError
+from pydantic_core import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
@@ -21,6 +21,7 @@ from .exceptions import (
     ModelRetry,
     SkipToolExecution,
     SkipToolValidation,
+    ToolOutputValidationError,
     ToolRetryError,
     UnexpectedModelBehavior,
 )
@@ -510,6 +511,27 @@ class ToolManager(Generic[AgentDepsT]):
             self._check_max_retries(name, validated.tool.max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
+
+        if validated.tool.validate_return:
+            try:
+                if (validator := validated.tool._return_validator) is not None:
+                    tool_result = validator.validate_python(tool_result)
+                if validated.tool.result_validator is not None:
+                    result = validated.tool.result_validator(validated.ctx, tool_result)
+                    if inspect.isawaitable(result):
+                        tool_result = await result
+                    else:
+                        tool_result = result
+            except (ValidationError, ModelRetry) as e:
+                self._check_max_retries(name, validated.tool.max_retries, e)
+                self.failed_tools.add(name)
+                if isinstance(e, ValidationError):
+                    # Wrap Pydantic validation error into our custom terminal-ish error
+                    # but check if we should retry first
+                    raise ToolOutputValidationError(name, e) from e
+                else:
+                    # ModelRetry from custom validator
+                    raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         if usage is not None:
             usage.tool_calls += 1

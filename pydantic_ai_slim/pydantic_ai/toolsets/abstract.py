@@ -3,14 +3,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
+from pydantic import TypeAdapter
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
-from ..tools import ToolDefinition, ToolsPrepareFunc
+from ..tools import ResultValidatorFunc, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -69,6 +71,16 @@ class ToolsetTool(Generic[AgentDepsT]):
     with `RunContext` as the first argument.
     Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure, return `None` on success.
     """
+    validate_return: bool = False
+    result_validator: ResultValidatorFunc[AgentDepsT] | None = None
+    return_type: Any = Any
+
+    @cached_property
+    def _return_validator(self) -> SchemaValidator | SchemaValidatorProt | None:
+        """The Pydantic Core validator for the tool's return value."""
+        if self.return_type is Any or self.return_type is type(None):
+            return None
+        return TypeAdapter(self.return_type).validator
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):

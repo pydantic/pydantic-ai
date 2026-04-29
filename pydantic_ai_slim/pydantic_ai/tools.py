@@ -1,12 +1,13 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import typing
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, Tag, TypeAdapter
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
@@ -21,6 +22,7 @@ from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 __all__ = (
     'AgentDepsT',
     'ArgsValidatorFunc',
+    'ResultValidatorFunc',
     'DocstringFormat',
     'RunContext',
     'SystemPromptFunc',
@@ -47,6 +49,18 @@ __all__ = (
 
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
+
+
+def _get_return_validator(function: Callable[..., Any]) -> SchemaValidator | SchemaValidatorProt | None:
+    """Infer the return type from the function signature and return a Pydantic validator."""
+    try:
+        type_hints = typing.get_type_hints(function, include_extras=True)
+        return_type = type_hints.get('return', Any)
+        if return_type is not Any and return_type is not type(None):
+            return TypeAdapter(return_type).validator
+    except Exception:
+        pass
+    return None
 
 SystemPromptFunc: TypeAlias = (
     Callable[[RunContext[AgentDepsT]], str | None]
@@ -89,6 +103,14 @@ The validator receives the same typed parameters as the tool function,
 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument for dependency access.
 
 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure.
+"""
+ResultValidatorFunc: TypeAlias = (
+    Callable[[RunContext[AgentDepsT], Any], Awaitable[Any]] | Callable[[RunContext[AgentDepsT], Any], Any]
+)
+"""A function that validates or sanitizes tool results after execution.
+
+The validator receives the tool result and [`RunContext`][pydantic_ai.tools.RunContext] as arguments.
+It should return the validated/sanitized result, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
 """
 ToolPrepareFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT], 'ToolDefinition'],
@@ -449,6 +471,9 @@ class Tool(Generic[ToolAgentDepsT]):
     require_parameter_descriptions: bool
     strict: bool | None
     sequential: bool
+    validate_return: bool
+    result_validator: ResultValidatorFunc[ToolAgentDepsT] | None
+    return_type: Any
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
@@ -476,6 +501,9 @@ class Tool(Generic[ToolAgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[ToolAgentDepsT] | None = None,
+        return_type: Any = Any,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -570,6 +598,19 @@ class Tool(Generic[ToolAgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
         self.sequential = sequential
+        self.validate_return = validate_return
+        self.result_validator = result_validator
+
+        if validate_return and return_type is Any:
+            # try to infer the return type from the function signature
+            import typing
+            try:
+                type_hints = typing.get_type_hints(function, include_extras=True)
+                return_type = type_hints.get('return', Any)
+            except Exception:
+                pass
+
+        self.return_type = return_type
         self.requires_approval = requires_approval
         self.metadata = metadata
         self.timeout = timeout
@@ -646,7 +687,16 @@ class Tool(Generic[ToolAgentDepsT]):
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,
+            return_type=self.return_type,
+            validate_return=self.validate_return,
         )
+
+    @cached_property
+    def _return_validator(self) -> SchemaValidator | SchemaValidatorProt | None:
+        """The Pydantic Core validator for the tool's return value."""
+        if self.return_type is Any or self.return_type is type(None):
+            return None
+        return TypeAdapter(self.return_type).validator
 
     async def prepare_tool_def(self, ctx: RunContext[ToolAgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -771,6 +821,22 @@ class ToolDefinition:
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
+
+    return_type: Any = Any
+    """The type of the tool's return value.
+
+    Used to validate the tool's return value before being returned to the model if `validate_return` is `True`.
+    """
+
+    validate_return: bool = False
+    """Whether to validate the tool's return value against the `return_type`."""
+
+    @cached_property
+    def _return_validator(self) -> SchemaValidator | SchemaValidatorProt | None:
+        """The Pydantic Core validator for the tool's return value."""
+        if self.return_type is Any or self.return_type is type(None):
+            return None
+        return TypeAdapter(self.return_type).validator
 
     @cached_property
     def function_signature(self) -> FunctionSignature:

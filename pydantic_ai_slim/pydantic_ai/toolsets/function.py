@@ -8,6 +8,8 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from pydantic_core import SchemaValidator
+
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -16,6 +18,7 @@ from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    ResultValidatorFunc,
     SystemPromptFunc,
     Tool,
     ToolFuncContext,
@@ -24,7 +27,7 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from .abstract import AbstractToolset, ToolsetTool
+from .abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
 
 
 @dataclass(kw_only=True)
@@ -165,6 +168,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        return_type: Any = Any,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -187,6 +193,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        return_type: Any = Any,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -249,6 +258,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
+            validate_return: Whether to validate the tool's return value.
+            result_validator: custom method to validate or sanitize the tool result after execution.
+                See [`ResultValidatorFunc`][pydantic_ai.tools.ResultValidatorFunc].
+            return_type: The type of the tool's return value.
+                If `Any`, this is inferred from the function signature if `validate_return` is True.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
@@ -285,6 +299,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 schema_generator=schema_generator,
                 strict=strict,
                 sequential=sequential,
+                validate_return=validate_return,
+                result_validator=result_validator,
+                result_schema_validator=result_schema_validator,
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
@@ -320,6 +337,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        return_type: Any = Any,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -342,6 +362,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        return_type: Any = Any,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -405,6 +428,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
+            validate_return: Whether to validate the tool's return value.
+            result_validator: custom method to validate or sanitize the tool result after execution.
+                See [`ResultValidatorFunc`][pydantic_ai.tools.ResultValidatorFunc].
+            return_type: The type of the tool's return value.
+                If `Any`, this is inferred from the function signature if `validate_return` is True.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
@@ -436,6 +464,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 schema_generator=schema_generator,
                 strict=strict,
                 sequential=sequential,
+                validate_return=validate_return,
+                result_validator=result_validator,
+                result_schema_validator=result_schema_validator,
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
@@ -491,6 +522,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        return_type: Any = Any,
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
@@ -531,6 +565,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
+            validate_return: Whether to validate the tool's return value.
+            result_validator: custom method to validate or sanitize the tool result after execution.
+                See [`ResultValidatorFunc`][pydantic_ai.tools.ResultValidatorFunc].
+            return_type: The type of the tool's return value.
+                If `Any`, this is inferred from the function signature if `validate_return` is True.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
@@ -574,6 +613,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator=schema_generator,
             strict=strict,
             sequential=sequential,
+            validate_return=validate_return,
+            result_validator=result_validator,
+            result_schema_validator=result_schema_validator,
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
@@ -640,6 +682,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 max_retries=max_retries,
                 args_validator=tool.function_schema.validator,
                 args_validator_func=tool.args_validator,
+                validate_return=tool.validate_return,
+                result_validator=tool.result_validator,
+                return_type=tool.return_type,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
