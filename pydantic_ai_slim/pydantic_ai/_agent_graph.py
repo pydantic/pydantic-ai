@@ -414,19 +414,19 @@ async def _prepare_request_parameters(
         output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
-    all_tool_defs = list(ctx.deps.tool_manager.tool_defs)
-
-    # Let capabilities filter/modify tool definitions
-    run_context = build_run_context(ctx)
-    all_tool_defs = await ctx.deps.root_capability.prepare_tools(run_context, all_tool_defs)
-
+    # `tool_manager.tool_defs` already reflects the `prepare_tools`/`prepare_output_tools`
+    # capability hooks — they're dispatched at `get_tools()` time via `PreparedToolset`
+    # wrappers in `Agent._get_toolset`, so the filtered/modified defs are baked into
+    # `ToolManager.tools` (and execution lookups) as well as the model's request parameters.
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
-    for tool_def in all_tool_defs:
+    for tool_def in ctx.deps.tool_manager.tool_defs:
         if tool_def.kind == 'output':
             output_tools.append(tool_def)
         else:
             function_tools.append(tool_def)
+
+    run_context = build_run_context(ctx)
 
     # resolve dynamic builtin tools
     builtin_tools: list[AbstractBuiltinTool] = []
@@ -679,6 +679,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _run_ctx=build_run_context(ctx),
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
+            _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
         )
 
@@ -1016,8 +1017,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     if is_empty and output_schema.allows_none:
                         run_context = _build_output_run_context(ctx)
                         try:
-                            result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
-                            self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                            result_data = await _output.run_none_process_hooks(
+                                capability=ctx.deps.root_capability,
+                                run_context=run_context,
+                                schema=output_schema,
+                                output_validators=ctx.deps.output_validators,
+                            )
+                            self._next_node = self._handle_final_result(
+                                ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
+                            )
                         except ToolRetryError as e:
                             ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
                             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -1202,8 +1210,17 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = _build_output_run_context(ctx)
-        result_data = await text_processor.process(text, run_context=run_context)
-        result_data = await _run_output_validators(ctx, result_data, run_context)
+        schema = ctx.deps.output_schema
+
+        result_data = await _output.run_output_with_hooks(
+            text_processor,
+            text=text,
+            run_context=run_context,
+            capability=ctx.deps.root_capability,
+            schema=schema,
+            output_validators=ctx.deps.output_validators,
+        )
+
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
@@ -1212,7 +1229,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = _build_output_run_context(ctx)
-        result_data = await _run_output_validators(ctx, cast(NodeRunEndT, image), run_context)
+        schema = ctx.deps.output_schema
+        result_data = await _output.run_image_process_hooks(
+            image,
+            capability=ctx.deps.root_capability,
+            run_context=run_context,
+            schema=schema,
+            output_validators=ctx.deps.output_validators,
+        )
+
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     def _handle_final_result(
@@ -1286,24 +1311,20 @@ def build_validation_context(
 def _build_output_run_context(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
 ) -> RunContext[DepsT]:
-    """Build a RunContext with global output retry info for output validation."""
-    run_context = build_run_context(ctx)
+    """Build a RunContext with global output retry info for output validation.
+
+    Starts from `tool_manager.ctx` (when available) so per-tool retry counts
+    (`ctx.retries[name]`) populated by `for_run_step` propagate to output hooks
+    like `prepare_output_tools` and output validators. Then overrides `retry`
+    and `max_retries` with the **output** budget (`max_result_retries`),
+    distinct from the tool budget on `tool_manager.ctx`.
+    """
+    base = ctx.deps.tool_manager.ctx if ctx.deps.tool_manager.ctx is not None else build_run_context(ctx)
     return replace(
-        run_context,
+        base,
         retry=ctx.state.retries,
         max_retries=ctx.deps.max_result_retries,
     )
-
-
-async def _run_output_validators(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-    result_data: NodeRunEndT,
-    run_context: RunContext[DepsT],
-) -> NodeRunEndT:
-    """Run all output validators on the result data."""
-    for validator in ctx.deps.output_validators:
-        result_data = await validator.validate(result_data, run_context)
-    return result_data
 
 
 def _emit_skipped_output_tool(
@@ -1368,15 +1389,15 @@ async def process_tool_calls(  # noqa: C901
                 yield event
         # No final result yet, or exhaustive strategy processes all output tools
         else:
-            # Validate and execute the output tool call — unlike deferred tools,
-            # output tools track retries and can be skipped if a final_result exists.
+            # Validate and execute the output tool call using output hooks (not tool hooks).
+            # Unlike deferred tools, output tools track retries and can be skipped if a final_result exists.
+            schema = ctx.deps.output_schema
             try:
-                validated = await tool_manager.validate_tool_call(call)
+                validated = await tool_manager.validate_output_tool_call(call, schema=schema)
             except exceptions.UnexpectedModelBehavior as e:
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
-                    # If output tool fails when we already have a final result, skip it without retrying
                     for event in _emit_skipped_output_tool(
                         call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
@@ -1404,9 +1425,9 @@ async def process_tool_calls(  # noqa: C901
                 ctx.state.retries += 1
                 continue
 
-            # Validation passed - execute the tool
+            # Validation passed - execute through output hooks
             try:
-                result_data = await tool_manager.execute_tool_call(validated)
+                result_data = await tool_manager.execute_output_tool_call(validated, schema=schema)
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(

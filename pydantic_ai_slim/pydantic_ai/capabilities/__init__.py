@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic_ai.output import OutputContext
+
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -7,10 +9,13 @@ from .abstract import (
     CapabilityPosition,
     CapabilityRef,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputProcessHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
@@ -24,7 +29,7 @@ from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
-from .prepare_tools import PrepareTools
+from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import (
     HistoryProcessor,  # pyright: ignore[reportDeprecated]
@@ -77,6 +82,9 @@ __all__ = [
     'WrapRunHandler',
     'WrapToolExecuteHandler',
     'WrapToolValidateHandler',
+    'RawOutput',
+    'WrapOutputValidateHandler',
+    'WrapOutputProcessHandler',
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
@@ -85,6 +93,7 @@ __all__ = [
     'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',
+    'PrepareOutputTools',
     'PrepareTools',
     'ProcessEventStream',
     'ProcessHistory',
@@ -100,4 +109,5 @@ __all__ = [
     'HandleDeferredToolCalls',
     'HookTimeoutError',
     'Hooks',
+    'OutputContext',
 ]

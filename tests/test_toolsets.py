@@ -270,6 +270,24 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
+async def test_prepared_toolset_sync_prepare_func():
+    """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    def prepare_keep_first(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs[:1]
+
+    prepared_toolset = PreparedToolset(base_toolset, prepare_keep_first)
+
+    tools = await prepared_toolset.get_tools(build_run_context(None))
+    assert list(tools.keys()) == ['add']
+
+
 async def test_prepared_toolset_user_error_add_new_tools():
     """Test that PreparedToolset raises UserError when prepare function tries to add new tools."""
     context = build_run_context(None)
