@@ -139,6 +139,16 @@ async def fastmcp_server() -> FastMCP:  # noqa: C901
         return TextContent(type='text', text=message, _meta={'source': 'test'})
 
     @server.tool(output_schema=None)
+    async def embedded_text_resource_with_meta(message: str) -> EmbeddedResource:
+        """A tool whose embedded text resource carries `_meta`."""
+        return EmbeddedResource(
+            type='resource',
+            resource=TextResourceContents(
+                uri=AnyUrl('resource://message.txt'), text=message, _meta={'source': 'config'}
+            ),
+        )
+
+    @server.tool(output_schema=None)
     async def image_with_meta() -> ImageContent:
         """A tool whose image part carries `_meta`."""
         return ImageContent(
@@ -346,6 +356,7 @@ class TestFastMCPToolsetToolDiscovery:
                 'resource_tool',
                 'resource_tool_blob',
                 'text_with_meta',
+                'embedded_text_resource_with_meta',
                 'image_with_meta',
                 'with_result_meta',
                 'user_only',
@@ -671,6 +682,21 @@ class TestFastMCPToolsetMetadata:
             result = await fastmcp_toolset.call_tool('image_with_meta', {}, run_context, tool)
         assert isinstance(result, BinaryContent)
         assert result.metadata == snapshot({'caption': 'fake'})
+
+    async def test_embedded_text_resource_with_meta_promotes_to_text_content(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        from pydantic_ai import messages
+
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['embedded_text_resource_with_meta']
+            result = await fastmcp_toolset.call_tool(
+                'embedded_text_resource_with_meta', {'message': 'hi'}, run_context, tool
+            )
+        assert result == snapshot(messages.TextContent(content='hi', metadata={'source': 'config'}))
 
     async def test_top_level_meta_wraps_in_tool_return(
         self,

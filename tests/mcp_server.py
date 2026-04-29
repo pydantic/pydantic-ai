@@ -138,6 +138,41 @@ async def get_image_with_meta() -> ImageContent:
 
 
 @mcp.tool()
+async def get_text_resource_with_meta() -> EmbeddedResource:
+    """Return an embedded text resource whose inner `TextResourceContents` carries `_meta`."""
+    return EmbeddedResource(
+        type='resource',
+        resource=TextResourceContents(
+            uri=AnyUrl('resource://product_name.txt'),
+            text='Pydantic AI',
+            _meta={'version': 'v2', 'source': 'config'},
+        ),
+    )
+
+
+@mcp.tool()
+async def get_resource_link_with_meta() -> ResourceLink:
+    """Return a `ResourceLink` whose own `_meta` should be merged onto the resolved content."""
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://product_name.txt'),
+        name='product_name.txt',
+        _meta={'requested_at': 'rid-99'},
+    )
+
+
+@mcp.tool()
+async def get_image_resource_link_with_meta() -> ResourceLink:
+    """Return a `ResourceLink` to a binary resource whose link `_meta` is merged onto the resolved `BinaryContent`."""
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://kiwi.jpg'),
+        name='kiwi.jpeg',
+        _meta={'caption': 'Linked kiwi'},
+    )
+
+
+@mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
     data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return EmbeddedResource(
