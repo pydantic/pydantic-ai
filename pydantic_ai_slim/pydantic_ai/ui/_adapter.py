@@ -511,22 +511,27 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if self.manage_system_prompt == 'server':
             capabilities.append(ReinjectSystemPrompt(replace_existing=True))
 
-        return self.agent.run_stream_events(
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            instructions=instructions,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            capabilities=capabilities,
-        )
+        async def stream_events() -> AsyncIterator[NativeEvent]:
+            async with self.agent.run_stream_events(
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                instructions=instructions,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                capabilities=capabilities,
+            ) as stream:
+                async for event in stream:
+                    yield event
+
+        return stream_events()
 
     def run_stream(
         self,
