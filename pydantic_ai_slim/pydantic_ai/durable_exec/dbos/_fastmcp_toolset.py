@@ -24,6 +24,6 @@ class DBOSFastMCPToolset(DBOSMCPToolset[AgentDepsT]):
             step_config=step_config,
         )
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
         assert isinstance(self.wrapped, FastMCPToolset)
-        return self.wrapped.tool_for_tool_def(tool_def)
+        return self.wrapped.tool_for_tool_def(tool_def, max_retries=max_retries)

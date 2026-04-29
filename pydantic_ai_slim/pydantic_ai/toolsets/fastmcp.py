@@ -272,11 +272,16 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         else:
             return await self.direct_call_tool(name, tool_args)
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
+        if self.max_retries is not None:
+            max_retries = self.max_retries
+        elif max_retries is None:
+            max_retries = 1
+
         return ToolsetTool[AgentDepsT](
             tool_def=tool_def,
             toolset=self,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 

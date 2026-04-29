@@ -1576,7 +1576,7 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
 
 
 class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 

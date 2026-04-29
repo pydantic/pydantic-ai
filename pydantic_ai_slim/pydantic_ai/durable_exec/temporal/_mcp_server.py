@@ -52,7 +52,7 @@ class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
         assert isinstance(self.wrapped, MCPServer)
         return self.wrapped
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
         return self._server.tool_for_tool_def(tool_def)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

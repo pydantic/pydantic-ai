@@ -94,7 +94,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
                     params.name,
                     params.tool_args,
                     run_context,
-                    self.tool_for_tool_def(params.tool_def),
+                    self.tool_for_tool_def(params.tool_def, max_retries=run_context.max_retries),
                 )
             )
 
@@ -106,7 +106,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         )
 
     @abstractmethod
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
         raise NotImplementedError
 
     @property
@@ -160,7 +160,9 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             ],
             **activity_config,
         )
-        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {
+            name: self.tool_for_tool_def(tool_def, max_retries=ctx.max_retries) for name, tool_def in tool_defs.items()
+        }
 
     async def call_tool(
         self,

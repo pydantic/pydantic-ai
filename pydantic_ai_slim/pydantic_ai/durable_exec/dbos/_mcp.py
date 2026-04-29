@@ -78,7 +78,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
     @abstractmethod
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
         raise NotImplementedError
 
     @property
@@ -101,7 +101,9 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
-        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {
+            name: self.tool_for_tool_def(tool_def, max_retries=ctx.max_retries) for name, tool_def in tool_defs.items()
+        }
 
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
