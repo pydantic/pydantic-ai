@@ -3908,14 +3908,9 @@ class TestPrepareToolsHook:
         result = await agent.run('hello')
         assert result.output == "tools: ['visible_tool']"
 
-    async def test_receives_function_and_output_tools(self):
-        """`prepare_tools` receives **all** tool defs — function and output. Output-specific
-        filtering goes through `prepare_output_tools` (which runs first), but `prepare_tools`
-        still sees the merged set as a chance to do general transformations.
-
-        Maintained as released behavior; v2 may split these (see the docstring on
-        `AbstractCapability.prepare_tools`).
-        """
+    async def test_receives_function_tools_only(self):
+        """`prepare_tools` receives **function** tools only. Output tools route to
+        `prepare_output_tools` (with `ctx.max_retries` reflecting the output retry budget)."""
 
         @dataclass
         class CountKindsCap(AbstractCapability[Any]):
@@ -3940,7 +3935,7 @@ class TestPrepareToolsHook:
             return 'result'  # pragma: no cover
 
         await agent.run('hello')
-        assert cap.seen_kinds == ['function', 'output']
+        assert cap.seen_kinds == ['function']
 
     async def test_modify_tool_description(self):
         """Capability can modify tool descriptions."""
@@ -12182,7 +12177,6 @@ class TestOutputHookErrorPaths:
                                     'loc': (),
                                     'msg': 'Invalid JSON: expected ident at line 1 column 2',
                                     'input': 'not valid json',
-                                    'ctx': {'error': 'expected ident at line 1 column 2'},
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -12335,7 +12329,6 @@ class TestOutputHookErrorPaths:
                                     'loc': (),
                                     'msg': 'Invalid JSON: expected value at line 1 column 1',
                                     'input': 'invalid',
-                                    'ctx': {'error': 'expected value at line 1 column 1'},
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -12481,7 +12474,6 @@ class TestOutputHookErrorPaths:
                                     'loc': (),
                                     'msg': 'Invalid JSON: expected value at line 1 column 1',
                                     'input': 'bad json',
-                                    'ctx': {'error': 'expected value at line 1 column 1'},
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -12688,7 +12680,6 @@ class TestDefaultOutputErrorHooks:
                                     'loc': (),
                                     'msg': 'Invalid JSON: expected ident at line 1 column 2',
                                     'input': 'not json',
-                                    'ctx': {'error': 'expected ident at line 1 column 2'},
                                 }
                             ],
                             tool_call_id=IsStr(),

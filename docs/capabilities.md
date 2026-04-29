@@ -423,7 +423,7 @@ For [builtin tools](builtin-tools.md), override [`get_builtin_tools`][pydantic_a
 
 [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] lets a capability wrap the agent's entire assembled toolset with a [`WrapperToolset`](toolsets.md#changing-tool-execution). This is more powerful than providing tools — it can intercept tool execution, add logging, or apply cross-cutting behavior.
 
-The wrapper receives the combined non-output toolset (after any agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping). Output tools are added separately and are not affected.
+The wrapper receives the combined non-output toolset (after the [`prepare_tools`](#tool-preparation) hook has wrapped it). Output tools are added separately and are not affected.
 
 ```python {title="wrapper_toolset_example.py"}
 from dataclasses import dataclass
@@ -468,7 +468,7 @@ result = agent.run_sync('hello')
 ```
 
 !!! note
-    `get_wrapper_toolset` wraps the non-output *toolset* once per run (during toolset assembly), intercepting tool execution. This is different from the [`prepare_tools`](#tool-preparation) hook, which operates on tool *definitions* per step and controls visibility rather than execution.
+    `get_wrapper_toolset` wraps the non-output *toolset* once per run (during toolset assembly). The [`prepare_tools`](#tool-preparation) and [`prepare_output_tools`](#tool-preparation) hooks also flow through `PreparedToolset` wrappers, so all three integrate at the toolset level — `get_wrapper_toolset` runs around `prepare_tools` (it sees the prepared defs), and `prepare_output_tools` wraps the output toolset independently.
 
 ### Providing instructions
 
@@ -726,10 +726,10 @@ Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exception
 
 Capabilities can filter or modify which tool definitions the model sees on each step via two hooks:
 
-- [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives **all** tool defs (function and output). Use this for general filtering or modifications that apply across both kinds.
-- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle. Runs first, before `prepare_tools` sees the merged list.
+- [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives **function** tools only. Use this for filtering or modifications to tools the model can call directly.
+- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle.
 
-The result of both hooks flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
@@ -770,7 +770,7 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-Both hooks run after their agent-level counterparts ([`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc]). For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] capability wraps a function-tool callable without a custom subclass.
+For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass — these are also what the agent-level [`prepare_tools=`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools=`][pydantic_ai.tools.ToolsPrepareFunc] kwargs inject, so kwarg and capability share one execution path.
 
 #### Event stream hook
 

@@ -246,9 +246,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
 
-        Called per-run with the combined non-output toolset (after agent-level
-        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping).
-        Output tools are added separately and are not included.
+        Called per-run with the combined non-output toolset (after the
+        [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] hook
+        has already wrapped it). Output tools are added separately and are not included.
 
         Unlike the other `get_*` methods which are called once at agent construction,
         this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
@@ -269,17 +269,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        """Filter or modify tool definitions visible to the model for this step.
+        """Filter or modify function tool definitions for this step.
 
-        Receives **all** tool defs — function tools and output tools alike. To filter or
-        modify output tools specifically (with `ctx.retry`/`ctx.max_retries` reflecting
-        the **output** retry budget instead of the function-tool budget), override
+        Receives **function** tools only. For [output tools][pydantic_ai.output.ToolOutput],
+        override
         [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools]
-        instead — it runs first, on output tools only, before `prepare_tools` sees the
-        merged list.
+        — it runs separately, with `ctx.retry`/`ctx.max_retries` reflecting the **output**
+        retry budget instead of the function-tool budget.
 
         Return a filtered or modified list. The result flows into both the model's request
-        parameters and `ToolManager.tools` (so filtering also blocks tool execution).
+        parameters and `ToolManager.tools`, so filtering also blocks tool execution.
         """
         return tool_defs
 
@@ -288,18 +287,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        """Filter or modify output tool definitions visible to the model for this step.
+        """Filter or modify output tool definitions for this step.
 
         Receives only [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry` and
         `ctx.max_retries` reflect the **output** retry budget (agent-level
         `max_result_retries`), matching the output hook lifecycle.
 
-        Runs before [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools],
-        which sees the post-`prepare_output_tools` output tools merged with the function
-        tools and can do further general transformations.
-
         Return a filtered or modified list. The result flows into both the model's request
-        parameters and `ToolManager.tools` (so filtering also blocks tool execution).
+        parameters and `ToolManager.tools`, so filtering also blocks tool execution.
         """
         return tool_defs
 

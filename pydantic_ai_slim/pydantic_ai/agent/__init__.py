@@ -2433,10 +2433,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset: AbstractToolset[AgentDepsT] = CombinedToolset(toolsets)
 
-        # Capability wrapper toolsets (including ToolSearch and CodeMode) are
-        # applied here via get_wrapper_toolset. ToolSearch is auto-injected
-        # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
+            # Dispatch the `prepare_tools` capability hook through a `PreparedToolset` wrapped
+            # **inside** any other capability `get_wrapper_toolset` results (e.g. `ToolSearch`,
+            # `CodeMode`), matching the original ordering of the agent-level `prepare_tools=`
+            # kwarg in main: filter/modify defs first, let other toolset transformations layer
+            # on top. The hook sees **function** tools only — output tools route through
+            # `prepare_output_tools` below.
+            fn_cap = run_capability
+
+            async def _dispatch_prepare_tools(
+                ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return await fn_cap.prepare_tools(ctx, tool_defs)
+
+            toolset = PreparedToolset(toolset, _dispatch_prepare_tools)
+
+            # Capability wrapper toolsets (including ToolSearch and CodeMode) are
+            # applied here via get_wrapper_toolset, around the prepare_tools wrap above.
             toolset = run_capability.get_wrapper_toolset(toolset) or toolset
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
@@ -2459,20 +2473,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
-
-        if run_capability is not None:
-            # Dispatch the `prepare_tools` capability hook on the **combined** toolset so it sees
-            # all tools (function + output), preserving the pre-PR behavior. Output tools at this
-            # point have already been transformed by `prepare_output_tools` above; `prepare_tools`
-            # is the more general hook and runs last as a chance to transform the full set.
-            cap = run_capability
-
-            async def _dispatch_prepare_tools(
-                ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
-            ) -> list[ToolDefinition]:
-                return await cap.prepare_tools(ctx, tool_defs)
-
-            toolset = PreparedToolset(toolset, _dispatch_prepare_tools)
 
         return toolset
 
