@@ -75,6 +75,10 @@ class ToolManager(Generic[AgentDepsT]):
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step."""
+    _tools_by_def_name: dict[str, ToolsetTool[AgentDepsT]] | None = field(default=None, repr=False)
+    """Cached ``tool_def.name → ToolsetTool`` dispatch index, populated lazily by
+    :meth:`_tool_by_name`. Keeps per-call lookup O(1) independent of the raw
+    ``tools`` dict's key convention (e.g. the tool-search ``~managed:`` suffix)."""
     failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
@@ -155,15 +159,31 @@ class ToolManager(Generic[AgentDepsT]):
 
         return mode
 
-    def get_tool_def(self, name: str) -> ToolDefinition | None:
-        """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
+    def _tool_by_name(self, name: str) -> ToolsetTool[AgentDepsT] | None:
+        """Look up a tool by the name the model calls it by (``tool_def.name``).
+
+        The raw ``self.tools`` dict may use internal-use keys alongside plain names —
+        e.g. the tool-search ``~managed:`` convention where an entry's dict key may be
+        ``{name}~managed:tool_search`` while the ``tool_def.name`` the model sees is
+        still ``{name}``. Dispatch must hit the entry the model is actually calling,
+        which is the one whose ``tool_def.name`` matches. A reverse index is built
+        lazily on first lookup to keep dispatch O(1) on large toolsets.
+        """
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
+        index = self._tools_by_def_name
+        if index is None:
+            # Later entries win on collision. `ToolSearchToolset` emits the regular
+            # variant after the managed one, so `{name}` → regular. Either variant
+            # shares dispatch semantics, so pick whichever is last.
+            index = {t.tool_def.name: t for t in self.tools.values()}
+            self._tools_by_def_name = index
+        return index.get(name)
 
-        try:
-            return self.tools[name].tool_def
-        except KeyError:
-            return None
+    def get_tool_def(self, name: str) -> ToolDefinition | None:
+        """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
+        tool = self._tool_by_name(name)
+        return tool.tool_def if tool is not None else None
 
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
@@ -367,13 +387,14 @@ class ToolManager(Generic[AgentDepsT]):
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         name = call.tool_name
-        tool = self.tools.get(name)
+        tool = self._tool_by_name(name)
         ctx = self.ctx
 
         try:
             if tool is None:
                 if self.tools:
-                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+                    available = sorted({t.tool_def.name for t in self.tools.values()})
+                    msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
                 else:
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')

@@ -403,7 +403,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'builtin_tools': [{'kind': 'tool_search', 'optional': True, 'strategy': None, 'custom': False}],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

@@ -15,12 +15,17 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     AbstractBuiltinTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    ToolSearchMatch,
+    ToolSearchReturn,
+    ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
+    extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
@@ -143,6 +148,10 @@ try:
         BetaThinkingDelta,
         BetaToolChoiceParam,
         BetaToolParam,
+        BetaToolReferenceBlockParam,
+        BetaToolSearchToolBm25_20251119Param,
+        BetaToolSearchToolRegex20251119Param,
+        BetaToolSearchToolResultBlock,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -388,7 +397,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool})
 
     async def request(
         self,
@@ -791,6 +800,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 items.append(call_part)
             elif isinstance(item, BetaWebSearchToolResultBlock):
                 items.append(_map_web_search_tool_result_block(item, self.system))
+            elif isinstance(item, BetaToolSearchToolResultBlock):
+                items.append(_map_tool_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
                 items.append(_map_code_execution_tool_result_block(item, self.system))
             elif isinstance(item, BetaWebFetchToolResultBlock):
@@ -919,6 +930,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tools = [tool for tool in tools if tool.get('name') != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.add('context-management-2025-06-27')
+            elif isinstance(tool, ToolSearchTool):  # pragma: no branch
+                # Custom-callable strategies go through the regular `search_tools` function tool
+                # (which is already in `function_tools`), so no server-side builtin is emitted.
+                if tool.custom:
+                    pass
+                # No `beta_features.add(...)` for tool search: it's GA on Sonnet 4.5+, Opus 4.5+,
+                # and Haiku 4.5+ (the models whose profile lists `ToolSearchTool` in
+                # `supported_builtin_tools`). The provisional beta header `tool-search-tool-2025-11-19`
+                # is rejected by the API as an unknown beta — including it breaks the request.
+                # Default strategy is BM25; regex is the alternative named strategy.
+                elif tool.strategy == 'regex':
+                    tools.append(
+                        BetaToolSearchToolRegex20251119Param(
+                            type='tool_search_tool_regex_20251119',
+                            name='tool_search_tool_regex',
+                        )
+                    )
+                else:
+                    tools.append(
+                        BetaToolSearchToolBm25_20251119Param(
+                            type='tool_search_tool_bm25_20251119',
+                            name='tool_search_tool_bm25',
+                        )
+                    )
             elif isinstance(tool, MCPServerTool) and tool.url:
                 mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
                     type='url',
@@ -970,6 +1005,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        # In custom-callable tool search mode, `search_tools` is a regular function tool and
+        # Anthropic expects its results as `tool_reference` blocks so discovered tools get
+        # unlocked on the provider side.
+        custom_tool_search_active = any(
+            isinstance(t, ToolSearchTool) and t.custom for t in model_request_parameters.builtin_tools
+        )
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -984,6 +1025,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
+
+                        discovered_tools = _extract_discovered_tool_names(request_part, custom_tool_search_active)
+                        if discovered_tools:
+                            # Anthropic rejects an empty `content` list on a `tool_result`
+                            # block, so when the custom search returned no matches fall
+                            # through to the normal text-formatting path (which sends the
+                            # "No matching tools found..." string from ``ToolSearchToolset``).
+                            tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
+                                tool_use_id=_guard_tool_call_id(t=request_part),
+                                type='tool_result',
+                                content=[
+                                    BetaToolReferenceBlockParam(tool_name=name, type='tool_reference')
+                                    for name in discovered_tools
+                                ],
+                                is_error=False,
+                            )
+                            user_content_params.append(tool_result_block_param)
+                            continue
 
                         for item in request_part.content_items(mode='str'):
                             if isinstance(item, UploadedFile):
@@ -1116,6 +1175,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == ToolSearchTool.kind:
+                                # Round-trip the native variant (bm25/regex) so we don't
+                                # silently rewrite the algorithm. `_map_server_tool_use_block`
+                                # stashes it in `provider_details['strategy']`.
+                                details = response_part.provider_details or {}
+                                strategy: Literal['bm25', 'regex'] = (
+                                    'regex' if details.get('strategy') == 'regex' else 'bm25'
+                                )
+                                native_name = (
+                                    'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
+                                )
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name=native_name,
+                                    input=response_part.args_as_dict(),
+                                )
+                                assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
@@ -1174,6 +1251,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                             response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                         ),
                                     )
+                                )
+                            elif response_part.tool_name == ToolSearchTool.kind and isinstance(
+                                response_part.content, dict
+                            ):
+                                assistant_content_params.append(
+                                    _build_tool_search_replay_block(response_part, tool_use_id)
                                 )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
@@ -1569,6 +1652,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
+        if f.managed_by_builtin == ToolSearchTool.kind:
+            # `defer_loading` on the wire controls Anthropic's native tool search
+            # caching. `ToolDefinition.defer_loading` is the local discovery flag and
+            # is unrelated to what the provider API sees — hence the separate check on
+            # `managed_by_builtin` here.
+            tool_param['defer_loading'] = True
         return tool_param
 
     def _build_output_config(
@@ -1810,6 +1899,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_web_search_tool_result_block(current_block, self.provider_name),
                         )
+                    elif isinstance(current_block, BetaToolSearchToolResultBlock):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=event.index,
+                            part=_map_tool_search_tool_result_block(current_block, self.provider_name),
+                        )
                     elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
@@ -1932,39 +2026,98 @@ class AnthropicStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_active: bool) -> list[str] | None:
+    """Return discovered tool names to render as Anthropic `tool_reference` blocks.
+
+    Reads the typed :class:`SearchToolsReturn` off of ``part.content`` — the
+    tool-return value is the contract here, not the sideband metadata. Returns
+    ``None`` when this isn't a custom-callable tool-search return (wrong tool, or
+    content doesn't parse as a ``SearchToolsReturn``), letting the caller fall
+    through to the default text-formatting path.
+    """
+    if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
+        return None
+    parsed = extract_tool_search_return(part.content)
+    if parsed is None:
+        return None
+    return [match['name'] for match in parsed['tools']]
+
+
+def _build_tool_search_replay_block(response_part: BuiltinToolReturnPart, tool_use_id: str) -> Any:
+    """Reconstruct an Anthropic tool-search result block for history replay.
+
+    Reads the cross-provider :class:`ToolSearchReturn` off ``content`` and any error
+    fields the parse-time mapper stashed on ``provider_details``. Returned as a plain
+    dict cast to ``Any`` because ``BetaToolSearchToolResultBlockParam`` isn't in the
+    ``BetaContentBlockParam`` union yet.
+    """
+    err = response_part.provider_details or {}
+    if err.get('error_code') is not None:
+        inner: dict[str, Any] = {
+            'type': 'tool_search_tool_result_error',
+            'error_code': err['error_code'],
+            'error_message': err.get('error_message', ''),
+        }
+    else:
+        parsed = extract_tool_search_return(response_part.content) or ToolSearchReturn(tools=[])
+        tool_refs = [{'type': 'tool_reference', 'tool_name': match['name']} for match in parsed['tools']]
+        inner = {'type': 'tool_search_tool_search_result', 'tool_references': tool_refs}
+    return {'tool_use_id': tool_use_id, 'type': 'tool_search_tool_result', 'content': inner}
+
+
+_BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
+    'web_search': WebSearchTool.kind,
+    'code_execution': CodeExecutionTool.kind,
+    'web_fetch': WebFetchTool.kind,
+}
+
+
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
+    if item.name in ('web_search', 'code_execution', 'web_fetch'):
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=_BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME[item.name],
+            args=tool_args,
+            tool_call_id=item.id,
+        )
+    if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
+        # Preserve the variant on the call part for replay (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=ToolSearchTool.kind,
+            args=tool_args,
+            tool_call_id=item.id,
+            provider_details={'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'},
+        )
+    if item.name in ('bash_code_execution', 'text_editor_code_execution', 'advisor'):  # pragma: no cover
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    assert_never(item.name)
 
-    if item.name == 'web_search':
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=WebSearchTool.kind,
-            args=tool_args,
-            tool_call_id=item.id,
-        )
-    elif item.name == 'code_execution':
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=CodeExecutionTool.kind,
-            args=tool_args,
-            tool_call_id=item.id,
-        )
-    elif item.name == 'web_fetch':
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name=WebFetchTool.kind,
-            args=tool_args,
-            tool_call_id=item.id,
-        )
-    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
-    elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
-        # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
-    elif item.name == 'advisor':  # pragma: no cover
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
-    else:
-        assert_never(item.name)
+
+def _map_tool_search_tool_result_block(
+    item: BetaToolSearchToolResultBlock, provider_name: str
+) -> BuiltinToolReturnPart:
+    """Map a tool-search result block into a typed :class:`BuiltinToolReturnPart`.
+
+    Writes a cross-provider :class:`ToolSearchReturn` to ``content`` (no provider-shape
+    smuggling) and stashes the Anthropic-specific error fields on ``provider_details``
+    so we can faithfully reconstruct the original block on replay.
+    """
+    block = item.content
+    provider_details: dict[str, Any] | None = None
+    matches: list[ToolSearchMatch] = []
+    if block.type == 'tool_search_tool_search_result':
+        matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
+    else:  # tool_search_tool_result_error
+        provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=ToolSearchTool.kind,
+        content=cast('dict[str, Any]', ToolSearchReturn(tools=matches)),
+        tool_call_id=item.tool_use_id,
+        provider_details=provider_details,
+    )
 
 
 web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(

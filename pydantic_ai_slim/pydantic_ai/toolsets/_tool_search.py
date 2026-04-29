@@ -1,44 +1,134 @@
+"""Tool search toolset and strategy types.
+
+`ToolSearchToolset` wraps another toolset to support discovery of tools marked with
+`defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
+know which model will actually serve the request — think ``FallbackModel``), the toolset
+emits **both** representations of every deferred tool and lets
+[`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter to one based
+on the specific model's support for the
+[`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] builtin.
+
+Dict keys follow the convention:
+
+* ``{name}~managed:tool_search`` → deferred tool in **managed** form (carries
+  ``managed_by_builtin='tool_search'`` on its ``ToolDefinition``). Always present for
+  every deferred tool. When the model supports native tool search, the adapter keeps
+  this in the request and sets ``defer_loading=True`` on the wire.
+* ``{name}`` → deferred tool in **regular** form (no ``managed_by_builtin``). Only
+  present when the tool has been discovered — either by our local ``search_tools``
+  function or by a previous provider-native search, both of which write
+  ``discovered_tools`` into message history. When the model does NOT support native
+  tool search, the adapter keeps this variant and drops the managed one.
+* ``search_tools`` → the local discovery function with ``prefer_builtin='tool_search'``.
+  Dropped by the adapter when the builtin is supported.
+
+The two variants of a deferred tool share the same underlying ``ToolsetTool`` — only the
+wrapping ``ToolDefinition`` differs (``managed_by_builtin`` flag set or not). The
+model calls the tool by its plain name, and the ``ToolManager`` dispatches by
+``tool_def.name`` rather than dict key, so either variant resolves correctly.
+"""
+
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Annotated, Any
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from functools import cache
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
+from ..builtin_tools import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    ToolSearchMatch,
+    ToolSearchNativeStrategy,
+    ToolSearchReturn,
+    extract_tool_search_return,
+)
 from ..exceptions import ModelRetry, UserError
-from ..messages import ModelRequest, ToolReturn, ToolReturnPart
+from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
-_SEARCH_TOOLS_NAME = 'search_tools'
+ToolSearchFunc = Callable[[str, Sequence[ToolDefinition]], Sequence[str]]
+"""Custom search function for
+[`ToolSearch`][pydantic_ai.capabilities.ToolSearch]'s ``strategy`` field.
 
-_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+Takes the natural-language query and the deferred tool definitions, and returns the
+matching tool names ordered by relevance.
+"""
+
+ToolSearchLocalStrategy = Literal['substring']
+"""Named local tool search strategy.
+
+``'substring'`` opts into the built-in token-overlap algorithm explicitly — use this
+to lock in the current local algorithm rather than the ``None`` default (which lets
+Pydantic AI pick the best algorithm per provider and may change over time).
+"""
+
+ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNativeStrategy]  # noqa: UP007
+"""Strategy value accepted by [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy].
+
+* ``'substring'``: force the local token-overlap algorithm regardless of provider.
+* ``'bm25'`` / ``'regex'``: force a specific provider-native strategy (Anthropic). The
+  request fails on providers that can't honor the choice.
+* Callable ``(query, tools) -> names``: custom search function. Used locally, and also
+  by the native "client-executed" surface on providers that support it (Anthropic custom
+  tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
+
+``None`` is not part of the union — it's accepted as the default on the
+[`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy] field and means
+"let Pydantic AI pick"; see that field's docstring for details.
+"""
+
+
+_SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
+_TOOL_SEARCH_BUILTIN_ID = 'tool_search'
+_MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
+
+
+def _managed_key(name: str) -> str:
+    """Dict key for the managed-variant entry of a deferred tool in the toolset output."""
+    return f'{name}{_MANAGED_KEY_SUFFIX}'
+
 
 _MAX_SEARCH_RESULTS = 10
 _SEARCH_TOKEN_RE = re.compile(r'[a-z0-9]+')
 
+_DEFAULT_TOOL_DESCRIPTION = (
+    'There are additional tools not yet visible to you.'
+    ' When you need a capability not provided by your current tools,'
+    ' search here by providing specific keywords to discover and activate relevant tools.'
+    ' Each keyword is matched independently against tool names and descriptions.'
+    ' If no tools are found, they do not exist — do not retry.'
+)
 
-class _SearchToolArgs(TypedDict):
-    keywords: Annotated[
-        str,
-        Field(
-            description=(
-                'Space-separated keywords to match against tool names and descriptions.'
-                ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
-            )
-        ),
-    ]
+_DEFAULT_SEARCH_GUIDANCE = (
+    'Space-separated keywords to match against tool names and descriptions.'
+    ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
+)
 
 
-# TypeAdapter doesn't support config= for TypedDict, so we fix the title on the generated schema
-# to avoid leaking the private class name '_SearchToolArgs' to the model.
-_search_tool_args_ta = TypeAdapter(_SearchToolArgs)
-_SEARCH_TOOL_SCHEMA = _search_tool_args_ta.json_schema()
-_SEARCH_TOOL_SCHEMA['title'] = 'SearchToolArgs'
+@cache
+def _build_search_args_schema(search_guidance: str) -> tuple[dict[str, Any], TypeAdapter[Any]]:
+    """Build the `search_tools` parameter schema for the given guidance text.
+
+    Cached per-guidance: the default guidance is used for every agent step with deferred
+    tools, so we only pay for class and adapter construction once per distinct guidance
+    value.
+    """
+
+    class _SearchToolArgs(TypedDict):
+        keywords: Annotated[str, Field(description=search_guidance)]
+
+    ta = TypeAdapter(_SearchToolArgs)
+    schema = ta.json_schema()
+    # TypeAdapter doesn't support config= for TypedDict; rename away from the private class.
+    schema['title'] = 'SearchToolArgs'
+    return schema, ta
 
 
 @dataclass(kw_only=True)
@@ -57,11 +147,41 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
 class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
 
-    This toolset wraps another toolset and provides a `search_tools` tool that allows
-    the model to discover tools marked with `defer_loading=True`.
+    Wraps another toolset and exposes a ``search_tools`` function that lets the model
+    discover tools with ``defer_loading=True``. Tools with ``defer_loading=True`` are
+    not initially presented to the model — they become available after the model
+    discovers them via search.
 
-    Tools with `defer_loading=True` are not initially presented to the model.
-    Instead, they become available after the model discovers them via the search tool.
+    When the model supports the [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]
+    builtin, discovery is handled by the provider and the deferred tools are sent to the API
+    with ``defer_loading=True`` on the wire.
+    """
+
+    search_fn: ToolSearchFunc | None = None
+    """Optional custom search function. If ``None``, the default token-overlap algorithm is used.
+
+    Receives the raw query string and the deferred tool definitions, and returns the matching
+    tool names ordered by relevance.
+    """
+
+    max_results: int = _MAX_SEARCH_RESULTS
+    """Maximum number of matches returned from the default algorithm."""
+
+    tool_description: str | None = None
+    """Custom description for the ``search_tools`` function shown to the model."""
+
+    search_guidance: str | None = None
+    """Custom description for the ``keywords`` parameter shown to the model."""
+
+    local_fallback: bool = True
+    """Whether to register the local ``search_tools`` function tool.
+
+    When ``False``, deferred tools appear only in their managed form and discovery must go
+    through the provider's native tool search. Used by
+    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] when an explicit named native
+    strategy (``'bm25'`` / ``'regex'``) is configured — falling back to a different local
+    algorithm would silently ignore the user's choice, so we skip the local tool entirely
+    and let ``prepare_request`` raise if the native builtin is unavailable.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -85,8 +205,46 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         discovered = self._parse_discovered_tools(ctx)
 
-        if discovered.issuperset(deferred):
-            return all_tools
+        result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
+
+        # Emit both representations of every deferred tool so the model adapter
+        # (inside `Model.prepare_request` with the concrete model in hand — the decision
+        # that can't be made here because of `FallbackModel`) can filter to whichever
+        # path the specific model supports:
+        #
+        # * ``{name}~managed:tool_search`` — always present; carries
+        #   ``managed_by_builtin='tool_search'``. Kept by adapters whose model supports
+        #   native tool search.
+        # * ``{name}`` — only present for already-discovered tools. Kept by adapters
+        #   whose model doesn't support native tool search.
+        #
+        # Both entries share the same underlying dispatch target; the surviving entry
+        # determines which `ToolDefinition` is sent to the model. Duplication here stays
+        # bounded: at most `N + k` entries where `k` is the number of discovered tools
+        # (not `2N`), because undiscovered tools only appear in the managed slot.
+        for name, tool in deferred.items():
+            managed_def = replace(tool.tool_def, managed_by_builtin=_TOOL_SEARCH_BUILTIN_ID)
+            result[_managed_key(name)] = replace(tool, tool_def=managed_def)
+            if name in discovered:
+                result[name] = tool
+
+        # `search_tools` carries `prefer_builtin='tool_search'` (when fallback-to-local
+        # is appropriate) — the adapter drops it when the builtin is supported. Skip
+        # emitting it when ``local_fallback=False`` (the capability's named-native mode:
+        # we must not silently substitute a different local algorithm for the user's
+        # explicit strategy choice) or once every deferred tool is already discovered.
+        if self.local_fallback and not discovered.issuperset(deferred):
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
+
+        return result
+
+    def _build_search_tool(
+        self,
+        deferred: dict[str, ToolsetTool[AgentDepsT]],
+        discovered: set[str],
+    ) -> _SearchTool[AgentDepsT]:
+        search_guidance = self.search_guidance or _DEFAULT_SEARCH_GUIDANCE
+        schema, args_ta = _build_search_args_schema(search_guidance)
 
         search_index = [
             _SearchIndexEntry(
@@ -98,48 +256,54 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             if name not in discovered
         ]
 
+        # `prefer_builtin` tells the adapter to drop this function tool when the native
+        # builtin is supported. That's what we want for server-side strategies (the
+        # provider handles search entirely). For a custom callable strategy, the native
+        # path on both Anthropic (regular function tool with tool_reference result
+        # formatting) and OpenAI (`execution='client'`) still needs the local function
+        # tool to execute the search, so we leave `prefer_builtin` unset in that case.
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
-            description=(
-                'There are additional tools not yet visible to you.'
-                ' When you need a capability not provided by your current tools,'
-                ' search here by providing specific keywords to discover and activate relevant tools.'
-                ' Each keyword is matched independently against tool names and descriptions.'
-                ' If no tools are found, they do not exist — do not retry.'
-            ),
-            parameters_json_schema=_SEARCH_TOOL_SCHEMA,
+            description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
+            parameters_json_schema=schema,
+            prefer_builtin=_TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None,
         )
 
-        search_tool = _SearchTool(
+        return _SearchTool(
             toolset=self,
             tool_def=search_tool_def,
             max_retries=1,
-            args_validator=_search_tool_args_ta.validator,  # pyright: ignore[reportArgumentType]
+            args_validator=args_ta.validator,  # pyright: ignore[reportArgumentType]
             search_index=search_index,
         )
 
-        result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
-        result.update(visible)
-        for name, tool in deferred.items():
-            if name in discovered:
-                result[name] = tool
-
-        return result
-
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
-        """Parse message history to find tools discovered via search_tools."""
+        """Scan message history for previously-discovered tool names.
+
+        Reads the typed :class:`ToolSearchReturn` off of ``content`` for both the local
+        ``search_tools`` return (on ``ToolReturnPart`` in a ``ModelRequest``) and the
+        provider-native return (on ``BuiltinToolReturnPart`` in a ``ModelResponse`` —
+        each adapter normalizes its provider's wire format into the same shape). The
+        return value is the contract; no metadata sideband.
+        """
         discovered: set[str] = set()
         for msg in ctx.messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
-                    if (
-                        isinstance(part, ToolReturnPart)
-                        and part.tool_name == _SEARCH_TOOLS_NAME
-                        and isinstance(metadata := part.metadata, dict)
-                        and isinstance(tool_names := metadata.get(_DISCOVERED_TOOLS_METADATA_KEY), list)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                    ):
-                        discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]
+                    if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
+                        self._collect_discovered_from_content(part.content, discovered)
+            else:  # ModelResponse — the only other variant of ModelMessage.
+                for part in msg.parts:
+                    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
+                        self._collect_discovered_from_content(part.content, discovered)
         return discovered
+
+    @staticmethod
+    def _collect_discovered_from_content(content: Any, discovered: set[str]) -> None:
+        parsed = extract_tool_search_return(content)
+        if parsed is None:
+            return
+        discovered.update(match['name'] for match in parsed['tools'])
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -156,23 +320,27 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return search_terms
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools ordered by token overlap with the query.
-
-        Tokenizes both the query and each tool's name/description on alphanumeric runs,
-        scores each tool by how many query tokens it contains, and returns all positive
-        matches ordered from highest to lowest score. This prefers more specific
-        matches such as `github_get_me` for "github profile" without matching
-        substrings inside words like `comment` for the query `me`.
-        """
+        """Run the configured search strategy over the deferred-but-not-yet-discovered tools."""
         keywords = tool_args['keywords']
         if not keywords:
             raise ModelRetry('Please provide search keywords.')
 
+        if self.search_fn is not None:
+            return self._run_search_fn(keywords, search_tool)
+        return self._run_default_search(keywords, search_tool)
+
+    def _run_default_search(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+        """Score each tool by how many query tokens appear in its name/description.
+
+        Tokenizes on alphanumeric runs for both the query and the indexed terms, so the
+        top hit for "github profile" is ``github_get_me`` (two matches) without matching
+        substrings inside longer words like ``comment`` for the query ``me``.
+        """
         terms = self._search_terms(keywords, None)
         if not terms:
             raise ModelRetry('Please provide search keywords.')
 
-        scored_matches: list[tuple[int, dict[str, str | None]]] = []
+        scored_matches: list[tuple[int, ToolSearchMatch]] = []
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
             if score == 0:
@@ -180,16 +348,48 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
         if not scored_matches:
-            return ToolReturn(
-                return_value='No matching tools found. The tools you need may not be available.',
-                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
-            )
+            return self._empty_return()
 
         scored_matches.sort(key=lambda item: item[0], reverse=True)
-        matches = [match for _, match in scored_matches[:_MAX_SEARCH_RESULTS]]
-        tool_names = [match['name'] for match in matches]
+        matches = [match for _, match in scored_matches[: self.max_results]]
+        return self._build_return(matches)
 
+    def _run_search_fn(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+        """Invoke a user-provided strategy, validating that the returned names are known."""
+        assert self.search_fn is not None
+
+        tool_defs_by_name = {entry.name: entry for entry in search_tool.search_index}
+        tool_defs: Sequence[ToolDefinition] = [
+            ToolDefinition(name=entry.name, description=entry.description) for entry in search_tool.search_index
+        ]
+
+        matched = list(self.search_fn(keywords, tool_defs))[: self.max_results]
+
+        matches: list[ToolSearchMatch] = []
+        for name in matched:
+            if entry := tool_defs_by_name.get(name):
+                matches.append({'name': entry.name, 'description': entry.description})
+
+        if not matches:
+            return self._empty_return()
+        return self._build_return(matches)
+
+    @staticmethod
+    def _empty_return() -> ToolReturn:
+        """Shaped "no matches" return: empty ``tools`` list + a user-visible note.
+
+        The note is sent to the model as separate content (``ToolReturn.content``) so
+        the model doesn't retry searching with the same keywords, while
+        ``return_value`` stays as a typed :class:`ToolSearchReturn`.
+        """
+        return_value: ToolSearchReturn = {'tools': []}
         return ToolReturn(
-            return_value=matches,
-            metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+            return_value=return_value,
+            content='No matching tools found. The tools you need may not be available.',
         )
+
+    @staticmethod
+    def _build_return(matches: list[ToolSearchMatch]) -> ToolReturn:
+        """Shaped matches return: typed :class:`ToolSearchReturn`."""
+        return_value: ToolSearchReturn = {'tools': matches}
+        return ToolReturn(return_value=return_value)

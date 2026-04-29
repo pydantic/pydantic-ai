@@ -478,16 +478,19 @@ For more information on how `end_strategy` works with both function tools and ou
 
 ## Tool Search
 
-Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; a `search_tools` tool is automatically injected so the model can discover hidden tools by keyword when it needs them.
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
-This is inspired by Anthropic's [Tool Search Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#limits-and-best-practices) for managing large tool collections. Tool search is implemented on the Pydantic AI side and works with any model. Native provider support is planned in [#4167](https://github.com/pydantic/pydantic-ai/issues/4167).
+Tool search is handled provider-adaptively by the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability, which is auto-injected so it "just works":
+
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with ``defer_loading`` on the wire and the provider manages their visibility.
+* **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
 For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
 
 ```python {title="tool_search.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('anthropic:claude-sonnet-4-6')
 
 
 @agent.tool_plain(defer_loading=True)
@@ -506,8 +509,35 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
 mcp = MCPServerHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
 ```
+
+### Configuring `ToolSearch`
+
+Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability to control the strategy or provide a custom search function:
+
+```python {title="tool_search_custom.py"}
+from collections.abc import Sequence
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.tools import ToolDefinition
+
+
+def fuzzy_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    """Match tools whose name or description contains any query word."""
+    needles = query.lower().split()
+    return [
+        t.name
+        for t in tools
+        if any(n in t.name.lower() or n in (t.description or '').lower() for n in needles)
+    ]
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=fuzzy_search)])
+```
+
+The default `strategy=None` lets Pydantic AI pick the best algorithm for the current provider — Anthropic's native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI's server-executed `tool_search` on GPT-5.4+, local token matching elsewhere. Pass `strategy='substring'` to always use the local algorithm. Pass `strategy='bm25'` or `strategy='regex'` to force a specific Anthropic native strategy — the request fails on providers that can't honor the choice (including OpenAI) rather than silently substituting a different algorithm. A custom callable `strategy` runs locally — and on models that expose a provider-side custom search mode (Anthropic tool-reference blocks; OpenAI `execution='client'`), the callable is invoked through that native path so deferred tools still ship with `defer_loading` on the wire.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.

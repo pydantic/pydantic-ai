@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
 
@@ -93,6 +94,23 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
 
+    # Native tool search requires the `tool_search_tool_bm25_20251119` /
+    # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
+    # practice, Anthropic enables it for Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+.
+    supports_tool_search = model_name.startswith(
+        (
+            'claude-sonnet-4-5',
+            'claude-sonnet-4-6',
+            'claude-opus-4-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-haiku-4-5',
+        )
+    )
+    supported_builtin_tools = (
+        SUPPORTED_BUILTIN_TOOLS if supports_tool_search else SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
+    )
+
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
@@ -103,4 +121,5 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        supported_builtin_tools=supported_builtin_tools,
     )

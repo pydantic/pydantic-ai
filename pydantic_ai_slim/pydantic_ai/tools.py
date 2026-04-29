@@ -755,6 +755,21 @@ class ToolDefinition:
     removed and this function tool stays.
     """
 
+    managed_by_builtin: str | None = None
+    """If set, this tool is part of a corpus managed by the builtin with the given unique_id.
+
+    When the managing builtin is supported by the model, the tool is kept in the request and
+    the model adapter applies provider-specific wire-format modifications (e.g.
+    ``defer_loading`` for tool search). When the managing builtin is NOT supported, the tool
+    is removed from the function tools sent to the model — the capability's local
+    implementation manages the corpus instead.
+
+    This is complementary to ``prefer_builtin``: a tool with ``prefer_builtin`` is REMOVED
+    when the builtin is supported (it's a local fallback), while a tool with
+    ``managed_by_builtin`` is KEPT when the builtin is supported (it's part of the
+    builtin's corpus).
+    """
+
     return_schema: ObjectJsonSchema | None = None
     """The JSON schema for the tool's return value.
 

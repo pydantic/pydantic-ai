@@ -22,6 +22,7 @@ from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
+    ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
     XSearchTool,
@@ -40,6 +41,7 @@ from pydantic_ai.capabilities import (
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
+    ToolSearch,
     Toolset,
     WebFetch,
     WebSearch,
@@ -106,6 +108,7 @@ def test_capability_types() -> None:
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
+            'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -451,13 +454,17 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
                 'FileSearchTool': {
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
                     },
                     'required': ['file_store_ids'],
@@ -467,6 +474,7 @@ def test_model_json_schema_with_capabilities():
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'background': {
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
@@ -921,6 +929,7 @@ def test_model_json_schema_with_capabilities():
                 'MCPServerTool': {
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'id': {'title': 'Id', 'type': 'string'},
                         'url': {'title': 'Url', 'type': 'string'},
                         'authorization_token': {
@@ -949,7 +958,10 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'MemoryTool': {
-                    'properties': {'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                    },
                     'title': 'MemoryTool',
                     'type': 'object',
                 },
@@ -992,10 +1004,25 @@ though not all of these settings are supported by all models.\
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'ToolSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'strategy': {
+                            'anyOf': [{'enum': ['bm25', 'regex'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Strategy',
+                        },
+                        'custom': {'default': False, 'title': 'Custom', 'type': 'boolean'},
+                    },
+                    'title': 'ToolSearchTool',
+                    'type': 'object',
+                },
                 'UrlContextTool': {
                     'deprecated': True,
                     'properties': {
                         'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1024,6 +1051,7 @@ though not all of these settings are supported by all models.\
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1052,6 +1080,7 @@ though not all of these settings are supported by all models.\
                 'WebSearchTool': {
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],
@@ -1103,6 +1132,7 @@ Supported by:
                 'XSearchTool': {
                     'properties': {
                         'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'allowed_x_handles': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'default': None,
@@ -1158,6 +1188,7 @@ Supported by:
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
                                 {'type': 'null'},
@@ -1244,6 +1275,13 @@ Supported by:
                     'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
                     'required': ['PrefixTools'],
                     'title': 'spec_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {'ToolSearch': {'$ref': '#/$defs/spec_params_ToolSearch'}},
+                    'required': ['ToolSearch'],
+                    'title': 'spec_ToolSearch',
                     'type': 'object',
                 },
                 'spec_WebFetch': {
@@ -1372,6 +1410,8 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'const': 'ToolSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ToolSearch'},
                                 {'const': 'WebFetch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
@@ -1381,6 +1421,30 @@ Supported by:
                     },
                     'required': ['prefix', 'capability'],
                     'title': 'spec_params_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_params_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'strategy': {
+                            'anyOf': [
+                                {'const': 'substring', 'type': 'string'},
+                                {'enum': ['bm25', 'regex'], 'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Strategy',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'tool_description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Tool Description',
+                        },
+                        'search_guidance': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Search Guidance',
+                        },
+                    },
+                    'title': 'spec_params_ToolSearch',
                     'type': 'object',
                 },
                 'spec_params_WebFetch': {
@@ -1516,6 +1580,8 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'const': 'ToolSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ToolSearch'},
                             {'const': 'WebFetch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
@@ -1606,8 +1672,9 @@ def test_builtin_tools_param_wrapped_as_capabilities():
     assert len(builtin_caps) == 2
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
     assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
-    # Also available via _cap_builtin_tools
-    assert len(agent._cap_builtin_tools) == 2  # pyright: ignore[reportPrivateUsage]
+    # Also available via _cap_builtin_tools (ToolSearchTool is auto-injected).
+    cap_tools = [t for t in agent._cap_builtin_tools if not isinstance(t, ToolSearchTool)]  # pyright: ignore[reportPrivateUsage]
+    assert len(cap_tools) == 2
 
 
 def test_agent_from_spec_builtin_tool():
@@ -4412,9 +4479,14 @@ class TestImageGenerationCapability:
         import dataclasses
         import inspect
 
-        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        # partial_images is excluded — not useful for subagent fallback (no streaming).
+        # `optional` is an `AbstractBuiltinTool` field that caller code uses to soft-fail
+        # on unsupported models — the capability already decides support via its own
+        # builtin/local routing, so it doesn't need a passthrough init param.
         builtin_fields = {
-            f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
+            f.name
+            for f in dataclasses.fields(ImageGenerationTool)
+            if f.name not in ('kind', 'partial_images', 'optional')
         }
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',

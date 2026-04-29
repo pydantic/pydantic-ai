@@ -336,7 +336,11 @@ class GoogleModel(Model[Client]):
         supports_native_output_with_builtin_tools = GoogleModelProfile.from_profile(
             self.profile
         ).google_supports_native_output_with_builtin_tools
-        if model_request_parameters.builtin_tools and model_request_parameters.output_tools:
+        # Ignore optional infrastructure builtins (e.g. auto-injected `ToolSearchTool`) —
+        # they're dropped by `Model.prepare_request` when inert and shouldn't trigger the
+        # "builtin + output tools" path.
+        user_builtin_tools = [t for t in model_request_parameters.builtin_tools if not t.optional]
+        if user_builtin_tools and model_request_parameters.output_tools:
             default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
             model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
             if model_request_parameters.output_mode not in ('native', 'prompted'):
