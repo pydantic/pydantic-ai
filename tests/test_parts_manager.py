@@ -18,6 +18,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr
@@ -160,6 +161,170 @@ def test_handle_text_deltas_with_think_tags():
             TextPart(content='post-thinking', part_kind='text'),
         ]
     )
+
+
+def test_handle_text_deltas_with_empty_start_think_tag():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='thinking', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='thinking', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+    assert manager.get_parts() == snapshot([ThinkingPart(content='thinking', part_kind='thinking')])
+
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='</think>', thinking_tags=thinking_tags))
+    assert events == []
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='after', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='after', part_kind='text'), event_kind='part_start')
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='thinking', part_kind='thinking'), TextPart(content='after', part_kind='text')]
+    )
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content=' more', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartDeltaEvent(
+            index=1, delta=TextPartDelta(content_delta=' more', part_delta_kind='text'), event_kind='part_delta'
+        )
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='thinking', part_kind='thinking'), TextPart(content='after more', part_kind='text')]
+    )
+
+
+def test_handle_text_deltas_with_empty_start_think_tag_without_vendor_id():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='thinking', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='thinking', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='</think>', thinking_tags=thinking_tags))
+    assert events == []
+
+    event = next(manager.handle_text_delta(vendor_part_id=None, content='after', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='after', part_kind='text'), event_kind='part_start')
+    )
+
+    event = next(manager.handle_text_delta(vendor_part_id=None, content=' more', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartDeltaEvent(
+            index=1, delta=TextPartDelta(content_delta=' more', part_delta_kind='text'), event_kind='part_delta'
+        )
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='thinking', part_kind='thinking'), TextPart(content='after more', part_kind='text')]
+    )
+
+
+def test_empty_start_think_tag_streaming_matches_non_stream_split():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+    chunks = ['thinking', '</think>', 'after', ' more']
+
+    for chunk in chunks:
+        list(manager.handle_text_delta(vendor_part_id='content', content=chunk, thinking_tags=thinking_tags))
+
+    expected_parts = split_content_into_text_and_thinking(''.join(chunks), thinking_tags)
+    assert manager.get_parts() == snapshot(expected_parts)
+
+
+def test_empty_start_think_tag_without_vendor_id_multiple_thinking_chunks():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='think-1', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='think-1', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content=' think-2', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' think-2', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            )
+        ]
+    )
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='</think>', thinking_tags=thinking_tags))
+    assert events == []
+    assert manager.get_parts() == snapshot([ThinkingPart(content='think-1 think-2', part_kind='thinking')])
+
+
+def test_empty_start_think_tag_without_vendor_id_can_start_closed():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id=None, content='</think>', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')]
+    )
+
+    event = next(manager.handle_text_delta(vendor_part_id=None, content='visible', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='visible', part_kind='text'), event_kind='part_start')
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='', part_kind='thinking'), TextPart(content='visible', part_kind='text')]
+    )
+
+
+def test_empty_start_think_tag_with_vendor_id_can_start_closed():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='</think>', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start')]
+    )
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='visible', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='visible', part_kind='text'), event_kind='part_start')
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='', part_kind='thinking'), TextPart(content='visible', part_kind='text')]
+    )
+
+
+def test_handle_text_delta_ignores_empty_thinking_tags():
+    manager = ModelResponsePartsManager()
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='plain text', thinking_tags=('', '')))
+    assert event == snapshot(
+        PartStartEvent(index=0, part=TextPart(content='plain text', part_kind='text'), event_kind='part_start')
+    )
+    assert manager.get_parts() == snapshot([TextPart(content='plain text', part_kind='text')])
 
 
 def test_handle_tool_call_deltas():
