@@ -1,6 +1,7 @@
 import base64
 import uuid
 from datetime import timezone
+from typing import cast
 
 import anyio
 import httpx
@@ -27,10 +28,12 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
+    from fasta2a.broker import InMemoryBroker
     from fasta2a.client import A2AClient
-    from fasta2a.schema import DataPart, FilePart, Message, TextPart
+    from fasta2a.schema import DataPart, FilePart, Message, Task, TaskSendParams, TextPart
     from fasta2a.storage import InMemoryStorage
 
+    from pydantic_ai.a2a import AgentWorker, current_storage, current_task, current_task_id
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed'),
@@ -1031,3 +1034,110 @@ async def test_a2a_multiple_send_task_messages():
                     ],
                 }
             )
+
+
+async def test_a2a_context_vars():
+    """Test that all a2a ContextVars are correctly exposed during execution."""
+
+    async def get_task_context(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        task_id = current_task_id.get()
+        task = current_task.get()
+        storage = current_storage.get()
+
+        assert task['id'] == task_id
+        assert task['status']['state'] == 'working'
+        assert isinstance(storage, InMemoryStorage)
+
+        await storage.update_task(task_id, state='working')
+
+        context_id = task.get('context_id')
+        args_json = f'{{"response":["{task_id}", "{context_id}"]}}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    model_task_context = FunctionModel(get_task_context)
+    agent = Agent(model=model_task_context, output_type=tuple[str, str])
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='What is my task ID and context ID?', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'result' in response
+            task_result = response['result']
+            assert task_result['kind'] == 'task'
+
+            task_id = task_result['id']
+            assert 'context_id' in task_result
+            context_id = task_result['context_id']
+
+            while task_resp := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task_resp and task_resp['result']['status']['state'] == 'completed':
+                    break
+                await anyio.sleep(0.1)
+
+            assert 'result' in task_resp
+            final_result = task_resp['result']
+            assert 'artifacts' in final_result
+
+            parts = final_result['artifacts'][0]['parts']
+            assert parts == snapshot(
+                [
+                    {
+                        'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                        'kind': 'data',
+                        'data': {'result': [task_id, context_id]},
+                    }
+                ]
+            )
+
+
+async def test_a2a_worker_cleanup():
+    """Verify context vars are cleaned up properly when AgentWorker executes a task in the caller's context."""
+
+    def simple_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[PydanticAITextPart(content='ok')])
+
+    agent = Agent(model=FunctionModel(simple_model), output_type=str)
+    storage = InMemoryStorage()
+    broker = InMemoryBroker()
+    worker = AgentWorker(agent=agent, storage=storage, broker=broker)
+
+    task_id = str(uuid.uuid4())
+
+    task = cast(
+        Task,
+        {
+            'id': task_id,
+            'context_id': str(uuid.uuid4()),
+            'kind': 'task',
+            'status': {'state': 'submitted', 'timestamp': '2024-01-01T00:00:00Z'},
+            'history': [
+                {
+                    'role': 'user',
+                    'parts': [{'kind': 'text', 'text': 'Hello'}],
+                    'kind': 'message',
+                    'message_id': str(uuid.uuid4()),
+                }
+            ],
+        },
+    )
+    storage.tasks[task_id] = task
+
+    params = cast(TaskSendParams, {'id': task_id})
+    await worker.run_task(params)
+
+    with pytest.raises(LookupError):
+        current_task_id.get()
+    with pytest.raises(LookupError):
+        current_task.get()
+    with pytest.raises(LookupError):
+        current_storage.get()

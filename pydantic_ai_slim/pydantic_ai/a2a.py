@@ -4,6 +4,7 @@ import base64
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Generic, TypeVar
@@ -30,6 +31,12 @@ from pydantic_ai import (
 
 from .agent import AbstractAgent, AgentDepsT, OutputDataT
 
+__all__ = (
+    'current_task_id',
+    'current_task',
+    'current_storage',
+)
+
 # AgentWorker output type needs to be invariant for use in both parameter and return positions
 WorkerOutputT = TypeVar('WorkerOutputT')
 
@@ -43,6 +50,7 @@ try:
         Message,
         Part,
         Skill,
+        Task,
         TaskIdParams,
         TaskSendParams,
         TextPart as A2ATextPart,
@@ -57,6 +65,28 @@ except ImportError as _import_error:
         'Please install the `fasta2a` package to use `Agent.to_a2a()` method, '
         'you can use the `a2a` optional group — `pip install "pydantic-ai-slim[a2a]"`'
     ) from _import_error
+
+
+current_task_id: ContextVar[str] = ContextVar('current_task_id')
+"""Context variable holding the ID of the A2A task currently being executed.
+
+Available during agent execution (e.g. in tools or callbacks).
+Raises `LookupError` if accessed outside an A2A task execution.
+"""
+
+current_task: ContextVar[Task] = ContextVar('current_task')
+"""Context variable holding the current A2A task metadata.
+
+Available during agent execution. Contains the full task dictionary from storage.
+Raises `LookupError` if accessed outside an A2A task execution.
+"""
+
+current_storage: ContextVar[Storage] = ContextVar('current_storage')
+"""Context variable holding the A2A storage instance.
+
+Available during agent execution. Useful for mutating task state mid-run.
+Raises `LookupError` if accessed outside an A2A task execution.
+"""
 
 
 @asynccontextmanager
@@ -135,11 +165,27 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
 
         await self.storage.update_task(task['id'], state='working')
 
+        # Re-load the task to ensure we expose the most up-to-date state (e.g. state='working' and any new timestamps).
+        # This is critical for persistent storage backends that do not mutate the task dictionary in-place.
+        updated_task = await self.storage.load_task(task['id'])
+        if updated_task is None:
+            raise ValueError(f'Task {task["id"]} not found after update')  # pragma: no cover
+        task = updated_task
+
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
         message_history = await self.storage.load_context(task['context_id']) or []
         message_history.extend(self.build_message_history(task.get('history', [])))
 
+        # Expose the A2A context to the agent execution
+        task_id_token = None
+        task_token = None
+        storage_token = None
+
         try:
+            task_id_token = current_task_id.set(task['id'])
+            task_token = current_task.set(task)
+            storage_token = current_storage.set(self.storage)
+
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
             await self.storage.update_context(task['context_id'], result.all_messages())
@@ -167,6 +213,13 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
             await self.storage.update_task(
                 task['id'], state='completed', new_artifacts=artifacts, new_messages=a2a_messages
             )
+        finally:
+            if task_id_token is not None:  # pragma: no branch
+                current_task_id.reset(task_id_token)
+            if task_token is not None:  # pragma: no branch
+                current_task.reset(task_token)
+            if storage_token is not None:  # pragma: no branch
+                current_storage.reset(storage_token)
 
     async def cancel_task(self, params: TaskIdParams) -> None:
         pass
