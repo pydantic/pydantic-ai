@@ -1444,24 +1444,7 @@ async def test_temporal_wrapper_get_tools_strips_args_validator_func_in_workflow
     assert len(temporal_function_toolsets) >= 1
     temporal_toolset = temporal_function_toolsets[-1]  # last one has the registered tool
 
-    # Find a dummy run context
-    from pydantic_ai._run_context import RunContext as RC
-
-    ctx = RC(
-        deps=None,
-        model=TestModel(),
-        usage=RunUsage(),
-        prompt='',
-        messages=[],
-        run_id='test',
-        retries={},
-        run_step=0,
-        max_retries=1,
-        tracer=None,
-        trace_include_content=False,
-        instrumentation_version=None,
-        toolset=None,
-    )
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
     # Outside workflow: args_validator_func should be preserved
     tools_outside = await temporal_toolset.get_tools(ctx)

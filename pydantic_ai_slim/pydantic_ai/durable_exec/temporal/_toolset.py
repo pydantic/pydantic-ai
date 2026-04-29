@@ -178,11 +178,16 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         """
         toolset = toolset or self.wrapped
         args_dict = tool.args_validator.validate_python(tool_args)
-        if tool.args_validator_func is not None:
-            result = tool.args_validator_func(ctx, **args_dict)
-            if inspect.isawaitable(result):
-                await result
-        return await self._wrap_call_tool_result(toolset.call_tool(name, args_dict, ctx, tool))
+        args_validator_func = tool.args_validator_func
+
+        async def _validate_and_call() -> Any:
+            if args_validator_func is not None:
+                result = args_validator_func(ctx, **args_dict)
+                if inspect.isawaitable(result):
+                    await result
+            return await toolset.call_tool(name, args_dict, ctx, tool)
+
+        return await self._wrap_call_tool_result(_validate_and_call())
 
 
 def temporalize_toolset(
