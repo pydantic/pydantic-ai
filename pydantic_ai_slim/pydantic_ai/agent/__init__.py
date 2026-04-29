@@ -10,6 +10,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
@@ -51,6 +52,7 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -67,6 +69,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -203,8 +206,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
-    _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
@@ -406,6 +407,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
+        if prepare_tools is not None:
+            capabilities.append(PrepareTools(prepare_tools))
+        if prepare_output_tools is not None:
+            capabilities.append(PrepareOutputTools(prepare_output_tools))
 
         _inject_auto_capabilities(capabilities)
 
@@ -445,9 +450,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
 
         self._cap_model_settings = self._root_capability.get_model_settings()
-
-        self._prepare_tools = prepare_tools
-        self._prepare_output_tools = prepare_output_tools
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset and self._output_toolset.max_retries is None:
@@ -2431,19 +2433,42 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset: AbstractToolset[AgentDepsT] = CombinedToolset(toolsets)
 
-        if self._prepare_tools:
-            toolset = PreparedToolset(toolset, self._prepare_tools)
-
         # Capability wrapper toolsets (including ToolSearch and CodeMode) are
         # applied here via get_wrapper_toolset. ToolSearch is auto-injected
         # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
             toolset = run_capability.get_wrapper_toolset(toolset) or toolset
 
+            # Dispatch the `prepare_tools` capability hook chain via a `PreparedToolset` so the
+            # filtered/modified tool defs flow into `ToolManager.tools` (not just the model's
+            # `ModelRequestParameters`). This is the outermost function-side wrapper, so the
+            # hook runs after any inner wrappers (e.g. `SetToolMetadata`) have applied.
+            cap = run_capability
+
+            async def _dispatch_prepare_tools(
+                ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return await cap.prepare_tools(ctx, tool_defs)
+
+            toolset = PreparedToolset(toolset, _dispatch_prepare_tools)
+
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            if run_capability is not None:
+                # Dispatch `prepare_output_tools` similarly, but override `ctx.max_retries` to the
+                # output retry budget (matches `_build_output_run_context`'s contract — see #4745).
+                # `output_toolset.max_retries` is set to the agent's `max_result_retries` at agent
+                # construction time.
+                output_cap = run_capability
+                output_max_retries = self._max_result_retries
+
+                async def _dispatch_prepare_output_tools(
+                    ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+                ) -> list[ToolDefinition]:
+                    output_ctx = replace(ctx, max_retries=output_max_retries)
+                    return await output_cap.prepare_output_tools(output_ctx, tool_defs)
+
+                output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
