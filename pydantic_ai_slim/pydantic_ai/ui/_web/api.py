@@ -152,7 +152,7 @@ def create_api_app(
 
     async def post_chat(request: Request) -> Response:
         """Handle chat requests via Vercel AI Adapter."""
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(request, agent=agent)
+        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(request, agent=agent, sdk_version=6)
         extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
@@ -163,6 +163,7 @@ def create_api_app(
         streaming_response = await VercelAIAdapter[AgentDepsT, OutputDataT].dispatch_request(
             request,
             agent=agent,
+            sdk_version=6,
             model=model_ref,
             builtin_tools=request_builtin_tools,
             deps=deps,
