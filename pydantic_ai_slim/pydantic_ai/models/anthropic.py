@@ -241,6 +241,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
+    anthropic_service_tier: Literal['auto', 'standard_only']
+    """The service tier to use for the model request.
+
+    See https://docs.anthropic.com/en/docs/build-with-claude/latency-and-throughput for more information.
+    """
+
     anthropic_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last system prompt block.
 
@@ -251,10 +257,13 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_messages: bool | Literal['5m', '1h']
-    """Deprecated: use `anthropic_cache` instead. Will be removed in V2.
+    """Whether to add `cache_control` to the last message content block.
 
-    Behaves the same as `anthropic_cache`: uses automatic caching where supported,
-    falls back to per-block caching on Bedrock and Vertex. Emits a deprecation warning.
+    This is an alternative to `anthropic_cache` for Anthropic-compatible gateways and
+    proxies that accept the Anthropic message format but don't support the top-level
+    automatic caching parameter.
+
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     Cannot be combined with `anthropic_cache`.
     """
 
@@ -332,6 +341,26 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
     """
+
+
+def _resolve_anthropic_service_tier(
+    model_settings: AnthropicModelSettings,
+) -> Literal['auto', 'standard_only'] | Omit:
+    """Resolve the value to send as `service_tier` on the Anthropic request.
+
+    Per-provider [`anthropic_service_tier`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_service_tier]
+    wins; otherwise the top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] is mapped
+    (`'default'` → `'standard_only'`, `'auto'` → `'auto'`). `'flex'`/`'priority'` are dropped as Anthropic
+    does not expose them via this field.
+    """
+    if anthropic_tier := model_settings.get('anthropic_service_tier'):
+        return anthropic_tier
+    unified = model_settings.get('service_tier')
+    if unified == 'auto':
+        return 'auto'
+    if unified == 'default':
+        return 'standard_only'
+    return OMIT
 
 
 @dataclass(init=False)
@@ -602,6 +631,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
+        self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -611,6 +641,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
+
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -632,6 +663,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
                 container=container or OMIT,
+                service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -755,6 +787,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
+        self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1428,14 +1461,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if auto_cache and cache_messages:
             raise UserError('`anthropic_cache` and `anthropic_cache_messages` cannot both be enabled.')
 
-        if cache_messages:
-            warnings.warn(
-                '`anthropic_cache_messages` is deprecated, use `anthropic_cache` instead',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            auto_cache = cache_messages
-
         if not auto_cache:
             return None, None
 
@@ -1460,17 +1485,39 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_cache` for automatic caching. As a fallback, this applies per-block
         `cache_control` to the last content block of the last user message.
 
-        If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
-        it is left unchanged to preserve the user's chosen TTL.
-
         Args:
             resolved_ttl: The resolved TTL from `_build_automatic_cache_control`, or None
                 if caching is not enabled.
             anthropic_messages: The list of Anthropic message params to apply fallback to.
         """
-        if not resolved_ttl or not isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS) or not anthropic_messages:
-            return
+        if resolved_ttl and isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
+            self._apply_message_cache_control(anthropic_messages, resolved_ttl)
 
+    def _apply_explicit_message_caching(
+        self,
+        model_settings: AnthropicModelSettings,
+        anthropic_messages: list[BetaMessageParam],
+    ) -> None:
+        """Apply per-block message caching when `anthropic_cache_messages` is enabled.
+
+        Mutually exclusive with `anthropic_cache` (enforced by `_build_automatic_cache_control`).
+        """
+        if cache_messages := model_settings.get('anthropic_cache_messages'):
+            ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            self._apply_message_cache_control(anthropic_messages, ttl)
+
+    def _apply_message_cache_control(
+        self,
+        anthropic_messages: list[BetaMessageParam],
+        ttl: Literal['5m', '1h'],
+    ) -> None:
+        """Apply per-block `cache_control` to the last content block of the last message.
+
+        If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
+        it is left unchanged to preserve the user's chosen TTL.
+
+        Assumes `anthropic_messages` is non-empty.
+        """
         last_message = anthropic_messages[-1]
         content = last_message['content']
         if isinstance(content, str):  # pragma: no cover
@@ -1478,13 +1525,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 BetaTextBlockParam(
                     type='text',
                     text=content,
-                    cache_control=self._build_cache_control(resolved_ttl),
+                    cache_control=self._build_cache_control(ttl),
                 )
             ]
         else:
-            content_list = cast(list[BetaContentBlockParam], content)
-            if content_list and 'cache_control' not in cast(dict[str, Any], content_list[-1]):
-                self._add_cache_control_to_last_param(content_list, resolved_ttl)
+            content_blocks = cast(list[BetaContentBlockParam], content)
+            if content_blocks and 'cache_control' not in cast(dict[str, Any], content_blocks[-1]):
+                self._add_cache_control_to_last_param(content_blocks, ttl)
 
     def _add_cache_control_to_last_param(
         self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'

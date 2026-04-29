@@ -45,6 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
+from pydantic_ai.capabilities import CombinedCapability
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
@@ -2815,6 +2816,7 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
         _run_ctx=run_ctx,
         _usage_limits=None,
         _tool_manager=ToolManager(toolset=MagicMock()),
+        _root_capability=CombinedCapability([]),
     )
 
     assert stream.metadata == {'source': 'run-context'}
@@ -3064,6 +3066,37 @@ async def test_output_tool_validation_failure_events():
             # Output tools only emit FunctionToolCallEvent on validation/execution failure
         ]
     )
+
+
+async def test_output_function_model_retry_in_stream():
+    """`ModelRetry` from a `ToolOutput` function during `run_stream()` must surface as
+    `UnexpectedModelBehavior` (caused by `ModelRetry`), not propagate as `ToolRetryError`.
+
+    Regression test for an earlier version of `ToolManager.execute_output_tool_call` that
+    unconditionally wrapped `ModelRetry` from the output function as `ToolRetryError`,
+    which `result.validate_response_output` doesn't catch in the streaming path.
+    """
+
+    async def stream_final_result(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name='final_result', json_args='{"value": "anything"}')}
+
+    def reject(value: str) -> str:
+        raise ModelRetry('please try again')
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_final_result),
+        output_type=ToolOutput(reject, name='final_result'),
+        output_retries=0,
+    )
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+    # The cause must be ModelRetry, not ToolRetryError — `validate_response_output`
+    # only catches `(ValidationError, ModelRetry)` in the streaming path.
+    assert isinstance(exc_info.value.__cause__, ModelRetry)
 
 
 async def test_stream_structured_output():

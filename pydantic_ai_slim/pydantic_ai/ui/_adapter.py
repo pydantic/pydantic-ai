@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import KW_ONLY, Field, dataclass
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -16,6 +16,7 @@ from typing import (
     cast,
     runtime_checkable,
 )
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
@@ -25,7 +26,18 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.messages import (
+    BaseToolCallPart,
+    FileUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    SystemPromptPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -148,6 +160,27 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     to your agent.
     """
 
+    allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'})
+    """URL schemes that are allowed for [`FileUrl`][pydantic_ai.messages.FileUrl] parts
+    ([`ImageUrl`][pydantic_ai.messages.ImageUrl], [`DocumentUrl`][pydantic_ai.messages.DocumentUrl],
+    [`VideoUrl`][pydantic_ai.messages.VideoUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl])
+    in client-submitted messages.
+
+    Defaults to `{'http', 'https'}`. Parts whose URL scheme is not in this set are
+    dropped with a warning before the messages are passed to the agent.
+
+    Non-HTTP schemes like `s3://` (Bedrock) or `gs://` (Vertex AI) cause the model
+    provider to fetch the object using the server-side IAM role or service account,
+    so a client that can supply arbitrary URLs can read anything that identity can
+    reach. HTTPS URLs are safe to forward because the provider fetches them with
+    its own public credentials, and the library's own [`download_item`][pydantic_ai.models.download_item]
+    path applies SSRF protection when it has to download them itself.
+
+    For uploads initiated in the browser, prefer pre-signed `https://` URLs over
+    cloud-storage schemes. To opt into a cloud-storage scheme after auditing your
+    frontend, add it to this set, e.g. `frozenset({'http', 'https', 's3'})`.
+    """
+
     @classmethod
     async def from_request(
         cls,
@@ -155,6 +188,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         *,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
@@ -167,6 +201,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
             **kwargs,
         )
 
@@ -212,6 +247,173 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     def deferred_tool_results(self) -> DeferredToolResults | None:
         """Deferred tool results extracted from the request, used for tool approval workflows."""
         return None
+
+    def sanitize_messages(
+        self,
+        messages: Sequence[ModelMessage],
+        *,
+        deferred_tool_results: DeferredToolResults | None = None,
+    ) -> list[ModelMessage]:
+        """Strip parts of client-submitted messages that aren't trusted from the client.
+
+        Called on the messages produced from the protocol-specific run input before
+        they're passed to the agent. Caller-supplied `message_history` is not passed
+        through this method — it is trusted as coming from server-side persistence.
+
+        Currently strips:
+
+        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s when
+          [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is
+          `'server'`. The agent's configured `system_prompt` is reinjected by
+          [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on
+          the next model request. If stripping leaves a `ModelRequest` with no parts,
+          the request is dropped from history entirely.
+        - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
+          [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+          Non-HTTP schemes like `s3://` or `gs://` cause the model provider to fetch
+          the object using the server-side IAM role, so they should only be accepted
+          from trusted frontends.
+        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
+          [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] entries at
+          the end of the history that don't have a matching entry in
+          `deferred_tool_results`. Tool calls are produced by the model on the server
+          side, so an unresolved tool call at the end of client-supplied history doesn't
+          correspond to a paused agent run and shouldn't be executed. Tool calls that
+          correspond to a resolution in `deferred_tool_results` are preserved so that
+          human-in-the-loop resumption continues to work. If stripping leaves the final
+          response with no parts, the response is dropped from history entirely.
+        """
+        resolved_tool_call_ids: set[str] = set()
+        if deferred_tool_results is not None:
+            resolved_tool_call_ids.update(deferred_tool_results.approvals)
+            resolved_tool_call_ids.update(deferred_tool_results.calls)
+
+        strip_system_prompt = self.manage_system_prompt == 'server'
+        stripped_system_prompt = False
+        disallowed_url_schemes: set[str] = set()
+        dangling_tool_call_names: list[str] = []
+        last_index = len(messages) - 1
+
+        sanitized: list[ModelMessage] = []
+        for index, message in enumerate(messages):
+            if isinstance(message, ModelRequest):
+                new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
+                    message.parts, strip_system_prompt=strip_system_prompt, disallowed_schemes=disallowed_url_schemes
+                )
+                stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
+                if new_request_parts:
+                    sanitized.append(replace(message, parts=new_request_parts))
+                # Otherwise drop the request entirely so we don't leave an empty
+                # `ModelRequest(parts=[])` in history.
+            elif isinstance(message, ModelResponse) and index == last_index:
+                new_response_parts = self._sanitize_last_response_parts(
+                    message.parts,
+                    resolved_tool_call_ids=resolved_tool_call_ids,
+                    dangling_names=dangling_tool_call_names,
+                )
+                if new_response_parts:
+                    sanitized.append(replace(message, parts=new_response_parts))
+                # Otherwise drop the final response entirely so we don't leave an empty
+                # `ModelResponse(parts=[])` in history.
+            else:
+                sanitized.append(message)
+
+        if stripped_system_prompt:
+            warnings.warn(
+                "Client-submitted system prompts were stripped because `manage_system_prompt` is `'server'` "
+                "(the default). Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        if disallowed_url_schemes:
+            warnings.warn(
+                f'Client-submitted file URLs with scheme(s) {sorted(disallowed_url_schemes)!r} '
+                f'were dropped because those schemes are not in `allowed_file_url_schemes` '
+                f'(currently {sorted(self.allowed_file_url_schemes)!r}). Non-HTTP schemes like '
+                f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
+                f'so they should only be accepted from trusted frontends. To allow a scheme, add it to '
+                f'`allowed_file_url_schemes` on the adapter.',
+                UserWarning,
+                stacklevel=2,
+            )
+
+        if dangling_tool_call_names:
+            warnings.warn(
+                f'Client-submitted history ended with unresolved tool call(s) '
+                f'{sorted(set(dangling_tool_call_names))!r}, which were stripped. Tool calls are '
+                f'produced by the model on the server side, so an unresolved tool call at the end '
+                f'of client-supplied history does not correspond to a paused agent run. For '
+                f'human-in-the-loop resumption, pass matching `deferred_tool_results` to the run '
+                f'method.',
+                UserWarning,
+                stacklevel=2,
+            )
+
+        return sanitized
+
+    def _sanitize_request_parts(
+        self,
+        parts: Sequence[ModelRequestPart],
+        *,
+        strip_system_prompt: bool,
+        disallowed_schemes: set[str],
+    ) -> tuple[list[ModelRequestPart], bool]:
+        """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
+
+        `disallowed_schemes` is updated in place with any non-allowlisted file URL schemes encountered.
+        Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s were stripped.
+        """
+        stripped_system_prompt = False
+        new_parts: list[ModelRequestPart] = []
+        for part in parts:
+            if strip_system_prompt and isinstance(part, SystemPromptPart):
+                stripped_system_prompt = True
+                continue
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                new_parts.append(replace(part, content=self._filter_user_content(part.content, disallowed_schemes)))
+            else:
+                new_parts.append(part)
+        return new_parts, stripped_system_prompt
+
+    def _filter_user_content(
+        self,
+        content: Sequence[UserContent],
+        disallowed_schemes: set[str],
+    ) -> list[UserContent]:
+        """Drop [`FileUrl`][pydantic_ai.messages.FileUrl] items whose scheme isn't in the allowlist.
+
+        `disallowed_schemes` is updated in place with any disallowed schemes encountered.
+        """
+        filtered: list[UserContent] = []
+        for item in content:
+            if isinstance(item, FileUrl):
+                scheme = urlparse(item.url).scheme.lower()
+                if scheme and scheme not in self.allowed_file_url_schemes:
+                    disallowed_schemes.add(scheme)
+                    continue
+            filtered.append(item)
+        return filtered
+
+    def _sanitize_last_response_parts(
+        self,
+        parts: Sequence[ModelResponsePart],
+        *,
+        resolved_tool_call_ids: set[str],
+        dangling_names: list[str],
+    ) -> list[ModelResponsePart]:
+        """Sanitize the parts of the trailing client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+
+        Drops tool calls that aren't resolved by `deferred_tool_results`. `dangling_names`
+        is appended to with the names of any stripped calls.
+        """
+        new_parts: list[ModelResponsePart] = []
+        for part in parts:
+            if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+                dangling_names.append(part.tool_name)
+                continue
+            new_parts.append(part)
+        return new_parts
 
     def transform_stream(
         self,
@@ -279,30 +481,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
         """
-        frontend_messages = self.messages
-        if self.manage_system_prompt == 'server' and any(
-            isinstance(part, SystemPromptPart)
-            for msg in frontend_messages
-            if isinstance(msg, ModelRequest)
-            for part in msg.parts
-        ):
-            warnings.warn(
-                "Frontend system prompts were provided but `manage_system_prompt` is `'server'` "
-                '(the default), so they will be stripped. '
-                "Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
-                UserWarning,
-                stacklevel=2,
-            )
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
 
+        frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
             toolsets = [*(toolsets or []), toolset]
-
-        if deferred_tool_results is None:
-            deferred_tool_results = self.deferred_tool_results
 
         if isinstance(deps, StateHandler):
             raw_state = self.state or {}
@@ -419,6 +607,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -448,6 +637,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+            allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
+                [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -469,6 +660,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     request,
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
+                    allowed_file_url_schemes=allowed_file_url_schemes,
                     **kwargs,
                 ),
             )
