@@ -98,5 +98,10 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
             return result
 
         parts = [part for msg in follow_ups for part in msg.parts]
+        # No explicit timestamp/run_id needed: `ModelRequestNode._prepare_request`
+        # stamps `self.request` during the graph lifecycle (see `_agent_graph.py`
+        # `self.request.timestamp = now_utc()` / `self.request.run_id = ...`).
+        # The steering path stamps explicitly because it appends directly to
+        # `messages` outside that lifecycle.
         request = ModelRequest(parts=parts)
         return ModelRequestNode(request=request)

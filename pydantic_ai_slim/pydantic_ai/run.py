@@ -416,6 +416,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 `'steering'` (default) — before the next model request.
                 `'follow_up'` — when the agent would otherwise end.
         """
+        if not parts:
+            raise ValueError('enqueue() requires at least one ModelRequestPart')
         self._graph_run.state.pending_messages.append(_messages.PendingMessage(parts=parts, priority=priority))
 
     def __repr__(self) -> str:  # pragma: no cover

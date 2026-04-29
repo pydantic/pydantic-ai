@@ -383,19 +383,17 @@ agent = Agent('openai:gpt-5.2')
 
 async def main():
     async with agent.iter('Start drafting the report') as agent_run:
-        agent_run.enqueue(
-            UserPromptPart('Change of plan: focus on Q3 revenue first.'),
-            priority='steering',
-        )
+        # Steering: drained into the next ModelRequest before the model is called.
+        agent_run.enqueue(UserPromptPart('Change of plan: focus on Q3 revenue first.'))
         node = agent_run.next_node
         while not isinstance(node, End):
             node = await agent_run.next(node)
 ```
 
-Drive the run with [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] (or
-[`Agent.run()`][pydantic_ai.agent.AbstractAgent.run]) when you enqueue
-follow-ups — see the limitations note below for why a bare `async for`
-doesn't drain them.
+The example above uses [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], which works
+for both priorities. Steering messages would also be drained inside a bare
+`async for node in agent_run:` loop (they're picked up by `before_model_request`),
+but follow-up messages would not — see the limitations note below.
 
 [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages] exposes the
 current queue for inspection.

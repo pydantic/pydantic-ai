@@ -9833,6 +9833,23 @@ async def test_pending_messages_accessible_on_run_context():
     )
 
 
+async def test_enqueue_rejects_empty_parts():
+    """`ctx.enqueue()` and `agent_run.enqueue()` reject zero-part calls."""
+    agent = Agent(FunctionModel(simple_model_function))
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        with pytest.raises(ValueError, match='at least one ModelRequestPart'):
+            ctx.enqueue()
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        with pytest.raises(ValueError, match='at least one ModelRequestPart'):
+            agent_run.enqueue()
+        async for _ in agent_run:
+            pass
+
+
 # region HandleDeferredToolCalls
 
 

@@ -2053,6 +2053,11 @@ class PendingMessage:
     Pending messages are enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
     or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and are
     automatically drained at the appropriate time during the agent run.
+
+    Unlike `ModelRequest` / `ModelResponse` and the part types in this module, this is
+    a plain `dataclass` rather than a Pydantic `BaseModel`: pending messages are
+    transient runtime state that's drained mid-run and never persisted in the
+    serializable message history.
     """
 
     parts: Sequence[ModelRequestPart]
