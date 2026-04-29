@@ -1058,21 +1058,23 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            async def guarded() -> AsyncIterator[ModelResponseStreamEvent]:
+            async def iterator_with_cancel_guard(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
                 # Suppress transport errors caused by `cancel()` tearing down the
                 # connection mid-stream. The try/except has to live inside an
                 # async generator body so it's active at every `await` during
-                # iteration — wrapping the synchronous chain construction below
-                # would catch nothing.
-                chain = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+                # iteration.
                 try:
-                    async for event in chain:
+                    async for event in iterator:
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
 
-            self._event_iterator = guarded()
+            self._event_iterator = iterator_with_cancel_guard(
+                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            )
         return self._event_iterator
 
     async def cancel(self) -> None:

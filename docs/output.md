@@ -967,7 +967,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 #### Message History After Cancellation
 
-When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. If you pass this history into a subsequent run, Pydantic AI automatically filters out incomplete tool calls from interrupted responses to avoid errors from model providers that reject malformed tool call arguments:
+When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. If you pass this history into a subsequent run, Pydantic AI automatically filters out tool calls with incomplete JSON arguments from interrupted responses to avoid errors from model providers that reject malformed tool call arguments:
 
 ```python {title="stream_cancel_history.py"}
 from pydantic_ai import Agent
@@ -988,7 +988,7 @@ async def main():
 ```
 
 1. The message history includes the interrupted response with any partial content that was received before cancellation.
-2. Incomplete tool calls are filtered automatically when the history is sent to the model, so the conversation can continue cleanly.
+2. Tool calls with incomplete JSON arguments are filtered automatically when the history is sent to the model, so the conversation can continue cleanly. Complete tool calls are kept; if the interrupted response ended with pending tool calls, resume without a new user prompt so Pydantic AI can execute them first.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
