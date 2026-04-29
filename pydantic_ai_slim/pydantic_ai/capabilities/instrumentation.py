@@ -22,6 +22,7 @@ from .abstract import (
     CapabilityOrdering,
     ValidatedToolArgs,
     WrapModelRequestHandler,
+    WrapOutputProcessHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
 )
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
 
@@ -408,3 +410,89 @@ class Instrumentation(AbstractCapability[Any]):
                 raise
 
         return tool_result
+
+    # ------------------------------------------------------------------
+    # wrap_output_process — output tool execution span (tool-mode only)
+    # ------------------------------------------------------------------
+
+    async def wrap_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        handler: WrapOutputProcessHandler,
+    ) -> Any:
+        """Emit an `execute_tool` span for tool-mode output processing.
+
+        Output tools no longer go through `wrap_tool_execute`, so this hook restores
+        the outer "execute_tool {tool_name}" span that wraps the validated final-result
+        tool call. Output-function spans (emitted by `execute_output_function`) nest
+        inside this when present.
+
+        For non-tool output (text, native, prompted, image), no span is created here —
+        function execution still gets its own span via `execute_output_function`, and
+        plain text/image passthrough has nothing meaningful to span.
+        """
+        tool_call = output_context.tool_call
+        if tool_call is None:
+            return await handler(output)
+
+        from pydantic_ai.models.instrumented import InstrumentedModel
+
+        settings = self.settings
+        names = self._instrumentation_names
+        include_content = settings.include_content
+
+        span_attributes: dict[str, Any] = {
+            'gen_ai.operation.name': 'execute_tool',
+            'gen_ai.tool.name': tool_call.tool_name,
+            'gen_ai.tool.call.id': tool_call.tool_call_id,
+            **({names.tool_arguments_attr: tool_call.args_as_json_str()} if include_content else {}),
+            **get_agent_run_baggage_attributes(),
+            'logfire.msg': f'running tool: {tool_call.tool_name}',
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        **(
+                            {
+                                names.tool_arguments_attr: {'type': 'object'},
+                                names.tool_result_attr: {'type': 'object'},
+                            }
+                            if include_content
+                            else {}
+                        ),
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                }
+            ),
+        }
+
+        with settings.tracer.start_as_current_span(
+            names.get_tool_span_name(tool_call.tool_name),
+            attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            try:
+                result = await handler(output)
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        result if isinstance(result, str) else json.dumps(InstrumentedModel.serialize_any(result)),
+                    )
+            except ToolRetryError as e:
+                part = e.tool_retry
+                if include_content and span.is_recording():
+                    span.set_attribute(names.tool_result_attr, part.model_response())
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
+            except BaseException as e:
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
+
+        return result

@@ -707,7 +707,10 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
+                        ],
                     }
                 ]
             )
@@ -718,7 +721,14 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'execute_tool final_result',
+                                'message': 'running tool: final_result',
+                            },
+                        ],
                     }
                 ]
             )
@@ -919,7 +929,10 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'agent run',
                     'message': 'my_agent run',
-                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    'children': [
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
+                    ],
                 }
             ]
         )
@@ -930,7 +943,10 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'invoke_agent my_agent',
                     'message': 'my_agent run',
-                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    'children': [
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 2, 'name': 'execute_tool final_result', 'message': 'running tool: final_result'},
+                    ],
                 }
             ]
         )
@@ -1476,6 +1492,7 @@ def test_logfire_output_function_v2_v3(
             attributes
             for attributes in summary.attributes.values()
             if attributes.get('gen_ai.tool.name') == 'final_result'
+            and 'output function' in attributes.get('logfire.msg', '')
         ]
         assert summary.traces == snapshot(
             [
@@ -1487,8 +1504,15 @@ def test_logfire_output_function_v2_v3(
                         {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
                         {
                             'id': 2,
-                            'name': 'running output function',
-                            'message': 'running output function: final_result',
+                            'name': 'running tool',
+                            'message': 'running tool: final_result',
+                            'children': [
+                                {
+                                    'id': 3,
+                                    'name': 'running output function',
+                                    'message': 'running output function: final_result',
+                                }
+                            ],
                         },
                     ],
                 }
@@ -1526,6 +1550,7 @@ def test_logfire_output_function_v2_v3(
             attributes
             for attributes in summary.attributes.values()
             if attributes.get('gen_ai.tool.name') == 'final_result'
+            and 'output function' in attributes.get('logfire.msg', '')
         ]
         assert summary.traces == snapshot(
             [
@@ -1538,7 +1563,14 @@ def test_logfire_output_function_v2_v3(
                         {
                             'id': 2,
                             'name': 'execute_tool final_result',
-                            'message': 'running output function: final_result',
+                            'message': 'running tool: final_result',
+                            'children': [
+                                {
+                                    'id': 3,
+                                    'name': 'execute_tool final_result',
+                                    'message': 'running output function: final_result',
+                                }
+                            ],
                         },
                     ],
                 }
@@ -1596,7 +1628,10 @@ def test_output_type_function_logfire_attributes(
 
     # Find the output function span attributes
     [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'final_result'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -1666,7 +1701,10 @@ def test_output_type_function_with_run_context_logfire_attributes(
 
     # Find the output function span attributes
     [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'final_result'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -1743,7 +1781,10 @@ def test_output_type_function_with_retry_logfire_attributes(
     summary = get_logfire_summary()
 
     output_function_attributes = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'final_result'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -1854,7 +1895,10 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
 
     # Find the output function span attributes with custom tool name
     [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'get_weather'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'get_weather'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -1931,7 +1975,10 @@ def test_output_type_bound_instance_method_logfire_attributes(
 
     # Find the output function span attributes
     [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'final_result'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -2009,7 +2056,10 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
 
     # Find the output function span attributes
     [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'final_result'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -2082,7 +2132,10 @@ def test_output_type_async_function_logfire_attributes(
 
     # Find the output function span attributes
     [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('gen_ai.tool.name') == 'final_result'
+        and 'output function' in attributes.get('logfire.msg', '')
     ]
 
     if include_content:
@@ -2522,7 +2575,10 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
+                        ],
                     }
                 ]
             )
@@ -2533,7 +2589,14 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'execute_tool final_result',
+                                'message': 'running tool: final_result',
+                            },
+                        ],
                     }
                 ]
             )
@@ -2774,6 +2837,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                             {'id': 2, 'name': 'running tool', 'message': 'running tool: my_tool'},
                             {'id': 3, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 4, 'name': 'running tool', 'message': 'running tool: final_result'},
                         ],
                     }
                 ]
@@ -2789,6 +2853,11 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                             {'id': 2, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'},
                             {'id': 3, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 4,
+                                'name': 'execute_tool final_result',
+                                'message': 'running tool: final_result',
+                            },
                         ],
                     }
                 ]
@@ -3063,7 +3132,10 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
+                        ],
                     }
                 ]
             )
@@ -3074,7 +3146,14 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'execute_tool final_result',
+                                'message': 'running tool: final_result',
+                            },
+                        ],
                     }
                 ]
             )

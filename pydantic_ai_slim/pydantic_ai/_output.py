@@ -371,11 +371,12 @@ async def execute_output_function(
     args: dict[str, Any],
     wrap_validation_errors: bool = True,
 ) -> Any:
-    """Execute an output function with `ModelRetry` → `ToolRetryError` wrapping.
+    """Execute an output function within a traced span with error handling.
 
-    Output spans are emitted by the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    capability via `wrap_output_process`, which wraps `do_process` and therefore covers any
-    output-function call made inside `processor.hook_execute`.
+    Creates an `execute_tool` span scoped to the output function invocation. When the
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability has already
+    opened an outer `execute_tool` span for tool-mode output (via `wrap_output_process`),
+    this span nests inside it; otherwise it sits under the active agent run span.
 
     Args:
         function_schema: The function schema containing the function to execute
@@ -390,18 +391,67 @@ async def execute_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
-    try:
-        return await function_schema.call(args, run_context)
-    except ModelRetry as r:
-        if not wrap_validation_errors:
-            raise
-        m = _messages.RetryPromptPart(
-            content=r.message,
-            tool_name=run_context.tool_name,
-        )
-        if run_context.tool_call_id:
-            m.tool_call_id = run_context.tool_call_id  # pragma: no cover
-        raise ToolRetryError(m) from r
+    from pydantic_core import to_json
+
+    from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
+
+    instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
+    tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
+    attributes: dict[str, Any] = {
+        'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.tool.name': tool_name,
+        **get_agent_run_baggage_attributes(),
+        'logfire.msg': f'running output function: {tool_name}',
+    }
+    if run_context.tool_call_id:
+        attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
+    if run_context.trace_include_content:
+        attributes[instrumentation_names.tool_arguments_attr] = to_json(args).decode()
+
+    attributes['logfire.json_schema'] = json.dumps(
+        {
+            'type': 'object',
+            'properties': {
+                **(
+                    {
+                        instrumentation_names.tool_arguments_attr: {'type': 'object'},
+                        instrumentation_names.tool_result_attr: {'type': 'object'},
+                    }
+                    if run_context.trace_include_content
+                    else {}
+                ),
+                'gen_ai.tool.name': {},
+                **({'gen_ai.tool.call.id': {}} if run_context.tool_call_id else {}),
+            },
+        }
+    )
+
+    with run_context.tracer.start_as_current_span(
+        instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
+    ) as span:
+        try:
+            output = await function_schema.call(args, run_context)
+        except ModelRetry as r:
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    content=r.message,
+                    tool_name=run_context.tool_name,
+                )
+                if run_context.tool_call_id:
+                    m.tool_call_id = run_context.tool_call_id  # pragma: no cover
+                raise ToolRetryError(m) from r
+            else:
+                raise
+
+        if run_context.trace_include_content and span.is_recording():
+            from .models.instrumented import InstrumentedModel
+
+            span.set_attribute(
+                instrumentation_names.tool_result_attr,
+                output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+            )
+
+        return output
 
 
 @dataclass
