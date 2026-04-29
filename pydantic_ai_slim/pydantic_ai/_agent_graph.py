@@ -1018,7 +1018,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             result_data = await _run_output_validators(ctx, cast(NodeRunEndT, None), run_context)
                             self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
                         except ToolRetryError as e:
-                            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                            ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
                             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                                 _messages.ModelRequest(parts=[e.tool_retry])
                             )

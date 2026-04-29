@@ -1091,6 +1091,12 @@ Pydantic AI enforces `output_retries` differently depending on how the model ret
 
 Inside an [`output_validator`][pydantic_ai.agent.Agent.output_validator], [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects the enforcement limit that will actually stop the validator: the global budget on the text path, or the per-tool limit on the tool path. [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is the global retry counter in both cases, so it stays consistent across output tool switches within a single run.
 
+### How tool retries are enforced
+
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] or its arguments fail validation, only that tool's counter advances. The limit can be set at three levels — per-tool (`@agent.tool(retries=N)` or [`Tool(max_retries=N)`][pydantic_ai.tools.Tool]), per-toolset ([`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset]), or agent-wide ([`Agent(retries=N)`][pydantic_ai.agent.Agent.__init__]) — applied in that order of precedence. User-provided toolsets inherit `Agent(retries=...)` as their default when no per-toolset value is set.
+
+Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`.
+
 Here's an example:
 
 ```python {title="tool_retry.py"}

@@ -10165,6 +10165,77 @@ def test_output_retries_run_override_without_validators():
     assert call_count == 3
 
 
+def test_override_output_retries_explicit_param():
+    """`agent.override(output_retries=N)` caps the retry budget for runs inside the block."""
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with agent.override(output_retries=2):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+            agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2]
+
+
+def test_override_output_retries_via_spec():
+    """`agent.override(spec={'output_retries': N})` is honored (was previously silently dropped with a warning)."""
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with agent.override(spec={'output_retries': 2}):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+            agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2]
+
+
+def test_override_output_retries_wins_over_run_arg():
+    """`override(output_retries=...)` beats `run(output_retries=...)`, matching `model`/`deps`/etc. precedence.
+
+    Test fixtures use override() to constrain agent behavior under test; production code that calls
+    `agent.run_sync(..., output_retries=N)` must not silently bypass the test's override.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with agent.override(output_retries=1):
+        # Run kwarg requests 10 retries — override pins to 1.
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+            agent.run_sync('Hello', output_retries=10)
+
+    assert retries_log == [0, 1]
+
+
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
     """Unknown tool calls should not increment the global retry counter.
 

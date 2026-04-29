@@ -499,6 +499,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_model_settings: ContextVar[_utils.Option[AgentModelSettings[AgentDepsT]]] = ContextVar(
             '_override_model_settings', default=None
         )
+        self._override_output_retries: ContextVar[_utils.Option[int]] = ContextVar(
+            '_override_output_retries', default=None
+        )
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
@@ -1111,6 +1114,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else:
                     metadata = resolved.metadata
 
+        # `override(output_retries=...)` wins over the run kwarg + spec, matching the precedence
+        # of `model`/`deps`/`instructions`/etc. (see `Agent._get_model`). This keeps testing
+        # fixtures that wrap call sites in `agent.override(output_retries=N)` effective even when
+        # production code passes its own `run(output_retries=...)`.
+        override_output_retries = self._override_output_retries.get()
+        if override_output_retries is not None:
+            effective_output_retries = override_output_retries.value
+
         model_used = self._get_model(model)
         del model
 
@@ -1686,6 +1697,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        output_retries: int | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
@@ -1706,6 +1718,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
+            output_retries: The output-retry budget to use instead of the agent-level `output_retries`. When set,
+                any per-run `output_retries` argument is ignored.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
@@ -1725,6 +1739,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model_settings = resolved.model_settings
             if not _utils.is_set(metadata) and resolved.metadata is not None:
                 metadata = resolved.metadata
+            if not _utils.is_set(output_retries) and resolved.output_retries is not None:
+                output_retries = resolved.output_retries
 
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -1767,6 +1783,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
+        if _utils.is_set(output_retries):
+            output_retries_token = self._override_output_retries.set(_utils.Some(output_retries))
+        else:
+            output_retries_token = None
+
         # Set capability from spec, replacing the agent's existing root capability.
         # Auto-inject infrastructure capabilities since the override replaces
         # (not merges with) the agent's root capability.
@@ -1797,6 +1818,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_metadata.reset(metadata_token)
             if model_settings_token is not None:
                 self._override_model_settings.reset(model_settings_token)
+            if output_retries_token is not None:
+                self._override_output_retries.reset(output_retries_token)
             if cap_token is not None:
                 self._override_root_capability.reset(cap_token)
 
