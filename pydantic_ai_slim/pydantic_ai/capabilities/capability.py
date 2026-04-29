@@ -17,9 +17,6 @@ class Capability(AbstractCapability[AgentDepsT]):
     [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
     """
 
-    description: str | None = field(default=None, kw_only=True)
-    """Human-readable description of what this capability provides."""
-
     instructions: AgentInstructions[AgentDepsT] | None = field(default=None, kw_only=True)
     """Instructions to include in the system prompt."""
 
@@ -31,6 +28,3 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.toolset
-
-    def get_description(self) -> str | None:
-        return self.description

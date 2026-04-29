@@ -250,7 +250,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
         Override to compute the description dynamically.
         """
-        return None
+        return self.description
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
