@@ -6,6 +6,7 @@ import importlib.metadata
 import inspect
 import json
 import uuid
+import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -68,7 +69,7 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
@@ -4483,6 +4484,121 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
             ),
         ]
     )
+
+
+async def test_client_submitted_dangling_tool_calls_not_executed() -> None:
+    """A client-submitted history ending with an unresolved tool call has that tool call
+    stripped before the agent sees the history, so the agent never has the chance to
+    execute it.
+    """
+    captured: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(list(messages))
+        yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Hi'),
+        AssistantMessage(
+            id='msg_2',
+            tool_calls=[
+                ToolCall(
+                    id='client-call-1',
+                    type='function',
+                    function=FunctionCall(name='refresh_cache', arguments='{"key": "prod"}'),
+                )
+            ],
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*refresh_cache'):
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert len(captured) == 1
+    history_seen_by_model = captured[0]
+    assert not any(
+        isinstance(message, ModelResponse) and any(isinstance(part, ToolCallPart) for part in message.parts)
+        for message in history_seen_by_model
+    ), 'dangling client-submitted tool call leaked into the agent run'
+
+
+async def test_client_submitted_tool_call_resolved_by_deferred_results_runs() -> None:
+    """Tool calls matched by caller-supplied `deferred_tool_results` survive sanitization,
+    so human-in-the-loop resumption still works.
+    """
+    executed: list[dict[str, Any]] = []
+
+    agent = Agent(model=TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def refresh_cache(key: str) -> str:
+        executed.append({'key': key})
+        return 'refreshed'
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Hi'),
+        AssistantMessage(
+            id='msg_2',
+            tool_calls=[
+                ToolCall(
+                    id='approved-call-1',
+                    type='function',
+                    function=FunctionCall(name='refresh_cache', arguments='{"key": "prod"}'),
+                )
+            ],
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        async for _ in adapter.encode_stream(
+            adapter.run_stream(deferred_tool_results=DeferredToolResults(approvals={'approved-call-1': True}))
+        ):
+            pass
+
+    assert executed == [{'key': 'prod'}], 'approval-resumed tool call must execute'
+
+
+async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
+    """An AG-UI `AGUIAdapter.sanitize_messages` call drops `FileUrl` parts whose URL
+    scheme isn't in `allowed_file_url_schemes`, matching the base `UIAdapter` contract.
+    """
+    agent = Agent(model=TestModel())
+    adapter = AGUIAdapter(
+        agent=agent,
+        run_input=create_input(UserMessage(id='msg_1', content='Hi')),
+    )
+
+    crafted: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'See attached',
+                        ImageUrl(url='s3://some-bucket/internal.png'),
+                        ImageUrl(url='https://example.com/ok.png'),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'s3'"):
+        sanitized = adapter.sanitize_messages(crafted)
+
+    assert len(sanitized) == 1
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
 
 
 # endregion
