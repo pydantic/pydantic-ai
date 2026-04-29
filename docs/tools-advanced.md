@@ -546,7 +546,7 @@ Available strategy values:
 | `'bm25'` / `'regex'` | Force a specific Anthropic-native strategy. The request fails on providers that can't honor the choice (including OpenAI) rather than silently substituting a different algorithm. |
 | Callable `(query, tools) -> names` | Custom search function. Runs locally and produces the matched names. |
 
-A custom callable strategy is also wired into a provider's "client-executed" tool-search surface where one exists — Anthropic's `tool_reference` mechanism, OpenAI's `execution='client'` — so deferred tools still ship with `defer_loading` on the wire and the model sees a tool-search call rather than a regular function tool. On providers without that surface, the callable runs as the local `search_tools` function tool with no behavioural change for the user.
+A custom callable also benefits from provider-native tool search on models that support a client-executed mode (Anthropic, OpenAI Responses), where deferred tools still ship with `defer_loading` on the wire so the provider can keep them out of the prompt until the search picks them. On other providers, the callable runs as the local `search_tools` function tool with no behavioural change.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
