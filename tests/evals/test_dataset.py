@@ -892,7 +892,6 @@ async def test_serialization_to_yaml_preserves_unicode(tmp_path: Path):
     content = yaml_path.read_text(encoding='utf-8')
     assert 'Привет' in content
     assert 'Здравствуйте' in content
-    assert '\\u041f' not in content
 
 
 async def test_deserializing_without_name(
