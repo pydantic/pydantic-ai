@@ -2,7 +2,7 @@
 
 `ToolSearchToolset` wraps another toolset to support discovery of tools marked with
 `defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
-know which model will actually serve the request — think ``FallbackModel``), the toolset
+know which model will actually serve the request — think `FallbackModel`), the toolset
 emits **both** representations of every deferred tool and lets
 [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter to one based
 on the specific model's support for the
@@ -10,22 +10,22 @@ on the specific model's support for the
 
 Dict keys follow the convention:
 
-* ``{name}~managed:tool_search`` → deferred tool in **managed** form (carries
-  ``managed_by_builtin='tool_search'`` on its ``ToolDefinition``). Always present for
+* `{name}~managed:tool_search` → deferred tool in **managed** form (carries
+  `managed_by_builtin='tool_search'` on its `ToolDefinition`). Always present for
   every deferred tool. When the model supports native tool search, the adapter keeps
-  this in the request and sets ``defer_loading=True`` on the wire.
-* ``{name}`` → deferred tool in **regular** form (no ``managed_by_builtin``). Only
-  present when the tool has been discovered — either by our local ``search_tools``
+  this in the request and sets `defer_loading=True` on the wire.
+* `{name}` → deferred tool in **regular** form (no `managed_by_builtin`). Only
+  present when the tool has been discovered — either by our local `search_tools`
   function or by a previous provider-native search, both of which write
-  ``discovered_tools`` into message history. When the model does NOT support native
+  `discovered_tools` into message history. When the model does NOT support native
   tool search, the adapter keeps this variant and drops the managed one.
-* ``search_tools`` → the local discovery function with ``prefer_builtin='tool_search'``.
+* `search_tools` → the local discovery function with `prefer_builtin='tool_search'`.
   Dropped by the adapter when the builtin is supported.
 
-The two variants of a deferred tool share the same underlying ``ToolsetTool`` — only the
-wrapping ``ToolDefinition`` differs (``managed_by_builtin`` flag set or not). The
-model calls the tool by its plain name, and the ``ToolManager`` dispatches by
-``tool_def.name`` rather than dict key, so either variant resolves correctly.
+The two variants of a deferred tool share the same underlying `ToolsetTool` — only the
+wrapping `ToolDefinition` differs (`managed_by_builtin` flag set or not). The
+model calls the tool by its plain name, and the `ToolManager` dispatches by
+`tool_def.name` rather than dict key, so either variant resolves correctly.
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from ..builtin_tools import (
     ToolSearchFunc,
     ToolSearchMatch,
     ToolSearchReturn,
+    ToolSearchTool,
     extract_tool_search_return,
 )
 from ..exceptions import ModelRetry, UserError
@@ -54,16 +55,17 @@ from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
-_TOOL_SEARCH_BUILTIN_ID = 'tool_search'
+_TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 _MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 """Legacy metadata key for previously-discovered tool names.
 
 Pre-typed-content versions of this toolset wrote discovered tool names to
-``ToolReturnPart.metadata['discovered_tools']`` instead of the typed
-:class:`ToolSearchReturn` on ``content``. Read-only — kept for backward-compat
-parsing of persisted histories. New writes go to the typed content."""
+`ToolReturnPart.metadata['discovered_tools']` instead of the typed
+[`ToolSearchReturn`][pydantic_ai.builtin_tools.ToolSearchReturn] on `content`.
+Read-only — kept for backward-compat parsing of persisted histories. New writes go to
+the typed content."""
 
 
 def _managed_key(name: str) -> str:
@@ -123,18 +125,18 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
 class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
 
-    Wraps another toolset and exposes a ``search_tools`` function that lets the model
-    discover tools with ``defer_loading=True``. Tools with ``defer_loading=True`` are
+    Wraps another toolset and exposes a `search_tools` function that lets the model
+    discover tools with `defer_loading=True`. Tools with `defer_loading=True` are
     not initially presented to the model — they become available after the model
     discovers them via search.
 
     When the model supports the [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]
     builtin, discovery is handled by the provider and the deferred tools are sent to the API
-    with ``defer_loading=True`` on the wire.
+    with `defer_loading=True` on the wire.
     """
 
     search_fn: ToolSearchFunc | None = None
-    """Optional custom search function. If ``None``, the default token-overlap algorithm is used.
+    """Optional custom search function. If `None`, the default token-overlap algorithm is used.
 
     Receives the raw query string and the deferred tool definitions, and returns the matching
     tool names ordered by relevance.
@@ -144,20 +146,20 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """Maximum number of matches returned from the default algorithm."""
 
     tool_description: str | None = None
-    """Custom description for the ``search_tools`` function shown to the model."""
+    """Custom description for the `search_tools` function shown to the model."""
 
     search_guidance: str | None = None
-    """Custom description for the ``keywords`` parameter shown to the model."""
+    """Custom description for the `keywords` parameter shown to the model."""
 
     local_fallback: bool = True
-    """Whether to register the local ``search_tools`` function tool.
+    """Whether to register the local `search_tools` function tool.
 
-    When ``False``, deferred tools appear only in their managed form and discovery must go
+    When `False`, deferred tools appear only in their managed form and discovery must go
     through the provider's native tool search. Used by
     [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] when an explicit named native
-    strategy (``'bm25'`` / ``'regex'``) is configured — falling back to a different local
+    strategy (`'bm25'` / `'regex'`) is configured — falling back to a different local
     algorithm would silently ignore the user's choice, so we skip the local tool entirely
-    and let ``prepare_request`` raise if the native builtin is unavailable.
+    and let `prepare_request` raise if the native builtin is unavailable.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -188,10 +190,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # that can't be made here because of `FallbackModel`) can filter to whichever
         # path the specific model supports:
         #
-        # * ``{name}~managed:tool_search`` — always present; carries
-        #   ``managed_by_builtin='tool_search'``. Kept by adapters whose model supports
+        # * `{name}~managed:tool_search` — always present; carries
+        #   `managed_by_builtin='tool_search'`. Kept by adapters whose model supports
         #   native tool search.
-        # * ``{name}`` — only present for already-discovered tools. Kept by adapters
+        # * `{name}` — only present for already-discovered tools. Kept by adapters
         #   whose model doesn't support native tool search.
         #
         # Both entries share the same underlying dispatch target; the surviving entry
@@ -206,7 +208,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         # `search_tools` carries `prefer_builtin='tool_search'` (when fallback-to-local
         # is appropriate) — the adapter drops it when the builtin is supported. Skip
-        # emitting it when ``local_fallback=False`` (the capability's named-native mode:
+        # emitting it when `local_fallback=False` (the capability's named-native mode:
         # we must not silently substitute a different local algorithm for the user's
         # explicit strategy choice) or once every deferred tool is already discovered.
         if self.local_fallback and not discovered.issuperset(deferred):
@@ -256,13 +258,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
         """Scan message history for previously-discovered tool names.
 
-        Reads the typed :class:`ToolSearchReturn` off of ``content`` for both the local
-        ``search_tools`` return (on ``ToolReturnPart`` in a ``ModelRequest``) and the
-        provider-native return (on ``BuiltinToolReturnPart`` in a ``ModelResponse`` —
-        each adapter normalizes its provider's wire format into the same shape).
+        Reads the typed [`ToolSearchReturn`][pydantic_ai.builtin_tools.ToolSearchReturn]
+        off of `content` for both the local `search_tools` return (on `ToolReturnPart`
+        in a `ModelRequest`) and the provider-native return (on `BuiltinToolReturnPart`
+        in a `ModelResponse` — each adapter normalizes its provider's wire format into
+        the same shape).
 
-        Also reads the legacy ``metadata['discovered_tools']`` sideband on
-        ``ToolReturnPart`` so message histories serialized before the typed-content
+        Also reads the legacy `metadata['discovered_tools']` sideband on
+        `ToolReturnPart` so message histories serialized before the typed-content
         migration continue to surface previously-discovered tools.
         """
         discovered: set[str] = set()
@@ -290,8 +293,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         """Backward-compat reader for the pre-typed-content metadata sideband.
 
         Earlier versions stashed discovered tool names on
-        ``ToolReturnPart.metadata['discovered_tools']`` instead of on the typed
-        ``content``. Persisted histories from those versions still need to surface
+        `ToolReturnPart.metadata['discovered_tools']` instead of on the typed
+        `content`. Persisted histories from those versions still need to surface
         their discoveries on resume.
         """
         if not isinstance(metadata, dict):
@@ -329,8 +332,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         """Score each tool by how many query tokens appear in its name/description.
 
         Tokenizes on alphanumeric runs for both the query and the indexed terms, so the
-        top hit for "github profile" is ``github_get_me`` (two matches) without matching
-        substrings inside longer words like ``comment`` for the query ``me``.
+        top hit for "github profile" is `github_get_me` (two matches) without matching
+        substrings inside longer words like `comment` for the query `me`.
         """
         terms = self._search_terms(keywords, None)
         if not terms:
@@ -372,11 +375,12 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _empty_return() -> ToolReturn:
-        """Shaped "no matches" return: empty ``tools`` list + a user-visible note.
+        """Shaped "no matches" return: empty `tools` list + a user-visible note.
 
-        The note is sent to the model as separate content (``ToolReturn.content``) so
+        The note is sent to the model as separate content (`ToolReturn.content`) so
         the model doesn't retry searching with the same keywords, while
-        ``return_value`` stays as a typed :class:`ToolSearchReturn`.
+        `return_value` stays as a typed
+        [`ToolSearchReturn`][pydantic_ai.builtin_tools.ToolSearchReturn].
         """
         return_value: ToolSearchReturn = {'tools': []}
         return ToolReturn(
@@ -386,6 +390,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _build_return(matches: list[ToolSearchMatch]) -> ToolReturn:
-        """Shaped matches return: typed :class:`ToolSearchReturn`."""
+        """Shaped matches return: typed [`ToolSearchReturn`][pydantic_ai.builtin_tools.ToolSearchReturn]."""
         return_value: ToolSearchReturn = {'tools': matches}
         return ToolReturn(return_value=return_value)

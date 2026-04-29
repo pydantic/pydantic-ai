@@ -963,10 +963,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # (which is already in `function_tools`), so no server-side builtin is emitted.
                 if tool.custom:
                     pass
-                # No `beta_features.add(...)` for tool search: it's GA on Sonnet 4.5+, Opus 4.5+,
-                # and Haiku 4.5+ (the models whose profile lists `ToolSearchTool` in
-                # `supported_builtin_tools`). The provisional beta header `tool-search-tool-2025-11-19`
-                # is rejected by the API as an unknown beta — including it breaks the request.
                 # Default strategy is BM25; regex is the alternative named strategy.
                 elif tool.strategy == 'regex':
                     tools.append(

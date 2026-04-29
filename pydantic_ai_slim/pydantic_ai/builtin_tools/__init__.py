@@ -61,16 +61,16 @@ class AbstractBuiltinTool(ABC):
     optional: bool = False
     """Whether this instance is a best-effort upgrade rather than a hard requirement.
 
-    When ``True``, the instance is silently dropped from the request on a model that
+    When `True`, the instance is silently dropped from the request on a model that
     doesn't support it, instead of raising when no local fallback is provided.
 
-    Defaults to ``False`` (the user explicitly asked for this tool; fail loudly if we
+    Defaults to `False` (the user explicitly asked for this tool; fail loudly if we
     can't honor it). Capabilities backing a native optimization rather than a
-    user-visible feature pass ``optional=True`` when constructing their builtin —
+    user-visible feature pass `optional=True` when constructing their builtin —
     e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] sets it on the
     [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] it creates so models
     that don't support native tool search transparently fall back to local search.
-    Users can also pass ``optional=True`` themselves to opt into soft-fail semantics
+    Users can also pass `optional=True` themselves to opt into soft-fail semantics
     for any builtin.
     """
 
