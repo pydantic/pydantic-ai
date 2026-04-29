@@ -406,10 +406,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
-        # Defer eager `infer_model` when a capability declares `resolve_model`,
-        # so the capability gets to map raw model values (e.g. provider strings)
-        # to `Model` instances inside `_get_model`.
-        if model is None or defer_model_check or self._root_capability.has_resolve_model_id:
+        if model is None or defer_model_check:
             self._model = model
         else:
             self._model = models.infer_model(model)

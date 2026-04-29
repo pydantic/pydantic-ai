@@ -114,7 +114,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectDurability
 
 agent = Agent(
-    'gpt-5.2',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',
     capabilities=[PrefectDurability()],  # (1)!

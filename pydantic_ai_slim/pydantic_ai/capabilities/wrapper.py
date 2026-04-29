@@ -59,6 +59,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped.has_wrap_run_event_stream
         )
 
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return (
+            type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
+        )
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
         if new_wrapped is self.wrapped:  # pragma: no branch

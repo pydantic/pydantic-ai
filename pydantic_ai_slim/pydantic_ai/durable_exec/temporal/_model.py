@@ -20,7 +20,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._durability import RequestParams
+from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext, deserialize_run_context
 
 if TYPE_CHECKING:
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     'CompletedStreamedResponse',
-    'RequestParams',
     'TemporalModel',
     'TemporalProviderFactory',
 ]
@@ -77,7 +76,7 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
-        async def request_activity(params: RequestParams, deps: Any | None = None) -> ModelResponse:
+        async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -92,7 +91,7 @@ class TemporalModel(WrapperModel):
         # Union with None for backward compatibility with activity payloads created before deps was added
         self.request_activity.__annotations__['deps'] = deps_type | None
 
-        async def request_stream_activity(params: RequestParams, deps: AgentDepsT) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
             run_context = deserialize_run_context(
@@ -148,7 +147,7 @@ class TemporalModel(WrapperModel):
         return await workflow.execute_activity(
             activity=self.request_activity,
             args=[
-                RequestParams(
+                _RequestParams(
                     messages=messages,
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
@@ -193,7 +192,7 @@ class TemporalModel(WrapperModel):
         response = await workflow.execute_activity(
             activity=self.request_stream_activity,
             args=[
-                RequestParams(
+                _RequestParams(
                     messages=messages,
                     model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,

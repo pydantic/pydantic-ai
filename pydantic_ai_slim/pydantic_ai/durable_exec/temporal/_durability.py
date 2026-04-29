@@ -41,7 +41,7 @@ from ._toolset import (
 
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
-class RequestParams:
+class _RequestParams:
     """Serializable arguments for the model-request Temporal activity."""
 
     messages: list[_messages.ModelMessage]
@@ -260,7 +260,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         # --- Model request activities ---
 
-        async def request_activity(params: RequestParams, deps: Any | None = None) -> ModelResponse:
+        async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             from pydantic_ai.durable_exec import call_model
 
             run_context = deserialize_run_context(
@@ -279,7 +279,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
         activities.append(self.request_activity)
 
-        async def request_stream_activity(params: RequestParams, deps: AgentDepsT) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             from pydantic_ai.durable_exec import open_model_stream
 
             run_context = deserialize_run_context(
@@ -493,7 +493,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             response = await workflow.execute_activity(
                 activity=self.request_stream_activity,
                 args=[
-                    RequestParams(
+                    _RequestParams(
                         messages=request_context.messages,
                         model_settings=cast(dict[str, Any] | None, request_context.model_settings),
                         model_request_parameters=request_context.model_request_parameters,
@@ -514,7 +514,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         return await workflow.execute_activity(
             activity=self.request_activity,
             args=[
-                RequestParams(
+                _RequestParams(
                     messages=request_context.messages,
                     model_settings=cast(dict[str, Any] | None, request_context.model_settings),
                     model_request_parameters=request_context.model_request_parameters,

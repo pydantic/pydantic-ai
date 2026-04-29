@@ -124,7 +124,7 @@ dbos_config: DBOSConfig = {
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'gpt-5.2',
+    'openai:gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',
     capabilities=[DBOSDurability()],  # (1)!

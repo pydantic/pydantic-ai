@@ -49,6 +49,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return any(c.has_resolve_model_id for c in self.capabilities)
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [c.for_agent(agent) for c in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):  # pragma: no branch
