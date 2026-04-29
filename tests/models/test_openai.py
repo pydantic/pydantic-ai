@@ -2070,6 +2070,10 @@ def tool_with_lists(x: list[int], y: list[MyDefaultDc]) -> str:
     return f'{x} {y}'  # pragma: no cover
 
 
+def tool_with_any_list(x: list[Any]) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
     return f'{x} {y}'  # pragma: no cover
 
@@ -2497,6 +2501,19 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 }
             ),
             snapshot(True),
+        ),
+        (
+            tool_with_any_list,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'items': {}, 'type': 'array'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
         ),
         (
             tool_with_tuples,

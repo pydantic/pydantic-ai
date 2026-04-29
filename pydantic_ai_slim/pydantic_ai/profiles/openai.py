@@ -321,6 +321,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         schema_type = schema.get('type')
+        if schema_type == 'array' and schema.get('items') == {} and self.strict is None:
+            self.is_strict_compatible = False
+
         if 'oneOf' in schema:
             # OpenAI does not support oneOf in strict mode
             if self.strict is True:

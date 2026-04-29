@@ -176,6 +176,45 @@ async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: 
     assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
 
 
+async def test_any_list_tool_disables_strict(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.1', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def tool_with_any_list(items: list[Any]) -> str:
+        return f'{items}'  # pragma: no cover
+
+    await agent.run('Hello')
+    assert get_mock_responses_kwargs(mock_client)[0]['tools'] == snapshot(
+        [
+            {
+                'name': 'tool_with_any_list',
+                'parameters': {
+                    'additionalProperties': False,
+                    'properties': {'items': {'items': {}, 'type': 'array'}},
+                    'required': ['items'],
+                    'type': 'object',
+                },
+                'type': 'function',
+                'description': None,
+                'strict': False,
+            }
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     ('aspect_ratio', 'explicit_size', 'expected_size'),
     [
