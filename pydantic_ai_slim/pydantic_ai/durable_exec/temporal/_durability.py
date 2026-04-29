@@ -143,7 +143,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             Per-tool activity config (custom timeouts, retry policies, or disabling
             activity wrapping entirely) is configured via tool metadata:
 
-            ```python
+            ```python {test="skip" lint="skip"}
             @my_toolset.tool(metadata={'temporal': ActivityConfig(...)})
             async def my_slow_tool(...): ...
             ```

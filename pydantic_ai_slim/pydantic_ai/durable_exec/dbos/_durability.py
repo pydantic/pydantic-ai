@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from dbos import DBOS
 
@@ -23,14 +23,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
 
+from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig
-
-DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
-"""Parallel execution modes safe for DBOS deterministic replay.
-
-`'parallel'` is excluded because it cannot guarantee deterministic event ordering,
-which DBOS replay requires.
-"""
 
 
 @dataclass(init=False)

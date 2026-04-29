@@ -164,7 +164,6 @@ from temporalio.worker import Worker
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.temporal import (
-    DurabilityPlugin,
     PydanticAIPlugin,
     PydanticAIWorkflow,
     TemporalDurability,
