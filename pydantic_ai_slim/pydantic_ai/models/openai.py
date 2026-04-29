@@ -545,6 +545,23 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more information.
     """
 
+    openai_conversation_id: Literal['auto'] | str
+    """Reference an OpenAI conversation to continue durable conversation state server-side.
+
+    - `'auto'`: use the most recent OpenAI conversation ID from `ModelResponse.provider_details['conversation_id']`
+      in the message history. If the history contains no such response, no `conversation` is sent.
+    - A concrete conversation ID string: use it as the OpenAI Responses API `conversation` parameter.
+
+    When a matching conversation ID is found in message history, messages that precede that response
+    are omitted from the input, since OpenAI reconstructs them from the server-side conversation.
+
+    Not compatible with
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+
+    See the [OpenAI conversation state documentation](https://platform.openai.com/docs/guides/conversation-state)
+    for more information.
+    """
+
     openai_include_code_execution_outputs: bool
     """Whether to include the code execution results in the response.
 
@@ -1835,6 +1852,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
+        if response.conversation:
+            provider_details['conversation_id'] = response.conversation.id
 
         if refusal_text is not None:
             items = []
@@ -1918,9 +1937,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             tool_choice = 'auto'
 
-        previous_response_id, messages = self._resolve_previous_response_id(
-            model_settings.get('openai_previous_response_id'), messages
-        )
+        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -1967,11 +1984,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
-        # When there are no input messages and we're not reusing a previous response,
+        # When there are no input messages and we're not reusing server-side state,
         # the OpenAI API will reject a request without any input,
         # even if there are instructions.
         # To avoid this provide an explicit empty user message.
-        if not openai_messages and not previous_response_id:
+        if not openai_messages and not previous_response_id and not conversation_id:
             openai_messages.append(
                 responses.EasyInputMessageParam(
                     role='user',
@@ -2000,6 +2017,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     service_tier=model_settings.get('openai_service_tier', OMIT),
                     previous_response_id=previous_response_id or OMIT,
+                    conversation=conversation_id or OMIT,
                     context_management=model_settings.get('openai_context_management', OMIT),
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
@@ -2200,6 +2218,48 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return previous_response_id, list(reversed(trimmed_messages))
         else:
             return None, messages
+
+    def _resolve_server_side_state(
+        self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
+    ) -> tuple[str | None, str | None, list[ModelMessage]]:
+        previous_response_id_setting = model_settings.get('openai_previous_response_id')
+        conversation_id_setting = model_settings.get('openai_conversation_id')
+        if previous_response_id_setting is not None and conversation_id_setting is not None:
+            raise UserError(
+                '`openai_previous_response_id` and `openai_conversation_id` cannot both be set because '
+                'the OpenAI Responses API does not support `previous_response_id` with `conversation`.'
+            )
+
+        if conversation_id_setting is not None:
+            conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
+            return None, conversation_id, messages
+
+        previous_response_id, messages = self._resolve_previous_response_id(previous_response_id_setting, messages)
+        return previous_response_id, None, messages
+
+    def _resolve_conversation_id(
+        self, setting: Literal['auto'] | str, messages: list[ModelMessage]
+    ) -> tuple[str | None, list[ModelMessage]]:
+        if setting == 'auto':
+            return self._get_conversation_id_and_new_messages(messages)
+
+        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, conversation_id=setting)
+        if conversation_id is not None:
+            return conversation_id, trimmed
+        return setting, messages
+
+    def _get_conversation_id_and_new_messages(
+        self, messages: list[ModelMessage], *, conversation_id: str | None = None
+    ) -> tuple[str | None, list[ModelMessage]]:
+        trimmed_messages: list[ModelMessage] = []
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                candidate = m.provider_details and m.provider_details.get('conversation_id')
+                if isinstance(candidate, str) and (conversation_id is None or candidate == conversation_id):
+                    return candidate, list(reversed(trimmed_messages))
+            trimmed_messages.append(m)
+
+        return None, messages
 
     async def _map_messages(  # noqa: C901
         self,
@@ -2833,6 +2893,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     self._usage += self._map_usage(chunk.response)
+                    self._store_conversation_id(chunk.response)
 
                     raw_finish_reason = (
                         details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -2855,6 +2916,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseCreatedEvent):
                     if chunk.response.id:  # pragma: no branch
                         self.provider_response_id = chunk.response.id
+                    self._store_conversation_id(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
@@ -3230,6 +3292,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+
+    def _store_conversation_id(self, response: responses.Response) -> None:
+        if response.conversation:
+            self.provider_details = {**(self.provider_details or {}), 'conversation_id': response.conversation.id}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
