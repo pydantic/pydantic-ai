@@ -50,9 +50,9 @@ from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import (
     AbstractCapability,
     CombinedCapability,
-    PendingMessageDrainCapability,
 )
 from ..capabilities._ordering import has_capability_type
+from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.process_history import ProcessHistory

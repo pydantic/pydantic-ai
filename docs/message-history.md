@@ -357,7 +357,7 @@ Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
 ```python {title="enqueue_from_tool.py"}
 from pydantic_ai import Agent, RunContext, SystemPromptPart
 
-agent = Agent('test')
+agent = Agent('openai:gpt-5.2')
 
 
 @agent.tool
@@ -376,8 +376,9 @@ from outside (e.g. forwarding events from a webhook, chat platform, or job queue
 
 ```python {title="enqueue_from_agent_run.py"}
 from pydantic_ai import Agent, UserPromptPart
+from pydantic_graph import End
 
-agent = Agent('test')
+agent = Agent('openai:gpt-5.2')
 
 
 async def main():
@@ -386,9 +387,15 @@ async def main():
             UserPromptPart('Change of plan: focus on Q3 revenue first.'),
             priority='steering',
         )
-        async for _ in agent_run:
-            ...
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
 ```
+
+Drive the run with [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] (or
+[`Agent.run()`][pydantic_ai.agent.AbstractAgent.run]) when you enqueue
+follow-ups — see the limitations note below for why a bare `async for`
+doesn't drain them.
 
 [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages] exposes the
 current queue for inspection.

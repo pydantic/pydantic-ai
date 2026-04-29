@@ -9563,21 +9563,17 @@ async def test_after_node_run_node_to_end():
 
 async def test_enqueue_steering_message_from_tool():
     """Steering messages enqueued from a tool are injected before the next model request."""
-    call_count = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
-            )
-        else:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
             return ModelResponse(
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
             )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
 
     agent = Agent(FunctionModel(model_fn))
 
@@ -9588,18 +9584,46 @@ async def test_enqueue_steering_message_from_tool():
 
     result = await agent.run('Hello')
     assert result.output == 'done'
-
-    # Verify the steering message appears before the second model request
-    messages = result.all_messages()
-    # Find a ModelRequest that contains a SystemPromptPart with our injected content
-    found = False
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, SystemPromptPart) and 'Injected steering message' in part.content:
-                    found = True
-                    break
-    assert found, 'Steering message was not found in message history'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_msg',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SystemPromptPart(content='Injected steering message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_enqueue_follow_up_message_prevents_end():
@@ -9637,6 +9661,53 @@ async def test_enqueue_follow_up_message_prevents_end():
     result = await agent.run('Hello')
     assert result.output == 'final answer after follow-up'
     assert call_count == 3
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_follow_up',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Follow-up context', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_enqueue_from_agent_run():
@@ -9665,23 +9736,47 @@ async def test_enqueue_from_agent_run():
 
     assert agent_run.result is not None
     assert call_count == 2  # First response triggers End, follow-up prevents it, second response is final
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='External follow-up', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 2')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_pending_messages_accessible_on_run_context():
     """RunContext.pending_messages is accessible and initially empty."""
-    queue_observed = False
-    call_count = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='check_queue', args='{}')],
+                parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
             )
         return ModelResponse(
-            parts=[TextPart(content='done')],
+            parts=[ToolCallPart(tool_name='check_queue', args='{}')],
             usage=RequestUsage(input_tokens=10, output_tokens=5),
         )
 
@@ -9689,15 +9784,53 @@ async def test_pending_messages_accessible_on_run_context():
 
     @agent.tool
     def check_queue(ctx: RunContext[None]) -> str:
-        nonlocal queue_observed
+        # The queue must be live (mutations from inside a tool reach the drain).
         assert len(ctx.pending_messages) == 0
-        ctx.enqueue(SystemPromptPart('test'), priority='steering')
+        ctx.enqueue(SystemPromptPart('observed'), priority='steering')
         assert len(ctx.pending_messages) == 1
-        queue_observed = True
         return 'done'
 
-    await agent.run('Test')
-    assert queue_observed
+    result = await agent.run('Test')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='check_queue', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='check_queue',
+                        content='done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SystemPromptPart(content='observed', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 # region HandleDeferredToolCalls

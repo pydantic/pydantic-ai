@@ -51,6 +51,10 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         # after_node_run hooks (which run in reverse order).
         return CapabilityOrdering(position='outermost')
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return None  # not spec-constructible (internal, auto-injected)
+
     async def before_model_request(
         self,
         ctx: RunContext[Any],

@@ -1,6 +1,5 @@
 from typing import Any
 
-from ._pending_messages import PendingMessageDrainCapability
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -66,7 +65,6 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
-    'PendingMessageDrainCapability',
     'AgentNode',
     'CapabilityOrdering',
     'CapabilityPosition',
