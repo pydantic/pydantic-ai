@@ -48,8 +48,12 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from ..builtin_tools import AbstractBuiltinTool
-from ..capabilities import AbstractCapability, CombinedCapability
+from ..capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+)
 from ..capabilities._ordering import has_capability_type
+from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
@@ -1159,6 +1163,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             messages=state.message_history,
             tracer=tracer,
             run_step=0,
+            pending_messages=state.pending_messages,
         )
 
         # Determine root capability: override > agent default
@@ -1850,6 +1855,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
+        pending_messages: list[_messages.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
@@ -1864,6 +1870,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             messages=list(message_history or []),
             model_settings=model_settings,
             run_step=1,
+            pending_messages=pending_messages if pending_messages is not None else [],
         )
         return await _system_prompt.resolve_system_prompts(
             self._system_prompts, self._system_prompt_functions, run_context
@@ -2693,7 +2700,10 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
 )
 """AgentSpec fields that are not supported at run/override time."""
 
-_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (ToolSearchCap,)
+_AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
+    ToolSearchCap,
+    PendingMessageDrainCapability,
+)
 """Infrastructure capabilities auto-injected when not already present."""
 
 

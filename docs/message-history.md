@@ -334,6 +334,91 @@ print(result2.all_messages())
 """
 ```
 
+## Injecting messages mid-run
+
+Tools, capability hooks, and external code driving an agent run can inject extra
+[`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s into the conversation
+mid-run via a pending message queue. Use this when something happens during a run
+that the agent should know about — a tool wants to add follow-up context, an external
+event needs to redirect the agent's plan, or background work needs to reach the agent
+when it completes.
+
+Enqueued parts are bundled into a [`PendingMessage`][pydantic_ai.messages.PendingMessage]
+and drained automatically based on a `priority`:
+
+- `'steering'` (default): drained into the next [`ModelRequest`][pydantic_ai.messages.ModelRequest] before the model call. Use when the new context should influence the agent's *next* step.
+- `'follow_up'`: drained only when the agent would otherwise end. The agent run continues with a new model request that includes the follow-up parts. Use when the agent shouldn't stop while there's still pending work.
+
+### From inside a tool or hook
+
+Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
+`RunContext` in scope:
+
+```python {title="enqueue_from_tool.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool
+def trigger_alert(ctx: RunContext[None]) -> str:
+    ctx.enqueue(SystemPromptPart('Alert: production is degraded, prioritize triage.'))
+    return 'alert raised'
+```
+
+The steering message is appended to the agent's message history and is visible to the
+model on the next request, alongside any tool returns from the same step.
+
+### From external code driving `agent.iter()`
+
+Use [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] when you're driving a run
+from outside (e.g. forwarding events from a webhook, chat platform, or job queue):
+
+```python {title="enqueue_from_agent_run.py"}
+from pydantic_ai import Agent, UserPromptPart
+from pydantic_graph import End
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.iter('Summarize the latest deploy report') as agent_run:
+        # An external system pushes a follow-up while the agent is working.
+        # When the agent would otherwise finish, the follow-up redirects it
+        # into a fresh model request so it can incorporate the new context.
+        agent_run.enqueue(
+            UserPromptPart('A new error was just reported — include it in the summary.'),
+            priority='follow_up',
+        )
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+```
+
+The example drives the run with [`AgentRun.next()`][pydantic_ai.run.AgentRun.next]
+because follow-up messages are only drained when the agent reaches a natural
+`End` — that drain happens in `after_node_run`, which doesn't fire inside a bare
+`async for node in agent_run:` loop. Steering messages don't have this constraint
+(they're drained in `before_model_request`, which fires either way).
+
+[`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages] exposes the
+current queue for inspection.
+
+!!! info "Limitations"
+    - Follow-up messages need [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] or
+      explicit [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] driving — they
+      aren't drained inside a bare `async for node in agent_run:` loop. Steering
+      messages work in either case.
+    - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
+      activities and don't share state with the workflow, so `ctx.enqueue` from a
+      tool doesn't currently propagate back to the run. Enqueue from the workflow
+      context (e.g. via `AgentRun.enqueue`) instead.
+    - Each `'follow_up'` redirect opens a new model request. If something keeps
+      enqueueing follow-ups every step (e.g. a tool that always enqueues, or a
+      system-prompt callback that re-enqueues on each reinjection), the run will
+      loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
+      run as a safety net.
+
 ## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy

@@ -2036,6 +2036,47 @@ class ModelResponse:
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
 
+
+PendingMessagePriority = Literal['steering', 'follow_up']
+"""Priority level for a pending message.
+
+- `'steering'`: Drained into the next model request (before the model call).
+- `'follow_up'`: Drained only when the agent would otherwise end, preventing
+    premature termination while follow-up work is pending.
+"""
+
+
+@dataclass
+class PendingMessage:
+    """A message queued for injection into the agent conversation.
+
+    Pending messages are enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
+    or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and are
+    automatically drained at the appropriate time during the agent run.
+
+    Unlike `ModelRequest` / `ModelResponse` and the part types in this module, this is
+    a plain `dataclass` rather than a Pydantic `BaseModel`: pending messages are
+    transient runtime state that's drained mid-run and never persisted in the
+    serializable message history.
+    """
+
+    parts: Sequence[ModelRequestPart]
+    """The message parts to inject."""
+
+    _: KW_ONLY
+
+    priority: PendingMessagePriority = 'steering'
+    """When to drain this message:
+
+    - `'steering'`: injected before the next model request.
+    - `'follow_up'`: injected only when the agent would otherwise finish.
+    """
+
+    def __post_init__(self) -> None:
+        if not self.parts:
+            raise ValueError('PendingMessage requires at least one ModelRequestPart')
+
+
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )

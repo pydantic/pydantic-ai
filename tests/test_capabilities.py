@@ -69,6 +69,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -10091,6 +10092,353 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# ===== Pending Message Queue Tests =====
+
+
+async def test_enqueue_steering_message_from_tool():
+    """Steering messages enqueued from a tool are injected before the next model request."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart('Injected steering message'))
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_msg',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SystemPromptPart(content='Injected steering message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_follow_up_message_prevents_end():
+    """Follow-up messages prevent the agent from ending and are drained into a new ModelRequest."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        elif call_count == 2:
+            # Agent produces final result, but follow-up is pending
+            return ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            # After follow-up is drained, agent produces real final result
+            return ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_follow_up(ctx: RunContext[None]) -> str:
+        ctx.enqueue(UserPromptPart('Follow-up context'), priority='follow_up')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final answer after follow-up'
+    assert call_count == 3
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_follow_up',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Follow-up context', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_from_agent_run():
+    """Messages can be enqueued from external code via AgentRun.enqueue."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(
+            parts=[TextPart(content=f'response {call_count}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('Hello') as agent_run:
+        assert agent_run.pending_messages == []
+        # Enqueue a follow-up message from external code before iteration
+        agent_run.enqueue(UserPromptPart('External follow-up'), priority='follow_up')
+        assert len(agent_run.pending_messages) == 1
+        # Use next() to drive iteration so after_node_run fires
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+
+    assert agent_run.result is not None
+    assert call_count == 2  # First response triggers End, follow-up prevents it, second response is final
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='External follow-up', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 2')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_pending_messages_accessible_on_run_context():
+    """RunContext.pending_messages is accessible and initially empty."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='check_queue', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def check_queue(ctx: RunContext[None]) -> str:
+        # The queue must be live (mutations from inside a tool reach the drain).
+        assert len(ctx.pending_messages) == 0
+        ctx.enqueue(SystemPromptPart('observed'), priority='steering')
+        assert len(ctx.pending_messages) == 1
+        return 'done'
+
+    result = await agent.run('Test')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='check_queue', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='check_queue',
+                        content='done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SystemPromptPart(content='observed', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_rejects_empty_parts():
+    """`ctx.enqueue()` and `agent_run.enqueue()` reject zero-part calls."""
+    agent = Agent(FunctionModel(simple_model_function))
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        with pytest.raises(ValueError, match='PendingMessage requires at least one'):
+            ctx.enqueue()
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        with pytest.raises(ValueError, match='PendingMessage requires at least one'):
+            agent_run.enqueue()
+        async for _ in agent_run:
+            pass
+
+
+async def test_enqueue_from_system_prompt_callback_with_reinject():
+    """`ctx.enqueue` from inside an `@agent.system_prompt` callback reaches the live queue.
+
+    `ReinjectSystemPrompt` re-resolves system-prompt callbacks on every model request via
+    `Agent.system_prompt_parts`, which builds a synthetic `RunContext`. The synthetic ctx
+    must share the live `pending_messages` list so enqueues from inside the callback
+    aren't silently dropped — using `follow_up` here so the drain (which runs after
+    end-of-run, by design after the current step's `before_model_request` has fired)
+    actually delivers what the callback enqueued.
+    """
+    enqueued = False
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content='ok')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        system_prompt='base prompt',
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    @agent.system_prompt
+    def maybe_enqueue(ctx: RunContext[None]) -> str:
+        nonlocal enqueued
+        # Only enqueue once so we don't loop. ReinjectSystemPrompt re-runs us
+        # for every model request; if we kept enqueueing follow-ups we'd never end.
+        if not enqueued:
+            ctx.enqueue(SystemPromptPart('from system prompt callback'), priority='follow_up')
+            enqueued = True
+        return 'extra prompt'
+
+    # Provide a message_history without an existing SystemPromptPart so
+    # ReinjectSystemPrompt actually fires.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='earlier')]),
+        ModelResponse(parts=[TextPart(content='earlier response')]),
+    ]
+    result = await agent.run('hi', message_history=history)
+
+    assert enqueued
+    # The enqueued follow-up should appear in the persisted history as a
+    # ModelRequest before the second model response — proving the threading
+    # through Agent.system_prompt_parts → synthetic RunContext → live queue.
+    found = any(
+        isinstance(part, SystemPromptPart) and part.content == 'from system prompt callback'
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+    )
+    assert found, 'enqueued follow-up did not reach the conversation'
 
 
 # --- Output hook tests ---

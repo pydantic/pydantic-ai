@@ -394,6 +394,30 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
 
+    @property
+    def pending_messages(self) -> list[_messages.PendingMessage]:
+        """Queue of messages waiting to be injected into the conversation.
+
+        Messages are drained automatically: `'steering'` messages before the next model
+        request, `'follow_up'` messages when the agent would otherwise end.
+        """
+        return self._graph_run.state.pending_messages
+
+    def enqueue(
+        self,
+        *parts: _messages.ModelRequestPart,
+        priority: _messages.PendingMessagePriority = 'steering',
+    ) -> None:
+        """Enqueue message parts to be injected into the conversation.
+
+        Args:
+            *parts: One or more message parts (e.g. `SystemPromptPart`, `UserPromptPart`).
+            priority: When to inject:
+                `'steering'` (default) — before the next model request.
+                `'follow_up'` — when the agent would otherwise end.
+        """
+        self._graph_run.state.pending_messages.append(_messages.PendingMessage(parts=parts, priority=priority))
+
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
