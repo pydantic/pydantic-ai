@@ -99,6 +99,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
+        pending_messages: list[_messages.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         return await self.wrapped.system_prompt_parts(
             deps=deps,
@@ -107,6 +108,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             prompt=prompt,
             usage=usage,
             model_settings=model_settings,
+            pending_messages=pending_messages,
         )
 
     @overload

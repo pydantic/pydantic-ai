@@ -170,6 +170,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         prompt: str | Sequence[_messages.UserContent] | None = None,
         usage: _usage.RunUsage | None = None,
         model_settings: ModelSettings | None = None,
+        pending_messages: list[_messages.PendingMessage] | None = None,
     ) -> list[_messages.SystemPromptPart]:
         """Resolve the agent's configured system prompts into `SystemPromptPart`s.
 
@@ -190,6 +191,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             prompt: Optional user prompt to expose as `RunContext.prompt`.
             usage: Optional usage to expose as `RunContext.usage`.
             model_settings: Optional settings to expose as `RunContext.model_settings`.
+            pending_messages: Optional pending message queue to expose as
+                `RunContext.pending_messages`. When called from within a run, pass
+                through the active queue so `ctx.enqueue()` calls inside system-prompt
+                callbacks are not silently discarded.
         """
         return []  # pragma: no cover — concrete subclasses override this
 
