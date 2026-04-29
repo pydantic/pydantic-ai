@@ -105,6 +105,44 @@ Because DBOS workflows need to be defined before calling `DBOS.launch()` and the
 
 For more information on how to use DBOS in Python applications, see their [Python SDK guide](https://docs.dbos.dev/python/programming-guide).
 
+### Durability as a Capability
+
+As an alternative to wrapping the agent with [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent], you can attach durable execution as a [capability][pydantic_ai.capabilities.AbstractCapability] on a regular [`Agent`][pydantic_ai.agent.Agent]. The agent stays a normal `Agent` everywhere — outside a DBOS workflow it behaves transparently, and inside a workflow the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] capability routes model requests and MCP communication through DBOS steps.
+
+This approach composes with other [capabilities](../capabilities.md) without each needing a DBOS-specific wrapper variant. The capability automatically registers `agent.run` and `agent.run_sync` as DBOS workflows, just like [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAgent], so the agent must be constructed before calling `DBOS.launch()`.
+
+```python {title="dbos_durability_capability.py" test="skip"}
+from dbos import DBOS, DBOSConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+dbos_config: DBOSConfig = {
+    'name': 'pydantic_dbos_agent',
+    'system_database_url': 'sqlite:///dbostest.sqlite',
+}
+DBOS(config=dbos_config)
+
+agent = Agent(
+    'gpt-5.2',
+    instructions="You're an expert in geography.",
+    name='geography',
+    capabilities=[DBOSDurability()],  # (1)!
+)
+
+
+async def main():
+    DBOS.launch()
+    result = await agent.run('What is the capital of Mexico?')  # (2)!
+    print(result.output)
+    #> Mexico City (Ciudad de México, CDMX)
+```
+
+1. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent, and rebinds `agent.run` / `agent.run_sync` to run inside a DBOS workflow.
+2. `agent.run()` enters a DBOS workflow automatically; model requests and MCP communication run as DBOS steps.
+
+The integration considerations below (run context and dependencies, streaming, parallel tool execution) apply to both the wrapper-agent and capability paths.
+
 ## DBOS Integration Considerations
 
 When using DBOS with Pydantic AI agents, there are a few important considerations to ensure workflows and toolsets behave correctly.

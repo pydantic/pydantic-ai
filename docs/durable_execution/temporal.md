@@ -149,6 +149,71 @@ Because Temporal workflows need to be defined at the top level of the file and t
 
 For more information on how to use Temporal in Python applications, see their [Python SDK guide](https://docs.temporal.io/develop/python).
 
+### Durability as a Capability
+
+As an alternative to wrapping the agent with [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent], you can attach durable execution as a [capability][pydantic_ai.capabilities.AbstractCapability] on a regular [`Agent`][pydantic_ai.agent.Agent]. The agent stays a normal `Agent` everywhere — outside a workflow it behaves transparently, and inside a workflow the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability routes model requests, tool calls, and MCP communication through Temporal activities.
+
+This approach composes with other [capabilities](../capabilities.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant, and avoids the frozen-at-wrap-time snapshot of [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
+
+```python {title="temporal_durability_capability.py" test="skip"}
+import uuid
+
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import (
+    DurabilityPlugin,
+    PydanticAIPlugin,
+    PydanticAIWorkflow,
+    TemporalDurability,
+)
+
+agent = Agent(
+    'openai:gpt-5.2',
+    instructions="You're an expert in geography.",
+    name='geography',
+    capabilities=[TemporalDurability()],  # (1)!
+)
+
+
+@workflow.defn
+class GeographyWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]  # (2)!
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await agent.run(prompt)  # (3)!
+        return result.output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+
+    async with Worker(
+        client,
+        task_queue='geography',
+        workflows=[GeographyWorkflow],
+    ):
+        output = await client.execute_workflow(
+            GeographyWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=f'geography-{uuid.uuid4()}',
+            task_queue='geography',
+        )
+        print(output)
+        #> Mexico City (Ciudad de México, CDMX)
+```
+
+1. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent.
+2. [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] discovers agents listed in `__pydantic_ai_agents__` and registers the activities contributed by their [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. As an alternative to listing agents on the workflow, you can use [`DurabilityPlugin`][pydantic_ai.durable_exec.temporal.DurabilityPlugin] to register an agent's activities directly on the worker.
+3. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP communication are routed through Temporal activities.
+
+The same agent can be used outside a workflow without changes — the capability is transparent when [`workflow.in_workflow()`](https://python.temporal.io/temporalio.workflow.html#in_workflow) returns `False`.
+
+The integration considerations below (agent name and toolset IDs, run context, streaming, model selection) apply to both the wrapper-agent and capability paths.
+
 ## Temporal Integration Considerations
 
 There are a few considerations specific to agents and toolsets when using Temporal for durable execution. These are important to understand to ensure that your agents and toolsets work correctly with Temporal's workflow and activity model.
