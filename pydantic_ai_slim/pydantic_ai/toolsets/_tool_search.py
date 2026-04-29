@@ -31,10 +31,10 @@ model calls the tool by its plain name, and the ``ToolManager`` dispatches by
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
@@ -42,8 +42,8 @@ from typing_extensions import TypedDict
 from .._run_context import AgentDepsT, RunContext
 from ..builtin_tools import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    ToolSearchFunc,
     ToolSearchMatch,
-    ToolSearchNativeStrategy,
     ToolSearchReturn,
     extract_tool_search_return,
 )
@@ -53,41 +53,17 @@ from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
-ToolSearchFunc = Callable[[str, Sequence[ToolDefinition]], Sequence[str]]
-"""Custom search function for
-[`ToolSearch`][pydantic_ai.capabilities.ToolSearch]'s ``strategy`` field.
-
-Takes the natural-language query and the deferred tool definitions, and returns the
-matching tool names ordered by relevance.
-"""
-
-ToolSearchLocalStrategy = Literal['substring']
-"""Named local tool search strategy.
-
-``'substring'`` opts into the built-in token-overlap algorithm explicitly — use this
-to lock in the current local algorithm rather than the ``None`` default (which lets
-Pydantic AI pick the best algorithm per provider and may change over time).
-"""
-
-ToolSearchStrategy = Union[ToolSearchFunc, ToolSearchLocalStrategy, ToolSearchNativeStrategy]  # noqa: UP007
-"""Strategy value accepted by [`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy].
-
-* ``'substring'``: force the local token-overlap algorithm regardless of provider.
-* ``'bm25'`` / ``'regex'``: force a specific provider-native strategy (Anthropic). The
-  request fails on providers that can't honor the choice.
-* Callable ``(query, tools) -> names``: custom search function. Used locally, and also
-  by the native "client-executed" surface on providers that support it (Anthropic custom
-  tool-reference blocks, OpenAI ``ToolSearchToolParam(execution='client')``).
-
-``None`` is not part of the union — it's accepted as the default on the
-[`ToolSearch.strategy`][pydantic_ai.capabilities.ToolSearch.strategy] field and means
-"let Pydantic AI pick"; see that field's docstring for details.
-"""
-
-
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = 'tool_search'
 _MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
+
+_LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+"""Legacy metadata key for previously-discovered tool names.
+
+Pre-typed-content versions of this toolset wrote discovered tool names to
+``ToolReturnPart.metadata['discovered_tools']`` instead of the typed
+:class:`ToolSearchReturn` on ``content``. Read-only — kept for backward-compat
+parsing of persisted histories. New writes go to the typed content."""
 
 
 def _managed_key(name: str) -> str:
@@ -283,8 +259,11 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         Reads the typed :class:`ToolSearchReturn` off of ``content`` for both the local
         ``search_tools`` return (on ``ToolReturnPart`` in a ``ModelRequest``) and the
         provider-native return (on ``BuiltinToolReturnPart`` in a ``ModelResponse`` —
-        each adapter normalizes its provider's wire format into the same shape). The
-        return value is the contract; no metadata sideband.
+        each adapter normalizes its provider's wire format into the same shape).
+
+        Also reads the legacy ``metadata['discovered_tools']`` sideband on
+        ``ToolReturnPart`` so message histories serialized before the typed-content
+        migration continue to surface previously-discovered tools.
         """
         discovered: set[str] = set()
         for msg in ctx.messages:
@@ -292,6 +271,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                         self._collect_discovered_from_content(part.content, discovered)
+                        self._collect_discovered_from_legacy_metadata(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
@@ -304,6 +284,22 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if parsed is None:
             return
         discovered.update(match['name'] for match in parsed['tools'])
+
+    @staticmethod
+    def _collect_discovered_from_legacy_metadata(metadata: Any, discovered: set[str]) -> None:
+        """Backward-compat reader for the pre-typed-content metadata sideband.
+
+        Earlier versions stashed discovered tool names on
+        ``ToolReturnPart.metadata['discovered_tools']`` instead of on the typed
+        ``content``. Persisted histories from those versions still need to surface
+        their discoveries on resume.
+        """
+        if not isinstance(metadata, dict):
+            return
+        names = metadata.get(_LEGACY_DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if not isinstance(names, list):
+            return
+        discovered.update(name for name in names if isinstance(name, str))  # pyright: ignore[reportUnknownVariableType]
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

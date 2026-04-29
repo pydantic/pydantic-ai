@@ -2,9 +2,21 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, ToolSearchTool
+from ..builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    ToolSearchTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+"""Builtin tool types Anthropic generally supports across the model line. Mirrors
+``AnthropicModel.supported_builtin_tools()`` minus ``ToolSearchTool``, which is gated
+per-model in the profile below."""
 
 
 @dataclass(kw_only=True)
@@ -108,7 +120,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         )
     )
     supported_builtin_tools = (
-        SUPPORTED_BUILTIN_TOOLS if supports_tool_search else SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
+        _ANTHROPIC_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _ANTHROPIC_BASE_BUILTINS
     )
 
     return AnthropicModelProfile(

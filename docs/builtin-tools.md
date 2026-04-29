@@ -898,20 +898,22 @@ You typically don't register `ToolSearchTool` yourself; the [`ToolSearch`][pydan
 
 ### Provider Support
 
-| Provider | Supported | Notes |
-|----------|-----------|-------|
-| Anthropic | ✅ | `strategy='bm25'` (default) or `'regex'`; custom callable surfaces via regular `search_tools` function tool with `tool_reference` result blocks. Claude Sonnet 4.5+, Opus 4.5+, Haiku 4.5+. |
-| OpenAI Responses | ✅ | Server-executed tool search by default; custom callable uses `execution='client'` with our local `search_tools` via Route A conversion. GPT-5.4+. |
-| OpenAI Chat Completions | ❌ | Not supported (Responses-API-only feature) |
-| Google | ❌ | Not supported |
-| xAI | ❌ | Not supported |
-| Groq | ❌ | Not supported |
-| Bedrock | ❌ | Not supported |
-| Mistral | ❌ | Not supported |
-| Cohere | ❌ | Not supported |
-| OpenRouter | ❌ | Not supported |
-| HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
+| Provider | Supported | Models | Notes |
+|----------|-----------|--------|-------|
+| Anthropic | ✅ | Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ | Server-executed `bm25` (default) or `regex`. Custom callable surfaces via a regular `search_tools` function tool whose return value the adapter re-formats as `tool_reference` blocks. |
+| OpenAI Responses | ✅ | GPT-5.4+ | Server-executed `tool_search` by default. Custom callable surfaces as `ToolSearchToolParam(execution='client')` and routes back to the local `search_tools` function. Named `'bm25'`/`'regex'` strategies are not supported. |
+| OpenAI Chat Completions | ❌ | — | Responses-API-only feature. |
+| Google | ❌ | — | — |
+| xAI | ❌ | — | — |
+| Groq | ❌ | — | — |
+| Bedrock | ❌ | — | — |
+| Mistral | ❌ | — | — |
+| Cohere | ❌ | — | — |
+| OpenRouter | ❌ | — | — |
+| HuggingFace | ❌ | — | — |
+| Outlines | ❌ | — | — |
+
+On unsupported providers, [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] transparently falls back to a local `search_tools` function tool — including when the user passes a custom callable strategy.
 
 ## API Reference
 

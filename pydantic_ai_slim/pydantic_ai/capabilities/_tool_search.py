@@ -6,10 +6,24 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .._run_context import AgentDepsT
-from ..builtin_tools import ToolSearchNativeStrategy, ToolSearchTool
-from ..tools import AgentBuiltinTool
+from ..builtin_tools import (
+    ToolSearchFunc,
+    ToolSearchNativeStrategy,
+    ToolSearchStrategy,
+    ToolSearchTool,
+)
+
+# `ToolDefinition` is referenced via forward-string from `ToolSearchFunc`
+# (defined in `builtin_tools/tool_search.py`, where it can't be eagerly imported because
+# of the `tools.py` ↔ `builtin_tools` circular). Import it eagerly here so dataclass-spec
+# generation (`get_type_hints` on `ToolSearch.__init__`) can resolve the forward reference
+# against this module's globals.
+from ..tools import (
+    AgentBuiltinTool,
+    ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
+)
 from ..toolsets import AbstractToolset
-from ..toolsets._tool_search import ToolSearchFunc, ToolSearchStrategy, ToolSearchToolset
+from ..toolsets._tool_search import ToolSearchToolset
 from .abstract import AbstractCapability, CapabilityOrdering
 
 
@@ -30,19 +44,19 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     from pydantic_ai.capabilities import ToolSearch
 
     # Default: native search on supporting providers, local token matching elsewhere.
-    agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ToolSearch()])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch()])
 
     # Force a specific Anthropic native strategy; errors on providers that can't honor it.
-    agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ToolSearch(strategy='regex')])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='regex')])
 
     # Always run the local token-overlap algorithm, regardless of provider.
-    agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ToolSearch(strategy='substring')])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='substring')])
 
     # Custom search function — used locally, and by provider-native "client-executed" modes when supported.
     def my_search(query, tools):
         return [t.name for t in tools if query.lower() in (t.description or '').lower()]
 
-    agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[ToolSearch(strategy=my_search)])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=my_search)])
     ```
     """
 

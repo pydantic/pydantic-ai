@@ -7,10 +7,24 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
-from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, ToolSearchTool
+from ..builtin_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    ToolSearchTool,
+    WebSearchTool,
+)
 from ..exceptions import UserError
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_OPENAI_BASE_BUILTINS = frozenset(
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+)
+"""Builtin tool types OpenAI supports — the union of what ``OpenAIChatModel`` and
+``OpenAIResponsesModel`` can handle. ``ToolSearchTool`` is gated per-model in the
+profile below."""
 
 OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     True: 'medium',
@@ -202,7 +216,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # GPT-5.4 and later mainline models.
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
     supported_builtin_tools = (
-        SUPPORTED_BUILTIN_TOOLS if supports_tool_search else SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
+        _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
     )
 
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,

@@ -537,7 +537,16 @@ def fuzzy_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
 agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=fuzzy_search)])
 ```
 
-The default `strategy=None` lets Pydantic AI pick the best algorithm for the current provider — Anthropic's native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI's server-executed `tool_search` on GPT-5.4+, local token matching elsewhere. Pass `strategy='substring'` to always use the local algorithm. Pass `strategy='bm25'` or `strategy='regex'` to force a specific Anthropic native strategy — the request fails on providers that can't honor the choice (including OpenAI) rather than silently substituting a different algorithm. A custom callable `strategy` runs locally — and on models that expose a provider-side custom search mode (Anthropic tool-reference blocks; OpenAI `execution='client'`), the callable is invoked through that native path so deferred tools still ship with `defer_loading` on the wire.
+Available strategy values:
+
+| `strategy` | Behavior |
+|---|---|
+| `None` (default) | Let Pydantic AI pick the best algorithm for the current provider — Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local token matching elsewhere. |
+| `'substring'` | Force the local token-overlap algorithm regardless of provider. |
+| `'bm25'` / `'regex'` | Force a specific Anthropic-native strategy. The request fails on providers that can't honor the choice (including OpenAI) rather than silently substituting a different algorithm. |
+| Callable `(query, tools) -> names` | Custom search function. Runs locally and produces the matched names. |
+
+A custom callable strategy is also wired into a provider's "client-executed" tool-search surface where one exists — Anthropic's `tool_reference` mechanism, OpenAI's `execution='client'` — so deferred tools still ship with `defer_loading` on the wire and the model sees a tool-search call rather than a regular function tool. On providers without that surface, the callable runs as the local `search_tools` function tool with no behavioural change for the user.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.

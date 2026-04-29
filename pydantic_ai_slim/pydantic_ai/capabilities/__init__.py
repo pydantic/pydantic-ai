@@ -2,6 +2,12 @@ from typing import Any
 
 from pydantic_ai.output import OutputContext
 
+from ..builtin_tools.tool_search import (
+    ToolSearchFunc,
+    ToolSearchLocalStrategy,
+    ToolSearchNativeStrategy,
+    ToolSearchStrategy,
+)
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
@@ -104,6 +110,10 @@ __all__ = [
     'Thinking',
     'ThreadExecutor',
     'ToolSearch',
+    'ToolSearchFunc',
+    'ToolSearchLocalStrategy',
+    'ToolSearchNativeStrategy',
+    'ToolSearchStrategy',
     'Toolset',
     'WebFetch',
     'WebSearch',
