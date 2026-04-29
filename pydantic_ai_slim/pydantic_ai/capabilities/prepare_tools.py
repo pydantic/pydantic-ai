@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
+from pydantic_ai.toolsets.abstract import AbstractToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
 
@@ -14,10 +16,10 @@ from .abstract import AbstractCapability
 class PrepareTools(AbstractCapability[AgentDepsT]):
     """Capability that filters or modifies function tool definitions using a callable.
 
-    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability,
-    allowing it to be composed with other capabilities via the capability system. Receives
-    only function tools — output tools route to
-    [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
+    Wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability —
+    sugar for the agent-level `prepare_tools=` constructor argument, which injects this
+    capability automatically. Filters/modifies **function** tools only; for output tools
+    use [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools].
 
     ```python
     from pydantic_ai import Agent, RunContext
@@ -41,8 +43,10 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)
 
-    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return await _run_prepare_func(self.prepare_func, ctx, tool_defs)
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # `get_wrapper_toolset` is called per-run on the **function** toolset (output tools
+        # are added later in `_get_toolset`), so the prepare func only sees function tools.
+        return PreparedToolset(toolset, self.prepare_func)
 
 
 @dataclass

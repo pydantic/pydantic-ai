@@ -3908,9 +3908,14 @@ class TestPrepareToolsHook:
         result = await agent.run('hello')
         assert result.output == "tools: ['visible_tool']"
 
-    async def test_does_not_receive_output_tools(self):
-        """`prepare_tools` only receives function tools — output tools route to
-        `prepare_output_tools` instead, mirroring the rest of the tool-hook lifecycle."""
+    async def test_receives_function_and_output_tools(self):
+        """`prepare_tools` receives **all** tool defs — function and output. Output-specific
+        filtering goes through `prepare_output_tools` (which runs first), but `prepare_tools`
+        still sees the merged set as a chance to do general transformations.
+
+        Maintained as released behavior; v2 may split these (see the docstring on
+        `AbstractCapability.prepare_tools`).
+        """
 
         @dataclass
         class CountKindsCap(AbstractCapability[Any]):
@@ -3919,7 +3924,7 @@ class TestPrepareToolsHook:
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                self.seen_kinds = [td.kind for td in tool_defs]
+                self.seen_kinds = sorted({td.kind for td in tool_defs})
                 return tool_defs
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3935,7 +3940,7 @@ class TestPrepareToolsHook:
             return 'result'  # pragma: no cover
 
         await agent.run('hello')
-        assert 'output' not in cap.seen_kinds, f'prepare_tools should not see output tools, got {cap.seen_kinds}'
+        assert cap.seen_kinds == ['function', 'output']
 
     async def test_modify_tool_description(self):
         """Capability can modify tool descriptions."""
@@ -5148,11 +5153,48 @@ class TestPrepareToolsCapability:
             executed.append('secret')  # pragma: no cover
             return 'secret'  # pragma: no cover
 
-        await agent.run('hello')
+        result = await agent.run('hello')
 
         # `secret_tool` was never executed — the hallucinated call resolved to "unknown tool"
         # because `prepare_tools` filtering also removed it from `ToolManager.tools`.
         assert executed == []
+        # Snapshot the message flow: the hallucinated call should produce a "Unknown tool"
+        # retry prompt referencing only the visible tools, and the second turn should succeed.
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='secret_tool', args={}, tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content="Unknown tool name: 'secret_tool'. No tools available.",
+                            tool_name='secret_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 class TestPrepareOutputToolsCapability:
@@ -8820,6 +8862,64 @@ class TestModelRetryFromHooks:
         result = await agent.run('call tool')
         assert result.output == 'got: tool result'
         assert tool_call_count == 2  # Retried after ValidationError
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'int_parsing',
+                                    'loc': (),
+                                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                    'input': 'not_an_int',
+                                }
+                            ],
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=88, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=90, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_before_tool_execute_validation_error(self):
         """before_tool_execute raises ValidationError — converted to ToolRetryError for retry."""
@@ -8863,6 +8963,64 @@ class TestModelRetryFromHooks:
         assert result.output == 'got: tool result'
         # Tool only called once — before_tool_execute ValidationError prevented first call
         assert tool_call_count == 1
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'int_parsing',
+                                    'loc': (),
+                                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                    'input': 'not_an_int',
+                                }
+                            ],
+                            tool_name='my_tool',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=88, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content='tool result', tool_call_id='call-1', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='got: tool result')],
+                    usage=RequestUsage(input_tokens=90, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_tool_execute_model_retry_skips_on_error(self):
         """wrap_tool_execute raising ModelRetry should NOT call on_tool_execute_error."""
@@ -10087,6 +10245,22 @@ class TestOnOutputValidateError:
         result = await agent.run('hello')
         # The error hook bypasses Pydantic validation, so the output is the raw dict
         assert result.output == {'value': 99}
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": "bad"}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_default_reraises(self):
         """Without an error hook, validation errors propagate normally as retries."""
@@ -10104,6 +10278,47 @@ class TestOnOutputValidateError:
         # Model retries and eventually gets it right
         assert result.output == MyOutput(value=42)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": "bad"}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'int_parsing',
+                                    'loc': ('value',),
+                                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                    'input': 'bad',
+                                }
+                            ],
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 42}')],
+                    usage=RequestUsage(input_tokens=87, output_tokens=7),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 class TestOnOutputValidateErrorModelRetry:
@@ -10199,6 +10414,40 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": -1}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Negative values are not allowed',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 42}')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_after_output_validate_raises_model_retry(self):
         """after_output_validate can raise ModelRetry to reject validated output."""
@@ -10225,6 +10474,40 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 0}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Zero is not a valid value',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 42}')],
+                    usage=RequestUsage(input_tokens=66, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_after_output_process_raises_model_retry(self):
         """after_output_process can raise ModelRetry to reject the execution result."""
@@ -10250,6 +10533,40 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == 'this is long enough'
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='short')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Output too short, please elaborate',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='this is long enough')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_wrap_output_process_model_retry_skips_error_hook(self):
         """ModelRetry from wrap_output_process bypasses on_output_process_error."""
@@ -10285,6 +10602,40 @@ class TestModelRetryFromOutputHooks:
         assert result.output == 'good'
         assert call_count == 2
         assert not error_hook_called  # ModelRetry skips on_output_process_error
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='bad')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Bad output, please try again',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='good')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_before_output_process_raises_model_retry(self):
         """before_output_process can raise ModelRetry to skip execution."""
@@ -10312,6 +10663,40 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=5)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 0}')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Cannot execute with zero value',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"value": 5}')],
+                    usage=RequestUsage(input_tokens=65, output_tokens=6),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_output_tool_before_validate_raises_model_retry(self):
         """ModelRetry from before_output_validate on a tool output includes tool_call_id."""
@@ -10428,6 +10813,53 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=10)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 0}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Zero not allowed',
+                            tool_name='final_result',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 10}', tool_call_id='call-2')],
+                    usage=RequestUsage(input_tokens=61, output_tokens=8),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='call-2',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_output_tool_validation_failure(self):
         """Invalid output tool args trigger retry through output validate hooks."""
@@ -10451,6 +10883,60 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content=[
+                                {
+                                    'type': 'int_parsing',
+                                    'loc': ('value',),
+                                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                    'input': 'bad',
+                                }
+                            ],
+                            tool_name='final_result',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
+                    usage=RequestUsage(input_tokens=89, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='call-2',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_output_tool_error_hook_raises_model_retry(self):
         """on_output_validate_error raises ModelRetry for output tool, includes tool_call_id."""
@@ -10486,6 +10972,53 @@ class TestModelRetryFromOutputHooks:
         result = await agent.run('hello')
         assert result.output == MyOutput(value=42)
         assert call_count == 2
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Please provide a valid integer',
+                            tool_name='final_result',
+                            tool_call_id='call-1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
+                    usage=RequestUsage(input_tokens=63, output_tokens=9),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='call-2',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
 
 class TestOutputToolWithOutputFunction:
@@ -11527,6 +12060,22 @@ class TestOnOutputProcessError:
         agent = Agent(FunctionModel(model_fn), output_type=TextOutput(failing_func), capabilities=[RecoverCap()])
         result = await agent.run('hello')
         assert result.output == 'recovered'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='trigger error')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
 
     async def test_default_reraises(self):
         """Without a recovery hook, output execution errors propagate."""

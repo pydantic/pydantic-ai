@@ -724,12 +724,12 @@ Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exception
 
 #### Tool preparation
 
-Capabilities can filter or modify which tool definitions the model sees on each step via two parallel hooks:
+Capabilities can filter or modify which tool definitions the model sees on each step via two hooks:
 
-- [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives function tools (and other non-output kinds).
-- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry`/`ctx.max_retries` reflect the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle.
+- [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives **all** tool defs (function and output). Use this for general filtering or modifications that apply across both kinds.
+- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle. Runs first, before `prepare_tools` sees the merged list.
 
-This controls tool **visibility**, not execution — use the relevant execution hooks for that.
+The result of both hooks flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass

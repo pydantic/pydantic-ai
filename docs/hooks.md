@@ -175,7 +175,11 @@ See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatu
 | `prepare_tools` | `prepare_tools=` | `prepare_tools` |
 | `prepare_output_tools` | `prepare_output_tools=` | `prepare_output_tools` |
 
-Filters or modifies tool definitions the model sees on each step. Function and output tools go through separate hooks: `prepare_tools` only sees function tools (matching the rest of the tool-hook lifecycle), and `prepare_output_tools` only sees [output tools][pydantic_ai.output.ToolOutput] (with `ctx.max_retries` reflecting the output retry budget). Controls visibility, not execution.
+Filters or modifies tool definitions the model sees on each step.
+
+`prepare_tools` (capability hook + constructor kwarg) handles **all** tool kinds — function and [output tools][pydantic_ai.output.ToolOutput] together — and is the general entry point. `prepare_output_tools` (additive, new) targets [output tools][pydantic_ai.output.ToolOutput] specifically with `ctx.max_retries` reflecting the **output** retry budget; it runs first, before `prepare_tools` sees the merged list.
+
+The result of both hooks flows into the model's request *and* `ToolManager.tools`, so filtering also blocks tool execution.
 
 ### Deferred tool call hook
 

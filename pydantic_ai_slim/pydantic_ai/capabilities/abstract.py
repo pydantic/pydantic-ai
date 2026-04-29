@@ -269,16 +269,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        """Filter or modify function tool definitions visible to the model for this step.
+        """Filter or modify tool definitions visible to the model for this step.
 
-        Receives only function tools (and other non-output kinds like `unapproved`); output
-        tools are routed to
+        Receives **all** tool defs — function tools and output tools alike. To filter or
+        modify output tools specifically (with `ctx.retry`/`ctx.max_retries` reflecting
+        the **output** retry budget instead of the function-tool budget), override
         [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools]
-        instead. This mirrors the rest of the tool-hook lifecycle, which doesn't fire for
-        output tools either — those go through the dedicated output hooks.
+        instead — it runs first, on output tools only, before `prepare_tools` sees the
+        merged list.
 
-        Return a filtered or modified list. Called after the agent-level
-        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] has already run.
+        Return a filtered or modified list. The result flows into both the model's request
+        parameters and `ToolManager.tools` (so filtering also blocks tool execution).
         """
         return tool_defs
 
@@ -293,8 +294,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `ctx.max_retries` reflect the **output** retry budget (agent-level
         `max_result_retries`), matching the output hook lifecycle.
 
-        Return a filtered or modified list. Called after the agent-level
-        [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc] has already run.
+        Runs before [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools],
+        which sees the post-`prepare_output_tools` output tools merged with the function
+        tools and can do further general transformations.
+
+        Return a filtered or modified list. The result flows into both the model's request
+        parameters and `ToolManager.tools` (so filtering also blocks tool execution).
         """
         return tool_defs
 
