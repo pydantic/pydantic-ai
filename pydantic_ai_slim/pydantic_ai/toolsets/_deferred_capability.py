@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
@@ -35,6 +35,32 @@ _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
 
+class LoadCapabilityReturn(TypedDict):
+    capability_id: str
+    instructions: str | None
+    # Maybe tools, not sure right now but basically showing that this capability has been revealed
+    # I am not entirely sure yet of this structure but let us take it
+
+
+def extract_load_capability_return(content: Any) -> LoadCapabilityReturn | None:
+    if not isinstance(content, dict):
+        return None
+
+    # Unfortunate that we are having to do this here, the tool return content is Mapping[str | Any]
+    # It is not inferred
+    content = cast(dict[str, Any], content)
+
+    capability_id = content.get('capability_id')
+    if not isinstance(capability_id, str):
+        return None
+
+    instructions = content.get('instructions')
+    if instructions is not None and not isinstance(instructions, str):
+        return None
+
+    return LoadCapabilityReturn(capability_id=capability_id, instructions=instructions)
+
+
 @dataclass
 class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     """Toolset that wraps an agent's tools and injects a ``load_capability`` discovery tool.
@@ -56,7 +82,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         if not unloaded:
             return all_tools
 
-        catalog = '\n'.join(f'- {cap.wrapped.id}: {cap.wrapped.description}' for cap in unloaded)
+        catalog = '\n'.join(f'- {cap.wrapped.id}: {cap.wrapped.get_description()}' for cap in unloaded)
 
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,
@@ -95,7 +121,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                     msg = instructions
                 else:
                     msg = f'Capability {capability_id!r} loaded.'
-                return ToolReturn(return_value=msg, metadata={LOADED_CAPABILITY_METADATA_KEY: capability_id})
+                return ToolReturn(return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=msg))
         return f'No capability found with id {capability_id!r}.'
 
 
@@ -105,11 +131,9 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if (
-                    isinstance(part, ToolReturnPart)
-                    and part.tool_name == LOAD_CAPABILITY_TOOL_NAME
-                    and isinstance(metadata := part.metadata, dict)
-                    and isinstance(cap_id := metadata.get(LOADED_CAPABILITY_METADATA_KEY), str)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                ):
-                    loaded.add(cap_id)
+                if isinstance(part, ToolReturnPart) and part.tool_name == LOAD_CAPABILITY_TOOL_NAME:
+                    parsed = extract_load_capability_return(part.content)
+                    if parsed is not None:
+                        loaded.add(parsed['capability_id'])
+
     return loaded

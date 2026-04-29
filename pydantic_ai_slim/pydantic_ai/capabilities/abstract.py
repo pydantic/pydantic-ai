@@ -143,15 +143,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    # Note: I think these are kw_only because of spec serialization issues I faced but need to validate
+
     id: str | None = field(default=None, kw_only=True)
-    description: str | None = field(default=None, kw_only=True)  # Make it a method
-    defer_loading: bool = field(default=False, kw_only=True)
+    # Note: Should this also be a method?
+    defer_loading: bool | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.defer_loading:
             if not self.id:
                 raise ValueError('Capabilities with defer_loading=True must have an id.')
-            if not self.description:
+            if not self.get_description():
                 raise ValueError('Capabilities with defer_loading=True must have a description.')
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
@@ -224,7 +226,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def get_description(self) -> str | None:
         # Allowing for it to be dynamic if needed
-        return self.description
+        return None
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.

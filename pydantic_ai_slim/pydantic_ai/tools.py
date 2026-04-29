@@ -772,6 +772,9 @@ class ToolDefinition:
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
+    capability_id: str | None = None
+    """Gives the ownership tag to the tools, will be used by tool search to reveal tools from within capabilities."""
+
     @cached_property
     def function_signature(self) -> FunctionSignature:
         """The function signature shape for this tool.
