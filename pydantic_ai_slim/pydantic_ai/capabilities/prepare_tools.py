@@ -4,7 +4,6 @@ import inspect
 from dataclasses import dataclass
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
 
 from .abstract import AbstractCapability
@@ -42,7 +41,7 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
         return None  # Not spec-serializable (takes a callable)
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return await _run_prepare_func(self.prepare_func, ctx, tool_defs)
+        return await _call_prepare_func(self.prepare_func, ctx, tool_defs)
 
 
 @dataclass
@@ -83,29 +82,17 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
     async def prepare_output_tools(
         self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition]:
-        return await _run_prepare_func(self.prepare_func, ctx, tool_defs)
+        return await _call_prepare_func(self.prepare_func, ctx, tool_defs)
 
 
-async def _run_prepare_func(
+async def _call_prepare_func(
     prepare_func: ToolsPrepareFunc[AgentDepsT],
     ctx: RunContext[AgentDepsT],
     tool_defs: list[ToolDefinition],
 ) -> list[ToolDefinition]:
-    """Invoke a `ToolsPrepareFunc`, normalizing sync/async and `None`-as-empty-list.
-
-    Matches [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] semantics: rejects
-    added or renamed tools (the prepare function may filter or modify in place, but cannot
-    introduce new tool names).
-    """
+    # Just sync/async + `None` normalization — `PreparedToolset.get_tools` validates that
+    # the result didn't add or rename tools when these capabilities' hooks dispatch through it.
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
-    prepared = list(result or [])
-    original_names = {td.name for td in tool_defs}
-    added = {td.name for td in prepared} - original_names
-    if added:
-        raise UserError(
-            'Prepare function cannot add or rename tools. '
-            'Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
-        )
-    return prepared
+    return list(result or [])
