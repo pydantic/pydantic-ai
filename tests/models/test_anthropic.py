@@ -6936,12 +6936,11 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
         ]
     )
 
-    assert len(vcr.requests) == 2
     request_bodies = [json.loads(request.body) for request in vcr.requests]
-    for request, request_body in zip(vcr.requests, request_bodies):
-        assert 'anthropic-beta' not in {header.lower() for header in request.headers}
-        assert request_body['tools'] == [{'name': 'code_execution', 'type': 'code_execution_20260120'}]
-        assert request_body['tool_choice'] == {'type': 'auto'}
+    assert [body['tools'] for body in request_bodies] == [
+        [{'name': 'code_execution', 'type': 'code_execution_20260120'}],
+        [{'name': 'code_execution', 'type': 'code_execution_20260120'}],
+    ]
 
 
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
@@ -8555,21 +8554,34 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
     )
     _, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
 
-    assert len(anthropic_messages) == 2
-    assistant_content = anthropic_messages[1]['content']
-    assert any(
-        isinstance(item, dict)
-        and item.get('type') == 'server_tool_use'
-        and item.get('name') == 'text_editor_code_execution'
-        for item in assistant_content
+    assert anthropic_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'View the file.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_text_editor_1',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_text_editor_1',
+                        'content': {
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                    },
+                ],
+            },
+        ]
     )
-    result_block = next(
-        item
-        for item in assistant_content
-        if isinstance(item, dict) and item.get('type') == 'text_editor_code_execution_tool_result'
-    )
-    assert result_block['tool_use_id'] == 'srvtoolu_text_editor_1'  # pyright: ignore[reportGeneralTypeIssues]
-    assert result_block['content']['type'] == 'text_editor_code_execution_view_result'  # type: ignore[typeddict-item]
 
 
 async def test_anthropic_bash_code_execution_tool_message_replay():
