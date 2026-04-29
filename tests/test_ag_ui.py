@@ -2433,6 +2433,23 @@ async def test_adapter_uses_run_input_thread_id_as_conversation_id() -> None:
     assert captured_results[0].all_messages()[-1].conversation_id == 'thread-abc'
 
 
+async def test_adapter_explicit_conversation_id_overrides_thread_id() -> None:
+    """Passing `conversation_id` explicitly to `run_stream_native` overrides `RunAgentInput.threadId`."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    agent = Agent(TestModel())
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'), thread_id='thread-abc')
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(
+        adapter.run_stream_native(conversation_id='explicit-conv-id'),
+        on_complete=captured_results.append,
+    ):
+        pass
+
+    assert captured_results[0].conversation_id == 'explicit-conv-id'
+
+
 async def test_callback_async() -> None:
     """Test that async callbacks work correctly."""
 
