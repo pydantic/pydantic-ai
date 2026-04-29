@@ -143,11 +143,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    # Note: I think these are kw_only because of spec serialization issues I faced but need to validate
-
     id: str | None = field(default=None, kw_only=True)
-    # Note: Should this also be a method?
+    """Stable identifier for this capability instance.
+
+    Required when `defer_loading=True` so the model can reference the capability
+    by id when calling `load_capability`.
+    """
+
     defer_loading: bool | None = field(default=None, kw_only=True)
+    """If True, the capability's contributions (instructions, tools, settings) are hidden
+    from the model until it explicitly loads them via `load_capability(id)`.
+
+    Requires both [`id`][pydantic_ai.capabilities.AbstractCapability.id] and
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
+    to be set so the capability can be discovered in the load catalog.
+    """
 
     def __post_init__(self) -> None:
         if self.defer_loading:
@@ -225,7 +235,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_description(self) -> str | None:
-        # Allowing for it to be dynamic if needed
+        """Return a human-readable description of this capability, or None.
+
+        Surfaced to the model in the `load_capability` catalog when
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
+        Override to compute the description dynamically.
+        """
         return None
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:

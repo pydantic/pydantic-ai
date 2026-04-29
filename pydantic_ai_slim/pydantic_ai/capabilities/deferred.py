@@ -44,6 +44,10 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
 
     @property
     def loaded(self) -> bool:
+        """Whether the wrapped capability has been loaded for the current run.
+
+        Derived from message history at the start of each run; do not set directly.
+        """
         return self._loaded
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
@@ -115,6 +119,7 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
     """
 
     deferred_capabilities: Sequence[DeferredCapability[AgentDepsT]]
+    """The deferred capabilities to expose in the `load_capability` catalog."""
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return CapabilityOrdering(position='outermost')
