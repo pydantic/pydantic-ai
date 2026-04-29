@@ -131,8 +131,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 `'steering'` (default) — before the next model request.
                 `'follow_up'` — when the agent would otherwise end.
         """
-        if not parts:
-            raise ValueError('enqueue() requires at least one ModelRequestPart')
         self.pending_messages.append(PendingMessage(parts=parts, priority=priority))
 
     __repr__ = _utils.dataclasses_no_defaults_repr

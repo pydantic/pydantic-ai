@@ -10375,12 +10375,12 @@ async def test_enqueue_rejects_empty_parts():
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
-        with pytest.raises(ValueError, match='at least one ModelRequestPart'):
+        with pytest.raises(ValueError, match='PendingMessage requires at least one'):
             ctx.enqueue()
         return 'ok'
 
     async with agent.iter('hi') as agent_run:
-        with pytest.raises(ValueError, match='at least one ModelRequestPart'):
+        with pytest.raises(ValueError, match='PendingMessage requires at least one'):
             agent_run.enqueue()
         async for _ in agent_run:
             pass

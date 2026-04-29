@@ -2072,6 +2072,10 @@ class PendingMessage:
     - `'follow_up'`: injected only when the agent would otherwise finish.
     """
 
+    def __post_init__(self) -> None:
+        if not self.parts:
+            raise ValueError('PendingMessage requires at least one ModelRequestPart')
+
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
