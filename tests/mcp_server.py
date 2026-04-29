@@ -7,8 +7,10 @@ from mcp.server.session import ServerSession
 from mcp.types import (
     Annotations,
     BlobResourceContents,
+    CallToolResult,
     CreateMessageResult,
     EmbeddedResource,
+    ImageContent,
     ResourceLink,
     SamplingMessage,
     TextContent,
@@ -45,6 +47,129 @@ async def get_weather_forecast(location: str) -> str:
         The weather forecast for the location.
     """
     return f'The weather in {location} is sunny and 26 degrees Celsius.'
+
+
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(title='Collatz Conjecture sequence generator'))
+async def get_collatz_conjecture(n: int) -> TextContent:
+    """Generate the Collatz conjecture sequence for a given number.
+    This tool attaches response metadata.
+
+    Args:
+        n: The starting number for the Collatz sequence.
+    Returns:
+        A list representing the Collatz sequence with attached metadata.
+    """
+    if n <= 0:
+        raise ValueError('Starting number for the Collatz conjecture must be a positive integer.')
+
+    input_param_n = n  # store the original input value
+
+    sequence = [n]
+    while n != 1:
+        if n % 2 == 0:
+            n = n // 2
+        else:
+            n = 3 * n + 1
+        sequence.append(n)
+
+    return TextContent(
+        type='text',
+        text=str(sequence),
+        _meta={'pydantic_ai': {'tool': 'collatz_conjecture', 'n': input_param_n, 'length': len(sequence)}},
+    )
+
+
+@mcp.tool()
+async def get_with_result_meta(value: str) -> CallToolResult:
+    """Return a single text part wrapped in a CallToolResult that carries top-level `_meta`.
+
+    Args:
+        value: The text content to return.
+    """
+    return CallToolResult(
+        content=[TextContent(type='text', text=value)],
+        _meta={'request_id': 'rid-42', 'duration_ms': 7},
+    )
+
+
+@mcp.tool()
+async def get_user_only_audience(reason: str) -> CallToolResult:
+    """Return a tool result whose only content is annotated `audience=['user']`.
+
+    The model should see the placeholder return; the application can read the original content from
+    `ToolReturn.metadata['user_content']`.
+
+    Args:
+        reason: The user-facing reason text.
+    """
+    return CallToolResult(
+        content=[
+            TextContent(type='text', text=reason, annotations=Annotations(audience=['user'])),
+        ],
+    )
+
+
+@mcp.tool()
+async def get_mixed_audience(answer: str, user_note: str) -> CallToolResult:
+    """Return a tool result with both assistant-visible and user-only text parts.
+
+    Args:
+        answer: Text shown to the model.
+        user_note: Text annotated `audience=['user']` — withheld from the model.
+    """
+    return CallToolResult(
+        content=[
+            TextContent(type='text', text=answer, annotations=Annotations(audience=['assistant'])),
+            TextContent(type='text', text=user_note, annotations=Annotations(audience=['user'])),
+        ],
+    )
+
+
+@mcp.tool()
+async def get_image_with_meta() -> ImageContent:
+    """Return a single image content block with per-part `_meta`."""
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return ImageContent(
+        type='image',
+        data=base64.b64encode(data).decode(),
+        mimeType='image/jpeg',
+        _meta={'caption': 'A kiwi'},
+    )
+
+
+@mcp.tool()
+async def get_text_resource_with_meta() -> EmbeddedResource:
+    """Return an embedded text resource whose inner `TextResourceContents` carries `_meta`."""
+    return EmbeddedResource(
+        type='resource',
+        resource=TextResourceContents(
+            uri=AnyUrl('resource://product_name.txt'),
+            text='Pydantic AI',
+            _meta={'version': 'v2', 'source': 'config'},
+        ),
+    )
+
+
+@mcp.tool()
+async def get_resource_link_with_meta() -> ResourceLink:
+    """Return a `ResourceLink` whose own `_meta` should be merged onto the resolved content."""
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://product_name.txt'),
+        name='product_name.txt',
+        _meta={'requested_at': 'rid-99'},
+    )
+
+
+@mcp.tool()
+async def get_image_resource_link_with_meta() -> ResourceLink:
+    """Return a `ResourceLink` to a binary resource whose link `_meta` is merged onto the resolved `BinaryContent`."""
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://kiwi.jpg'),
+        name='kiwi.jpeg',
+        _meta={'caption': 'Linked kiwi'},
+    )
 
 
 @mcp.tool()

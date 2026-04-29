@@ -43,7 +43,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, _utils, exceptions, messages, models
+from . import _mcp, _mcp_util, _utils, exceptions, messages, models
 
 __all__ = (
     'MCPServer',
@@ -584,19 +584,31 @@ class MCPServer(AbstractToolset[Any], ABC):
 
             raise exceptions.ModelRetry(message or 'MCP tool call failed')
 
-        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        assistant_content, user_only = _mcp_util.partition_content(result.content)
+        return_value: Any
+        # Prefer structured content if all assistant-visible parts are text (per the docs they contain the
+        # JSON-encoded structured content for backward compatibility).
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structuredContent) and not any(
-            not isinstance(part, mcp_types.TextContent) for part in result.content
+        if (structured := result.structuredContent) and all(
+            isinstance(part, mcp_types.TextContent) for part in assistant_content
         ):
-            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
-            # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want the
+            # raw value returned by the tool function.
             if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return structured['result']
-            return structured
+                return_value = structured['result']
+            else:
+                return_value = structured
+        elif user_only and not assistant_content:
+            # Every content block was filtered to user-only; tell the model the tool ran without exposing it.
+            return_value = _mcp_util.USER_ONLY_PLACEHOLDER_TEXT
+        else:
+            mapped = [await self._map_tool_result_part(part) for part in assistant_content]
+            return_value = mapped[0] if len(mapped) == 1 else mapped
 
-        mapped = [await self._map_tool_result_part(part) for part in result.content]
-        return mapped[0] if len(mapped) == 1 else mapped
+        tool_return_metadata = _mcp_util.build_tool_return_metadata(result.meta, user_only)
+        if tool_return_metadata is None:
+            return return_value
+        return messages.ToolReturn(return_value=return_value, metadata=tool_return_metadata)
 
     async def call_tool(
         self,
@@ -624,6 +636,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                        # TODO(v2): drop `output_schema` from metadata; it's already exposed as `return_schema` above.
                         'output_schema': mcp_tool.outputSchema or None,
                     },
                     return_schema=mcp_tool.outputSchema or None,
@@ -685,16 +698,24 @@ class MCPServer(AbstractToolset[Any], ABC):
         return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
 
     @overload
-    async def read_resource(self, uri: str) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+    async def read_resource(
+        self, uri: str
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ): ...
 
     @overload
     async def read_resource(
         self, uri: Resource
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]: ...
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ): ...
 
     async def read_resource(
         self, uri: str | Resource
-    ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ):
         """Read the contents of a specific resource by URI.
 
         Args:
@@ -811,46 +832,62 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
-    ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
+    ) -> str | messages.TextContent | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
         if isinstance(part, mcp_types.TextContent):
-            text = part.text
-            if text.startswith(('[', '{')):
-                try:
-                    return pydantic_core.from_json(text)
-                except ValueError:
-                    pass
-            return text
+            return _map_mcp_text(part.text, part.meta)
         elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
+            return messages.BinaryImage(
+                data=base64.b64decode(part.data), media_type=part.mimeType, metadata=part.meta or None
+            )
         elif isinstance(part, mcp_types.AudioContent):
             # NOTE: The FastMCP server doesn't support audio content.
             # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
             return messages.BinaryContent(
-                data=base64.b64decode(part.data), media_type=part.mimeType
+                data=base64.b64decode(part.data), media_type=part.mimeType, metadata=part.meta or None
             )  # pragma: no cover
         elif isinstance(part, mcp_types.EmbeddedResource):
-            resource = part.resource
-            return self._get_content(resource)
+            return self._get_content(part.resource, outer_meta=part.meta)
         elif isinstance(part, mcp_types.ResourceLink):
-            return await self.read_resource(str(part.uri))
+            return await self._read_resource_link(part)
         else:
             assert_never(part)
 
     def _get_content(
-        self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> str | messages.BinaryContent:
+        self,
+        resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents,
+        *,
+        outer_meta: dict[str, Any] | None = None,
+    ) -> str | messages.TextContent | messages.BinaryContent:
+        merged_meta = _mcp_util.merge_meta(resource.meta, outer_meta)
         if isinstance(resource, mcp_types.TextResourceContents):
-            return resource.text
+            if merged_meta is None:
+                return resource.text
+            return messages.TextContent(content=resource.text, metadata=merged_meta)
         elif isinstance(resource, mcp_types.BlobResourceContents):
             return messages.BinaryContent.narrow_type(
                 messages.BinaryContent(
-                    data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+                    data=base64.b64decode(resource.blob),
+                    media_type=resource.mimeType or 'application/octet-stream',
+                    metadata=merged_meta,
                 )
             )
         else:
             assert_never(resource)
+
+    async def _read_resource_link(
+        self, part: mcp_types.ResourceLink
+    ) -> (
+        str | messages.TextContent | messages.BinaryContent | list[str | messages.TextContent | messages.BinaryContent]
+    ):
+        """Eagerly dereference an MCP `ResourceLink`, propagating its `_meta` onto the resolved content."""
+        resolved = await self.read_resource(str(part.uri))
+        if not part.meta:
+            return resolved
+        if isinstance(resolved, list):
+            return [_attach_meta(item, part.meta) for item in resolved]
+        return _attach_meta(resolved, part.meta)
 
     def __eq__(self, value: object, /) -> bool:
         return isinstance(value, MCPServer) and self.id == value.id and self.tool_prefix == value.tool_prefix
@@ -1350,12 +1387,50 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
 ToolResult = (
     str
+    | messages.TextContent
     | messages.BinaryContent
+    | messages.ToolReturn
     | dict[str, Any]
     | list[Any]
-    | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
+    | Sequence[str | messages.TextContent | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
-"""The result type of an MCP tool call."""
+"""The result type of an MCP tool call.
+
+The default mapping returns a bare value; the [`ToolReturn`][pydantic_ai.messages.ToolReturn] variant is
+used when the MCP tool result carried metadata that needs to be attached to the application but not
+exposed to the model (top-level `_meta`, or content blocks annotated `audience=['user']`).
+"""
+
+
+def _map_mcp_text(text: str, meta: dict[str, Any] | None) -> str | messages.TextContent | dict[str, Any] | list[Any]:
+    """Map an MCP `TextContent.text` payload, lifting it to [`TextContent`][pydantic_ai.messages.TextContent] when `_meta` is set.
+
+    With no metadata, the text is returned bare; if it parses as JSON we return the parsed value to match
+    Pydantic AI's existing tool-result behavior. With metadata, we always keep the original string so the
+    metadata can travel with it on a typed [`TextContent`][pydantic_ai.messages.TextContent].
+    """
+    if not meta:
+        if text.startswith(('[', '{')):
+            try:
+                return pydantic_core.from_json(text)
+            except ValueError:
+                pass
+        return text
+    return messages.TextContent(content=text, metadata=meta)
+
+
+def _attach_meta(
+    item: str | messages.TextContent | messages.BinaryContent,
+    extra_meta: dict[str, Any],
+) -> messages.TextContent | messages.BinaryContent:
+    """Merge `extra_meta` into the metadata of a single content item, lifting bare strings to `TextContent`.
+
+    Returns a new instance — the caller's content (which may be cached or shared) is never mutated.
+    """
+    if isinstance(item, str):
+        return messages.TextContent(content=item, metadata=dict(extra_meta))
+    return replace(item, metadata=_mcp_util.merge_meta(item.metadata, extra_meta))
+
 
 CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
 """A function type that represents a tool call."""

@@ -34,6 +34,8 @@ try:
         TextResourceContents,
     )
 
+    # `_mcp_util` itself imports `mcp`, so it has to live inside the dependency guard.
+    from pydantic_ai import _mcp_util
     from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
 except ImportError as _import_error:
@@ -49,7 +51,7 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import ProcessToolCallback
 
 
-FastMCPToolResult = messages.BinaryContent | dict[str, Any] | str | None
+FastMCPToolResult = messages.TextContent | messages.BinaryContent | messages.ToolReturn | dict[str, Any] | str | None
 
 ToolErrorBehavior = Literal['model_retry', 'error']
 
@@ -209,6 +211,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                         metadata={
                             'meta': mcp_tool.meta,
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
+                            # TODO(v2): drop `output_schema` from metadata; it's already exposed as `return_schema` below.
                             'output_schema': mcp_tool.outputSchema or None,
                         },
                         return_schema=mcp_tool.outputSchema or None,
@@ -248,17 +251,34 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise e
 
-        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        assistant_content, user_only = _mcp_util.partition_content(call_tool_result.content)
+        return_value: Any
+        # Prefer structured content if all assistant-visible parts are text (per the docs they contain the
+        # JSON-encoded structured content for backward compatibility).
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
         if (structured := call_tool_result.structured_content) and all(
-            isinstance(part, TextContent) for part in call_tool_result.content
+            isinstance(part, TextContent) for part in assistant_content
         ):
-            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
             if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
-                return structured['result']
-            return structured
+                return_value = structured['result']
+            else:
+                return_value = structured
+        elif user_only and not assistant_content:
+            return_value = _mcp_util.USER_ONLY_PLACEHOLDER_TEXT
+        else:
+            return_value = _map_fastmcp_tool_results(parts=assistant_content)
 
-        return _map_fastmcp_tool_results(parts=call_tool_result.content)
+        # FastMCP populates `meta = {'fastmcp': {'wrap_result': True}}` for tools without an output
+        # schema; that's an implementation detail of the wire format, not user metadata. Strip the
+        # `fastmcp` key, then collapse `{}` to `None` so a sanitization-emptied dict doesn't end up as
+        # `ToolReturn.metadata['meta']`.
+        sanitized_meta: dict[str, Any] | None = None
+        if call_tool_result.meta:
+            sanitized_meta = {k: v for k, v in call_tool_result.meta.items() if k != 'fastmcp'} or None
+        tool_return_metadata = _mcp_util.build_tool_return_metadata(sanitized_meta, user_only)
+        if tool_return_metadata is None:
+            return return_value
+        return messages.ToolReturn(return_value=return_value, metadata=tool_return_metadata)
 
     async def call_tool(
         self,
@@ -293,17 +313,25 @@ def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResu
 
 def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
     if isinstance(part, TextContent):
+        if part.meta:
+            return messages.TextContent(content=part.text, metadata=part.meta)
         return part.text
     elif isinstance(part, ImageContent | AudioContent):
-        return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+        return messages.BinaryContent(
+            data=base64.b64decode(part.data), media_type=part.mimeType, metadata=part.meta or None
+        )
     elif isinstance(part, EmbeddedResource):
+        merged_meta = _mcp_util.merge_meta(part.resource.meta, part.meta)
         if isinstance(part.resource, BlobResourceContents):
             return messages.BinaryContent(
                 data=base64.b64decode(part.resource.blob),
                 media_type=part.resource.mimeType or UNKNOWN_BINARY_MEDIA_TYPE,
+                metadata=merged_meta,
             )
         elif isinstance(part.resource, TextResourceContents):
-            return part.resource.text
+            if merged_meta is None:
+                return part.resource.text
+            return messages.TextContent(content=part.resource.text, metadata=merged_meta)
         else:
             assert_never(part.resource)
     elif isinstance(part, ResourceLink):

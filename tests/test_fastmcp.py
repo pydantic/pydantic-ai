@@ -30,6 +30,7 @@ with try_import() as imports_successful:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
+    from fastmcp.tools import ToolResult as FastMCPToolResult
     from mcp.types import (
         AnyUrl,
         AudioContent,
@@ -55,7 +56,7 @@ pytestmark = [
 
 
 @pytest.fixture
-async def fastmcp_server() -> FastMCP:
+async def fastmcp_server() -> FastMCP:  # noqa: C901
     """Create a real in-memory FastMCP server for testing."""
     server = FastMCP('test_server')
 
@@ -132,6 +133,57 @@ async def fastmcp_server() -> FastMCP:
         import json
 
         return json.dumps({'received': data, 'processed': True})
+
+    @server.tool(output_schema=None)
+    async def text_with_meta(message: str) -> TextContent:
+        """A tool whose text part carries `_meta`."""
+        return TextContent(type='text', text=message, _meta={'source': 'test'})
+
+    @server.tool(output_schema=None)
+    async def embedded_text_resource_with_meta(message: str) -> EmbeddedResource:
+        """A tool whose embedded text resource carries `_meta`."""
+        return EmbeddedResource(
+            type='resource',
+            resource=TextResourceContents(
+                uri=AnyUrl('resource://message.txt'), text=message, _meta={'source': 'config'}
+            ),
+        )
+
+    @server.tool(output_schema=None)
+    async def image_with_meta() -> ImageContent:
+        """A tool whose image part carries `_meta`."""
+        return ImageContent(
+            type='image',
+            data=base64.b64encode(b'image-bytes').decode(),
+            mimeType='image/png',
+            _meta={'caption': 'fake'},
+        )
+
+    @server.tool(output_schema=None)
+    async def with_result_meta(value: str) -> FastMCPToolResult:
+        """A tool with top-level `_meta` on the result."""
+        return FastMCPToolResult(content=[TextContent(type='text', text=value)], meta={'request_id': 'rid-7'})
+
+    @server.tool(output_schema=None)
+    async def user_only(reason: str) -> FastMCPToolResult:
+        """A tool whose only content is annotated `audience=['user']`."""
+        from mcp.types import Annotations
+
+        return FastMCPToolResult(
+            content=[TextContent(type='text', text=reason, annotations=Annotations(audience=['user']))],
+        )
+
+    @server.tool(output_schema=None)
+    async def mixed_audience(answer: str, user_note: str) -> FastMCPToolResult:
+        """A tool with both assistant-visible and user-only content blocks."""
+        from mcp.types import Annotations
+
+        return FastMCPToolResult(
+            content=[
+                TextContent(type='text', text=answer, annotations=Annotations(audience=['assistant'])),
+                TextContent(type='text', text=user_note, annotations=Annotations(audience=['user'])),
+            ],
+        )
 
     return server
 
@@ -304,6 +356,12 @@ class TestFastMCPToolsetToolDiscovery:
                 'resource_link_tool',
                 'resource_tool',
                 'resource_tool_blob',
+                'text_with_meta',
+                'embedded_text_resource_with_meta',
+                'image_with_meta',
+                'with_result_meta',
+                'user_only',
+                'mixed_audience',
             }
             assert set(tools.keys()) == expected_tools
 
@@ -603,6 +661,125 @@ class TestFastMCPToolsetToolCalling:
                 'test_tool', {'param1': 'world', 'param2': 0}, run_context, test_tool
             )
         assert result == 'param1=world, param2=0'
+
+
+class TestFastMCPToolsetMetadata:
+    """Tool-result metadata + audience filtering."""
+
+    @pytest.fixture
+    async def fastmcp_toolset(self, fastmcp_client: Client[FastMCPTransport]) -> FastMCPToolset[None]:
+        """Create a FastMCP Toolset for testing."""
+        return FastMCPToolset(fastmcp_client)
+
+    async def test_text_part_meta_promotes_to_text_content(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        from pydantic_ai import messages
+
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['text_with_meta']
+            result = await fastmcp_toolset.call_tool('text_with_meta', {'message': 'Hello'}, run_context, tool)
+        assert result == snapshot(messages.TextContent(content='Hello', metadata={'source': 'test'}))
+
+    async def test_image_part_meta_attaches_to_binary_content(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['image_with_meta']
+            result = await fastmcp_toolset.call_tool('image_with_meta', {}, run_context, tool)
+        assert isinstance(result, BinaryContent)
+        assert result.metadata == snapshot({'caption': 'fake'})
+
+    async def test_embedded_text_resource_with_meta_promotes_to_text_content(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        from pydantic_ai import messages
+
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['embedded_text_resource_with_meta']
+            result = await fastmcp_toolset.call_tool(
+                'embedded_text_resource_with_meta', {'message': 'hi'}, run_context, tool
+            )
+        assert result == snapshot(messages.TextContent(content='hi', metadata={'source': 'config'}))
+
+    async def test_top_level_meta_wraps_in_tool_return(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        from pydantic_ai import messages
+
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['with_result_meta']
+            result = await fastmcp_toolset.call_tool('with_result_meta', {'value': 'hi'}, run_context, tool)
+        assert result == snapshot(messages.ToolReturn(return_value='hi', metadata={'meta': {'request_id': 'rid-7'}}))
+
+    async def test_user_only_audience_yields_placeholder(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        from pydantic_ai import messages
+
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['user_only']
+            result = await fastmcp_toolset.call_tool('user_only', {'reason': 'shown to user'}, run_context, tool)
+        assert isinstance(result, messages.ToolReturn)
+        assert result.return_value == 'Tool executed successfully without producing model-visible content.'
+        assert result.metadata == snapshot(
+            {
+                'user_content': [
+                    {
+                        'type': 'text',
+                        'text': 'shown to user',
+                        'annotations': {'audience': ['user'], 'priority': None},
+                        'meta': None,
+                    }
+                ]
+            }
+        )
+
+    async def test_mixed_audience_keeps_assistant_only_in_return_value(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        from pydantic_ai import messages
+
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            tool = tools['mixed_audience']
+            result = await fastmcp_toolset.call_tool(
+                'mixed_audience',
+                {'answer': 'visible answer', 'user_note': 'private detail'},
+                run_context,
+                tool,
+            )
+        assert isinstance(result, messages.ToolReturn)
+        assert result.return_value == 'visible answer'
+        assert result.metadata == snapshot(
+            {
+                'user_content': [
+                    {
+                        'type': 'text',
+                        'text': 'private detail',
+                        'annotations': {'audience': ['user'], 'priority': None},
+                        'meta': None,
+                    }
+                ]
+            }
+        )
 
 
 class TestFastMCPToolsetFactoryMethods:
