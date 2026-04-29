@@ -353,7 +353,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             ctx, output_context=output_context, output=output, error=error
         )
 
-    # --- Output execute lifecycle hooks ---
+    # --- Output process lifecycle hooks ---
 
     async def before_output_process(
         self,

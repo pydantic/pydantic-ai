@@ -480,7 +480,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 raise
         raise error
 
-    # --- Output execute lifecycle hooks ---
+    # --- Output process lifecycle hooks ---
 
     async def before_output_process(
         self,
