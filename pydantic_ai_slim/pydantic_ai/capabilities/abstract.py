@@ -139,7 +139,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
-    YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.Agent.from_spec]); they have
+    YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec]); they have
     sensible defaults and typically don't need to be overridden.
     """
 
@@ -366,10 +366,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.Agent.run],
-        [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and when manually driving
-        an [`agent.iter()`][pydantic_ai.Agent.iter] run with
-        [`next()`][pydantic_ai.result.AgentRun.next], but it does **not** fire when
+        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
+        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with
+        [`next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
 

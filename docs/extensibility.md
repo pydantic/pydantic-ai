@@ -28,7 +28,7 @@ To make a capability installable and usable in [agent specs](agent-spec.md):
 
 3. **Package naming** — use the `pydantic-ai-` prefix (e.g. `pydantic-ai-guardrails`) so users can find your package.
 
-4. **Registration** — users pass custom capability types via `custom_capability_types` on [`Agent.from_spec`][pydantic_ai.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.Agent.from_file].
+4. **Registration** — users pass custom capability types via `custom_capability_types` on [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file`][pydantic_ai.agent.Agent.from_file].
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent

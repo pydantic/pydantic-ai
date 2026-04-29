@@ -72,6 +72,115 @@ print(result.output)
 
 Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
 
+## Lifecycle overview
+
+The following sequence diagram shows all hooks firing during a complete run with one tool call (happy path). Error hooks (`on_*_error`) are mutually exclusive with `after_*` — see [error hooks](capabilities.md#error-hooks) for that flow.
+
+??? note "Expand sequence diagram"
+
+    ```mermaid
+    sequenceDiagram
+        participant App as Application
+        participant R as Run Hooks
+        participant N as Node Hooks
+        participant M as Model Hooks
+        participant P as prepare_tools
+        participant TV as Tool Validate Hooks
+        participant TEx as Tool Execute Hooks
+        participant LLM as LLM Provider
+        participant Fn as Tool Function
+
+        App->>R: before_run(ctx)
+        activate R
+        Note right of R: wrap_run enters
+
+        Note over R,Fn: ── UserPromptNode ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        Note over N: Build user prompt message
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: ModelRequestNode
+        deactivate N
+
+        Note over R,Fn: ── ModelRequestNode ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        N->>P: prepare_tools(ctx, tool_defs)
+        P-->>N: filtered tool_defs
+        N->>M: before_model_request(ctx, request_context)
+        activate M
+        Note right of M: wrap_model_request enters
+        M->>LLM: HTTP request
+        LLM-->>M: Response (with tool_calls)
+        Note right of M: wrap_model_request exits
+        M-->>N: after_model_request(ctx, request_context, response)
+        deactivate M
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: CallToolsNode
+        deactivate N
+
+        Note over R,Fn: ── CallToolsNode ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+
+        Note over TV,TEx: For each tool call
+        N->>TV: before_tool_validate(ctx, call, tool_def, raw_args)
+        activate TV
+        Note right of TV: wrap_tool_validate enters
+        Note over TV: Parse & validate args against schema
+        Note right of TV: wrap_tool_validate exits
+        TV-->>N: after_tool_validate(ctx, call, tool_def, validated_args)
+        deactivate TV
+
+        N->>TEx: before_tool_execute(ctx, call, tool_def, args)
+        activate TEx
+        Note right of TEx: wrap_tool_execute enters
+        TEx->>Fn: call tool function
+        Fn-->>TEx: result
+        Note right of TEx: wrap_tool_execute exits
+        TEx-->>N: after_tool_execute(ctx, call, tool_def, args, result)
+        deactivate TEx
+
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: ModelRequestNode
+        deactivate N
+
+        Note over R,Fn: ── ModelRequestNode (with tool results) ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        N->>P: prepare_tools(ctx, tool_defs)
+        P-->>N: filtered tool_defs
+        N->>M: before_model_request(ctx, request_context)
+        activate M
+        Note right of M: wrap_model_request enters
+        M->>LLM: HTTP request
+        LLM-->>M: Response (text only, no tool calls)
+        Note right of M: wrap_model_request exits
+        M-->>N: after_model_request(ctx, request_context, response)
+        deactivate M
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → next: CallToolsNode
+        deactivate N
+
+        Note over R,Fn: ── CallToolsNode (no tool calls) ──
+        R->>N: before_node_run(ctx, node)
+        activate N
+        Note right of N: wrap_node_run enters
+        Note over N: No tool calls → End(FinalResult)
+        Note right of N: wrap_node_run exits
+        N-->>R: after_node_run → End
+        deactivate N
+
+        Note right of R: wrap_run exits
+        R-->>App: after_run(ctx, result)
+        deactivate R
+        Note over App: AgentRunResult
+    ```
+
 ## Hook types
 
 ### Run hooks
@@ -94,7 +203,7 @@ Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wr
 | `node_run` | `node_run=` | `wrap_node_run` |
 | `node_run_error` | `node_run_error=` | `on_node_run_error` |
 
-Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNode], [`ModelRequestNode`][pydantic_ai.ModelRequestNode], [`CallToolsNode`][pydantic_ai.CallToolsNode]).
+Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.agent.UserPromptNode], [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode], [`CallToolsNode`][pydantic_ai.agent.CallToolsNode]).
 
 !!! note
     `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
@@ -312,13 +421,9 @@ print(wrap_log)
 
 ## Hook ordering
 
-When multiple hooks are registered for the same event (either on the same `Hooks` instance or across multiple capabilities):
+Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` fire in **registration order** (the order they were defined or passed to the constructor). `wrap_*` nests as middleware, with the first-registered wrapper as the outermost layer.
 
-* **`before_*`** hooks fire in registration/capability order
-* **`after_*`** hooks fire in reverse order
-* **`wrap_*`** hooks nest as middleware — the first registered hook is the outermost layer
-
-See [Composition](capabilities.md#composition) for details on how hooks from multiple capabilities interact.
+Across multiple capabilities, the [composition rules](capabilities.md#composition) apply: `before_*` fires in capability order, `after_*` fires in reverse capability order, and `wrap_*` nests as middleware.
 
 ## Error hooks
 

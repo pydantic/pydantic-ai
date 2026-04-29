@@ -3,6 +3,7 @@
 ::: pydantic_ai.toolsets
     options:
         members:
+        - AgentToolset
         - AbstractToolset
         - CombinedToolset
         - ExternalToolset
