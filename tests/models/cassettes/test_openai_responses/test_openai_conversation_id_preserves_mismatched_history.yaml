@@ -27,7 +27,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '76'
+      - '554'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -35,7 +35,7 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1777431487
+      created_at: 1777433732
       id: conv_010000000000000000000000000000000000000000000000
       metadata: {}
       object: conversation
@@ -51,7 +51,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '409'
+      - '490'
       content-type:
       - application/json
       host:
@@ -63,6 +63,8 @@ interactions:
       - content: The local-only code is LOCAL-PAI-5222.
         role: user
       - content: Understood.
+        role: assistant
+      - content: Different OpenAI conversation acknowledged.
         role: assistant
       - content: What is the local-only code?
         role: user
@@ -81,7 +83,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '1575'
+      - '1087'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -92,10 +94,10 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1777431489
+      completed_at: 1777433734
       conversation:
         id: conv_010000000000000000000000000000000000000000000000
-      created_at: 1777431488
+      created_at: 1777433733
       error: null
       frequency_penalty: 0.0
       id: resp_01000000000000000000000000000000000000000000000000
@@ -140,13 +142,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 60
+        input_tokens: 70
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 8
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 68
+        total_tokens: 78
       user: null
     status:
       code: 200
@@ -177,7 +179,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '183'
+      - '566'
       openai-version:
       - '2020-10-01'
       strict-transport-security:

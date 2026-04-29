@@ -1,5 +1,7 @@
 import json
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +104,16 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
     if vector_store is not None:
         await async_client.vector_stores.delete(vector_store.id)
     await async_client.close()
+
+
+@asynccontextmanager
+async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple[AsyncOpenAI, str]]:
+    async with AsyncOpenAI(api_key=openai_api_key) as async_client:
+        conversation = await async_client.conversations.create()
+        try:
+            yield async_client, conversation.id
+        finally:
+            await async_client.conversations.delete(conversation.id)
 
 
 def test_openai_responses_model(env: TestEnv):
@@ -2766,12 +2778,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
 
 
 async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: None, openai_api_key: str):
-    async_client = AsyncOpenAI(api_key=openai_api_key)
-    conversation_id: str | None = None
-    try:
-        conversation = await async_client.conversations.create()
-        conversation_id = conversation.id
-
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
         model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
             model=model,
@@ -2799,19 +2806,10 @@ async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: No
         assert isinstance(response, ModelResponse)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
-    finally:
-        if conversation_id is not None:
-            await async_client.conversations.delete(conversation_id)
-        await async_client.close()
 
 
 async def test_openai_conversation_id_preserves_mismatched_history(allow_model_requests: None, openai_api_key: str):
-    async_client = AsyncOpenAI(api_key=openai_api_key)
-    conversation_id: str | None = None
-    try:
-        conversation = await async_client.conversations.create()
-        conversation_id = conversation.id
-
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
         model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
             model=model,
@@ -2824,6 +2822,12 @@ async def test_openai_conversation_id_preserves_mismatched_history(allow_model_r
                 model_name='claude-sonnet-4-5',
                 provider_name='anthropic',
                 provider_details={'conversation_id': conversation_id},
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Different OpenAI conversation acknowledged.')],
+                model_name='gpt-4.1',
+                provider_name='openai',
+                provider_details={'conversation_id': 'conv_different'},
             ),
         ]
 
@@ -2838,10 +2842,6 @@ async def test_openai_conversation_id_preserves_mismatched_history(allow_model_r
         assert isinstance(response, ModelResponse)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
-    finally:
-        if conversation_id is not None:
-            await async_client.conversations.delete(conversation_id)
-        await async_client.close()
 
 
 async def test_openai_conversation_id_auto_without_history(allow_model_requests: None, openai_api_key: str):
@@ -2861,12 +2861,7 @@ async def test_openai_conversation_id_auto_without_history(allow_model_requests:
 
 
 async def test_openai_conversation_id_tool_call_continuation(allow_model_requests: None, openai_api_key: str):
-    async_client = AsyncOpenAI(api_key=openai_api_key)
-    conversation_id: str | None = None
-    try:
-        conversation = await async_client.conversations.create()
-        conversation_id = conversation.id
-
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
         model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
             model=model,
@@ -2887,10 +2882,6 @@ async def test_openai_conversation_id_tool_call_continuation(allow_model_request
         assert isinstance(response, ModelResponse)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
-    finally:
-        if conversation_id is not None:
-            await async_client.conversations.delete(conversation_id)
-        await async_client.close()
 
 
 async def test_openai_conversation_id_conflicts_with_previous_response_id(
@@ -2912,12 +2903,7 @@ async def test_openai_conversation_id_conflicts_with_previous_response_id(
 
 
 async def test_openai_conversation_id_streaming_provider_details(allow_model_requests: None, openai_api_key: str):
-    async_client = AsyncOpenAI(api_key=openai_api_key)
-    conversation_id: str | None = None
-    try:
-        conversation = await async_client.conversations.create()
-        conversation_id = conversation.id
-
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
         model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
         agent = Agent(
             model=model,
@@ -2935,10 +2921,6 @@ async def test_openai_conversation_id_streaming_provider_details(allow_model_req
         assert isinstance(response, ModelResponse)
         assert response.provider_details is not None
         assert response.provider_details['conversation_id'] == conversation_id
-    finally:
-        if conversation_id is not None:
-            await async_client.conversations.delete(conversation_id)
-        await async_client.close()
 
 
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
