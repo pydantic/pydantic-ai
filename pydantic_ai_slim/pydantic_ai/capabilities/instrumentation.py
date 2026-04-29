@@ -478,21 +478,17 @@ class Instrumentation(AbstractCapability[Any]):
         ) as span:
             try:
                 result = await handler(output)
-                if include_content and span.is_recording():
-                    span.set_attribute(
-                        names.tool_result_attr,
-                        result if isinstance(result, str) else json.dumps(InstrumentedModel.serialize_any(result)),
-                    )
-            except ToolRetryError as e:
-                part = e.tool_retry
-                if include_content and span.is_recording():
-                    span.set_attribute(names.tool_result_attr, part.model_response())
-                span.record_exception(e, escaped=True)
-                span.set_status(StatusCode.ERROR)
-                raise
             except BaseException as e:
+                # `do_process` (passed as `handler` by `run_output_process_hooks`) raises
+                # `ModelRetry` (or other exceptions) — `ToolRetryError` is only synthesized
+                # by `run_output_process_hooks`'s outer wrapper, after this span has closed.
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
+            if include_content and span.is_recording():
+                span.set_attribute(
+                    names.tool_result_attr,
+                    result if isinstance(result, str) else json.dumps(InstrumentedModel.serialize_any(result)),
+                )
 
         return result

@@ -3859,3 +3859,22 @@ def test_instrumentation_capability_template_description(
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     agent_span = spans[-1]  # outermost span is the agent run
     assert agent_span['attributes']['gen_ai.agent.description'] == snapshot('Agent for testing')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_instrumentation_capability_with_noop_tracer() -> None:
+    """When the configured tracer provider is a no-op, model-request spans skip
+    attribute population entirely. Regression coverage for the non-recording
+    branch in `Instrumentation.wrap_model_request`."""
+    from opentelemetry._logs import NoOpLoggerProvider
+    from opentelemetry.trace import NoOpTracerProvider
+
+    agent = Agent(
+        model=TestModel(),
+        instrument=InstrumentationSettings(
+            tracer_provider=NoOpTracerProvider(),
+            logger_provider=NoOpLoggerProvider(),
+        ),
+    )
+    result = await agent.run('hello')
+    assert result.output == snapshot('success (no tool calls)')
