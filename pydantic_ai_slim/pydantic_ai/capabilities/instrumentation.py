@@ -29,7 +29,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
@@ -54,6 +54,7 @@ class Instrumentation(AbstractCapability[Any]):
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
+    _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(2), repr=False, init=False
     )
@@ -161,7 +162,9 @@ class Instrumentation(AbstractCapability[Any]):
                 )
             }
         else:
-            last_instructions = InstrumentedModel._get_instructions(message_history)  # pyright: ignore[reportPrivateUsage]
+            last_instructions = InstrumentedModel._get_instructions(  # pyright: ignore[reportPrivateUsage]
+                message_history, self._last_model_request_parameters
+            )
             attrs = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(list(message_history))),
                 **settings.system_instructions_attributes(last_instructions),
@@ -238,6 +241,11 @@ class Instrumentation(AbstractCapability[Any]):
             request_context.model_settings,
             request_context.model_request_parameters,
         )
+        # Stash for `_run_span_end_attributes`: feeding the parameters into
+        # `_get_instructions` lets it use the canonical `instruction_parts` source
+        # (which includes prompted-output template instructions and is properly sorted)
+        # instead of falling back to reading `ModelRequest.instructions` from history.
+        self._last_model_request_parameters = prepared_parameters
 
         operation = 'chat'
         span_name = f'{operation} {model.model_name}'
@@ -329,20 +337,16 @@ class Instrumentation(AbstractCapability[Any]):
     # wrap_tool_execute — tool execution span
     # ------------------------------------------------------------------
 
-    async def wrap_tool_execute(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        handler: WrapToolExecuteHandler,
-    ) -> Any:
-        settings = self.settings
-        names = self._instrumentation_names
-        include_content = settings.include_content
+    def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
+        """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
 
-        span_attributes: dict[str, Any] = {
+        Both spans use `gen_ai.operation.name='execute_tool'` and the same `gen_ai.tool.*`
+        attributes — they only differ in how the result is serialized and which exceptions
+        are special-cased, which stays in the call-site `try/except`.
+        """
+        names = self._instrumentation_names
+        include_content = self.settings.include_content
+        return {
             'gen_ai.operation.name': 'execute_tool',
             'gen_ai.tool.name': call.tool_name,
             'gen_ai.tool.call.id': call.tool_call_id,
@@ -368,9 +372,22 @@ class Instrumentation(AbstractCapability[Any]):
             ),
         }
 
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        settings = self.settings
+        names = self._instrumentation_names
+        include_content = settings.include_content
+
         with settings.tracer.start_as_current_span(
             names.get_tool_span_name(call.tool_name),
-            attributes=span_attributes,
+            attributes=self._tool_span_attributes(call),
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
@@ -444,35 +461,9 @@ class Instrumentation(AbstractCapability[Any]):
         names = self._instrumentation_names
         include_content = settings.include_content
 
-        span_attributes: dict[str, Any] = {
-            'gen_ai.operation.name': 'execute_tool',
-            'gen_ai.tool.name': tool_call.tool_name,
-            'gen_ai.tool.call.id': tool_call.tool_call_id,
-            **({names.tool_arguments_attr: tool_call.args_as_json_str()} if include_content else {}),
-            **get_agent_run_baggage_attributes(),
-            'logfire.msg': f'running tool: {tool_call.tool_name}',
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {
-                        **(
-                            {
-                                names.tool_arguments_attr: {'type': 'object'},
-                                names.tool_result_attr: {'type': 'object'},
-                            }
-                            if include_content
-                            else {}
-                        ),
-                        'gen_ai.tool.name': {},
-                        'gen_ai.tool.call.id': {},
-                    },
-                }
-            ),
-        }
-
         with settings.tracer.start_as_current_span(
             names.get_tool_span_name(tool_call.tool_name),
-            attributes=span_attributes,
+            attributes=self._tool_span_attributes(tool_call),
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
