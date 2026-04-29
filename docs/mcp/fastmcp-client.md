@@ -126,7 +126,7 @@ async def long_task() -> str:
 
 async def main():
     agent = Agent(
-        TestModel(call_tools=['long_task'], custom_output_text='completed'),
+        TestModel(custom_output_text='completed'),
         toolsets=[FastMCPToolset(mcp)],
     )
     result = await agent.run('Run the long task')
