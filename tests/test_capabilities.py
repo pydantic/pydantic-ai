@@ -9644,3 +9644,19 @@ async def test_resolve_model_id_invoked_on_override() -> None:
     with agent.override(model='magic-model'):
         result = await agent.run('hi')
     assert result.output == 'ok'
+
+
+def test_resolve_model_id_invoked_on_agent_default_string() -> None:
+    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at init.
+
+    Capabilities with `resolve_model_id` need a shot at the default model string just
+    like they do for runtime overrides — otherwise things like `provider_factory` for
+    durability capabilities can't customize how the agent's primary model is built.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='default-resolved')
+    cap = _StringResolver(target=target)
+
+    agent = Agent('magic-model', name='resolve_default_string', capabilities=[cap])
+
+    # Capability's resolve_model_id ran at construction and the resolved Model is the default.
+    assert agent.model is target

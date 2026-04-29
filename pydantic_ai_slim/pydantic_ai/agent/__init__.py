@@ -406,8 +406,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
+        # Resolve the agent's default model up front so capabilities like
+        # `TemporalDurability` see a concrete `Model` when their `for_agent`
+        # binds (a few lines below). For string defaults, give capabilities
+        # the same shot at mapping the string to a `Model` they get for
+        # runtime values via `_get_model`.
         if model is None or defer_model_check:
             self._model = model
+        elif isinstance(model, str) and self._root_capability.has_resolve_model_id:
+            resolved = self._root_capability.resolve_model_id(model, agent=self)
+            self._model = resolved if resolved is not None else models.infer_model(model)
         else:
             self._model = models.infer_model(model)
 
