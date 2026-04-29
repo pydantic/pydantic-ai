@@ -293,6 +293,7 @@ def build_schema_types(
         type_hints = {k: fv for k, v in type_hints.items() if (fv := filter_serializable_type(v)) is not None}
 
         required_type_hints: dict[str, Any] = {}
+        parameters: dict[str, inspect.Parameter] = {}
 
         for p in inspect.signature(target).parameters.values():
             # Skip self/cls (unbound instance/class methods) and *args/**kwargs
@@ -305,6 +306,7 @@ def build_schema_types(
             # Skip params whose type was entirely filtered out
             if p.name not in type_hints:
                 continue
+            parameters[p.name] = p
             type_hints.setdefault(p.name, Any)
             if p.default is not p.empty:
                 type_hints[p.name] = NotRequired[type_hints[p.name]]
@@ -329,6 +331,15 @@ def build_schema_types(
         elif len(required_type_hints) == 1:  # pragma: no branch
             [type_hint_type] = required_type_hints.values()
             schema_types.append(_make_typed_dict('short_spec', {name: type_hint_type}))
+        elif not required_type_hints:
+            optional_positional_hints = [
+                type_hint
+                for field_name, type_hint in type_hints.items()
+                if parameters[field_name].kind
+                in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            if len(optional_positional_hints) == 1:
+                schema_types.append(_make_typed_dict('short_spec', {name: optional_positional_hints[0]}))
 
         # Long form: multiple parameters, possibly required
         if len(type_hints) > 1:

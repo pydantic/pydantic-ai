@@ -136,6 +136,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                         isinstance(part, ToolReturnPart)
                         and part.tool_name == _SEARCH_TOOLS_NAME
                         and isinstance(metadata := part.metadata, dict)
+                        # Check if it belongs to a cap, if that cap is loaded already
                         and isinstance(tool_names := metadata.get(_DISCOVERED_TOOLS_METADATA_KEY), list)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     ):
                         discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]

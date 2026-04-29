@@ -144,7 +144,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """
 
     id: str | None = field(default=None, kw_only=True)
-    description: str | None = field(default=None, kw_only=True)
+    description: str | None = field(default=None, kw_only=True)  # Make it a method
     defer_loading: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
