@@ -19,6 +19,7 @@ from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
+from genai_prices.data_snapshot import get_snapshot
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
@@ -861,7 +862,58 @@ class Model(ABC, Generic[InterfaceClient]):
         if effective_tools != profile_supported:
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
+        if _profile.context_window is None:
+            _profile = self._with_context_window(_profile)
+
         return _profile
+
+    def _with_context_window(self, profile: ModelProfile) -> ModelProfile:
+        for model_ref, provider_id, provider_api_url in self._context_window_lookup_attempts(profile):
+            try:
+                _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, provider_api_url)
+            except LookupError:
+                continue
+
+            if model_info.context_window is not None:
+                return replace(profile, context_window=model_info.context_window)
+
+        return profile
+
+    def _context_window_lookup_attempts(self, profile: ModelProfile) -> list[tuple[str, str | None, str | None]]:
+        attempts: list[tuple[str, str | None, str | None]] = []
+
+        try:
+            model_name = self.model_name
+        except AttributeError:
+            model_name = None
+
+        if model_name is not None:
+            try:
+                system = self.system
+            except AttributeError:
+                system = None
+            else:
+                attempts.append((model_name, system, None))
+
+            try:
+                base_url = self.base_url
+            except (AttributeError, UserError):
+                base_url = None
+
+            if base_url is not None:
+                attempts.append((model_name, None, base_url))
+
+            attempts.append((model_name, None, None))
+
+        origin_model_name = profile._origin_model_name  # pyright: ignore[reportPrivateUsage]
+        if origin_model_name is not None:
+            origin_provider = profile._origin_provider  # pyright: ignore[reportPrivateUsage]
+            if origin_provider is not None:
+                attempts.append((origin_model_name, origin_provider, None))
+
+            attempts.append((origin_model_name, None, None))
+
+        return attempts
 
     @property
     @abstractmethod

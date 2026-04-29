@@ -56,17 +56,19 @@ class NebiusProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        model_name = model_name.lower()
-        if '/' not in model_name:
+        raw_model_name = model_name
+        normalized_model_name = model_name.lower()
+        if '/' not in normalized_model_name:
             return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            profile = provider_to_profile[provider](model_name)
+        profile_provider, profile_model_name = normalized_model_name.split('/', 1)
+        if profile_provider in provider_to_profile:
+            profile = provider_to_profile[profile_provider](profile_model_name)
 
         # As NebiusProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return result.with_origin('huggingface_nebius', raw_model_name)
 
     @overload
     def __init__(self) -> None: ...
