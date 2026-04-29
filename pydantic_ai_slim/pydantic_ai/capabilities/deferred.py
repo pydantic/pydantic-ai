@@ -25,11 +25,15 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
     """A wrapper that suppresses a capability's contributions until explicitly loaded.
 
     When a capability has ``defer_loading=True``, the agent automatically wraps it
-    in a ``DeferredCapability``. Before :meth:`load` is called, all ``get_*`` methods
-    return empty values (``None`` / ``[]``), hiding the capability's instructions,
-    tools, and settings from the model. The capability's ``id`` and ``description``
-    remain visible for catalog rendering so the model can discover and request it
-    via ``load_capability(id)``.
+    in a ``DeferredCapability``. Until the model calls ``load_capability(id)``, all
+    ``get_*`` methods return empty values (``None`` / ``[]``), hiding the capability's
+    instructions, tools, and settings from the model. The capability's ``id`` and
+    ``description`` remain visible for catalog rendering so the model can discover
+    and request it.
+
+    Loaded state is derived from message history (the ``ToolReturn`` recorded by
+    ``load_capability``), so the same capability instance can be safely shared
+    across agents and runs without state leaking.
 
     Hooks are always forwarded regardless of loaded state, allowing the wrapped
     capability to observe lifecycle events and decide how to act based on
@@ -38,18 +42,18 @@ class DeferredCapability(WrapperCapability[AgentDepsT]):
 
     _loaded: bool = field(default=False, init=False, repr=False)
 
-    def load(self) -> None:
-        self._loaded = True
-
     @property
     def loaded(self) -> bool:
         return self._loaded
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         result = await super().for_run(ctx)
-        if isinstance(result, DeferredCapability) and not result._loaded:
-            if result.wrapped.id in parse_loaded_capabilities(ctx.messages):
-                result._loaded = True
+        # Each sibling DeferredCapability re-scans the same messages here; deduping would
+        # require threading a shared cache through for_run/RunContext, which isn't worth
+        # the API surface for a run-start cost on a small list.
+        loaded_capabilities = parse_loaded_capabilities(ctx.messages)
+        if isinstance(result, DeferredCapability):
+            result._loaded = result.wrapped.id in loaded_capabilities
         return result
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
@@ -90,7 +94,7 @@ class _GatedToolset(WrapperToolset[AgentDepsT]):
     deferred: DeferredCapability[AgentDepsT]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not self.deferred.loaded:
+        if self.deferred.wrapped.id not in parse_loaded_capabilities(ctx.messages):
             return {}
         return await self.wrapped.get_tools(ctx)
 

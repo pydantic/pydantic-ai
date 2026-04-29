@@ -17,8 +17,8 @@ if TYPE_CHECKING:
     from pydantic_ai.capabilities.deferred import DeferredCapability
     from pydantic_ai.messages import ModelMessage
 
-_LOAD_CAPABILITY_NAME = 'load_capability'
-_LOADED_CAPABILITY_METADATA_KEY = 'loaded_capability_id'
+LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
+LOADED_CAPABILITY_METADATA_KEY = 'loaded_capability_id'
 
 
 class _LoadCapabilityArgs(TypedDict):
@@ -51,14 +51,15 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        unloaded = [cap for cap in self.deferred_capabilities if not cap.loaded]
+        loaded_ids = parse_loaded_capabilities(ctx.messages)
+        unloaded = [cap for cap in self.deferred_capabilities if cap.wrapped.id not in loaded_ids]
         if not unloaded:
             return all_tools
 
         catalog = '\n'.join(f'- {cap.wrapped.id}: {cap.wrapped.description}' for cap in unloaded)
 
         load_tool_def = ToolDefinition(
-            name=_LOAD_CAPABILITY_NAME,
+            name=LOAD_CAPABILITY_TOOL_NAME,
             description=(
                 f'Load a capability to access its full instructions and tools. Available capabilities:\n{catalog}'
             ),
@@ -72,14 +73,14 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
             args_validator=_load_capability_args_ta.validator,  # pyright: ignore[reportArgumentType]
         )
 
-        result: dict[str, ToolsetTool[AgentDepsT]] = {_LOAD_CAPABILITY_NAME: load_tool}
+        result: dict[str, ToolsetTool[AgentDepsT]] = {LOAD_CAPABILITY_TOOL_NAME: load_tool}
         result.update(all_tools)
         return result
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if name == _LOAD_CAPABILITY_NAME:
+        if name == LOAD_CAPABILITY_TOOL_NAME:
             return self._load_capability(tool_args)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
@@ -87,7 +88,6 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         capability_id = tool_args['id']
         for cap in self.deferred_capabilities:
             if cap.wrapped.id == capability_id:
-                cap.load()
                 instructions = cap.wrapped.get_instructions()
                 if instructions is None:
                     msg = f'Capability {capability_id!r} loaded (no additional instructions).'
@@ -95,7 +95,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                     msg = instructions
                 else:
                     msg = f'Capability {capability_id!r} loaded.'
-                return ToolReturn(return_value=msg, metadata={_LOADED_CAPABILITY_METADATA_KEY: capability_id})
+                return ToolReturn(return_value=msg, metadata={LOADED_CAPABILITY_METADATA_KEY: capability_id})
         return f'No capability found with id {capability_id!r}.'
 
 
@@ -107,9 +107,9 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
             for part in msg.parts:
                 if (
                     isinstance(part, ToolReturnPart)
-                    and part.tool_name == _LOAD_CAPABILITY_NAME
+                    and part.tool_name == LOAD_CAPABILITY_TOOL_NAME
                     and isinstance(metadata := part.metadata, dict)
-                    and isinstance(cap_id := metadata.get(_LOADED_CAPABILITY_METADATA_KEY), str)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    and isinstance(cap_id := metadata.get(LOADED_CAPABILITY_METADATA_KEY), str)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                 ):
                     loaded.add(cap_id)
     return loaded
