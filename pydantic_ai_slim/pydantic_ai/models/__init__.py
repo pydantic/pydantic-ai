@@ -26,7 +26,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import AbstractBuiltinTool, ToolSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -755,7 +755,7 @@ class Model(ABC, Generic[InterfaceClient]):
             raise UserError('Image output is not supported by this model.')
 
         # Check builtin tools and handle fallback swap
-        if params.builtin_tools or any(t.prefer_builtin or t.managed_by_builtin for t in params.function_tools):
+        if params.builtin_tools or any(t.unless_builtin or t.managed_by_builtin for t in params.function_tools):
             params = self._resolve_builtin_tool_swap(params)
 
         return model_settings, params
@@ -763,11 +763,19 @@ class Model(ABC, Generic[InterfaceClient]):
     def _resolve_builtin_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Swap builtin tools and function-tool fallbacks/corpus based on profile support.
 
-        - ``prefer_builtin``: a local fallback that is removed when the builtin IS supported.
-        - ``managed_by_builtin``: part of a corpus managed by the builtin — kept when
-          supported (adapter applies wire-format tweaks), dropped when not supported.
-        - Optional unsupported builtins (``t.optional``) with no corpus are silently
-          dropped instead of raising.
+        Four rules drive the per-tool filter:
+
+        1. ``unless_builtin`` matches a supported builtin → drop from wire.
+        2. ``managed_by_builtin`` matches a supported builtin → keep on wire; the adapter
+           applies any builtin-specific format (e.g. Anthropic / OpenAI's wire-side
+           ``defer_loading`` flag for ``ToolSearchTool``).
+        3. ``managed_by_builtin`` matches an *unsupported* builtin AND ``defer_loading=True``
+           → drop from wire (the corpus member is currently undiscovered, so the model has
+           no way to call it on this provider).
+        4. Otherwise → keep.
+
+        Optional unsupported builtins (currently only [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]
+        carries the flag) with no remaining corpus are silently dropped instead of raising.
         """
         supported_types = self.profile.supported_builtin_tools
 
@@ -776,8 +784,8 @@ class Model(ABC, Generic[InterfaceClient]):
 
         supported_ids = {t.unique_id for t in supported_builtins}
         unsupported_ids = {t.unique_id for t in unsupported_builtins}
-        optional_ids = {t.unique_id for t in unsupported_builtins if t.optional}
-        fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
+        optional_ids = {t.unique_id for t in unsupported_builtins if isinstance(t, ToolSearchTool) and t.optional}
+        fallback_ids = {t.unless_builtin for t in params.function_tools if t.unless_builtin}
 
         without_fallback = unsupported_ids - fallback_ids - optional_ids
         if without_fallback:
@@ -793,26 +801,23 @@ class Model(ABC, Generic[InterfaceClient]):
 
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
-            if t.prefer_builtin and t.prefer_builtin in supported_ids:
+            # Rule 1: drop local fallback when the builtin is supported.
+            if t.unless_builtin and t.unless_builtin in supported_ids:
                 continue
-            if t.managed_by_builtin and t.managed_by_builtin not in supported_ids:
+            # Rule 3: drop undiscovered corpus members when the builtin is unsupported.
+            if t.managed_by_builtin and t.managed_by_builtin not in supported_ids and t.defer_loading:
                 continue
+            # Rules 2 + 4: keep.
             function_tools.append(t)
-
-        # Dedup by `tool_def.name`: some capabilities (notably tool search) produce both
-        # a managed variant (carries ``managed_by_builtin``) and a regular variant for
-        # the same tool, so `prepare_request` can pick the right one per model. On the
-        # native path both would survive the filter above, sending duplicate tool names
-        # on the wire. The managed variant is the one the model adapter knows how to
-        # express on the wire with provider-specific tweaks (e.g. ``defer_loading``),
-        # so it wins over its regular counterpart.
-        managed_names = {t.name for t in function_tools if t.managed_by_builtin}
-        function_tools = [t for t in function_tools if t.managed_by_builtin or t.name not in managed_names]
 
         # Drop optional builtins whose managed corpus is empty after filtering —
         # they have nothing to do, so sending them would waste a tool slot.
         remaining_corpus_ids = {t.managed_by_builtin for t in function_tools if t.managed_by_builtin}
-        supported_builtins = [t for t in supported_builtins if not t.optional or t.unique_id in remaining_corpus_ids]
+        supported_builtins = [
+            t
+            for t in supported_builtins
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
+        ]
         return replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
     @property

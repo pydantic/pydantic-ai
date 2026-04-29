@@ -417,9 +417,9 @@ async def test_tool_search_toolset_filters_deferred_tools():
         [
             'get_weather',
             'get_time',
-            'calculate_mortgage~managed:tool_search',
-            'stock_price~managed:tool_search',
-            'crypto_price~managed:tool_search',
+            'calculate_mortgage',
+            'stock_price',
+            'crypto_price',
             'search_tools',
         ]
     )
@@ -661,8 +661,10 @@ async def test_tool_search_toolset_max_results():
     assert len(rv['tools']) == 10
 
 
-async def test_tool_search_toolset_discovered_tools_available():
-    """Test that discovered tools become available after search."""
+async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
+    """Discovered tools have ``defer_loading=False``; undiscovered ones still have
+    ``defer_loading=True``. Both stay in the toolset under their real names — the
+    wire-side filter in ``Model.prepare_request`` decides what reaches the model."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -679,13 +681,19 @@ async def test_tool_search_toolset_discovered_tools_available():
     ctx = _build_run_context(None, messages=messages)
 
     tools = await searchable.get_tools(ctx)
-    tool_names = list(tools.keys())
+    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['stock_price'].tool_def.defer_loading is True
+    assert tools['crypto_price'].tool_def.defer_loading is True
 
-    assert 'calculate_mortgage' in tool_names
-    assert 'stock_price' not in tool_names
 
+async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
+    """``search_tools`` stays in the request even when every deferred tool is discovered.
 
-async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are_discovered():
+    Dropping it would invalidate the cached request prefix on the next turn — keeping
+    it preserves prompt caching across discovery steps. The local tool's body is a no-op
+    branch in `_search_tools` since the index is empty, and on native paths it's dropped
+    by the adapter via its `unless_builtin='tool_search'` flag anyway.
+    """
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -714,12 +722,10 @@ async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are
         [
             'get_weather',
             'get_time',
-            'calculate_mortgage~managed:tool_search',
             'calculate_mortgage',
-            'stock_price~managed:tool_search',
             'stock_price',
-            'crypto_price~managed:tool_search',
             'crypto_price',
+            'search_tools',
         ]
     )
 
@@ -818,10 +824,11 @@ def test_tool_search_in_capability_registry():
     assert CAPABILITY_TYPES['ToolSearch'] is ToolSearch
 
 
-async def test_tool_manager_with_tool_search_toolset_exposes_both_variants():
-    """The toolset emits both representations of every deferred tool — a managed variant
-    carrying ``managed_by_builtin='tool_search'`` and, for discovered tools, a regular
-    variant. ``Model.prepare_request`` filters to one based on model support."""
+async def test_tool_manager_with_tool_search_toolset_marks_corpus():
+    """Every deferred tool appears once under its real name with
+    ``managed_by_builtin='tool_search'``. Visible tools and ``search_tools`` round
+    out the dispatch dict. ``Model.prepare_request`` filters per-model to decide what
+    actually reaches the wire."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -835,11 +842,10 @@ async def test_tool_manager_with_tool_search_toolset_exposes_both_variants():
     local_names = [t.name for t in run_step_toolset.tool_defs if not t.managed_by_builtin]
     assert 'get_weather' in local_names
     assert 'search_tools' in local_names
-    # Undiscovered deferred tools don't appear in regular form.
-    assert 'calculate_mortgage' not in local_names
 
-    # Dispatch works under the plain name regardless of whether the entry only
-    # exists under the suffixed `~managed:tool_search` key.
+    # Undiscovered deferred tools are still dispatchable through the toolset under their
+    # real name — the wire-side filtering in `prepare_request` decides whether the
+    # model can see them, but `ToolManager` doesn't gatekeep dispatch on that.
     result = await run_step_toolset.handle_call(
         ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
     )
@@ -870,7 +876,9 @@ async def test_tool_search_toolset_tool_with_none_description():
 
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
-    """Test that tools discovered in multiple searches accumulate correctly."""
+    """Discovery accumulates across search turns: tools surfaced in any past
+    ``search_tools`` return have `defer_loading=False` on the next step, and
+    not-yet-found ones keep `defer_loading=True`."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -895,11 +903,9 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
     ctx = _build_run_context(None, messages=messages)
 
     tools = await searchable.get_tools(ctx)
-    tool_names = list(tools.keys())
-
-    assert 'calculate_mortgage' in tool_names
-    assert 'stock_price' in tool_names
-    assert 'crypto_price' not in tool_names
+    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['stock_price'].tool_def.defer_loading is False
+    assert tools['crypto_price'].tool_def.defer_loading is True
 
 
 async def test_function_toolset_all_deferred():
@@ -922,9 +928,7 @@ async def test_function_toolset_all_deferred():
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
 
-    assert tool_names == snapshot(
-        ['deferred_tool1~managed:tool_search', 'deferred_tool2~managed:tool_search', 'search_tools']
-    )
+    assert tool_names == snapshot(['deferred_tool1', 'deferred_tool2', 'search_tools'])
 
 
 async def test_tool_search_toolset_ignores_malformed_content_history():
@@ -963,9 +967,10 @@ async def test_tool_search_toolset_ignores_malformed_content_history():
     ctx = _build_run_context(None, messages=messages)
 
     tools = await searchable.get_tools(ctx)
-    assert 'calculate_mortgage' in tools
-    assert 'stock_price' not in tools
-    assert 'crypto_price' not in tools
+    # Only the well-formed entry flips `defer_loading` off; malformed history is ignored.
+    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['stock_price'].tool_def.defer_loading is True
+    assert tools['crypto_price'].tool_def.defer_loading is True
 
 
 async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
@@ -1016,7 +1021,10 @@ async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
 
 
 async def test_deferred_loading_toolset_marks_all_tools():
-    """Test that DeferredLoadingToolset marks all tools for deferred loading when tool_names is None."""
+    """``DeferredLoadingToolset`` (with `tool_names=None`) flips `defer_loading=True`
+    on every tool. After wrapping with `ToolSearchToolset`, all of them appear under
+    their real name with `defer_loading=True` (visibility hidden until discovered).
+    `search_tools` is the only directly-callable tool up front."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain
@@ -1035,12 +1043,13 @@ async def test_deferred_loading_toolset_marks_all_tools():
 
     tools = await searchable.get_tools(ctx)
     assert 'search_tools' in tools
-    assert 'tool_a' not in tools
-    assert 'tool_b' not in tools
+    assert tools['tool_a'].tool_def.defer_loading is True
+    assert tools['tool_b'].tool_def.defer_loading is True
 
 
 async def test_deferred_loading_toolset_marks_specific_tools():
-    """Test that DeferredLoadingToolset marks only named tools for deferred loading."""
+    """``DeferredLoadingToolset`` with explicit names only flips `defer_loading=True`
+    on the listed tools; others stay visible."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool_plain
@@ -1059,15 +1068,15 @@ async def test_deferred_loading_toolset_marks_specific_tools():
 
     tools = await searchable.get_tools(ctx)
     assert 'search_tools' in tools
-    assert 'tool_a' in tools
-    assert 'tool_b' not in tools
+    assert tools['tool_a'].tool_def.defer_loading is False
+    assert tools['tool_b'].tool_def.defer_loading is True
 
 
-async def test_tool_search_toolset_emits_managed_variant_under_suffixed_key():
-    """Every deferred tool has a managed variant under a ``~managed:tool_search``
-    suffixed key regardless of the current model — the adapter's ``prepare_request``
-    filters to it when the model supports native tool search, so the toolset can't
-    commit early (e.g. under ``FallbackModel``)."""
+async def test_tool_search_toolset_marks_corpus_with_managed_by_builtin():
+    """Every deferred tool keeps its real name in the toolset output and carries
+    ``managed_by_builtin='tool_search'`` regardless of the current model — the adapter's
+    ``prepare_request`` decides what reaches the wire so the toolset can't commit early
+    (e.g. under ``FallbackModel``)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -1075,22 +1084,17 @@ async def test_tool_search_toolset_emits_managed_variant_under_suffixed_key():
     tools = await searchable.get_tools(ctx)
 
     managed = {name: tool.tool_def for name, tool in tools.items() if tool.tool_def.managed_by_builtin}
-    assert set(managed) == {
-        'calculate_mortgage~managed:tool_search',
-        'stock_price~managed:tool_search',
-        'crypto_price~managed:tool_search',
-    }
+    assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
     for tool_def in managed.values():
         assert tool_def.managed_by_builtin == 'tool_search'
         assert tool_def.defer_loading
-    # The local fallback is still present — dropped by the adapter via ``prefer_builtin``.
+    # The local fallback is still present — dropped by the adapter via ``unless_builtin``.
     assert _SEARCH_TOOLS_NAME in tools
 
 
 async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
-    """The provider calls a deferred tool by its plain name. ``ToolManager`` dispatches
-    to the same underlying ``ToolsetTool`` even when only the ``~managed:`` variant is
-    present in the toolset output (undiscovered tool)."""
+    """The provider calls a deferred tool by its plain name and ``ToolManager``
+    dispatches directly via the dict key (also the plain name)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
@@ -1128,12 +1132,12 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     assert calls == ['anything']
 
 
-async def test_tool_search_toolset_custom_search_fn_still_emits_managed_variants():
-    """A custom ``search_fn`` handles local discovery, but the toolset still emits the
-    managed variants of deferred tools — when the model supports native tool search
-    (including provider-side custom callable modes like Anthropic's tool_reference
-    mechanism or OpenAI's ``execution='client'``), the adapter keeps them and applies
-    ``defer_loading`` on the wire. Commitment to native-vs-local happens in
+async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
+    """A custom ``search_fn`` handles local discovery, but the toolset still flags every
+    deferred tool with ``managed_by_builtin='tool_search'`` — when the model supports
+    native tool search (including provider-side custom callable modes like Anthropic's
+    tool_reference mechanism or OpenAI's ``execution='client'``), the adapter keeps them
+    and applies ``defer_loading`` on the wire. Commitment to native-vs-local happens in
     ``Model.prepare_request``, not here."""
 
     def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
@@ -2236,8 +2240,8 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
     ctx = _build_run_context(None, messages=messages)
 
     tools = await searchable.get_tools(ctx)
-    assert 'calculate_mortgage' in tools
-    assert 'stock_price' not in tools
+    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['stock_price'].tool_def.defer_loading is True
 
 
 async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
@@ -2329,24 +2333,25 @@ async def test_tool_search_capability_strategy_substring_no_builtin():
     assert builtins == []
 
 
-async def test_tool_search_capability_substring_keeps_local_fallback():
-    """``strategy='substring'`` still registers the local ``search_tools`` toolset."""
+async def test_tool_search_capability_wraps_with_tool_search_toolset():
+    """``strategy='substring'`` wraps with ``ToolSearchToolset`` so the corpus is
+    exposed and ``search_tools`` carries the user's customizations."""
     toolset = _create_function_toolset()
     cap = ToolSearch(strategy='substring')
     wrapped = cap.get_wrapper_toolset(toolset)
     assert isinstance(wrapped, ToolSearchToolset)
-    assert wrapped.local_fallback is True
+    assert wrapped.search_fn is None
 
 
-async def test_tool_search_capability_named_strategy_skips_local_fallback():
-    """Named native strategies (bm25/regex) must suppress the local ``search_tools``
-    tool so ``prepare_request`` raises on unsupported models instead of falling back
-    to a different local algorithm."""
+async def test_tool_search_capability_named_strategy_wraps_with_tool_search_toolset():
+    """Named native strategies (bm25/regex) still wrap with ``ToolSearchToolset`` so
+    the corpus is exposed; ``prepare_request`` raises on unsupported models because the
+    builtin is registered with ``optional=False``."""
     toolset = _create_function_toolset()
     cap = ToolSearch(strategy='bm25')
     wrapped = cap.get_wrapper_toolset(toolset)
     assert isinstance(wrapped, ToolSearchToolset)
-    assert wrapped.local_fallback is False
+    assert wrapped.search_fn is None
 
 
 async def test_tool_search_named_strategy_raises_on_unsupported_model():
@@ -2383,18 +2388,19 @@ async def test_tool_search_substring_ignores_builtin_support():
     assert [t.name for t in prepared.function_tools] == [_SEARCH_TOOLS_NAME]
 
 
-def test_managed_by_builtin_swaps_on_support():
-    """In `prepare_request`, `managed_by_builtin` tools are kept when the builtin
-    is supported and dropped otherwise — mirroring `prefer_builtin` in reverse."""
+def test_managed_by_builtin_undiscovered_drops_on_unsupported_model():
+    """In `prepare_request`, `managed_by_builtin` corpus members with `defer_loading=True`
+    (still undiscovered) drop on a model that doesn't support the builtin — the model has
+    no way to call them and the local `search_tools` fallback handles discovery."""
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import ToolDefinition
 
     m = TestModel()
     # `optional=True` models the default auto path where the builtin is a best-effort
-    # upgrade; on a model that doesn't support it, both the builtin and its corpus drop
-    # so the local `ToolSearch` fallback handles discovery.
+    # upgrade; on a model that doesn't support it, both the builtin and its undiscovered
+    # corpus drop so the local `ToolSearch` fallback handles discovery.
     search_builtin = ToolSearchTool(optional=True)
-    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search')
+    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search', defer_loading=True)
 
     _, prepared = m.prepare_request(
         None,
@@ -2405,6 +2411,26 @@ def test_managed_by_builtin_swaps_on_support():
     )
     assert prepared.builtin_tools == []
     assert prepared.function_tools == []
+
+
+def test_managed_by_builtin_discovered_kept_on_unsupported_model():
+    """A discovered corpus member (`defer_loading=False`) stays in the request even when
+    the builtin is unsupported — the model can call it directly by name on the local path."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import ToolDefinition
+
+    m = TestModel()
+    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search', defer_loading=False)
+
+    _, prepared = m.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[corpus_tool],
+            builtin_tools=[ToolSearchTool(optional=True)],
+        ),
+    )
+    assert prepared.builtin_tools == []
+    assert [t.name for t in prepared.function_tools] == ['deferred_tool']
 
 
 def test_managed_by_builtin_kept_on_supporting_model():

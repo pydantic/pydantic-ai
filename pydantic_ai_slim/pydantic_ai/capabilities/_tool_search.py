@@ -132,16 +132,19 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         return [ToolSearchTool(strategy=named, optional=False)]
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # For explicit named native strategies, the local ``search_tools`` function
-        # tool is not a valid fallback — the user's ``strategy='bm25'``/``'regex'``
-        # choice must be honored by the provider or error out. Suppress the local
-        # tool so ``prepare_request`` can raise cleanly when the builtin is unsupported.
-        local_fallback = not (isinstance(self.strategy, str) and self.strategy in ('bm25', 'regex'))
+        # For explicit named native strategies (`'bm25'` / `'regex'`) the
+        # ``ToolSearchTool`` builtin is registered with ``optional=False`` (see
+        # ``get_builtin_tools`` above), so ``prepare_request`` will raise on a model
+        # without native support — there's no risk of the local ``search_tools``
+        # function silently substituting a different algorithm. Always wrap with
+        # ``ToolSearchToolset`` so the corpus is exposed and ``search_tools`` keeps
+        # the prompt prefix stable across discovery steps; the function tool gets
+        # dropped on the wire whenever the builtin is supported via its
+        # ``unless_builtin='tool_search'`` flag.
         return ToolSearchToolset(
             wrapped=toolset,
             search_fn=self._search_fn,
             max_results=self.max_results,
             tool_description=self.tool_description,
             search_guidance=self.search_guidance,
-            local_fallback=local_fallback,
         )

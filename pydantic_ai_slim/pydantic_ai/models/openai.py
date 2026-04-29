@@ -746,7 +746,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
-            and not any(t.prefer_builtin == 'web_search' for t in model_request_parameters.function_tools)
+            and not any(t.unless_builtin == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
@@ -3886,7 +3886,7 @@ def _find_search_tool_definition(
     """Locate the local ``search_tools`` function-tool definition in the current request.
 
     In custom-callable tool search mode, ``ToolSearchToolset`` leaves its ``search_tools``
-    function tool in ``function_tools`` (no ``prefer_builtin``), so we look it up by name.
+    function tool in ``function_tools`` (no ``unless_builtin``), so we look it up by name.
     """
     return next(
         (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),

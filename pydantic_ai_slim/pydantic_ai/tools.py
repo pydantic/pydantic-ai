@@ -6,7 +6,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import AliasChoices, Discriminator, Field, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
@@ -742,17 +742,29 @@ class ToolDefinition:
     """
 
     defer_loading: bool = False
-    """Whether this tool should be hidden from the model until discovered via tool search.
+    """Whether this tool should currently be hidden from the model.
+
+    Both a user-facing input flag (set on `Tool(defer_loading=True)`) and the
+    visibility state computed from message history by a toolset like
+    [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] (which sets
+    `defer_loading=False` once the tool is discovered). The dual meaning is acknowledged
+    tech debt; a future `RunContext.loaded` will cleanly separate config from state.
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
-    prefer_builtin: str | None = None
-    """If set, this function tool is a local fallback for the builtin tool with the given unique_id.
+    unless_builtin: Annotated[
+        str | None,
+        # Old name was `prefer_builtin`; keep accepting it for serialized-history backward compat.
+        Field(validation_alias=AliasChoices('unless_builtin', 'prefer_builtin')),
+    ] = None
+    """If set, this tool is dropped from the wire when the named builtin is supported by the model.
 
-    When the model supports the corresponding builtin tool natively, this function tool is
-    removed from the request. When the model does not support the builtin, the builtin is
-    removed and this function tool stays.
+    Generic version of the old `prefer_builtin` flag: a function tool carrying
+    `unless_builtin='web_search'` is treated as a local fallback for the
+    [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] builtin and silently
+    removed from the request whenever the model handles `WebSearchTool` natively. It
+    stays in the request when the builtin isn't supported.
     """
 
     managed_by_builtin: str | None = None
@@ -761,9 +773,10 @@ class ToolDefinition:
     (e.g. [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool] sets
     `'tool_search'`).
 
-    Complementary to `prefer_builtin`: a tool with `prefer_builtin` is a local fallback that's
+    Complementary to `unless_builtin`: a tool with `unless_builtin` is a local fallback that's
     removed when the builtin is supported, while a tool with `managed_by_builtin` is part of
-    the builtin's corpus and kept when the builtin is supported.
+    the builtin's corpus and kept when the builtin is supported (and dropped when the builtin
+    is unsupported and `defer_loading=True`).
     """
 
     return_schema: ObjectJsonSchema | None = None

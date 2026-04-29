@@ -19,7 +19,7 @@ from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.builtin_tools import AbstractBuiltinTool, ToolSearchTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
@@ -440,6 +440,16 @@ async def _prepare_request_parameters(
                     t = await t
                 if t is not None:
                     builtin_tools.append(t)
+
+    # Drop the auto-injected `ToolSearchTool` builtin when the search corpus is empty —
+    # the toolset has nothing to manage, so emitting the builtin would waste a tool slot
+    # and surface an inert builtin in `ModelRequestParameters` snapshots. Filtering
+    # here (at MRP-construction time) keeps the request shape honest before
+    # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
+    # preserved so the request still fails loudly on unsupported models.
+    has_tool_search_corpus = any(t.managed_by_builtin == ToolSearchTool.kind for t in function_tools)
+    if not has_tool_search_corpus:
+        builtin_tools = [t for t in builtin_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
     return models.ModelRequestParameters(
         function_tools=function_tools,

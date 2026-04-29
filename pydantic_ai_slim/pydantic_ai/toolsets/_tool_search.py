@@ -3,29 +3,22 @@
 `ToolSearchToolset` wraps another toolset to support discovery of tools marked with
 `defer_loading=True`. Rather than commit to native-vs-local at toolset time (which can't
 know which model will actually serve the request — think `FallbackModel`), the toolset
-emits **both** representations of every deferred tool and lets
-[`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter to one based
-on the specific model's support for the
-[`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] builtin.
+emits one entry per deferred tool with both `managed_by_builtin='tool_search'` and the
+current local visibility on `defer_loading`, then lets
+[`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] filter based on the
+specific model's support for the [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]
+builtin:
 
-Dict keys follow the convention:
+* On the native path the adapter keeps every corpus member (regardless of local
+  discovery state) and applies its provider-specific wire format — e.g. setting
+  `defer_loading=True` on the Anthropic / OpenAI Responses tool param so the provider
+  drives discovery server-side.
+* On the local path corpus members with `defer_loading=True` (still undiscovered) are
+  dropped from the wire; discovered ones (`defer_loading=False`) stay so the model can
+  call them by their real name.
 
-* `{name}~managed:tool_search` → deferred tool in **managed** form (carries
-  `managed_by_builtin='tool_search'` on its `ToolDefinition`). Always present for
-  every deferred tool. When the model supports native tool search, the adapter keeps
-  this in the request and sets `defer_loading=True` on the wire.
-* `{name}` → deferred tool in **regular** form (no `managed_by_builtin`). Only
-  present when the tool has been discovered — either by our local `search_tools`
-  function or by a previous provider-native search, both of which write
-  `discovered_tools` into message history. When the model does NOT support native
-  tool search, the adapter keeps this variant and drops the managed one.
-* `search_tools` → the local discovery function with `prefer_builtin='tool_search'`.
-  Dropped by the adapter when the builtin is supported.
-
-The two variants of a deferred tool share the same underlying `ToolsetTool` — only the
-wrapping `ToolDefinition` differs (`managed_by_builtin` flag set or not). The
-model calls the tool by its plain name, and the `ToolManager` dispatches by
-`tool_def.name` rather than dict key, so either variant resolves correctly.
+`search_tools`, the local discovery function, carries `unless_builtin='tool_search'`
+and is dropped by the adapter when the builtin is supported.
 """
 
 from __future__ import annotations
@@ -56,7 +49,6 @@ from .wrapper import WrapperToolset
 
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
-_MANAGED_KEY_SUFFIX = f'~managed:{_TOOL_SEARCH_BUILTIN_ID}'
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 """Legacy metadata key for previously-discovered tool names.
@@ -66,11 +58,6 @@ Pre-typed-content versions of this toolset wrote discovered tool names to
 [`ToolSearchReturn`][pydantic_ai.builtin_tools.ToolSearchReturn] on `content`.
 Read-only — kept for backward-compat parsing of persisted histories. New writes go to
 the typed content."""
-
-
-def _managed_key(name: str) -> str:
-    """Dict key for the managed-variant entry of a deferred tool in the toolset output."""
-    return f'{name}{_MANAGED_KEY_SUFFIX}'
 
 
 _MAX_SEARCH_RESULTS = 10
@@ -151,17 +138,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     search_guidance: str | None = None
     """Custom description for the `keywords` parameter shown to the model."""
 
-    local_fallback: bool = True
-    """Whether to register the local `search_tools` function tool.
-
-    When `False`, deferred tools appear only in their managed form and discovery must go
-    through the provider's native tool search. Used by
-    [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] when an explicit named native
-    strategy (`'bm25'` / `'regex'`) is configured — falling back to a different local
-    algorithm would silently ignore the user's choice, so we skip the local tool entirely
-    and let `prepare_request` raise if the native builtin is unavailable.
-    """
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
@@ -185,34 +161,27 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
-        # Emit both representations of every deferred tool so the model adapter
-        # (inside `Model.prepare_request` with the concrete model in hand — the decision
-        # that can't be made here because of `FallbackModel`) can filter to whichever
-        # path the specific model supports:
-        #
-        # * `{name}~managed:tool_search` — always present; carries
-        #   `managed_by_builtin='tool_search'`. Kept by adapters whose model supports
-        #   native tool search.
-        # * `{name}` — only present for already-discovered tools. Kept by adapters
-        #   whose model doesn't support native tool search.
-        #
-        # Both entries share the same underlying dispatch target; the surviving entry
-        # determines which `ToolDefinition` is sent to the model. Duplication here stays
-        # bounded: at most `N + k` entries where `k` is the number of discovered tools
-        # (not `2N`), because undiscovered tools only appear in the managed slot.
+        # Single entry per deferred tool, keyed by its real name. `managed_by_builtin`
+        # stays set across the run (the tool is part of the search corpus regardless of
+        # current discovery state); `defer_loading` reflects current visibility — flipped
+        # to `False` once the tool is discovered. `Model.prepare_request` reads both
+        # flags together to decide what reaches the wire (see the four-rule filter in
+        # `_resolve_builtin_tool_swap`).
         for name, tool in deferred.items():
-            managed_def = replace(tool.tool_def, managed_by_builtin=_TOOL_SEARCH_BUILTIN_ID)
-            result[_managed_key(name)] = replace(tool, tool_def=managed_def)
-            if name in discovered:
-                result[name] = tool
+            managed_def = replace(
+                tool.tool_def,
+                managed_by_builtin=_TOOL_SEARCH_BUILTIN_ID,
+                defer_loading=name not in discovered,
+            )
+            result[name] = replace(tool, tool_def=managed_def)
 
-        # `search_tools` carries `prefer_builtin='tool_search'` (when fallback-to-local
-        # is appropriate) — the adapter drops it when the builtin is supported. Skip
-        # emitting it when `local_fallback=False` (the capability's named-native mode:
-        # we must not silently substitute a different local algorithm for the user's
-        # explicit strategy choice) or once every deferred tool is already discovered.
-        if self.local_fallback and not discovered.issuperset(deferred):
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
+        # Emit `search_tools` whenever the corpus is non-empty — we always reach this
+        # point with deferred tools to manage. It carries `unless_builtin='tool_search'`
+        # so the adapter drops it when the builtin is supported (the native path handles
+        # discovery server-side). Keeping it across discovery steps preserves prompt
+        # caching: dropping it once everything is discovered would invalidate the
+        # request prefix on the very next turn.
+        result[_SEARCH_TOOLS_NAME] = self._build_search_tool(deferred, discovered)
 
         return result
 
@@ -234,17 +203,17 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             if name not in discovered
         ]
 
-        # `prefer_builtin` tells the adapter to drop this function tool when the native
+        # `unless_builtin` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the
         # provider handles search entirely). For a custom callable strategy, the native
         # path on both Anthropic (regular function tool with tool_reference result
         # formatting) and OpenAI (`execution='client'`) still needs the local function
-        # tool to execute the search, so we leave `prefer_builtin` unset in that case.
+        # tool to execute the search, so we leave `unless_builtin` unset in that case.
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
-            prefer_builtin=_TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None,
+            unless_builtin=_TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None,
         )
 
         return _SearchTool(
