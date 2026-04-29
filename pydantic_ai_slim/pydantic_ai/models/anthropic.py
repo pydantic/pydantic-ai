@@ -232,6 +232,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
+    anthropic_service_tier: Literal['auto', 'standard_only']
+    """The service tier to use for the model request.
+
+    See https://docs.anthropic.com/en/docs/build-with-claude/latency-and-throughput for more information.
+    """
+
     anthropic_cache_instructions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last system prompt block.
 
@@ -326,6 +332,26 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
     """
+
+
+def _resolve_anthropic_service_tier(
+    model_settings: AnthropicModelSettings,
+) -> Literal['auto', 'standard_only'] | Omit:
+    """Resolve the value to send as `service_tier` on the Anthropic request.
+
+    Per-provider [`anthropic_service_tier`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_service_tier]
+    wins; otherwise the top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] is mapped
+    (`'default'` → `'standard_only'`, `'auto'` → `'auto'`). `'flex'`/`'priority'` are dropped as Anthropic
+    does not expose them via this field.
+    """
+    if anthropic_tier := model_settings.get('anthropic_service_tier'):
+        return anthropic_tier
+    unified = model_settings.get('service_tier')
+    if unified == 'auto':
+        return 'auto'
+    if unified == 'default':
+        return 'standard_only'
+    return OMIT
 
 
 @dataclass(init=False)
@@ -606,6 +632,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(builtin_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
+
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -627,6 +654,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
                 container=container or OMIT,
+                service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
