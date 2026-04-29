@@ -414,6 +414,13 @@ current queue for inspection.
       tool doesn't currently propagate back to the run. Enqueue from the workflow
       context (e.g. via `AgentRun.enqueue`) instead.
 
+!!! warning "Unbounded follow-up loops"
+    Each `'follow_up'` redirect opens a new model request. If something keeps
+    enqueueing follow-ups every step (e.g. a tool that always enqueues, or a
+    system-prompt callback that re-enqueues on each reinjection), the run will
+    loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
+    run as a safety net.
+
 ## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy

@@ -10386,6 +10386,61 @@ async def test_enqueue_rejects_empty_parts():
             pass
 
 
+async def test_enqueue_from_system_prompt_callback_with_reinject():
+    """`ctx.enqueue` from inside an `@agent.system_prompt` callback reaches the live queue.
+
+    `ReinjectSystemPrompt` re-resolves system-prompt callbacks on every model request via
+    `Agent.system_prompt_parts`, which builds a synthetic `RunContext`. The synthetic ctx
+    must share the live `pending_messages` list so enqueues from inside the callback
+    aren't silently dropped — using `follow_up` here so the drain (which runs after
+    end-of-run, by design after the current step's `before_model_request` has fired)
+    actually delivers what the callback enqueued.
+    """
+    enqueued = False
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content='ok')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        system_prompt='base prompt',
+        capabilities=[ReinjectSystemPrompt()],
+    )
+
+    @agent.system_prompt
+    def maybe_enqueue(ctx: RunContext[None]) -> str:
+        nonlocal enqueued
+        # Only enqueue once so we don't loop. ReinjectSystemPrompt re-runs us
+        # for every model request; if we kept enqueueing follow-ups we'd never end.
+        if not enqueued:
+            ctx.enqueue(SystemPromptPart('from system prompt callback'), priority='follow_up')
+            enqueued = True
+        return 'extra prompt'
+
+    # Provide a message_history without an existing SystemPromptPart so
+    # ReinjectSystemPrompt actually fires.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='earlier')]),
+        ModelResponse(parts=[TextPart(content='earlier response')]),
+    ]
+    result = await agent.run('hi', message_history=history)
+
+    assert enqueued
+    # The enqueued follow-up should appear in the persisted history as a
+    # ModelRequest before the second model response — proving the threading
+    # through Agent.system_prompt_parts → synthetic RunContext → live queue.
+    found = any(
+        isinstance(part, SystemPromptPart) and part.content == 'from system prompt callback'
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+    )
+    assert found, 'enqueued follow-up did not reach the conversation'
+
+
 # --- Output hook tests ---
 
 
