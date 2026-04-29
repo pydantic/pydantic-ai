@@ -5712,7 +5712,6 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'maybe',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -5822,7 +5821,6 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'maybe',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),

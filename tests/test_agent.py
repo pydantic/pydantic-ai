@@ -7532,6 +7532,55 @@ def test_prepare_output_tools():
     )
 
 
+def test_prepare_output_tools_receives_output_max_retries():
+    """Regression for the bug surfaced in #4745 / #4859 design discussion: the
+    `prepare_output_tools` callable must see `ctx.max_retries == max_result_retries`,
+    not the function-tool retry budget. Also verifies `ctx.retry` advances per output retry
+    and that per-tool retry counts in `ctx.retries` propagate (matching `prepare_tools`).
+    """
+    seen_retries: list[int] = []
+    seen_max_retries: list[int] = []
+    seen_per_tool_retries: list[int] = []
+
+    target_retries = 3
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools
+        # Always return the same output; the validator drives retries.
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_retries.append(ctx.retry)
+        seen_max_retries.append(ctx.max_retries)
+        seen_per_tool_retries.append(ctx.retries.get(tool_defs[0].name, 0))
+        return tool_defs
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        output_retries=target_retries,
+        retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
+        prepare_output_tools=prep,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        if ctx.retry == target_retries:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # `prep` runs once per step (= target_retries + 1 calls). Each call should see the
+    # OUTPUT retry budget, never the tool retry budget (`retries=1`).
+    assert seen_max_retries == [target_retries] * (target_retries + 1)
+    assert seen_retries == [0, 1, 2, 3]
+    # Per-tool retry counts populated by `for_run_step` propagate too — matching
+    # what `prepare_tools` sees on the function-tool side.
+    assert seen_per_tool_retries == [0, 1, 2, 3]
+
+
 async def test_explicit_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
@@ -7791,6 +7840,7 @@ async def test_wrapper_agent():
     assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+    assert wrapper_agent.root_capability is agent.root_capability
     assert wrapper_agent.output_json_schema() == snapshot(
         {
             'type': 'object',
@@ -8486,17 +8536,16 @@ async def test_user_prompt_with_deferred_tool_results():
     )
 
 
-def test_tool_requires_approval_error():
+def test_tool_requires_approval_no_output_type():
+    """Adding a requires_approval tool without DeferredToolRequests in output type is allowed.
+
+    The error is raised at runtime if the tool is called and no handler resolves it.
+    """
     agent = Agent('test')
 
-    with pytest.raises(
-        UserError,
-        match='To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.',
-    ):
-
-        @agent.tool_plain(requires_approval=True)
-        def delete_file(path: str) -> None:
-            pass
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> None:
+        pass
 
 
 async def test_consecutive_model_responses_in_history():
