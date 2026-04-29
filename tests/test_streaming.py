@@ -4596,7 +4596,7 @@ async def test_complete_pending_tool_call_kept_and_executed_on_resume():
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
-            parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
+            parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='call_1')],
             state='interrupted',
         ),
     ]
@@ -4606,7 +4606,7 @@ async def test_complete_pending_tool_call_kept_and_executed_on_resume():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
+                parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='call_1')],
                 usage=RequestUsage(),
                 timestamp=IsDatetime(),
                 state='interrupted',
