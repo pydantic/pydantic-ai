@@ -585,6 +585,22 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
 
+def _resolve_openai_service_tier(
+    model_settings: OpenAIChatModelSettings,
+) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
+    """Resolve the value to send as `service_tier` on the OpenAI request.
+
+    Per-provider [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]
+    wins; otherwise the top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier]
+    maps 1:1 to OpenAI's accepted values.
+    """
+    if openai_tier := model_settings.get('openai_service_tier'):
+        return openai_tier
+    if unified := model_settings.get('service_tier'):
+        return unified
+    return OMIT
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -855,7 +871,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=_resolve_openai_service_tier(model_settings),
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
@@ -2001,7 +2017,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     top_p=model_settings.get('top_p', OMIT),
                     truncation=model_settings.get('openai_truncation', OMIT),
                     timeout=model_settings.get('timeout', NOT_GIVEN),
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=_resolve_openai_service_tier(model_settings),
                     previous_response_id=previous_response_id or OMIT,
                     context_management=model_settings.get('openai_context_management', OMIT),
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
