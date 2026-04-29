@@ -32,6 +32,7 @@ __all__ = (
     'ModelHTTPError',
     'ContentFilterError',
     'IncompleteToolCall',
+    'ToolOutputValidationError',
     'FallbackExceptionGroup',
 )
 
@@ -295,3 +296,18 @@ class ToolRetryError(Exception):
 
 class IncompleteToolCall(UnexpectedModelBehavior):
     """Error raised when a model stops due to token limit while emitting a tool call."""
+
+
+class ToolOutputValidationError(UnexpectedModelBehavior):
+    """Error raised when tool output fails validation."""
+
+    tool_name: str
+    """The name of the tool that produced the malformed output."""
+
+    validation_error: pydantic_core.ValidationError
+    """The Pydantic validation error."""
+
+    def __init__(self, tool_name: str, validation_error: pydantic_core.ValidationError):
+        self.tool_name = tool_name
+        self.validation_error = validation_error
+        super().__init__(str(validation_error))

@@ -66,6 +66,7 @@ from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
     RunContext,
+    ResultValidatorFunc,
     Tool,
     ToolFuncContext,
     ToolFuncEither,
@@ -94,6 +95,7 @@ from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from pydantic_core import SchemaValidator, SchemaValidatorProt
     from starlette.applications import Starlette
 
     from pydantic_graph import GraphRunContext
@@ -2026,6 +2028,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -2048,6 +2053,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -2133,6 +2141,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
+                validate_return=validate_return,
+                result_validator=result_validator,
+                result_schema_validator=result_schema_validator,
             )
             return func_
 
@@ -2161,6 +2172,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -2183,6 +2197,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
+        validate_return: bool = False,
+        result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
+        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -2267,6 +2284,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
+                validate_return=validate_return,
+                result_validator=result_validator,
+                result_schema_validator=result_schema_validator,
             )
             return func_
 
