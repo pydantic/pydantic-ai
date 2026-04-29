@@ -62,11 +62,13 @@ class AbstractBuiltinTool(ABC):
     doesn't support it, instead of raising when no local fallback is provided.
 
     Defaults to ``False`` (the user explicitly asked for this tool; fail loudly if we
-    can't honor it). Subclasses backing infrastructure capabilities whose builtin enables
-    a native optimization rather than a user-visible feature (e.g.
-    [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]) default this to
-    ``True``; users can also pass ``optional=True`` themselves to opt into soft-fail
-    semantics for any builtin.
+    can't honor it). Capabilities backing a native optimization rather than a
+    user-visible feature pass ``optional=True`` when constructing their builtin —
+    e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] sets it on the
+    [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] it creates so models
+    that don't support native tool search transparently fall back to local search.
+    Users can also pass ``optional=True`` themselves to opt into soft-fail semantics
+    for any builtin.
     """
 
     @property

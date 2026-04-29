@@ -1834,7 +1834,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # Client-executed: emit a regular ToolCallPart so the standard agent-graph
                     # tool-execution path runs the local `search_tools` function. The matching
                     # `ToolReturnPart` is produced by the tool runner, not here.
-                    items.append(_map_client_tool_search_call(item))
+                    items.append(_map_client_tool_search_call(item, self.system))
                 else:
                     output_item = tool_search_outputs.get(item.call_id) if item.call_id else None
                     call_part, return_part = _map_tool_search_call(item, output_item, self.system)
@@ -3079,7 +3079,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         if chunk.item.execution == 'client':
                             # Emit a regular function-tool call so the standard
                             # tool-execution path runs our local `search_tools`.
-                            client_call_part = _map_client_tool_search_call(chunk.item)
+                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
                             yield self._parts_manager.handle_tool_call_part(
                                 vendor_part_id=chunk.item.id,
                                 tool_name=client_call_part.tool_name,
@@ -3205,7 +3205,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             # part manager resolves its pending args; there's no paired
                             # `tool_search_output` — the return part is produced by the
                             # local tool runner after the stream completes.
-                            client_call_part = _map_client_tool_search_call(chunk.item)
+                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
                             client_args_json = client_call_part.args_as_json_str()
                             maybe_event = self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=chunk.item.id,
@@ -3953,7 +3953,7 @@ configuration) so history round-trips correctly even if the user reconfigured
 harmless metadata on adapters that don't recognize it."""
 
 
-def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
+def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolCallPart:
     """Map a client-executed OpenAI ``tool_search_call`` into a regular ``ToolCallPart``.
 
     With ``ToolSearchToolParam(execution='client')``, OpenAI still emits the call wrapped
@@ -3973,7 +3973,7 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall) -> ToolCallPart:
         args=args_dict,
         tool_call_id=call_id,
         id=item.id,
-        provider_name='openai',
+        provider_name=provider_name,
         provider_details={'envelope': CLIENT_TOOL_SEARCH_ENVELOPE},
     )
 

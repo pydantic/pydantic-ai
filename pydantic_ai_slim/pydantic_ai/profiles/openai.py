@@ -198,9 +198,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
-    # OpenAI's native `tool_search` tool with `defer_loading` is currently available on
-    # GPT-5.4 and later.
-    supports_tool_search = model_name.startswith('gpt-5.4')
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on
+    # GPT-5.4 and later mainline models.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
     supported_builtin_tools = (
         SUPPORTED_BUILTIN_TOOLS if supports_tool_search else SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
     )

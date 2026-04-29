@@ -1437,9 +1437,11 @@ async def test_openai_client_tool_search_stamps_envelope_marker():
         status='completed',
         type='tool_search_call',
     )
-    part = _map_client_tool_search_call(call)
+    part = _map_client_tool_search_call(call, 'azure')
     assert part.tool_name == _SEARCH_TOOLS_NAME
-    assert part.provider_name == 'openai'
+    # Provider name flows through from the model — important for OpenAI-compatible
+    # providers (Azure, gateways) where ``self.system`` differs from ``'openai'``.
+    assert part.provider_name == 'azure'
     assert part.provider_details == {'envelope': CLIENT_TOOL_SEARCH_ENVELOPE}
 
 
