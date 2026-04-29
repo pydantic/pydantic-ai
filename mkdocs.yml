@@ -43,6 +43,7 @@ nav:
           - models/ollama.md
           - models/openrouter.md
           - models/outlines.md
+          - models/perplexity.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md

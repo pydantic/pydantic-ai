@@ -84,6 +84,7 @@ making it ideal for queries that require up-to-date data.
 | xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
+| Perplexity | ✅ | Native web search is always on for Perplexity chat models, so [`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool] is supported with no extra parameters. See the [Perplexity model docs](models/perplexity.md). |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
