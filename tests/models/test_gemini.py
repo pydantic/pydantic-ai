@@ -494,10 +494,14 @@ async def test_json_def_date(allow_model_requests: None):
 @dataclass
 class AsyncByteStreamList(httpx.AsyncByteStream):
     data: list[bytes]
+    closed: bool = False
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self.data:
             yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 ResOrList: TypeAlias = '_GeminiResponse | httpx.AsyncByteStream | Sequence[_GeminiResponse | httpx.AsyncByteStream]'
@@ -815,6 +819,45 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+
+
+async def test_stream_cancel(get_gemini_client: GetGeminiClient):
+    responses = [
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
+    ]
+    json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
+    stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
+    gemini_client = get_gemini_client(stream)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        async for _chunk in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            await result.cancel()
+            await result.cancel()  # double cancel is a no-op
+            assert result.cancelled
+            break
+
+    assert stream.closed is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello ')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/v1beta/models/',
+                run_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
 
 
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):

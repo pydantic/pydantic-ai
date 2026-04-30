@@ -550,6 +550,15 @@ class OutlinesStreamedResponse(StreamedResponse):
     _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
+    async def close_stream(self) -> None:
+        try:
+            # Outlines streams are async generators in async integrations, and
+            # local sync streams are wrapped in an async generator above.
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for content in self._response:
             for event in self._parts_manager.handle_text_delta(

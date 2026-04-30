@@ -10,13 +10,12 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -48,7 +47,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 with try_import() as imports_successful:
     import outlines
 
-    from pydantic_ai.models.outlines import OutlinesAsyncBaseModel, OutlinesModel, OutlinesStreamedResponse
+    from pydantic_ai.models.outlines import OutlinesAsyncBaseModel, OutlinesModel
     from pydantic_ai.providers.outlines import OutlinesProvider
 
 with try_import() as transformer_imports_successful:
@@ -433,6 +432,62 @@ async def test_request_streaming_async_model(mock_async_model: OutlinesModel) ->
         async for text in response.stream_text():
             assert isinstance(text, str)
             assert len(text) > 0
+
+
+async def test_stream_cancel_async_model() -> None:
+    closed = False
+
+    class MockOutlinesAsyncModel(OutlinesAsyncBaseModel):
+        async def __call__(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
+            return 'test'
+
+        async def stream(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any):  # pyright: ignore[reportIncompatibleMethodOverride]
+            nonlocal closed
+            try:
+                yield 'hello '
+                yield 'world'
+            finally:
+                closed = True
+
+        async def generate(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...
+
+        async def generate_batch(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...
+
+        async def generate_stream(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
+            self, model_input: Any, output_type: Any, **inference_kwargs: Any
+        ): ...
+
+    agent = Agent(OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider()))
+
+    async with agent.run_stream('Hello', model_settings=ModelSettings(max_tokens=100)) as result:
+        async for _chunk in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            await result.cancel()
+            await result.cancel()  # double cancel is a no-op
+            assert result.cancelled
+            break
+
+    assert closed is True
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                model_name='outlines-model',
+                timestamp=IsDatetime(),
+                provider_name='outlines',
+                run_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
 
 
 async def test_tool_definition_error_async_model(mock_async_model: OutlinesModel) -> None:
@@ -879,31 +934,3 @@ def test_model_settings_vllm_offline(vllm_model_offline: OutlinesModel) -> None:
     assert kwargs['priority'] == 1
     assert 'sampling_params' in kwargs
     assert 'temperature' in kwargs['sampling_params']
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_outlines_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = OutlinesStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='outlines-model',
-        _model_profile=cast(Any, object()),
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _provider_name='outlines',
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
