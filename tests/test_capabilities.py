@@ -32,6 +32,7 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     CapabilityOrdering,
+    DynamicCapability,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -46,7 +47,6 @@ from pydantic_ai.capabilities import (
     WebSearch,
     WrapperCapability,
 )
-from pydantic_ai.capabilities._dynamic import DynamicCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
