@@ -76,7 +76,7 @@ class ToolsetTool(Generic[AgentDepsT]):
     return_type: Any = Any
 
     @cached_property
-    def _return_validator(self) -> SchemaValidator | SchemaValidatorProt | None:
+    def _return_validator(self) -> SchemaValidator | None:
         """The Pydantic Core validator for the tool's return value."""
         if self.return_type is Any or self.return_type is type(None):
             return None
@@ -144,7 +144,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         """Exit the toolset context.
 
         This is where you can tear down network connections in a concrete implementation.

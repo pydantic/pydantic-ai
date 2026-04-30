@@ -8,8 +8,6 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from pydantic_core import SchemaValidator
-
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -27,7 +25,7 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from .abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
+from .abstract import AbstractToolset, ToolsetTool
 
 
 @dataclass(kw_only=True)
@@ -300,7 +298,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 validate_return=validate_return,
                 result_validator=result_validator,
-                result_schema_validator=result_schema_validator,
+                return_type=return_type,
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
@@ -465,7 +463,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 validate_return=validate_return,
                 result_validator=result_validator,
-                result_schema_validator=result_schema_validator,
+                return_type=return_type,
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,

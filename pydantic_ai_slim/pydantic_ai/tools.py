@@ -20,30 +20,30 @@ from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
+    'AgentBuiltinTool',
     'AgentDepsT',
     'ArgsValidatorFunc',
-    'ResultValidatorFunc',
-    'DocstringFormat',
-    'RunContext',
-    'SystemPromptFunc',
-    'ToolFuncContext',
-    'ToolFuncPlain',
-    'ToolFuncEither',
-    'ToolParams',
-    'ToolPrepareFunc',
-    'ToolsPrepareFunc',
-    'ToolSelectorFunc',
-    'ToolSelector',
-    'matches_tool_selector',
-    'AgentBuiltinTool',
     'BuiltinToolFunc',
-    'Tool',
-    'ObjectJsonSchema',
-    'ToolDefinition',
     'DeferredToolRequests',
     'DeferredToolResults',
+    'DocstringFormat',
+    'ObjectJsonSchema',
+    'ResultValidatorFunc',
+    'RunContext',
+    'SystemPromptFunc',
+    'Tool',
     'ToolApproved',
+    'ToolDefinition',
     'ToolDenied',
+    'ToolFuncContext',
+    'ToolFuncEither',
+    'ToolFuncPlain',
+    'ToolParams',
+    'ToolPrepareFunc',
+    'ToolSelector',
+    'ToolSelectorFunc',
+    'ToolsPrepareFunc',
+    'matches_tool_selector',
 )
 
 
@@ -51,7 +51,7 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 
-def _get_return_validator(function: Callable[..., Any]) -> SchemaValidator | SchemaValidatorProt | None:
+def _get_return_validator(function: Callable[..., Any]) -> SchemaValidator | None:
     """Infer the return type from the function signature and return a Pydantic validator."""
     try:
         type_hints = typing.get_type_hints(function, include_extras=True)
@@ -692,7 +692,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
 
     @cached_property
-    def _return_validator(self) -> SchemaValidator | SchemaValidatorProt | None:
+    def _return_validator(self) -> SchemaValidator | None:
         """The Pydantic Core validator for the tool's return value."""
         if self.return_type is Any or self.return_type is type(None):
             return None
@@ -832,7 +832,7 @@ class ToolDefinition:
     """Whether to validate the tool's return value against the `return_type`."""
 
     @cached_property
-    def _return_validator(self) -> SchemaValidator | SchemaValidatorProt | None:
+    def _return_validator(self) -> SchemaValidator | None:
         """The Pydantic Core validator for the tool's return value."""
         if self.return_type is Any or self.return_type is type(None):
             return None
