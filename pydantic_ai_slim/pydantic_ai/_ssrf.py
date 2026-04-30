@@ -386,11 +386,13 @@ async def safe_download(
             if response.is_redirect:
                 redirects_followed += 1
                 if redirects_followed > max_redirects:
+                    response.close()
                     raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
 
                 # Get redirect location
                 location = response.headers.get('location')
                 if not location:
+                    response.close()
                     raise ValueError('Redirect response missing Location header')
 
                 current_url = resolve_redirect_url(current_url, location)
