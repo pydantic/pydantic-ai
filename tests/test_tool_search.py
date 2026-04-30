@@ -2812,3 +2812,77 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
     prepared = model.prepare_messages(history)
 
     assert prepared is history
+
+
+def test_narrow_type_local_promotes_with_well_shaped_args() -> None:
+    """A `ToolCallPart` with `tool_name='search_tools'` and matching args promotes
+    to `ToolSearchCallPart` via the narrowing registry."""
+    from pydantic_ai.messages import ToolCallPart
+
+    part = ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}, tool_call_id='c1')
+    narrowed = ToolCallPart.narrow_type(part)
+    assert isinstance(narrowed, ToolSearchCallPart)
+    assert narrowed.args == {'queries': ['mortgage']}
+
+
+def test_narrow_type_local_passthrough_when_already_narrowed() -> None:
+    """Narrowing an already-typed `ToolSearchCallPart` returns the input instance."""
+    part = ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')
+    from pydantic_ai.messages import ToolCallPart
+
+    assert ToolCallPart.narrow_type(part) is part
+
+
+def test_pydantic_validation_rejects_search_tools_collision_with_bad_args() -> None:
+    """A user-defined function tool that *happens* to be named `search_tools` but
+    carries the wrong args shape must fail Pydantic validation when deserialized
+    through `ModelRequestPart`. Auto-promotion via the typed-class discriminator
+    requires the args to match `ToolSearchArgs`."""
+    import pydantic
+
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    raw = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 'search_tools',
+                    # Wrong shape: not `ToolSearchReturnContent`, not `str`, not `None`.
+                    'content': {'unrelated': 'data', 'definitely_not_discovered_tools': 42},
+                    'tool_call_id': 'c1',
+                },
+            ],
+        },
+    ]
+    with pytest.raises(pydantic.ValidationError):
+        ModelMessagesTypeAdapter.validate_python(raw)
+
+
+def test_pydantic_validation_accepts_search_tools_string_content_collision() -> None:
+    """The `str` variant on `ToolSearchReturnPart.content` covers the case where a
+    user-named tool returns plain text — they're collision-tolerant by design.
+
+    Adapters that consume the typed view check `isinstance(content, dict)` before
+    keying into `discovered_tools`, so a string content surfaces as "not a real
+    tool-search return" and falls through cleanly."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    raw = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 'search_tools',
+                    'content': 'hello world',
+                    'tool_call_id': 'c1',
+                },
+            ],
+        },
+    ]
+    [request] = ModelMessagesTypeAdapter.validate_python(raw)
+    [part] = request.parts
+    assert isinstance(part, ToolSearchReturnPart)
+    assert part.content == 'hello world'
