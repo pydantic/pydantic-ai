@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
 if TYPE_CHECKING:
@@ -37,6 +37,8 @@ class TemporalFastMCPToolset(TemporalMCPToolset[AgentDepsT]):
             agent=agent,
         )
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT] | None = None
+    ) -> ToolsetTool[AgentDepsT]:
         assert isinstance(self.wrapped, FastMCPToolset)
-        return self.wrapped.tool_for_tool_def(tool_def, max_retries=max_retries)
+        return self.wrapped.tool_for_tool_def(tool_def, ctx=ctx)

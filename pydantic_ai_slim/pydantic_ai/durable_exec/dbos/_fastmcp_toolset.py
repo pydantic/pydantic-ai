@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
 from ._mcp import DBOSMCPToolset
@@ -24,6 +24,8 @@ class DBOSFastMCPToolset(DBOSMCPToolset[AgentDepsT]):
             step_config=step_config,
         )
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition, *, max_retries: int | None = None) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(
+        self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT] | None = None
+    ) -> ToolsetTool[AgentDepsT]:
         assert isinstance(self.wrapped, FastMCPToolset)
-        return self.wrapped.tool_for_tool_def(tool_def, max_retries=max_retries)
+        return self.wrapped.tool_for_tool_def(tool_def, ctx=ctx)
