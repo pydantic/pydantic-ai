@@ -1089,8 +1089,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
-            An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
-            run result.
+            An `AgentEventStream` async context manager yielding stream events `AgentStreamEvent` and finally a
+            `AgentRunResultEvent` with the final run result.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())

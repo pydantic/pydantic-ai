@@ -1105,10 +1105,9 @@ class StreamedResponse(ABC):
         """Close the underlying HTTP/gRPC connection.
 
         Model classes must override this to stop token generation (and billing)
-        on the remote side. A missing override is a real bug — silently
-        setting `_cancelled` without closing the connection would let the
-        user believe the stream was cancelled while they continue being
-        charged.
+        on the remote side. Integrations that cannot support cancellation should
+        leave the default implementation so `cancel()` fails clearly rather than
+        silently reporting successful cancellation while generation continues.
         """
         raise NotImplementedError(
             f'Stream cancellation is not implemented for {type(self).__name__}. '

@@ -877,7 +877,10 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Cancelling Streams
 
-Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to limit costs. The primary streaming API, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], along with [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter], all support explicit cancellation.
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to limit costs. The primary streaming API, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], along with [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter], support explicit cancellation when the underlying model integration implements stream cancellation.
+
+!!! note "Model support"
+    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] and the deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] do not currently support stream cancellation.
 
 #### Cancelling `run_stream_events`
 
@@ -901,7 +904,7 @@ async def main():
 ```
 
 1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
-2. `cancel()` closes the underlying generator, which triggers task cancellation and connection cleanup.
+2. `cancel()` closes the underlying generator, which triggers task cancellation and connection cleanup when the model integration supports it.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -932,7 +935,7 @@ async def main():
 ```
 
 1. Check a condition during streaming, for example whether enough text has been received.
-2. `cancel()` tells the model provider to stop generating tokens and closes the HTTP connection.
+2. `cancel()` tells the model provider to stop generating tokens and closes the HTTP connection when the model integration supports it.
 3. The `cancelled` property reflects the cancellation state.
 4. The final [`ModelResponse`][pydantic_ai.messages.ModelResponse] is marked with `state='interrupted'` so that downstream code can identify incomplete responses.
 
