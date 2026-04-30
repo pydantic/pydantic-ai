@@ -434,62 +434,6 @@ async def test_request_streaming_async_model(mock_async_model: OutlinesModel) ->
             assert len(text) > 0
 
 
-async def test_stream_cancel_async_model() -> None:
-    closed = False
-
-    class MockOutlinesAsyncModel(OutlinesAsyncBaseModel):
-        async def __call__(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-            return 'test'
-
-        async def stream(self, model_input: Any, output_type: Any, backend: Any, **inference_kwargs: Any):  # pyright: ignore[reportIncompatibleMethodOverride]
-            nonlocal closed
-            try:
-                yield 'hello '
-                yield 'world'
-            finally:
-                closed = True
-
-        async def generate(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
-            self, model_input: Any, output_type: Any, **inference_kwargs: Any
-        ): ...
-
-        async def generate_batch(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
-            self, model_input: Any, output_type: Any, **inference_kwargs: Any
-        ): ...
-
-        async def generate_stream(  # pyright: ignore[reportIncompatibleMethodOverride]  # pragma: no cover
-            self, model_input: Any, output_type: Any, **inference_kwargs: Any
-        ): ...
-
-    agent = Agent(OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider()))
-
-    async with agent.run_stream('Hello', model_settings=ModelSettings(max_tokens=100)) as result:
-        async for _chunk in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            await result.cancel()
-            await result.cancel()  # double cancel is a no-op
-            assert result.cancelled
-            break
-
-    assert closed is True
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                model_name='outlines-model',
-                timestamp=IsDatetime(),
-                provider_name='outlines',
-                run_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
 async def test_tool_definition_error_async_model(mock_async_model: OutlinesModel) -> None:
     """Test that function tools raise UserError with async model."""
     agent = Agent(mock_async_model)

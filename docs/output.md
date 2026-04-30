@@ -879,6 +879,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to limit costs. The primary streaming API, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], along with [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter], support explicit cancellation by closing the underlying model stream.
 
+!!! note "Model support"
+    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] does not currently support stream cancellation.
+
 #### Cancelling `run_stream_events`
 
 [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager. Call `cancel()` on the stream to stop it:

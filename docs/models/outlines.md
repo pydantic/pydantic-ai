@@ -125,6 +125,9 @@ model = OutlinesModel.from_vllm_offline(
 
 Once you have initialized an `OutlinesModel`, you can use it with an Agent as with all other Pydantic AI models.
 
+!!! note "Stream cancellation"
+    `OutlinesModel` does not currently support stream cancellation.
+
 As Outlines is focused on structured output, this provider supports the `output_type` component through the [`NativeOutput`][pydantic_ai.output.NativeOutput] format. There is not need to include information on the required output format in your prompt, instructions based on the `output_type` will be included automatically.
 
 ```python {test="skip"}
