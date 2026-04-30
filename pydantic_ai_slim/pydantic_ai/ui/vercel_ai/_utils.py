@@ -8,8 +8,6 @@ from typing_extensions import Required, TypedDict
 
 from pydantic_ai.messages import (
     BaseToolReturnPart,
-    BinaryContent,
-    BinaryImage,
     MultiModalContent,
     ProviderDetailsDelta,
     ToolReturnPart,
@@ -64,51 +62,24 @@ multi_modal_content_ta: pydantic.TypeAdapter[MultiModalContent] = pydantic.TypeA
 """TypeAdapter for serializing/deserializing `MultiModalContent` items in the tool-return envelope."""
 
 
-def tool_return_output(part: BaseToolReturnPart) -> Any:
+def tool_return_output(part: BaseToolReturnPart, *, include_files: bool = False) -> Any:
     """Extract the return value from a tool return part.
 
     If the model response object contains a 'return_value' key, return its value,
     otherwise return the entire output dict. This matches the streaming output format.
+
+    When `include_files=True` and `part.files` is non-empty, wrap the output in a
+    `MultimodalToolOutputEnvelope` so multimodal items survive the Vercel `dump_messages` ->
+    `load_messages` round trip (the Vercel AI SDK has no native multimodal tool-output shape).
     """
     output = part.model_response_object()
+    if include_files and part.files:
+        return {
+            'pydantic_ai_kind': MULTIMODAL_TOOL_RETURN_KIND,
+            'data': output.get('return_value', output) if output else None,
+            'files': [multi_modal_content_ta.dump_python(f, mode='json') for f in part.files],
+        }
     return output.get('return_value', output)
-
-
-def tool_return_output_for_dump(part: BaseToolReturnPart) -> Any:
-    """Like `tool_return_output`, but wraps multimodal items in a `MultimodalToolOutputEnvelope`.
-
-    Used by `dump_messages` to preserve `MultiModalContent` items inside `ToolReturnPart.content`
-    across the dump -> load round trip. The Vercel AI SDK has no native multimodal tool-output
-    shape, so we encode files in a structured envelope keyed by `MULTIMODAL_TOOL_RETURN_KIND`.
-    """
-    if not part.files:
-        return tool_return_output(part)
-    output = part.model_response_object()
-    data = output.get('return_value', output) if output else None
-    return {
-        'pydantic_ai_kind': MULTIMODAL_TOOL_RETURN_KIND,
-        'data': data,
-        'files': [multi_modal_content_ta.dump_python(f, mode='json') for f in part.files],
-    }
-
-
-def decode_multimodal_tool_output(output: Any) -> tuple[Any, list[MultiModalContent]] | None:
-    """Decode a multimodal tool-return envelope; returns `None` if `output` is not an envelope."""
-    if not isinstance(output, dict):
-        return None
-    envelope: dict[str, Any] = output  # pyright: ignore[reportUnknownVariableType]
-    if envelope.get('pydantic_ai_kind') != MULTIMODAL_TOOL_RETURN_KIND:
-        return None
-    raw_files: list[Any] = envelope.get('files') or []
-    files: list[MultiModalContent] = []
-    for f in raw_files:
-        item = multi_modal_content_ta.validate_python(f)
-        # Narrow `BinaryContent` with an image media type to `BinaryImage` so round trips through
-        # the discriminator union preserve the subclass (matches `BinaryContent.from_data_uri`).
-        if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
-            item = BinaryContent.narrow_type(item)
-        files.append(item)
-    return envelope.get('data'), files
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:

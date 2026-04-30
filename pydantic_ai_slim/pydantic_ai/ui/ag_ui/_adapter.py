@@ -189,13 +189,6 @@ def _merge_tool_files(content: Any, files: list[MultiModalContent]) -> Any:
     return [content, *files]
 
 
-def _narrow_multimodal_item(item: MultiModalContent) -> MultiModalContent:
-    """Narrow a deserialized `BinaryContent` to `BinaryImage` when the media type is an image."""
-    if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
-        return BinaryContent.narrow_type(item)
-    return item
-
-
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -484,10 +477,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 f'ActivityMessage with activity_type={TOOL_RETURN_FILE_ACTIVITY_TYPE!r}'
                                 ' must have a non-empty tool_call_id.'
                             )
-                        pending_tool_files.setdefault(sidecar_tool_call_id, []).extend(
-                            _narrow_multimodal_item(multi_modal_content_ta.validate_python(item))
-                            for item in activity_content.get('files', [])
-                        )
+                        bucket = pending_tool_files.setdefault(sidecar_tool_call_id, [])
+                        for raw in activity_content.get('files', []):
+                            item = multi_modal_content_ta.validate_python(raw)
+                            # Narrow `BinaryContent` with an image media type to `BinaryImage` so round
+                            # trips preserve the subclass (matches `BinaryContent.from_data_uri`).
+                            if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
+                                item = BinaryContent.narrow_type(item)
+                            bucket.append(item)
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')

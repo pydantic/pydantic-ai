@@ -3767,8 +3767,115 @@ async def test_adapter_dump_messages_with_tools():
     )
 
 
-def _vercel_tool_return_roundtrip_assert(content: Any) -> None:
-    """Round-trip a `ToolReturnPart.content` through `dump_messages` / `load_messages`."""
+@pytest.mark.parametrize(
+    ('case_id', 'expected_envelope'),
+    [
+        pytest.param(
+            'single-image',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': None,
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                }
+            ),
+            id='single-image',
+        ),
+        pytest.param(
+            'text-then-audio',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': 'the audio narration says...',
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'audio/mpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                }
+            ),
+            id='text-then-audio',
+        ),
+        pytest.param(
+            'image-and-video',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': None,
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        },
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'video/mp4',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        },
+                    ],
+                }
+            ),
+            id='image-and-video',
+        ),
+        pytest.param(
+            'document-url',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': None,
+                    'files': [
+                        {
+                            'kind': 'document-url',
+                            'url': 'https://example.com/doc.pdf',
+                            'force_download': False,
+                            'vendor_metadata': None,
+                            'media_type': 'application/pdf',
+                            'identifier': 'e3337d',
+                        }
+                    ],
+                }
+            ),
+            id='document-url',
+        ),
+    ],
+)
+async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
+    case_id: str,
+    expected_envelope: dict[str, Any],
+    image_content: BinaryContent,
+    audio_content: BinaryContent,
+    video_content: BinaryContent,
+):
+    """Test multimodal `ToolReturnPart.content` round-trips via the `MultimodalToolOutputEnvelope`.
+
+    Vercel AI SDK has no native multimodal tool-output shape (as of ai@6.0.57); we wrap files
+    in a structured envelope inside `ToolOutputAvailablePart.output` so the dump -> load round
+    trip preserves them.
+    """
+    contents: dict[str, Any] = {
+        'single-image': image_content,
+        'text-then-audio': ['the audio narration says...', audio_content],
+        'image-and-video': [image_content, video_content],
+        'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+    }
+    content = contents[case_id]
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args={})]),
@@ -3777,67 +3884,16 @@ def _vercel_tool_return_roundtrip_assert(content: Any) -> None:
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant = next(m for m in ui_messages if m.role == 'assistant')
+    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
+    assert tool_part.output == expected_envelope
+
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     tool_returns = [
         p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
     ]
-    assert len(tool_returns) == 1
-    assert tool_returns[0].content == content
-
-
-async def test_adapter_dump_load_roundtrip_tool_return_single_image(image_content: BinaryContent):
-    """Test that a single multimodal `BinaryImage` round-trips via the `MultimodalToolOutputEnvelope`.
-
-    Vercel AI SDK has no native multimodal tool-output shape (as of ai@6.0.57); we wrap files
-    in a structured envelope inside `ToolOutputAvailablePart.output` so the dump -> load round
-    trip preserves them.
-    """
-    _vercel_tool_return_roundtrip_assert(image_content)
-
-
-async def test_adapter_dump_load_roundtrip_tool_return_text_then_audio(audio_content: BinaryContent):
-    """Test that a `[text, audio]` mixed `ToolReturnPart.content` round-trips."""
-    _vercel_tool_return_roundtrip_assert(['the audio narration says...', audio_content])
-
-
-async def test_adapter_dump_load_roundtrip_tool_return_image_and_video(
-    image_content: BinaryContent, video_content: BinaryContent
-):
-    """Test that multiple media items in `ToolReturnPart.content` round-trip in order."""
-    _vercel_tool_return_roundtrip_assert([image_content, video_content])
-
-
-async def test_adapter_dump_load_roundtrip_tool_return_document_url():
-    """Test that a `DocumentUrl` `ToolReturnPart.content` round-trips (URL-typed media, no payload)."""
-    _vercel_tool_return_roundtrip_assert(DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'))
-
-
-async def test_adapter_tool_return_multimodal_envelope_shape(image_content: BinaryContent):
-    """Test the on-the-wire envelope shape for a multimodal tool return."""
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content='Get image')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args={})]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=image_content)]),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(messages)
-    assistant = next(m for m in ui_messages if m.role == 'assistant')
-    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
-
-    assert tool_part.output == snapshot(
-        {
-            'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
-            'data': None,
-            'files': [
-                {
-                    'kind': 'binary',
-                    'data': IsStr(),
-                    'media_type': 'image/jpeg',
-                    'identifier': IsStr(),
-                    'vendor_metadata': None,
-                }
-            ],
-        }
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
 
 
@@ -3889,9 +3945,17 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(image_
     returns = [
         p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
     ]
-    assert len(returns) == 1
-    assert returns[0].content == ['Search results', image_content]
-    assert returns[0].provider_name == 'anthropic'
+    assert returns == snapshot(
+        [
+            BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=['Search results', image_content],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
 
 
 async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
