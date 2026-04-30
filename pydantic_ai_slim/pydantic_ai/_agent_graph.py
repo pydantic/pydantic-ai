@@ -75,7 +75,9 @@ async def _cancel_task(task: Task[Any]) -> None:
         task.cancel()
     try:
         await task
-    except asyncio.CancelledError:
+    except BaseException:
+        # Called while another stream error is already propagating; await only
+        # to finish cleanup and retrieve the task exception, not replace it.
         pass
 
 
