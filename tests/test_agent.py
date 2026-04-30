@@ -754,6 +754,43 @@ def test_tool_output_max_retries_overrides_agent_retries():
     )
 
 
+def test_tool_output_validator_uses_tool_max_retries_for_last_attempt():
+    """Output validators should see the same retry budget as the selected ToolOutput."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    last_attempt_log: list[bool] = []
+    target_retries = 5
+
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}'
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(get_weather, max_retries=target_retries),
+        output_retries=2,
+    )
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        last_attempt_log.append(ctx.last_attempt)
+        if not ctx.last_attempt:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return output
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather in Mexico City'
+    assert retries_log == [0, 1, 2, 3, 4, 5]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+    assert last_attempt_log == [False, False, False, False, False, True]
+
+
 def test_tool_output_max_retries_per_tool():
     """Multiple ToolOutputs with different max_retries are tracked independently. Regression test for #4678."""
     a_max_retries_seen: list[int] = []
@@ -9882,16 +9919,12 @@ class TestOverrideWithModelSettings:
 
 
 def test_output_validator_retry_consistency_across_paths():
-    """Output validators should see global retry info, matching the text-output path.
+    """Output validators should see the selected output tool retry info.
 
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
-    the text path sets ctx.retry/max_retries to the global output retry counter,
-    but the tool-output path was using the per-tool counter, causing inconsistent
-    ctx.retry and ctx.max_retries values in @agent.output_validator.
-
-    Using ToolOutput(max_retries=5) with output_retries=2 exposes the bug:
-    without the fix, the validator would see max_retries=5 (per-tool value)
-    instead of max_retries=2 (global output_retries, matching the text path).
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5238:
+    if ToolOutput(max_retries=5) overrides output_retries=2, validators need
+    the per-tool value so ctx.last_attempt matches the retry budget that actually
+    controls tool-output termination.
     """
     retries_log: list[int] = []
     max_retries_log: list[int] = []
@@ -9919,7 +9952,7 @@ def test_output_validator_retry_consistency_across_paths():
     assert isinstance(result.output, Foo)
 
     assert retries_log == [0, 1, 2]
-    assert max_retries_log == [2, 2, 2]
+    assert max_retries_log == [5, 5, 5]
 
 
 def test_output_validator_exceeds_output_retries():
@@ -9999,11 +10032,11 @@ async def test_concurrent_runs_output_retry_isolation():
 
 
 def test_output_validator_retry_counter_with_tool_switch():
-    """Global retry counter tracks across output tool switches.
+    """Output validator retry context tracks the selected output tool.
 
-    When the model switches from one output tool to another, the global
-    retry counter (visible to output validators via ctx.retry) keeps
-    incrementing. Each tool's per-tool counter is independent.
+    When the model switches from one output tool to another, validators see
+    the selected tool's retry counter and max_retries, matching the retry budget
+    that controls termination for that tool.
     """
     validator_retries: list[int] = []
     validator_max_retries: list[int] = []
@@ -10051,10 +10084,8 @@ def test_output_validator_retry_counter_with_tool_switch():
     result = agent.run_sync('Hello')
     assert result.output == 'hello'
 
-    # Global retry counter increments across tool switches
-    assert validator_retries == [0, 1, 2]
-    # max_retries reflects the agent-level default (0) since output_retries not set
-    assert validator_max_retries == [0, 0, 0]
+    assert validator_retries == [0, 0, 1, 2]
+    assert validator_max_retries == [1, 3, 3, 3]
 
 
 def test_output_tool_validation_vs_execution_retry_counting():

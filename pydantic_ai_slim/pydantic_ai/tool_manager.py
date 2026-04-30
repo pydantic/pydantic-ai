@@ -562,8 +562,8 @@ class ToolManager(Generic[AgentDepsT]):
         """Execute output tool through output process hooks (skipping tool hooks).
 
         Output validators run inside process hooks (inside wrap_output_process), ensuring
-        the complete output pipeline is wrapped. Validators see the global output retry
-        context (from self.ctx), not the per-tool context, matching the text output path.
+        the complete output pipeline is wrapped. Validators see the selected output tool's
+        retry context so `ctx.last_attempt` matches the retry budget that controls termination.
 
         `schema` is the run's output schema; it's forwarded to
         [`OutputContext`][pydantic_ai.output.OutputContext] so hooks can see the full shape
@@ -598,16 +598,7 @@ class ToolManager(Generic[AgentDepsT]):
         else:
             semantic_value = validated.validated_args
 
-        # Output validators see the *global* output-retry budget (`max_result_retries`), so the same
-        # validator stays consistent across the text path and across multiple `ToolOutput`s. Output
-        # functions, by contrast, see the *per-tool* `tool.max_retries` (the post-#4687 override) on
-        # `validated.ctx`. Termination on the tool path checks `retries[name] == tool.max_retries`
-        # (see `_check_max_retries` below), so when `ToolOutput(max_retries=N)` exceeds
-        # `max_result_retries`, the validator's `ctx.last_attempt` can fire before the run actually
-        # terminates. Tracked in #5238 — revisiting cleanly needs broader thought about
-        # `ctx.retry`/`ctx.retries[name]` semantics and is intentionally out of scope here.
-        assert toolset.max_retries is not None
-        validator_ctx = replace(validated.ctx, retry=self.ctx.retry, max_retries=toolset.max_retries)
+        validator_ctx = validated.ctx
 
         async def do_process(output: Any) -> Any:
             # `processor.hook_execute` re-wraps the semantic value into the dict shape
