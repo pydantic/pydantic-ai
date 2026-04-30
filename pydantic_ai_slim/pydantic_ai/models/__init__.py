@@ -1006,14 +1006,32 @@ class StreamedResponse(ABC):
             async def iterator_with_final_event(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
+                # Tracks a text/image-based final result that is tentative because output tools
+                # are also defined. In the non-streaming path, tool calls always take priority
+                # over text (see CallToolsNode._run_stream). We replicate that here by deferring
+                # the text-based FinalResultEvent until we know no output tool call will appear.
+                pending_text_final_event: FinalResultEvent | None = None
+
                 async for event in iterator:
                     yield event
                     if (
-                        final_result_event := _get_final_result_event(event, self.model_request_parameters)
+                        candidate := _get_final_result_event(event, self.model_request_parameters)
                     ) is not None:
-                        self.final_result_event = final_result_event
-                        yield final_result_event
-                        break
+                        if candidate.tool_name is None and self.model_request_parameters.output_tools:
+                            # Text/image result found, but output tools are also available.
+                            # Don't commit yet — a subsequent output tool call should win.
+                            if pending_text_final_event is None:
+                                pending_text_final_event = candidate
+                        else:
+                            # Output tool call (or deferred tool) found — takes priority.
+                            self.final_result_event = candidate
+                            yield candidate
+                            break
+
+                if pending_text_final_event is not None and self.final_result_event is None:
+                    # Stream ended without a tool-based result; use the pending text/image result.
+                    self.final_result_event = pending_text_final_event
+                    yield pending_text_final_event
 
                 # If we broke out of the above loop, we need to yield the rest of the events
                 # If we didn't, this will just be a no-op
