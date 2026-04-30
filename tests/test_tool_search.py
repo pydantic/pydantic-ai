@@ -466,7 +466,7 @@ async def test_tool_search_toolset_search_returns_matching_tools():
     assert result == snapshot(
         ToolReturn(
             return_value={
-                'tools': [
+                'discovered_tools': [
                     {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
                 ]
             },
@@ -486,8 +486,8 @@ async def test_tool_search_toolset_search_is_case_insensitive():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'STOCK'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv = cast('dict[str, Any]', result.return_value)
-    assert len(rv['tools']) == 1
-    assert rv['tools'][0]['name'] == 'stock_price'
+    assert len(rv['discovered_tools']) == 1
+    assert rv['discovered_tools'][0]['name'] == 'stock_price'
 
 
 async def test_tool_search_toolset_search_matches_description():
@@ -502,8 +502,8 @@ async def test_tool_search_toolset_search_matches_description():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'cryptocurrency'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv = cast('dict[str, Any]', result.return_value)
-    assert len(rv['tools']) == 1
-    assert rv['tools'][0]['name'] == 'crypto_price'
+    assert len(rv['discovered_tools']) == 1
+    assert rv['discovered_tools'][0]['name'] == 'crypto_price'
 
 
 async def test_tool_search_toolset_prefers_specific_term_matches():
@@ -529,7 +529,7 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
     assert result == snapshot(
         ToolReturn(
             return_value={
-                'tools': [
+                'discovered_tools': [
                     {'name': 'github_get_me', 'description': 'Get the authenticated GitHub profile.'},
                     {'name': 'github_create_gist', 'description': 'Create a new GitHub gist.'},
                 ]
@@ -561,7 +561,7 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
     assert result == snapshot(
         ToolReturn(
             return_value={
-                'tools': [
+                'discovered_tools': [
                     {'name': 'stock_price', 'description': 'Get the current stock price.'},
                     {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
                 ]
@@ -592,7 +592,7 @@ async def test_tool_search_toolset_does_not_match_substrings_inside_words():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value={'tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]},
+            return_value={'discovered_tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]},
         )
     )
 
@@ -608,7 +608,9 @@ async def test_tool_search_toolset_search_returns_no_matches():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'nonexistent'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot({'tools': []})
+    assert result.return_value == snapshot(
+        {'discovered_tools': [], 'message': 'No matching tools found. The tools you need may not be available.'}
+    )
 
 
 async def test_tool_search_toolset_search_empty_query():
@@ -658,7 +660,7 @@ async def test_tool_search_toolset_max_results():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'tool'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv = cast('dict[str, Any]', result.return_value)
-    assert len(rv['tools']) == 10
+    assert len(rv['discovered_tools']) == 10
 
 
 async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
@@ -872,7 +874,7 @@ async def test_tool_search_toolset_tool_with_none_description():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'no_desc'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot({'tools': [{'name': 'no_desc_tool', 'description': None}]})
+    assert result.return_value == snapshot({'discovered_tools': [{'name': 'no_desc_tool', 'description': None}]})
 
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
@@ -932,25 +934,33 @@ async def test_function_toolset_all_deferred():
 
 
 async def test_tool_search_toolset_ignores_malformed_content_history():
-    """Discovery reads ``content`` via ``extract_tool_search_return``; malformed shapes
-    (non-dict content, non-list ``tools``, entries missing a string ``name``) are
-    ignored, and only well-formed entries are picked up."""
+    """Discovery reads `discovered_tools` off the typed return content; malformed
+    shapes (non-dict content, missing list, entries missing a string `name`) are
+    ignored, and only well-formed entries are picked up. The legacy `tools` key
+    (pre-typed-parts) is still accepted on plain `ToolReturnPart` content for
+    backward compatibility with persisted histories."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
         # content is not a dict
         ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content='not a dict')]),
-        # content is a dict but `tools` is missing
+        # content is a dict but `discovered_tools` is missing and so is the legacy `tools`
         ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'message': 'hi'})]),
-        # `tools` is not a list
-        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'tools': 'not a list'})]),
-        # `tools` contains malformed entries (non-dict, missing/non-string name)
+        # `discovered_tools` is not a list
+        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'discovered_tools': 'not a list'})]),
+        # `discovered_tools` contains malformed entries (non-dict, missing/non-string name)
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': ['not a dict', {'name': 123}, {'description': 'no name'}]},
+                    content={
+                        'discovered_tools': [
+                            'not a dict',
+                            {'name': 123},
+                            {'description': 'no name'},
+                        ],
+                    },
                 ),
             ]
         ),
@@ -959,7 +969,16 @@ async def test_tool_search_toolset_ignores_malformed_content_history():
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                ),
+            ]
+        ),
+        # Legacy shape (pre-typed-parts): `tools` instead of `discovered_tools`.
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content={'tools': [{'name': 'stock_price', 'description': None}]},
                 ),
             ]
         ),
@@ -967,9 +986,9 @@ async def test_tool_search_toolset_ignores_malformed_content_history():
     ctx = _build_run_context(None, messages=messages)
 
     tools = await searchable.get_tools(ctx)
-    # Only the well-formed entry flips `defer_loading` off; malformed history is ignored.
+    # Only the well-formed entries flip `defer_loading` off; malformed history is ignored.
     assert tools['calculate_mortgage'].tool_def.defer_loading is False
-    assert tools['stock_price'].tool_def.defer_loading is True
+    assert tools['stock_price'].tool_def.defer_loading is False
     assert tools['crypto_price'].tool_def.defer_loading is True
 
 
@@ -1124,7 +1143,7 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
     assert result.return_value == {
-        'tools': [
+        'discovered_tools': [
             {'name': 'stock_price', 'description': 'Get the current stock price for a symbol.'},
             {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
         ]
@@ -1194,9 +1213,12 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
 
     result = await agent.run('What is the current USD to EUR exchange rate?')
 
-    parts_by_kind: list[type] = [type(p) for m in result.all_messages() for p in m.parts]
-    assert BuiltinToolCallPart in parts_by_kind
-    assert BuiltinToolReturnPart in parts_by_kind
+    # Native server-side tool search auto-promotes to the typed
+    # `ToolSearchCallPart` / `ToolSearchReturnPart` subclasses (which still
+    # `isinstance`-match the base `BuiltinToolCallPart` / `BuiltinToolReturnPart`).
+    builtin_call_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    builtin_return_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert builtin_call_parts and builtin_return_parts
 
     # The model's follow-up tool call for the discovered tool dispatches by its plain
     # name — the toolset exposes deferred tools as their regular variant on the native
@@ -1489,16 +1511,14 @@ async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: Non
         await agent.run('what should I wear?')
 
 
-async def test_openai_client_tool_search_stamps_envelope_marker():
-    """Client-executed tool search calls carry an envelope marker on
-    ``provider_details`` so replay doesn't depend on the current request's builtin
-    configuration (the user may have reconfigured ``ToolSearch``, or history may be
-    handed over from another run)."""
+async def test_openai_client_tool_search_maps_to_local_search_call():
+    """Client-executed `tool_search_call` items map to a regular `ToolCallPart` against
+    the local `search_tools` function. Replay later detects the OpenAI native variant
+    via the current request's builtin configuration plus a `provider_name` match."""
     pytest.importorskip('openai')
     from openai.types.responses import ResponseToolSearchCall
 
     from pydantic_ai.models.openai import (
-        CLIENT_TOOL_SEARCH_ENVELOPE,
         _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -1515,7 +1535,9 @@ async def test_openai_client_tool_search_stamps_envelope_marker():
     # Provider name flows through from the model — important for OpenAI-compatible
     # providers (Azure, gateways) where ``self.system`` differs from ``'openai'``.
     assert part.provider_name == 'azure'
-    assert part.provider_details == {'envelope': CLIENT_TOOL_SEARCH_ENVELOPE}
+    # No envelope marker any more: replay derives intent from the current request's
+    # builtin configuration + a `provider_name` match against `self.system`.
+    assert part.provider_details is None
 
 
 async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
@@ -1617,33 +1639,41 @@ def test_anthropic_tool_search_result_error_block_mapping():
     assert part.metadata is None
 
 
-def test_anthropic_extract_discovered_tool_names_malformed_content():
+def test_anthropic_custom_replay_blocks_malformed_content():
     """Custom-callable replay must fall through to text formatting when the persisted
-    return content doesn't parse as a ``ToolSearchReturn`` — e.g. older history written
-    before the typed shape, or a hand-crafted return — rather than crashing or
+    return content doesn't parse as a `ToolSearchReturnContent` — e.g. older history
+    written before the typed shape, or a hand-crafted return — rather than crashing or
     fabricating an empty discovery."""
     pytest.importorskip('anthropic')
     from pydantic_ai.messages import ToolReturnPart
-    from pydantic_ai.models.anthropic import _extract_discovered_tool_names  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.anthropic import (
+        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
+    )
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
-    assert _extract_discovered_tool_names(malformed, custom_tool_search_active=True) is None
+    refs, message = _build_custom_tool_search_replay_blocks(malformed, custom_tool_search_active=True)
+    assert refs is None and message is None
 
 
 def test_anthropic_build_tool_search_replay_block_error_branch():
     """Replay reconstruction must round-trip an error result that the parse-time
     mapper stashed on ``provider_details`` back into the ``tool_search_tool_result_error``
     inner block — otherwise a transient provider error on turn N would silently
-    flip into a fake successful empty-search on turn N+1's resend."""
+    flip into a fake successful empty-search on turn N+1's resend.
+
+    The Anthropic SDK's `BetaToolSearchToolResultErrorParam` carries only `error_code`
+    on the wire (no `error_message`), so the message stashed on `provider_details`
+    is observability-only — verified separately in
+    `test_anthropic_tool_search_result_error_block_mapping`.
+    """
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolReturnPart
+    from pydantic_ai.messages import ToolSearchReturnPart
     from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
 
-    return_part = BuiltinToolReturnPart(
+    return_part = ToolSearchReturnPart(
         provider_name='anthropic',
-        tool_name='tool_search',
         tool_call_id='srv_err',
-        content={'tools': []},
+        content={'discovered_tools': []},
         provider_details={'error_code': 'unavailable', 'error_message': 'temporary outage'},
     )
     block = _build_tool_search_replay_block(return_part, 'srv_err')
@@ -1653,31 +1683,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
         'content': {
             'type': 'tool_search_tool_result_error',
             'error_code': 'unavailable',
-            'error_message': 'temporary outage',
         },
-    }
-
-
-def test_anthropic_build_tool_search_replay_block_missing_error_message():
-    """`error_message` is optional on the wire; reconstruction must default to
-    an empty string rather than dropping the field (Anthropic rejects partial error
-    blocks)."""
-    pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolReturnPart
-    from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
-
-    return_part = BuiltinToolReturnPart(
-        provider_name='anthropic',
-        tool_name='tool_search',
-        tool_call_id='srv_err',
-        content={'tools': []},
-        provider_details={'error_code': 'unavailable'},
-    )
-    block = _build_tool_search_replay_block(return_part, 'srv_err')
-    assert block['content'] == {
-        'type': 'tool_search_tool_result_error',
-        'error_code': 'unavailable',
-        'error_message': '',
     }
 
 
@@ -1693,7 +1699,7 @@ def test_openai_map_tool_search_call_unit():
         ResponseToolSearchOutputItem,
     )
 
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.messages import ToolSearchCallPart, ToolSearchReturnPart
     from pydantic_ai.models.openai import (
         _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
@@ -1701,7 +1707,7 @@ def test_openai_map_tool_search_call_unit():
 
     call = ResponseToolSearchCall(
         id='ts_1',
-        arguments={'query': 'exchange rate'},
+        arguments={'paths': ['get_exchange_rate']},
         call_id='call_1',
         execution='server',
         status='completed',
@@ -1718,15 +1724,18 @@ def test_openai_map_tool_search_call_unit():
         type='tool_search_output',
     )
     call_part, return_part = _map_tool_search_call(call, output, 'openai')
-    assert isinstance(call_part, BuiltinToolCallPart)
+    assert isinstance(call_part, ToolSearchCallPart)
     assert call_part.tool_name == 'tool_search'
-    assert isinstance(return_part, BuiltinToolReturnPart)
-    assert return_part.content == {'tools': [{'name': 'get_exchange_rate', 'description': ''}]}
+    # OpenAI server-executed `tool_search.arguments` carries `paths`; the adapter
+    # normalizes that into the cross-provider `queries` slot.
+    assert call_part.args == {'queries': ['get_exchange_rate']}
+    assert isinstance(return_part, ToolSearchReturnPart)
+    assert return_part.content == {'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}]}
     assert return_part.provider_details == {'status': 'completed'}
 
     # No output item → empty discovery (streaming start case).
     empty_return = _build_tool_search_return_part('call_1', 'in_progress', None, 'openai')
-    assert empty_return.content == {'tools': []}
+    assert empty_return.content == {'discovered_tools': []}
     assert empty_return.provider_details == {'status': 'in_progress'}
 
     # Non-function tools in the output don't have a `name` attribute and are skipped.
@@ -1745,7 +1754,7 @@ def test_openai_map_tool_search_call_unit():
         type='tool_search_output',
     )
     mixed = _build_tool_search_return_part('call_mix', 'completed', mixed_output, 'openai')
-    assert mixed.content == {'tools': [{'name': 'real', 'description': ''}]}
+    assert mixed.content == {'discovered_tools': [{'name': 'real', 'description': ''}]}
 
 
 @pytest.mark.vcr
@@ -1895,8 +1904,8 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     assert 'get_exchange_rate' in tool_call_names
 
     # The local `search_tools` run recorded the discovered tool on `content` as a typed
-    # ``ToolSearchReturn`` — this is the same value read back by `ToolSearchToolset` on
-    # later turns to unlock the deferred tool on the local path (and round-tripped as
+    # ``ToolSearchReturnContent`` — this is the same value read back by ``ToolSearchToolset``
+    # on later turns to unlock the deferred tool on the local path (and round-tripped as
     # `tool_search_output.tools` in the cassette's replay request body).
     search_returns = [
         part
@@ -1906,7 +1915,7 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     ]
     assert len(search_returns) == 1
     assert search_returns[0].content == {
-        'tools': [
+        'discovered_tools': [
             {
                 'name': 'get_exchange_rate',
                 'description': 'Look up the current exchange rate between two currencies.',
@@ -1992,7 +2001,9 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
             pass
         response = streamed.get()
     return_parts = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
-    assert return_parts and return_parts[0].content == {'tools': [{'name': 'get_exchange_rate', 'description': None}]}
+    assert return_parts and return_parts[0].content == {
+        'discovered_tools': [{'name': 'get_exchange_rate', 'description': None}]
+    }
 
 
 @pytest.mark.filterwarnings(
@@ -2097,7 +2108,8 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None):
     parts = response.parts
     assert any(isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search' for p in parts)
     assert any(
-        isinstance(p, BuiltinToolReturnPart) and p.content == {'tools': [{'name': 'real_tool', 'description': ''}]}
+        isinstance(p, BuiltinToolReturnPart)
+        and p.content == {'discovered_tools': [{'name': 'real_tool', 'description': ''}]}
         for p in parts
     )
 
@@ -2222,9 +2234,9 @@ async def test_agent_graph_without_builtin_tools(allow_model_requests: None, mon
 
 
 async def test_tool_search_toolset_discovers_from_builtin_return_part():
-    """Discovery metadata on a `BuiltinToolReturnPart` from a native provider search
+    """Discovery metadata on a `ToolSearchReturnPart` from a native provider search
     is picked up so the local path recovers state on cross-provider handover."""
-    from pydantic_ai.messages import BuiltinToolReturnPart
+    from pydantic_ai.messages import ToolSearchReturnPart
 
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -2232,9 +2244,8 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                BuiltinToolReturnPart(
-                    tool_name='tool_search',
-                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 )
             ]
         )
@@ -2260,7 +2271,7 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
     assert result.return_value == {
-        'tools': [
+        'discovered_tools': [
             {'name': 'stock_price', 'description': 'Get the current stock price for a symbol.'},
             {'name': 'crypto_price', 'description': 'Get the current cryptocurrency price.'},
         ]
@@ -2280,7 +2291,10 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
     tools = await searchable.get_tools(ctx)
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
-    assert result.return_value == {'tools': []}
+    assert result.return_value == {
+        'discovered_tools': [],
+        'message': 'No matching tools found. The tools you need may not be available.',
+    }
     assert result.content == 'No matching tools found. The tools you need may not be available.'
 
 

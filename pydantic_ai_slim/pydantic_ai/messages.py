@@ -20,7 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, deprecated
+from typing_extensions import NotRequired, TypeAliasType, TypedDict, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -1281,7 +1281,13 @@ class ToolReturnPart(BaseToolReturnPart):
 
 @dataclass(repr=False)
 class BuiltinToolReturnPart(BaseToolReturnPart):
-    """A tool return message from a built-in tool."""
+    """A tool return message from a built-in tool.
+
+    For builtins with a stable cross-provider shape (currently `tool_search`), a
+    `BuiltinToolReturnPart` may be promoted to a typed subclass like
+    [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] with a
+    narrowed `content` `TypedDict`. See `BuiltinToolCallPart` for the pattern.
+    """
 
     _: KW_ONLY
 
@@ -1299,6 +1305,19 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    @staticmethod
+    def narrow_type(part: BuiltinToolReturnPart) -> BuiltinToolReturnPart:
+        """Promote a base `BuiltinToolReturnPart` to its typed subclass when registered.
+
+        Modeled after [`BinaryContent.narrow_type`][pydantic_ai.messages.BinaryContent.narrow_type].
+        Returns the input unchanged when no narrower is registered for `part.tool_name`.
+        Use this on direct construction; Pydantic deserialization promotes
+        automatically via the discriminated-union dispatch on
+        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        """
+        narrower = _BUILTIN_RETURN_NARROWERS.get(part.tool_name)
+        return narrower(part) if narrower else part
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -1759,17 +1778,235 @@ class ToolCallPart(BaseToolCallPart):
 
 @dataclass(repr=False)
 class BuiltinToolCallPart(BaseToolCallPart):
-    """A tool call to a built-in tool."""
+    """A tool call to a built-in tool.
+
+    For builtins with a stable cross-provider shape (currently `tool_search`), this base
+    class can be promoted to a typed subclass with a narrowed `args` `TypedDict`. See
+    [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] for the canonical
+    example.
+
+    Adding a typed subclass for a future builtin:
+
+    1. Define an `Args` `TypedDict` next to the builtin (e.g. in
+       `pydantic_ai/builtin_tools/<name>.py`) capturing the cross-provider shape.
+    2. Subclass `BuiltinToolCallPart` (and `BuiltinToolReturnPart`) here in `messages.py`,
+       set `tool_name: Literal['<name>']` as a discriminator, and shadow `args` /
+       `content` with the narrower union (`str | <Args> | None` for `args`, since the
+       streaming/partial-args case still produces `str`).
+    3. Register a narrower in `_BUILTIN_CALL_NARROWERS` / `_BUILTIN_RETURN_NARROWERS`
+       so direct construction (`narrow_type`) promotes to the typed subclass.
+    4. Add the subclass to `ModelResponsePart`'s discriminated union so Pydantic
+       deserialization auto-promotes on `model_validate` / `model_validate_json`.
+
+    The `provider_details` field carries genuinely non-portable provider extras
+    (e.g. Anthropic's `strategy: 'bm25' | 'regex'` for tool search). Promote a field
+    to a typed slot in `args` / `content` only when at least two of OpenAI, Anthropic,
+    and Google support it (cf. [issue #3885](https://github.com/pydantic/pydantic-ai/issues/3885)).
+
+    MCP's `tool_name='mcp_server:<label>'` doesn't fit a `Literal` discriminator and
+    stays on the base class as known follow-up work tracked by
+    [issue #3561](https://github.com/pydantic/pydantic-ai/issues/3561).
+    """
 
     _: KW_ONLY
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    @staticmethod
+    def narrow_type(part: BuiltinToolCallPart) -> BuiltinToolCallPart:
+        """Promote a base `BuiltinToolCallPart` to its typed subclass when registered.
+
+        Modeled after [`BinaryContent.narrow_type`][pydantic_ai.messages.BinaryContent.narrow_type].
+        Returns the input unchanged when no narrower is registered for `part.tool_name`.
+        Use this on direct construction; Pydantic deserialization promotes
+        automatically via the discriminated-union dispatch on
+        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        """
+        narrower = _BUILTIN_CALL_NARROWERS.get(part.tool_name)
+        return narrower(part) if narrower else part
+
+
+# Registry of typed promoters for `BuiltinToolCallPart` / `BuiltinToolReturnPart`.
+# Populated at import time by typed subclass modules (e.g. `ToolSearchCallPart` below).
+_BUILTIN_CALL_NARROWERS: dict[str, Callable[[BuiltinToolCallPart], BuiltinToolCallPart]] = {}
+_BUILTIN_RETURN_NARROWERS: dict[str, Callable[[BuiltinToolReturnPart], BuiltinToolReturnPart]] = {}
+
+
+class ToolSearchMatch(TypedDict):
+    """A single match in a tool-search result.
+
+    Mirrors the public type re-exported from
+    [`pydantic_ai.builtin_tools.tool_search`][pydantic_ai.builtin_tools.tool_search.ToolSearchMatch].
+    Defined here (not in `builtin_tools.tool_search`) so the typed
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] stays
+    importable from `messages.py` without a circular import through the
+    `pydantic_ai._run_context` module that the builtin-tool helpers depend on.
+    """
+
+    name: str
+    """Name of the discovered tool, as the model will call it."""
+
+    description: str | None
+    """Human-readable description, if the tool provided one."""
+
+
+class ToolSearchArgs(TypedDict):
+    """Typed arguments for a tool-search call.
+
+    Carried on
+    [`ToolSearchCallPart.args`][pydantic_ai.messages.ToolSearchCallPart.args] as the
+    canonical cross-provider shape. Each adapter normalizes its provider's wire format
+    into this shape on parse, and rebuilds the wire format from this shape on emit.
+    """
+
+    queries: list[str]
+    """Normalized search inputs.
+
+    * Anthropic BM25 / regex: single-item list with the query string.
+    * OpenAI server-executed `tool_search`: the list of tool paths the model picked.
+    * OpenAI client-execution / local `search_tools` fallback: single-item list with
+      the keywords string.
+    """
+
+
+class ToolSearchReturnContent(TypedDict):
+    """Typed return value of [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool].
+
+    Carried on
+    [`ToolSearchReturnPart.content`][pydantic_ai.messages.ToolSearchReturnPart.content]
+    as the canonical cross-provider shape. Future provider-native builtins (bash, text
+    editor, apply patch, etc.) are expected to follow the same per-tool `TypedDict`
+    pattern with their own typed `BuiltinToolCallPart` / `BuiltinToolReturnPart`
+    subclasses, converging on
+    [issue #3561](https://github.com/pydantic/pydantic-ai/issues/3561).
+    """
+
+    discovered_tools: list[ToolSearchMatch]
+    """Matches ordered by relevance. An empty list means "search ran, nothing matched"."""
+
+    message: NotRequired[str]
+    """Optional text shown to the model when no matches were found.
+
+    Rendered as text on local fallback / Anthropic custom-callable empty-results path.
+    Stripped on OpenAI client-execution and Anthropic server-side replay (those carry
+    only structural fields).
+    """
+
+
+@dataclass(repr=False)
+class ToolSearchCallPart(BuiltinToolCallPart):
+    """Typed view of a [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] for tool search.
+
+    Shadows `args` with a narrower type. The `str` variant covers the
+    streaming / partial-args case before parsing completes; once parsed,
+    `args` is a [`ToolSearchArgs`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs]
+    `TypedDict`.
+    """
+
+    tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (cross-provider tool-search call)."""
+
+    args: str | ToolSearchArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Tool-search query payload.
+
+    Narrows the parent's `str | dict[str, Any] | None` to a typed
+    [`ToolSearchArgs`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs] when
+    parsed. Streaming / partial-args still arrive as `str` until they're complete.
+    """
+
+
+@dataclass(repr=False)
+class ToolSearchReturnPart(BuiltinToolReturnPart):
+    """Typed view of a [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] for tool search.
+
+    Shadows `content` with a narrower
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    `TypedDict`.
+    """
+
+    tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (cross-provider tool-search return)."""
+
+    content: ToolSearchReturnContent | str | None = None
+    """Discovered-tools payload.
+
+    Narrows the parent's `ToolReturnContent` to a typed
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent].
+    `str` covers the rare provider-fallback case where a plain text result block is
+    surfaced (e.g. an Anthropic tool-search error block).
+    """
+
+
+def _narrow_tool_search_call(part: BuiltinToolCallPart) -> ToolSearchCallPart:
+    if isinstance(part, ToolSearchCallPart):
+        return part
+    return ToolSearchCallPart(
+        tool_name='tool_search',
+        args=cast('str | ToolSearchArgs | None', part.args),
+        tool_call_id=part.tool_call_id,
+        id=part.id,
+        provider_name=part.provider_name,
+        provider_details=part.provider_details,
+    )
+
+
+def _narrow_tool_search_return(part: BuiltinToolReturnPart) -> ToolSearchReturnPart:
+    if isinstance(part, ToolSearchReturnPart):
+        return part
+    return ToolSearchReturnPart(
+        tool_name='tool_search',
+        content=cast('ToolSearchReturnContent | str | None', part.content),
+        tool_call_id=part.tool_call_id,
+        metadata=part.metadata,
+        timestamp=part.timestamp,
+        outcome=part.outcome,
+        provider_name=part.provider_name,
+        provider_details=part.provider_details,
+    )
+
+
+_BUILTIN_CALL_NARROWERS['tool_search'] = _narrow_tool_search_call
+_BUILTIN_RETURN_NARROWERS['tool_search'] = _narrow_tool_search_return
+
+
+def _model_response_part_discriminator(v: Any) -> str | None:
+    """Callable discriminator for [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+
+    Two builtin parts share a `part_kind`:
+
+    * `'builtin-tool-call'` → `BuiltinToolCallPart` *or* `ToolSearchCallPart`
+    * `'builtin-tool-return'` → `BuiltinToolReturnPart` *or* `ToolSearchReturnPart`
+
+    Pick the narrower subclass when `tool_name` is recognized; otherwise fall through
+    to the base class so unknown `tool_name` values (e.g. future builtins not yet
+    typed) deserialize cleanly.
+    """
+    if isinstance(v, dict):
+        kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if kind == 'builtin-tool-call' and v.get('tool_name') == 'tool_search':  # pyright: ignore[reportUnknownMemberType]
+            return 'tool-search-call'
+        if kind == 'builtin-tool-return' and v.get('tool_name') == 'tool_search':  # pyright: ignore[reportUnknownMemberType]
+            return 'tool-search-return'
+        return kind if isinstance(kind, str) else None
+    if isinstance(v, ToolSearchCallPart):
+        return 'tool-search-call'
+    if isinstance(v, ToolSearchReturnPart):
+        return 'tool-search-return'
+    return getattr(v, 'part_kind', None)
+
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | CompactionPart | FilePart,
-    pydantic.Discriminator('part_kind'),
+    Annotated[TextPart, pydantic.Tag('text')]
+    | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
+    | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
+    | Annotated[BuiltinToolCallPart, pydantic.Tag('builtin-tool-call')]
+    | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
+    | Annotated[BuiltinToolReturnPart, pydantic.Tag('builtin-tool-return')]
+    | Annotated[ThinkingPart, pydantic.Tag('thinking')]
+    | Annotated[CompactionPart, pydantic.Tag('compaction')]
+    | Annotated[FilePart, pydantic.Tag('file')],
+    pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
 

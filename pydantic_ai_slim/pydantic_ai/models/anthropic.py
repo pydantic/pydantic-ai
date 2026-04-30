@@ -24,10 +24,9 @@ from ..builtin_tools import (
 )
 from ..builtin_tools.tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    ToolSearchArgs,
     ToolSearchMatch,
-    ToolSearchReturn,
     ToolSearchTool,
-    extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
@@ -54,6 +53,8 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -154,6 +155,9 @@ try:
         BetaToolSearchToolBm25_20251119Param,
         BetaToolSearchToolRegex20251119Param,
         BetaToolSearchToolResultBlock,
+        BetaToolSearchToolResultBlockParam,
+        BetaToolSearchToolResultErrorParam,
+        BetaToolSearchToolSearchResultBlockParam,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -1052,19 +1056,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
-                        discovered_tools = _extract_discovered_tool_names(request_part, custom_tool_search_active)
-                        if discovered_tools:
-                            # Anthropic rejects an empty `content` list on a `tool_result`
-                            # block, so when the custom search returned no matches fall
-                            # through to the normal text-formatting path (which sends the
-                            # "No matching tools found..." string from ``ToolSearchToolset``).
+                        custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
+                            request_part, custom_tool_search_active
+                        )
+                        if custom_tool_refs:
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
                                 type='tool_result',
-                                content=[
-                                    BetaToolReferenceBlockParam(tool_name=name, type='tool_reference')
-                                    for name in discovered_tools
-                                ],
+                                content=custom_tool_refs,
+                                is_error=False,
+                            )
+                            user_content_params.append(tool_result_block_param)
+                            continue
+                        if custom_tool_refs is not None:
+                            # Empty-results path on the custom-callable strategy. Anthropic
+                            # rejects an empty `tool_result.content` list, so we send the
+                            # `message` text from the typed return (set by the toolset's
+                            # `_empty_return`) as a single text block instead.
+                            empty_message = custom_empty_message or 'No matching tools found.'
+                            tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
+                                tool_use_id=_guard_tool_call_id(t=request_part),
+                                type='tool_result',
+                                content=[BetaTextBlockParam(text=empty_message, type='text')],
                                 is_error=False,
                             )
                             user_content_params.append(tool_result_block_param)
@@ -1130,6 +1143,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
                     | BetaWebFetchToolResultBlockParam
+                    | BetaToolSearchToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
@@ -1212,11 +1226,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 native_name = (
                                     'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
                                 )
+                                # Rebuild the wire `{"query": "..."}` shape from the
+                                # cross-provider `queries` slot. Joining with a space
+                                # matches Anthropic's BM25 / regex single-string input.
+                                args_dict = response_part.args_as_dict()
+                                if 'queries' in args_dict:
+                                    raw_queries = args_dict.get('queries')
+                                    queries: list[str] = (
+                                        [q for q in cast('list[Any]', raw_queries) if isinstance(q, str)]
+                                        if isinstance(raw_queries, list)
+                                        else []
+                                    )
+                                    wire_input: dict[str, Any] = {'query': ' '.join(queries)}
+                                else:
+                                    wire_input = args_dict
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name=native_name,
-                                    input=response_part.args_as_dict(),
+                                    input=wire_input,
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
@@ -1287,11 +1315,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
+                                mcp_content = cast(
+                                    'dict[str, Any]',
+                                    response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                )
                                 assistant_content_params.append(
                                     BetaMCPToolResultBlock(
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                        **mcp_content,
                                     )
                                 )
                     elif isinstance(response_part, CompactionPart):
@@ -2052,43 +2084,85 @@ class AnthropicStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _extract_discovered_tool_names(part: ToolReturnPart, custom_tool_search_active: bool) -> list[str] | None:
-    """Return discovered tool names to render as Anthropic `tool_reference` blocks.
+def _build_custom_tool_search_replay_blocks(
+    request_part: ToolReturnPart, custom_tool_search_active: bool
+) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
+    """Custom-callable tool-search replay payload for the Anthropic `tool_result` block.
 
-    Reads the typed :class:`SearchToolsReturn` off of ``part.content`` — the
-    tool-return value is the contract here, not the sideband metadata. Returns
-    ``None`` when this isn't a custom-callable tool-search return (wrong tool, or
-    content doesn't parse as a ``SearchToolsReturn``), letting the caller fall
+    Reads the typed
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    off `part.content` (the local `search_tools` return shape) and unpacks it into:
+
+    * `tool_references`: matched tools, ready to be wrapped in `BetaToolReferenceBlockParam`s.
+    * `empty_message`: fallback text to send when no matches were found (Anthropic
+      rejects an empty `tool_result` content list).
+
+    Returns `(None, None)` when this isn't a custom-callable tool-search return —
+    wrong tool, custom mode inactive, or content doesn't parse — so the caller falls
     through to the default text-formatting path.
     """
-    if not custom_tool_search_active or part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
-        return None
-    parsed = extract_tool_search_return(part.content)
-    if parsed is None:
-        return None
-    return [match['name'] for match in parsed['tools']]
+    if not custom_tool_search_active or request_part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
+        return None, None
+    content = request_part.content
+    if not isinstance(content, dict):
+        return None, None
+    matches = content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    if not isinstance(matches, list):
+        return None, None
+    refs: list[BetaToolReferenceBlockParam] = []
+    for entry in matches:  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(name, str):
+            refs.append(BetaToolReferenceBlockParam(tool_name=name, type='tool_reference'))
+    raw_message = content.get('message')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    message = raw_message if isinstance(raw_message, str) else None
+    return refs, message
 
 
-def _build_tool_search_replay_block(response_part: BuiltinToolReturnPart, tool_use_id: str) -> Any:
+def _build_tool_search_replay_block(
+    response_part: BuiltinToolReturnPart, tool_use_id: str
+) -> BetaToolSearchToolResultBlockParam:
     """Reconstruct an Anthropic tool-search result block for history replay.
 
-    Reads the cross-provider :class:`ToolSearchReturn` off ``content`` and any error
-    fields the parse-time mapper stashed on ``provider_details``. Returned as a plain
-    dict cast to ``Any`` because ``BetaToolSearchToolResultBlockParam`` isn't in the
-    ``BetaContentBlockParam`` union yet.
+    Reads the cross-provider
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    off ``content`` and any error fields the parse-time mapper stashed on
+    ``provider_details``. The SDK type
+    [`BetaToolSearchToolResultBlockParam`][anthropic.types.beta.BetaToolSearchToolResultBlockParam]
+    is in `BetaContentBlockParam` so no `cast(Any, ...)` is needed.
     """
     err = response_part.provider_details or {}
+    inner: BetaToolSearchToolResultErrorParam | BetaToolSearchToolSearchResultBlockParam
     if err.get('error_code') is not None:
-        inner: dict[str, Any] = {
-            'type': 'tool_search_tool_result_error',
-            'error_code': err['error_code'],
-            'error_message': err.get('error_message', ''),
-        }
+        # `BetaToolSearchToolResultErrorParam` only carries `error_code` (no
+        # `error_message`); the parse-time mapper stashes the message for
+        # observability but it doesn't make it back onto the wire.
+        inner = BetaToolSearchToolResultErrorParam(
+            type='tool_search_tool_result_error',
+            error_code=err['error_code'],
+        )
     else:
-        parsed = extract_tool_search_return(response_part.content) or ToolSearchReturn(tools=[])
-        tool_refs = [{'type': 'tool_reference', 'tool_name': match['name']} for match in parsed['tools']]
-        inner = {'type': 'tool_search_tool_search_result', 'tool_references': tool_refs}
-    return {'tool_use_id': tool_use_id, 'type': 'tool_search_tool_result', 'content': inner}
+        matches: list[ToolSearchMatch] = []
+        if isinstance(response_part.content, dict):
+            content_matches = response_part.content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(content_matches, list):
+                for entry in content_matches:  # pyright: ignore[reportUnknownVariableType]
+                    if isinstance(entry, dict):
+                        name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                        if isinstance(name, str):
+                            matches.append({'name': name, 'description': None})
+        tool_refs = [BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference') for match in matches]
+        inner = BetaToolSearchToolSearchResultBlockParam(
+            type='tool_search_tool_search_result',
+            tool_references=tool_refs,
+        )
+    return BetaToolSearchToolResultBlockParam(
+        tool_use_id=tool_use_id,
+        type='tool_search_tool_result',
+        content=inner,
+    )
 
 
 _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
@@ -2108,11 +2182,16 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
         )
     if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
-        # Preserve the variant on the call part for replay (see `_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
-        return BuiltinToolCallPart(
+        # Normalize the wire `{"query": "..."}` into the cross-provider
+        # `{"queries": [...]}` shape carried on the typed call part. The bm25/regex
+        # variant goes on `provider_details` so same-provider replay can pick the
+        # original tool name back out (`_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
+        query_value = (tool_args or {}).get('query', '')
+        queries = [query_value] if isinstance(query_value, str) else []
+        normalized_args: ToolSearchArgs = {'queries': queries}
+        return ToolSearchCallPart(
             provider_name=provider_name,
-            tool_name=ToolSearchTool.kind,
-            args=tool_args,
+            args=normalized_args,
             tool_call_id=item.id,
             provider_details={'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'},
         )
@@ -2121,14 +2200,12 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     assert_never(item.name)
 
 
-def _map_tool_search_tool_result_block(
-    item: BetaToolSearchToolResultBlock, provider_name: str
-) -> BuiltinToolReturnPart:
-    """Map a tool-search result block into a typed :class:`BuiltinToolReturnPart`.
+def _map_tool_search_tool_result_block(item: BetaToolSearchToolResultBlock, provider_name: str) -> ToolSearchReturnPart:
+    """Map a tool-search result block into a typed :class:`ToolSearchReturnPart`.
 
-    Writes a cross-provider :class:`ToolSearchReturn` to ``content`` (no provider-shape
-    smuggling) and stashes the Anthropic-specific error fields on ``provider_details``
-    so we can faithfully reconstruct the original block on replay.
+    Writes a cross-provider :class:`ToolSearchReturnContent` to ``content`` (no
+    provider-shape smuggling) and stashes the Anthropic-specific error fields on
+    ``provider_details`` so we can faithfully reconstruct the original block on replay.
     """
     block = item.content
     provider_details: dict[str, Any] | None = None
@@ -2137,10 +2214,9 @@ def _map_tool_search_tool_result_block(
         matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
     else:  # tool_search_tool_result_error
         provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
-    return BuiltinToolReturnPart(
+    return ToolSearchReturnPart(
         provider_name=provider_name,
-        tool_name=ToolSearchTool.kind,
-        content=cast('dict[str, Any]', ToolSearchReturn(tools=matches)),
+        content={'discovered_tools': matches},
         tool_call_id=item.tool_use_id,
         provider_details=provider_details,
     )

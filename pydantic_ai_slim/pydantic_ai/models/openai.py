@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Final, Literal, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -37,10 +37,9 @@ from ..builtin_tools import (
 )
 from ..builtin_tools.tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    ToolSearchArgs,
     ToolSearchMatch,
-    ToolSearchReturn,
     ToolSearchTool,
-    extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
@@ -69,6 +68,8 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -2342,12 +2343,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         # With `execution='client'` tool search, `search_tools` calls/returns need to be
         # replayed as `tool_search_call` / `tool_search_output` items so the provider can
-        # pair them with the builtin and unlock the discovered tools. Detect which calls
-        # came in through that envelope by the marker stamped on their
-        # ``provider_details`` at parse time, rather than by the current request's
-        # builtin configuration — the user may have reconfigured ``ToolSearch`` between
-        # turns, or the history may have been handed over from another run.
-        envelope_marked_call_ids: set[str] = set()
+        # pair them with the builtin and unlock the discovered tools. The current
+        # request's builtin configuration is the source of truth: a `ToolCallPart` for
+        # `search_tools` originating from this provider (`provider_name == self.system`)
+        # belongs in the client-execution flow whenever a custom-callable tool search is
+        # active.
+        client_tool_search_active = _has_custom_tool_search(model_request_parameters)
+        client_replay_call_ids: set[str] = set()
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -2360,7 +2362,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        if call_id in envelope_marked_call_ids:
+                        if call_id in client_replay_call_ids:
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
                             # discovered-tool state tied to the `tool_search_call`.
@@ -2440,13 +2442,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         id = id or item.id
 
                         if (
-                            item.provider_details is not None
-                            and item.provider_details.get('envelope') == CLIENT_TOOL_SEARCH_ENVELOPE
+                            client_tool_search_active
+                            and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+                            and item.provider_name == self.system
                         ):
                             # Replay the local `search_tools` call as a `tool_search_call`
                             # with `execution='client'` so OpenAI re-attaches it to the
                             # builtin and resumes the client-side discovery flow.
-                            envelope_marked_call_ids.add(call_id)
+                            client_replay_call_ids.add(call_id)
                             tool_search_call: ToolSearchCallParam = {
                                 'type': 'tool_search_call',
                                 'execution': 'client',
@@ -3238,7 +3241,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                             maybe_event = self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=f'{chunk.item.id}-call',
-                                args=call_part.args,
+                                args=cast('str | dict[str, Any] | None', call_part.args),
                             )
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
@@ -3898,22 +3901,36 @@ def _find_search_tool_definition(
     )
 
 
+def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:
+    """Translate an OpenAI `tool_search_call.arguments` payload into `ToolSearchArgs`.
+
+    OpenAI's server-side `tool_search` returns the picked tool paths under `paths`;
+    this helper folds that into the canonical
+    [`queries`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs] slot. Other
+    input shapes pass through with an empty `queries` list so adapters never have to
+    guess.
+    """
+    if isinstance(raw, dict):
+        paths = raw.get('paths')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(paths, list):
+            return {'queries': [p for p in paths if isinstance(p, str)]}  # pyright: ignore[reportUnknownVariableType]
+    return {'queries': []}
+
+
 def _map_tool_search_call(
     item: ResponseToolSearchCall,
     output_item: responses.ResponseToolSearchOutputItem | None,
     provider_name: str,
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    """Map OpenAI native tool search (server-executed) into builtin call/return parts.
+) -> tuple[ToolSearchCallPart, ToolSearchReturnPart]:
+    """Map OpenAI native tool search (server-executed) into typed builtin call/return parts.
 
     Mirrors `_map_web_search_tool_call`: call and result are both server-side, so we
-    emit both parts in the same response. The ``discovered_tools`` metadata matches the
-    key written by our local `search_tools`, enabling cross-provider history recovery.
+    emit both parts in the same response.
     """
     call_id = item.call_id or item.id
-    call_part = BuiltinToolCallPart(
+    call_part = ToolSearchCallPart(
         provider_name=provider_name,
-        tool_name=ToolSearchTool.kind,
-        args=cast('dict[str, Any]', item.arguments),
+        args=_normalize_tool_search_args(item.arguments),
         tool_call_id=call_id,
         id=item.id,
     )
@@ -3930,11 +3947,20 @@ def _build_client_tool_search_output_param(
     Looks up each discovered tool name in ``function_tools`` and emits a
     ``FunctionToolParam`` so OpenAI sees the same ``Tool`` definitions it originally
     loaded in the prior turn — the shape of :class:`ResponseToolSearchOutputItemParamParam`.
-    Reads the typed :class:`SearchToolsReturn` off of ``part.content`` rather than the
-    sideband metadata; the tool-return value is the contract.
+    Reads the typed
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    off of ``part.content`` rather than the sideband metadata; the tool-return value
+    is the contract.
     """
-    parsed = extract_tool_search_return(part.content)
-    discovered = [match['name'] for match in parsed['tools']] if parsed else []
+    discovered: list[str] = []
+    if isinstance(part.content, dict):
+        matches = part.content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(matches, list):
+            for entry in matches:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(entry, dict):
+                    name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    if isinstance(name, str):
+                        discovered.append(name)
 
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
     # `strict` is profile-dependent at initial send-time (`_map_tool_definition`
@@ -3965,14 +3991,6 @@ def _build_client_tool_search_output_param(
     return output
 
 
-CLIENT_TOOL_SEARCH_ENVELOPE: Final = 'openai.tool_search_client'
-"""Marker stored on ``ToolCallPart.provider_details['envelope']`` for client-executed
-tool search calls. Replay checks this marker (not the current request's builtin
-configuration) so history round-trips correctly even if the user reconfigured
-``ToolSearch`` between turns, and so cross-provider handover leaves the marker as
-harmless metadata on adapters that don't recognize it."""
-
-
 def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolCallPart:
     """Map a client-executed OpenAI ``tool_search_call`` into a regular ``ToolCallPart``.
 
@@ -3980,9 +3998,11 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: st
     as a ``tool_search_call`` item but leaves execution to us: the standard agent-graph
     tool-execution path runs the local ``search_tools`` function and produces the
     matching ``ToolReturnPart``. We pack the model's ``{"query": "..."}`` payload as the
-    ``{"keywords": ...}`` shape the local toolset expects, and stamp an envelope marker
-    on ``provider_details`` so replay can re-wrap this call as ``tool_search_call``
-    without relying on the current request's builtin configuration.
+    ``{"keywords": ...}`` shape the local toolset expects.
+
+    Replay later detects this case from the surrounding context — the call carries
+    ``tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME`` and there is no matching native
+    `ToolSearchCallPart` — so no envelope marker is required.
     """
     call_id = item.call_id or item.id
     args_dict = cast('dict[str, Any]', item.arguments)
@@ -3994,7 +4014,6 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: st
         tool_call_id=call_id,
         id=item.id,
         provider_name=provider_name,
-        provider_details={'envelope': CLIENT_TOOL_SEARCH_ENVELOPE},
     )
 
 
@@ -4003,12 +4022,13 @@ def _build_tool_search_return_part(
     status: str,
     output_item: responses.ResponseToolSearchOutputItem | None,
     provider_name: str,
-) -> BuiltinToolReturnPart:
-    """Build the builtin return part for an OpenAI tool search, with or without output.
+) -> ToolSearchReturnPart:
+    """Build the typed return part for an OpenAI tool search, with or without output.
 
-    Writes the cross-provider :class:`ToolSearchReturn` to ``content`` (with as much
-    detail as the provider returned — name and description for OpenAI's full
-    function-tool definitions) and stashes the ``status`` field on
+    Writes the cross-provider
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    to ``content`` (with as much detail as the provider returned — name and description
+    for OpenAI's full function-tool definitions) and stashes the ``status`` field on
     ``provider_details``.
     """
     matches: list[ToolSearchMatch] = []
@@ -4020,10 +4040,9 @@ def _build_tool_search_return_part(
         for t in output_item.tools:
             if isinstance(t, responses.FunctionTool):
                 matches.append({'name': t.name, 'description': t.description})
-    return BuiltinToolReturnPart(
+    return ToolSearchReturnPart(
         provider_name=provider_name,
-        tool_name=ToolSearchTool.kind,
-        content=cast('dict[str, Any]', ToolSearchReturn(tools=matches)),
+        content={'discovered_tools': matches},
         tool_call_id=call_id,
         provider_details={'status': status},
     )

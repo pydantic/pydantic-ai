@@ -37,12 +37,17 @@ from ..builtin_tools.tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchFunc,
     ToolSearchMatch,
-    ToolSearchReturn,
+    ToolSearchReturnContent,
     ToolSearchTool,
-    extract_tool_search_return,
 )
 from ..exceptions import ModelRetry, UserError
-from ..messages import BuiltinToolReturnPart, ModelRequest, ToolReturn, ToolReturnPart
+from ..messages import (
+    BuiltinToolReturnPart,
+    ModelRequest,
+    ToolReturn,
+    ToolReturnPart,
+    ToolSearchReturnPart,
+)
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -55,9 +60,9 @@ _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
 Pre-typed-content versions of this toolset wrote discovered tool names to
 `ToolReturnPart.metadata['discovered_tools']` instead of the typed
-[`ToolSearchReturn`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturn] on `content`.
-Read-only — kept for backward-compat parsing of persisted histories. New writes go to
-the typed content."""
+[`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+on `content`. Read-only — kept for backward-compat parsing of persisted histories. New
+writes go to the typed content."""
 
 
 _MAX_SEARCH_RESULTS = 10
@@ -217,11 +222,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
         """Scan message history for previously-discovered tool names.
 
-        Reads the typed [`ToolSearchReturn`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturn]
+        Reads the typed
+        [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
         off of `content` for both the local `search_tools` return (on `ToolReturnPart`
-        in a `ModelRequest`) and the provider-native return (on `BuiltinToolReturnPart`
-        in a `ModelResponse` — each adapter normalizes its provider's wire format into
-        the same shape).
+        in a `ModelRequest`) and the provider-native return (on
+        [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
+        [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] in a
+        `ModelResponse` — each adapter normalizes its provider's wire format into the
+        same shape).
 
         Also reads the legacy `metadata['discovered_tools']` sideband on
         `ToolReturnPart` so message histories serialized before the typed-content
@@ -236,16 +244,53 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                         self._collect_discovered_from_legacy_metadata(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
-                    if isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
-                        self._collect_discovered_from_content(part.content, discovered)
+                    if isinstance(part, ToolSearchReturnPart):
+                        self._collect_discovered_from_typed_content(part.content, discovered)
+                    elif isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
+                        # Base `BuiltinToolReturnPart` instances reach this branch when
+                        # constructed directly (e.g. legacy test fixtures) — promote and
+                        # read off the typed view.
+                        promoted = BuiltinToolReturnPart.narrow_type(part)
+                        if isinstance(promoted, ToolSearchReturnPart):
+                            self._collect_discovered_from_typed_content(promoted.content, discovered)
+                        else:
+                            self._collect_discovered_from_content(part.content, discovered)
         return discovered
 
     @staticmethod
-    def _collect_discovered_from_content(content: Any, discovered: set[str]) -> None:
-        parsed = extract_tool_search_return(content)
-        if parsed is None:
+    def _collect_discovered_from_typed_content(
+        content: ToolSearchReturnContent | str | None, discovered: set[str]
+    ) -> None:
+        if not isinstance(content, dict):
             return
-        discovered.update(match['name'] for match in parsed['tools'])
+        for match in content.get('discovered_tools', []):
+            name = match.get('name')
+            if isinstance(name, str):
+                discovered.add(name)
+
+    @staticmethod
+    def _collect_discovered_from_content(content: Any, discovered: set[str]) -> None:
+        """Read discovered tool names off untyped content (`ToolReturnPart.content`).
+
+        The local `search_tools` return is shaped as a
+        [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+        but lands on a regular `ToolReturnPart`, so the typed subclass dispatch doesn't
+        apply. Also tolerates the legacy `tools` key from earlier persisted histories.
+        """
+        if not isinstance(content, dict):
+            return
+        # Current shape: `discovered_tools`. Legacy shape (pre-typed-parts): `tools`.
+        matches = content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if not isinstance(matches, list):
+            matches = content.get('tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if not isinstance(matches, list):
+                return
+        for entry in matches:  # pyright: ignore[reportUnknownVariableType]
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(name, str):
+                discovered.add(name)
 
     @staticmethod
     def _collect_discovered_from_legacy_metadata(metadata: Any, discovered: set[str]) -> None:
@@ -344,23 +389,30 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             return self._empty_return()
         return self._build_return(matches)
 
-    @staticmethod
-    def _empty_return() -> ToolReturn:
-        """Shaped "no matches" return: empty `tools` list + a user-visible note.
+    _NO_MATCHES_MESSAGE = 'No matching tools found. The tools you need may not be available.'
+
+    @classmethod
+    def _empty_return(cls) -> ToolReturn:
+        """Shaped "no matches" return: empty `discovered_tools` list + a user-visible note.
 
         The note is sent to the model as separate content (`ToolReturn.content`) so
         the model doesn't retry searching with the same keywords, while
         `return_value` stays as a typed
-        [`ToolSearchReturn`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturn].
+        [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+        with the `message` slot mirroring the same text for adapters that need it
+        on the wire (Anthropic custom-callable empty-results path).
         """
-        return_value: ToolSearchReturn = {'tools': []}
+        return_value: ToolSearchReturnContent = {
+            'discovered_tools': [],
+            'message': cls._NO_MATCHES_MESSAGE,
+        }
         return ToolReturn(
             return_value=return_value,
-            content='No matching tools found. The tools you need may not be available.',
+            content=cls._NO_MATCHES_MESSAGE,
         )
 
     @staticmethod
     def _build_return(matches: list[ToolSearchMatch]) -> ToolReturn:
-        """Shaped matches return: typed [`ToolSearchReturn`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturn]."""
-        return_value: ToolSearchReturn = {'tools': matches}
+        """Shaped matches return: typed [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]."""
+        return_value: ToolSearchReturnContent = {'discovered_tools': matches}
         return ToolReturn(return_value=return_value)
