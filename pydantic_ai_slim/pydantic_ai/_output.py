@@ -1030,11 +1030,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         if self.output_validators:
-            # The snapshot-and-replace pattern is needed because `ctx` at this point still carries the
-            # pre-`for_run_step` counter and `ctx.max_retries` reflects the agent default rather than the
-            # per-tool `tool.max_retries` that actually enforces the retry budget here. Follow-up: if PR
-            # #4745 lands, `ctx.max_retries` will already carry the per-tool value and this replace can go.
-            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=tool.max_retries)
+            # Output validators see the global output-retry budget so the same validator stays
+            # consistent across the text path and across multiple `ToolOutput`s. The per-tool
+            # case where `ToolOutput(max_retries=N)` exceeds the global budget is tracked in
+            # https://github.com/pydantic/pydantic-ai/issues/5238.
+            assert self.max_retries is not None
+            validator_ctx = replace(ctx, retry=self._output_retry_count, max_retries=self.max_retries)
             for validator in self.output_validators:
                 output = await validator.validate(output, validator_ctx, wrap_validation_errors=False)
         return output

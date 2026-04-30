@@ -9785,14 +9785,16 @@ class TestOverrideWithModelSettings:
 
 
 def test_output_validator_retry_consistency_across_paths():
-    """Output validator `ctx.retry` tracks the global output retry counter across paths.
+    """Output validators see global retry info, matching the text-output path.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
-    the tool-output path now snapshots `ctx.retry` from the global output retry
-    counter so `ctx.retry` stays consistent across tool switches and matches the
-    text-path behavior. `ctx.max_retries` reflects the per-path enforcement limit:
-    tool path shows `tool.max_retries` (the per-tool limit that actually enforces),
-    text path shows the global `output_retries`.
+    the text path sets ctx.retry/max_retries to the global output retry counter,
+    but the tool-output path was using the per-tool counter, causing inconsistent
+    ctx.retry and ctx.max_retries values in @agent.output_validator.
+
+    Using ToolOutput(max_retries=5) with output_retries=2 exposes the bug:
+    without the fix, the validator would see max_retries=5 (per-tool value)
+    instead of max_retries=2 (global output_retries, matching the text path).
     """
     retries_log: list[int] = []
     max_retries_log: list[int] = []
@@ -9820,7 +9822,7 @@ def test_output_validator_retry_consistency_across_paths():
     assert isinstance(result.output, Foo)
 
     assert retries_log == [0, 1, 2]
-    assert max_retries_log == [5, 5, 5]
+    assert max_retries_log == [2, 2, 2]
 
 
 def test_output_validator_exceeds_output_retries():
@@ -9954,9 +9956,8 @@ def test_output_validator_retry_counter_with_tool_switch():
 
     # Global retry counter increments across tool switches
     assert validator_retries == [0, 1, 2]
-    # max_retries reflects each tool's per-tool enforcement limit: output_b on the first
-    # call (max_retries=1), output_a on the second and third (max_retries=3).
-    assert validator_max_retries == [1, 3, 3]
+    # max_retries reflects the agent-level default (0) since output_retries not set
+    assert validator_max_retries == [0, 0, 0]
 
 
 def test_output_tool_validation_vs_execution_retry_counting():
@@ -10065,56 +10066,6 @@ def test_output_retries_run_override_text_path():
 
     # Text-path budget is 2 → validator sees [0, 1, 2] before exhaustion
     assert retries_log == [0, 1, 2]
-
-
-def test_validator_sees_per_tool_max_retries():
-    """Output validators on the tool path see per-tool `ToolOutput(max_retries=...)`.
-
-    Regression for the Devin review comment on PR #4956: `ctx.max_retries` in an
-    output validator on the tool path should reflect `tool.max_retries` — the
-    enforcement limit that will actually stop the agent — not the agent-level default.
-    """
-    max_retries_log: list[int] = []
-
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
-
-    agent = Agent(
-        FunctionModel(return_model),
-        output_type=ToolOutput(Foo, max_retries=3),
-        retries=0,
-    )
-
-    @agent.output_validator
-    def record_max_retries(ctx: RunContext[None], o: Foo) -> Foo:
-        max_retries_log.append(ctx.max_retries)
-        return o
-
-    result = agent.run_sync('Hello')
-    assert isinstance(result.output, Foo)
-    # Validator sees the per-tool enforcement limit (3), not the agent-level default (0).
-    assert max_retries_log == [3]
-
-
-def test_validator_max_retries_text_path_unchanged():
-    """Text-path validators see the global `output_retries` as `ctx.max_retries`."""
-    max_retries_log: list[int] = []
-
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('hello')])
-
-    agent = Agent(FunctionModel(return_model), output_type=str, output_retries=4)
-
-    @agent.output_validator
-    def record_max_retries(ctx: RunContext[None], o: str) -> str:
-        max_retries_log.append(ctx.max_retries)
-        return o
-
-    result = agent.run_sync('Hello')
-    assert result.output == 'hello'
-    # Text-path validators see the agent-level global budget.
-    assert max_retries_log == [4]
 
 
 def test_output_retries_spec_only_override():
