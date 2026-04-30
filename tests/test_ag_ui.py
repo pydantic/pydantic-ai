@@ -3432,6 +3432,26 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
     assert uploaded.identifier == 'my-doc.pdf'
 
 
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    """Minimal `BinaryImage` for multimodal-tool-return roundtrip tests.
+
+    Avoids the KB-scale `image_content` session fixture; the assertions only check `IsStr()` on the
+    base64 payload and rely on round-trip equality, so real image bytes add cost without coverage.
+    """
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
+
+
 @pytest.mark.parametrize(
     ('case_id', 'expected_activities'),
     [
@@ -3548,9 +3568,9 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
 def test_dump_load_roundtrip_tool_return_multimodal(
     case_id: str,
     expected_activities: list[Any],
-    image_content: BinaryImage,
-    audio_content: BinaryContent,
-    video_content: BinaryContent,
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
 ) -> None:
     """Test multimodal `ToolReturnPart.content` round-trips via the sidecar `ActivityMessage`.
 
@@ -3559,9 +3579,9 @@ def test_dump_load_roundtrip_tool_return_multimodal(
     for native support: https://github.com/ag-ui-protocol/ag-ui/issues/126.
     """
     contents: dict[str, Any] = {
-        'single-image': image_content,
-        'text-then-audio': ['the audio narration says...', audio_content],
-        'image-and-video': [image_content, video_content],
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
         'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
     }
     content = contents[case_id]
@@ -3585,12 +3605,12 @@ def test_dump_load_roundtrip_tool_return_multimodal(
     )
 
 
-def test_tool_return_multimodal_dropped_by_default(image_content: BinaryImage) -> None:
+def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> None:
     """Test that multimodal `ToolReturnPart.content` is silently dropped when `preserve_file_data=False`."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args='{}')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=image_content)]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=tiny_image)]),
     ]
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=False)
@@ -3606,7 +3626,7 @@ def test_tool_return_multimodal_dropped_by_default(image_content: BinaryImage) -
     )
 
 
-def test_dump_load_roundtrip_builtin_tool_return_multimodal(image_content: BinaryImage) -> None:
+def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Test multimodal `BuiltinToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
@@ -3621,7 +3641,7 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(image_content: Binar
                 BuiltinToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_1',
-                    content=['Search results', image_content],
+                    content=['Search results', tiny_image],
                     provider_name='anthropic',
                 ),
             ]
@@ -3661,7 +3681,7 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(image_content: Binar
             BuiltinToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='call_1',
-                content=['Search results', image_content],
+                content=['Search results', tiny_image],
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
             )

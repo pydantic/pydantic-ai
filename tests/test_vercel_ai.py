@@ -3767,6 +3767,26 @@ async def test_adapter_dump_messages_with_tools():
     )
 
 
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    """Minimal `BinaryImage` for multimodal-tool-return roundtrip tests.
+
+    Avoids the KB-scale `image_content` session fixture; the assertions only check `IsStr()` on the
+    base64 payload and rely on round-trip equality, so real image bytes add cost without coverage.
+    """
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
+
+
 @pytest.mark.parametrize(
     ('case_id', 'expected_envelope'),
     [
@@ -3859,9 +3879,9 @@ async def test_adapter_dump_messages_with_tools():
 async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     case_id: str,
     expected_envelope: dict[str, Any],
-    image_content: BinaryContent,
-    audio_content: BinaryContent,
-    video_content: BinaryContent,
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
 ):
     """Test multimodal `ToolReturnPart.content` round-trips via the `MultimodalToolOutputEnvelope`.
 
@@ -3870,9 +3890,9 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     trip preserves them.
     """
     contents: dict[str, Any] = {
-        'single-image': image_content,
-        'text-then-audio': ['the audio narration says...', audio_content],
-        'image-and-video': [image_content, video_content],
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
         'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
     }
     content = contents[case_id]
@@ -3918,7 +3938,7 @@ async def test_adapter_tool_return_text_only_unchanged():
     assert tool_returns[0].content == 'just a string'
 
 
-async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(image_content: BinaryContent):
+async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
     """Test multimodal `BuiltinToolReturnPart.content` round-trips via the envelope."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
@@ -3933,7 +3953,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(image_
                 BuiltinToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_1',
-                    content=['Search results', image_content],
+                    content=['Search results', tiny_image],
                     provider_name='anthropic',
                 ),
             ]
@@ -3950,7 +3970,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(image_
             BuiltinToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='call_1',
-                content=['Search results', image_content],
+                content=['Search results', tiny_image],
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
             )
