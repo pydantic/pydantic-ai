@@ -158,7 +158,7 @@ class _ToXml:
         element = ElementTree.Element(tag)
         if path in self._fields_info:
             field_repr, field_info = self._fields_info[path]
-            if self.include_field_info and self.include_field_info != 'once' or field_repr not in self._included_fields:
+            if (self.include_field_info and self.include_field_info != 'once') or (self.include_field_info == 'once' and field_repr not in self._included_fields):
                 field_attributes = self._extract_attributes(field_info)
                 for k, v in field_attributes.items():
                     element.set(k, v)

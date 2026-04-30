@@ -251,7 +251,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         try:
             task = await self._graph_run.next(task)
         except StopAsyncIteration:
-            pass
+            return self._task_to_node(End(None))
         return self._task_to_node(task)
 
     async def _wrap_and_advance(
