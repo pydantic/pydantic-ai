@@ -113,7 +113,7 @@ with try_import() as imports_successful:
         run_ag_ui,
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
-    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, multi_modal_content_ta, parse_ag_ui_version
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -3687,6 +3687,65 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryIm
             )
         ]
     )
+
+
+def test_load_messages_builtin_tool_return_json_list_content_merges_with_files(tiny_image: BinaryImage) -> None:
+    """Builtin tool whose `ToolMessage.content` JSON-decodes into a list merges with sidecar files."""
+    prefixed_id = 'pyd_ai_builtin|anthropic|call_1'
+    raw = [
+        AssistantMessage(
+            id='msg-1',
+            tool_calls=[
+                ToolCall(
+                    id=prefixed_id,
+                    type='function',
+                    function=FunctionCall(name='web_search', arguments='{"q": "test"}'),
+                ),
+            ],
+        ),
+        ActivityMessage(
+            id='msg-2',
+            activity_type='pydantic_ai_tool_return_file',
+            content={
+                'tool_call_id': prefixed_id,
+                'files': [multi_modal_content_ta.dump_python(tiny_image, mode='json')],
+            },
+        ),
+        ToolMessage(
+            id='msg-3',
+            content='[{"a": 1}, {"b": 2}]',
+            tool_call_id=prefixed_id,
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(raw, preserve_file_data=True)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=[{'a': 1}, {'b': 2}, tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+def test_load_messages_sidecar_with_empty_tool_call_id_raises() -> None:
+    """Sidecar `ActivityMessage` for `pydantic_ai_tool_return_file` requires a non-empty `tool_call_id`."""
+    raw = [
+        ActivityMessage(
+            id='msg-1',
+            activity_type='pydantic_ai_tool_return_file',
+            content={'tool_call_id': '', 'files': []},
+        ),
+    ]
+    with pytest.raises(ValueError, match='must have a non-empty tool_call_id'):
+        AGUIAdapter.load_messages(raw, preserve_file_data=True)
 
 
 @pytest.mark.parametrize(

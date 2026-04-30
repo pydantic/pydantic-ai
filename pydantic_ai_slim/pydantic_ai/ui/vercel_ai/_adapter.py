@@ -880,7 +880,7 @@ def _restore_multimodal_tool_output(output: Any) -> Any:
             item = BinaryContent.narrow_type(item)
         files.append(item)
     data = output.get('data')
-    if not files:
+    if not files:  # pragma: no cover
         return data
     if data is None or data == '' or data == {}:
         return files[0] if len(files) == 1 else files

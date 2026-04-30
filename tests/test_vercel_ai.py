@@ -3874,6 +3874,25 @@ def tiny_video() -> BinaryContent:
             ),
             id='document-url',
         ),
+        pytest.param(
+            'list-data-and-image',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': ['hello', 'world'],
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                }
+            ),
+            id='list-data-and-image',
+        ),
     ],
 )
 async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
@@ -3894,6 +3913,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
         'text-then-audio': ['the audio narration says...', tiny_audio],
         'image-and-video': [tiny_image, tiny_video],
         'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+        'list-data-and-image': ['hello', 'world', tiny_image],
     }
     content = contents[case_id]
     messages: list[ModelMessage] = [
