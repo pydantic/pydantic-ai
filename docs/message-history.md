@@ -227,7 +227,7 @@ Each `ModelRequest` and `ModelResponse` carries two identifiers:
 - [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run; emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
 - [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`; emitted as `gen_ai.conversation.id`.
 
-A fresh `conversation_id` is generated on the first run, stamped onto every message produced by that run, and inherited by subsequent runs that pass the messages back via `message_history`. This means you can correlate traces from a multi-turn conversation in Logfire (or any OpenTelemetry backend) without tracking anything yourself — as long as the message history round-trips, the conversation ID does too.
+A fresh `conversation_id` is generated on the first run, stamped onto every message produced by that run, and inherited by subsequent runs that pass the messages back via `message_history`. This means you can correlate traces from a multi-turn conversation in [Logfire](logfire.md) (or any OpenTelemetry backend) without tracking anything yourself — as long as the message history round-trips, the conversation ID does too.
 
 ```python {title="conversation_id is shared across runs in the same conversation"}
 from pydantic_ai import Agent
@@ -260,7 +260,7 @@ forked = agent.run_sync(
 assert forked.conversation_id != result1.conversation_id
 ```
 
-The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] auto-populates `conversation_id` from `RunAgentInput.threadId`, and [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] auto-populates it from the top-level chat `id` field of the Vercel AI SDK request body, so frontends using these protocols get correlation for free.
+The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get correlation for free.
 
 ## Storing and loading messages (to JSON)
 
