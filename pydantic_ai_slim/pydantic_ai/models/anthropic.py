@@ -35,6 +35,8 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    BuiltinToolSearchCallPart,
+    BuiltinToolSearchReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -53,8 +55,6 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    ToolSearchCallPart,
-    ToolSearchReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -2189,7 +2189,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         query_value = (tool_args or {}).get('query', '')
         queries = [query_value] if isinstance(query_value, str) else []
         normalized_args: ToolSearchArgs = {'queries': queries}
-        return ToolSearchCallPart(
+        return BuiltinToolSearchCallPart(
             provider_name=provider_name,
             args=normalized_args,
             tool_call_id=item.id,
@@ -2200,8 +2200,10 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     assert_never(item.name)
 
 
-def _map_tool_search_tool_result_block(item: BetaToolSearchToolResultBlock, provider_name: str) -> ToolSearchReturnPart:
-    """Map a tool-search result block into a typed :class:`ToolSearchReturnPart`.
+def _map_tool_search_tool_result_block(
+    item: BetaToolSearchToolResultBlock, provider_name: str
+) -> BuiltinToolSearchReturnPart:
+    """Map a tool-search result block into a typed :class:`BuiltinToolSearchReturnPart`.
 
     Writes a cross-provider :class:`ToolSearchReturnContent` to ``content`` (no
     provider-shape smuggling) and stashes the Anthropic-specific error fields on
@@ -2214,7 +2216,7 @@ def _map_tool_search_tool_result_block(item: BetaToolSearchToolResultBlock, prov
         matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
     else:  # tool_search_tool_result_error
         provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
-    return ToolSearchReturnPart(
+    return BuiltinToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},
         tool_call_id=item.tool_use_id,

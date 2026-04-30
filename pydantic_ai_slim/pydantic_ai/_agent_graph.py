@@ -842,6 +842,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         messages = _clean_message_history(messages)
 
+        # Translate any cross-provider history shapes the active model can't ship on the wire
+        # (currently: typed `BuiltinToolSearch*Part` instances become local-shape `ToolSearch*Part`
+        # when the profile doesn't support `ToolSearchTool`). Centralized here so per-adapter
+        # message-prep code sees a homogeneous shape regardless of which provider produced the prior turn.
+        messages = model.prepare_messages(messages)
+
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
         usage = ctx.state.usage

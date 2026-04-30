@@ -125,6 +125,9 @@ class WrapperModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
 
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        return self.wrapped.prepare_messages(messages)
+
     @property
     def provider(self) -> Provider[Any] | None:
         return self.wrapped.provider  # pragma: no cover

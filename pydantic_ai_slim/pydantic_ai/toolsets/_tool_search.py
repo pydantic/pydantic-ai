@@ -43,6 +43,7 @@ from ..builtin_tools.tool_search import (
 from ..exceptions import ModelRetry, UserError
 from ..messages import (
     BuiltinToolReturnPart,
+    BuiltinToolSearchReturnPart,
     ModelRequest,
     ToolReturn,
     ToolReturnPart,
@@ -224,37 +225,45 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         Reads the typed
         [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-        off of `content` for both the local `search_tools` return (on `ToolReturnPart`
-        in a `ModelRequest`) and the provider-native return (on
-        [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
-        [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] in a
+        off of `content` for both the local `search_tools` return (on
+        [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] in a
+        `ModelRequest`) and the provider-native return (on
+        [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart]
+        / [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] in a
         `ModelResponse` — each adapter normalizes its provider's wire format into the
         same shape).
 
         Also reads the legacy `metadata['discovered_tools']` sideband on
-        `ToolReturnPart` so message histories serialized before the typed-content
-        migration continue to surface previously-discovered tools.
+        `ToolReturnPart` so message histories serialized on `main` (before the
+        typed-content migration) continue to surface previously-discovered tools.
         """
         discovered: set[str] = set()
         for msg in ctx.messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                        self._collect_discovered_from_content(part.content, discovered)
+                    # The local-fallback path produces `ToolSearchReturnPart` (a typed
+                    # `ToolReturnPart` subclass), reached via the `isinstance` check.
+                    # Direct `ToolReturnPart('search_tools', ...)` constructions
+                    # (legacy fixtures, fresh user code) fall through to the legacy
+                    # metadata reader on `ToolReturnPart`.
+                    if isinstance(part, ToolSearchReturnPart):
+                        self._collect_discovered_from_typed_content(part.content, discovered)
+                    elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
+                        promoted = ToolReturnPart.narrow_type(part)
+                        if isinstance(promoted, ToolSearchReturnPart):
+                            self._collect_discovered_from_typed_content(promoted.content, discovered)
                         self._collect_discovered_from_legacy_metadata(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
-                    if isinstance(part, ToolSearchReturnPart):
+                    if isinstance(part, BuiltinToolSearchReturnPart):
                         self._collect_discovered_from_typed_content(part.content, discovered)
                     elif isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
                         # Base `BuiltinToolReturnPart` instances reach this branch when
                         # constructed directly (e.g. legacy test fixtures) — promote and
                         # read off the typed view.
                         promoted = BuiltinToolReturnPart.narrow_type(part)
-                        if isinstance(promoted, ToolSearchReturnPart):
+                        if isinstance(promoted, BuiltinToolSearchReturnPart):
                             self._collect_discovered_from_typed_content(promoted.content, discovered)
-                        else:
-                            self._collect_discovered_from_content(part.content, discovered)
         return discovered
 
     @staticmethod
@@ -263,32 +272,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     ) -> None:
         if not isinstance(content, dict):
             return
-        for match in content.get('discovered_tools', []):
-            name = match.get('name')
-            if isinstance(name, str):
-                discovered.add(name)
-
-    @staticmethod
-    def _collect_discovered_from_content(content: Any, discovered: set[str]) -> None:
-        """Read discovered tool names off untyped content (`ToolReturnPart.content`).
-
-        The local `search_tools` return is shaped as a
-        [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-        but lands on a regular `ToolReturnPart`, so the typed subclass dispatch doesn't
-        apply. Also tolerates the legacy `tools` key from earlier persisted histories.
-        """
-        if not isinstance(content, dict):
-            return
-        # Current shape: `discovered_tools`. Legacy shape (pre-typed-parts): `tools`.
-        matches = content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        matches = content.get('discovered_tools')
         if not isinstance(matches, list):
-            matches = content.get('tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            if not isinstance(matches, list):
-                return
-        for entry in matches:  # pyright: ignore[reportUnknownVariableType]
-            if not isinstance(entry, dict):
+            return
+        for match in matches:
+            if not isinstance(match, dict):
                 continue
-            name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            name = match.get('name')
             if isinstance(name, str):
                 discovered.add(name)
 

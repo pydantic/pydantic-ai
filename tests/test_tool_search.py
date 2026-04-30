@@ -21,6 +21,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
 from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
@@ -28,6 +29,8 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserErro
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    BuiltinToolSearchCallPart,
+    BuiltinToolSearchReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -35,6 +38,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -157,7 +161,8 @@ def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools' and part.args is not None:
-                    raw_args: dict[str, Any] = json.loads(part.args) if isinstance(part.args, str) else part.args
+                    parsed = json.loads(part.args) if isinstance(part.args, str) else part.args
+                    raw_args = cast('dict[str, Any]', parsed)
                     args_list.append({k: str(v) for k, v in raw_args.items()})
     return args_list
 
@@ -683,9 +688,8 @@ async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 ),
             ]
         )
@@ -897,17 +901,15 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 ),
             ]
         ),
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': [{'name': 'stock_price', 'description': None}]},
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'stock_price', 'description': None}]},
                 ),
             ]
         ),
@@ -946,49 +948,49 @@ async def test_function_toolset_all_deferred():
 async def test_tool_search_toolset_ignores_malformed_content_history():
     """Discovery reads `discovered_tools` off the typed return content; malformed
     shapes (non-dict content, missing list, entries missing a string `name`) are
-    ignored, and only well-formed entries are picked up. The legacy `tools` key
-    (pre-typed-parts) is still accepted on plain `ToolReturnPart` content for
-    backward compatibility with persisted histories."""
+    ignored, and only well-formed entries are picked up."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
-        # content is not a dict
-        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content='not a dict')]),
-        # content is a dict but `discovered_tools` is missing and so is the legacy `tools`
-        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'message': 'hi'})]),
+        # content is not a dict (string fall-through)
+        ModelRequest(parts=[ToolSearchReturnPart(content='not a dict')]),
+        # content is a dict but `discovered_tools` is missing
+        ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, {'message': 'hi'}))]),
         # `discovered_tools` is not a list
-        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'discovered_tools': 'not a list'})]),
+        ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, {'discovered_tools': 'not a list'}))]),
         # `discovered_tools` contains malformed entries (non-dict, missing/non-string name)
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
-                    content={
-                        'discovered_tools': [
-                            'not a dict',
-                            {'name': 123},
-                            {'description': 'no name'},
-                        ],
-                    },
+                ToolSearchReturnPart(
+                    content=cast(
+                        Any,
+                        {
+                            'discovered_tools': [
+                                'not a dict',
+                                {'name': 123},
+                                {'description': 'no name'},
+                            ],
+                        },
+                    ),
                 ),
             ]
         ),
         # valid content
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
+                ToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 ),
             ]
         ),
-        # Legacy shape (pre-typed-parts): `tools` instead of `discovered_tools`.
+        # Legacy shape (pre-typed-parts): discoveries on `metadata`, content as plain text.
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
-                    content={'tools': [{'name': 'stock_price', 'description': None}]},
+                    content='legacy text return',
+                    metadata={'discovered_tools': ['stock_price']},
                 ),
             ]
         ),
@@ -1224,8 +1226,9 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     result = await agent.run('What is the current USD to EUR exchange rate?')
 
     # Native server-side tool search auto-promotes to the typed
-    # `ToolSearchCallPart` / `ToolSearchReturnPart` subclasses (which still
-    # `isinstance`-match the base `BuiltinToolCallPart` / `BuiltinToolReturnPart`).
+    # `BuiltinToolSearchCallPart` / `BuiltinToolSearchReturnPart` subclasses
+    # (which still `isinstance`-match the base `BuiltinToolCallPart` /
+    # `BuiltinToolReturnPart`).
     builtin_call_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
     builtin_return_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
     assert builtin_call_parts and builtin_return_parts
@@ -1480,7 +1483,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
                     provider_name='anthropic',
                     tool_name='tool_search',
                     tool_call_id='srv_r',
-                    content={'tools': [{'name': 'get_weather', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
                 ),
             ],
             provider_name='anthropic',
@@ -1582,7 +1585,7 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
                     provider_name='anthropic',
                     tool_name='tool_search',
                     tool_call_id='srv_a',
-                    content={'tools': [{'name': 'get_weather', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
                 ),
             ],
             provider_name='anthropic',
@@ -1677,10 +1680,10 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
     `test_anthropic_tool_search_result_error_block_mapping`.
     """
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import ToolSearchReturnPart
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart
     from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
 
-    return_part = ToolSearchReturnPart(
+    return_part = BuiltinToolSearchReturnPart(
         provider_name='anthropic',
         tool_call_id='srv_err',
         content={'discovered_tools': []},
@@ -1709,7 +1712,7 @@ def test_openai_map_tool_search_call_unit():
         ResponseToolSearchOutputItem,
     )
 
-    from pydantic_ai.messages import ToolSearchCallPart, ToolSearchReturnPart
+    from pydantic_ai.messages import BuiltinToolSearchCallPart, BuiltinToolSearchReturnPart
     from pydantic_ai.models.openai import (
         _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
         _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
@@ -1734,12 +1737,12 @@ def test_openai_map_tool_search_call_unit():
         type='tool_search_output',
     )
     call_part, return_part = _map_tool_search_call(call, output, 'openai')
-    assert isinstance(call_part, ToolSearchCallPart)
+    assert isinstance(call_part, BuiltinToolSearchCallPart)
     assert call_part.tool_name == 'tool_search'
     # OpenAI server-executed `tool_search.arguments` carries `paths`; the adapter
     # normalizes that into the cross-provider `queries` slot.
     assert call_part.args == {'queries': ['get_exchange_rate']}
-    assert isinstance(return_part, ToolSearchReturnPart)
+    assert isinstance(return_part, BuiltinToolSearchReturnPart)
     assert return_part.content == {'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}]}
     assert return_part.provider_details == {'status': 'completed'}
 
@@ -2244,9 +2247,9 @@ async def test_agent_graph_without_builtin_tools(allow_model_requests: None, mon
 
 
 async def test_tool_search_toolset_discovers_from_builtin_return_part():
-    """Discovery metadata on a `ToolSearchReturnPart` from a native provider search
+    """Discovery metadata on a `BuiltinToolSearchReturnPart` from a native provider search
     is picked up so the local path recovers state on cross-provider handover."""
-    from pydantic_ai.messages import ToolSearchReturnPart
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart
 
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -2254,7 +2257,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                ToolSearchReturnPart(
+                BuiltinToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                 )
             ]
@@ -2501,7 +2504,7 @@ def test_optional_builtin_dropped_with_empty_corpus():
 
 def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
     """Direct construction of `BuiltinToolCallPart` with `tool_name='tool_search'`
-    promotes to `ToolSearchCallPart` via the narrowing registry."""
+    promotes to `BuiltinToolSearchCallPart` via the narrowing registry."""
     base = BuiltinToolCallPart(
         tool_name='tool_search',
         args={'queries': ['mortgage']},
@@ -2510,19 +2513,19 @@ def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
         provider_details={'strategy': 'bm25'},
     )
     narrowed = BuiltinToolCallPart.narrow_type(base)
-    assert isinstance(narrowed, ToolSearchCallPart)
+    assert isinstance(narrowed, BuiltinToolSearchCallPart)
     assert narrowed.args == {'queries': ['mortgage']}
     assert narrowed.tool_call_id == 'c1'
     assert narrowed.provider_name == 'anthropic'
     assert narrowed.provider_details == {'strategy': 'bm25'}
 
-    already_narrowed = ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c2')
+    already_narrowed = BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c2')
     assert BuiltinToolCallPart.narrow_type(already_narrowed) is already_narrowed
 
 
 def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
     """Direct construction of `BuiltinToolReturnPart` with `tool_name='tool_search'`
-    promotes to `ToolSearchReturnPart` via the narrowing registry."""
+    promotes to `BuiltinToolSearchReturnPart` via the narrowing registry."""
     base = BuiltinToolReturnPart(
         tool_name='tool_search',
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
@@ -2530,10 +2533,10 @@ def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
         provider_name='anthropic',
     )
     narrowed = BuiltinToolReturnPart.narrow_type(base)
-    assert isinstance(narrowed, ToolSearchReturnPart)
+    assert isinstance(narrowed, BuiltinToolSearchReturnPart)
     assert narrowed.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
 
-    already_narrowed = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c2')
+    already_narrowed = BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c2')
     assert BuiltinToolReturnPart.narrow_type(already_narrowed) is already_narrowed
 
 
@@ -2575,11 +2578,11 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
     }
     [resp] = ModelMessagesTypeAdapter.validate_python([raw])
     assert isinstance(resp, ModelResponse)
-    assert isinstance(resp.parts[0], ToolSearchCallPart)
-    assert isinstance(resp.parts[1], ToolSearchReturnPart)
+    assert isinstance(resp.parts[0], BuiltinToolSearchCallPart)
+    assert isinstance(resp.parts[1], BuiltinToolSearchReturnPart)
     # Unrecognized `tool_name` falls through to the base class.
     assert isinstance(resp.parts[2], BuiltinToolCallPart)
-    assert not isinstance(resp.parts[2], ToolSearchCallPart)
+    assert not isinstance(resp.parts[2], BuiltinToolSearchCallPart)
 
 
 def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
@@ -2588,8 +2591,8 @@ def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
 
     resp = ModelResponse(
         parts=[
-            ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1'),
-            ToolSearchReturnPart(
+            BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1'),
+            BuiltinToolSearchReturnPart(
                 content={'discovered_tools': [{'name': 'foo', 'description': None}]},
                 tool_call_id='c1',
             ),
@@ -2598,8 +2601,8 @@ def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
     )
     [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
     assert isinstance(revalidated, ModelResponse)
-    assert isinstance(revalidated.parts[0], ToolSearchCallPart)
-    assert isinstance(revalidated.parts[1], ToolSearchReturnPart)
+    assert isinstance(revalidated.parts[0], BuiltinToolSearchCallPart)
+    assert isinstance(revalidated.parts[1], BuiltinToolSearchReturnPart)
     assert isinstance(revalidated.parts[2], BuiltinToolCallPart)
 
 
@@ -2625,3 +2628,187 @@ async def test_tool_search_toolset_promotes_base_builtin_return_part() -> None:
         cast(Any, type('_Ctx', (), {'messages': history})()),
     )
     assert 'calculate_mortgage' in discovered
+
+
+async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
+    """Histories serialized on `main` (before this PR's typed-content shape) carry the
+    discovered names on `ToolReturnPart.metadata['discovered_tools']` rather than on a
+    typed `content`. They must continue to replay cleanly on the typed-parts shape so
+    upgrading users don't lose discovered-tool state on the next turn.
+
+    This is the wire shape on the `main` branch as of the merge-base.
+    """
+    base_toolset = FunctionToolset[None]()
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'keywords': 'mortgage'}, tool_call_id='c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_tools',
+                    # `main`-branch shape: structured discoveries live on `metadata`,
+                    # `content` is just the user-visible string the model sees.
+                    content='Found 1 tool: calculate_mortgage',
+                    tool_call_id='c1',
+                    metadata={'discovered_tools': ['calculate_mortgage']},
+                ),
+            ],
+        ),
+    ]
+    ts = ToolSearchToolset(wrapped=base_toolset)
+    discovered = ts._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        cast(Any, type('_Ctx', (), {'messages': history})()),
+    )
+    assert discovered == {'calculate_mortgage'}
+
+
+def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> None:
+    """Cross-provider replay end-to-end: a `BuiltinToolSearch*Part` carried over from
+    a prior native turn is translated into the local-shape typed parts so a non-native
+    adapter can replay it as a normal `search_tools` function-call exchange. The
+    toolset's `_parse_discovered_tools` then surfaces the discoveries via the
+    discriminated-union dispatch."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(
+                    args={'queries': ['mortgage']},
+                    tool_call_id='c1',
+                    provider_name='anthropic',
+                    provider_details={'strategy': 'bm25'},
+                ),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    tool_call_id='c1',
+                    provider_name='anthropic',
+                ),
+            ],
+        ),
+    ]
+
+    translated = synthesize_local_tool_search_messages(history)
+
+    # The user prompt request passes through unchanged.
+    assert translated[0] is history[0]
+
+    # The response now carries a local `ToolSearchCallPart` (typed `ToolCallPart` subclass),
+    # and the return part has been lifted onto a fresh trailing `ModelRequest`.
+    response = translated[1]
+    assert isinstance(response, ModelResponse)
+    assert len(response.parts) == 1
+    call_part = response.parts[0]
+    assert isinstance(call_part, ToolSearchCallPart)
+    # Subclass of `ToolCallPart`, NOT `BuiltinToolSearchCallPart`.
+    assert isinstance(call_part, ToolCallPart)
+    assert not isinstance(call_part, BuiltinToolSearchCallPart)
+    assert call_part.tool_name == 'search_tools'
+    assert call_part.args == {'queries': ['mortgage']}
+
+    return_request = translated[2]
+    assert isinstance(return_request, ModelRequest)
+    return_part = return_request.parts[0]
+    assert isinstance(return_part, ToolSearchReturnPart)
+    assert isinstance(return_part, ToolReturnPart)
+    assert not isinstance(return_part, BuiltinToolSearchReturnPart)
+    assert return_part.tool_name == 'search_tools'
+    assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
+
+    # And the toolset's parser surfaces the discovery off the translated history.
+    base_toolset = FunctionToolset[None]()
+    ts = ToolSearchToolset(wrapped=base_toolset)
+    discovered = ts._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        cast(Any, type('_Ctx', (), {'messages': translated})()),
+    )
+    assert discovered == {'calculate_mortgage'}
+
+
+def test_prepare_messages_translates_on_non_native_model() -> None:
+    """`Model.prepare_messages` is the centralized hook that runs before the adapter's
+    message-prep on every request. On a model whose profile doesn't include
+    ``ToolSearchTool`` in ``supported_builtin_tools``, the hook translates any prior
+    server-side tool-search exchange into the local-shape typed parts so the adapter
+    sees a normal ``search_tools`` function-call exchange.
+
+    The single ``ModelResponse(call+return)`` carrying the inline server-side result
+    splits into ``ModelResponse(call) + ModelRequest(return)``."""
+    # Default `TestModel` excludes `ToolSearchTool` from `supported_builtin_tools`.
+    model = TestModel()
+    assert ToolSearchTool not in model.profile.supported_builtin_tools
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(
+                    args={'queries': ['mortgage']},
+                    tool_call_id='c1',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    tool_call_id='c1',
+                    provider_name='anthropic',
+                ),
+            ],
+        ),
+    ]
+
+    prepared = model.prepare_messages(history)
+
+    # Original 2 messages became 3: user prompt, response with local call,
+    # request carrying the lifted return.
+    assert len(prepared) == 3
+    assert prepared[0] is history[0]
+
+    response = prepared[1]
+    assert isinstance(response, ModelResponse)
+    assert len(response.parts) == 1
+    call_part = response.parts[0]
+    assert isinstance(call_part, ToolSearchCallPart)
+    assert not isinstance(call_part, BuiltinToolSearchCallPart)
+    assert call_part.tool_name == 'search_tools'
+
+    return_request = prepared[2]
+    assert isinstance(return_request, ModelRequest)
+    [return_part] = return_request.parts
+    assert isinstance(return_part, ToolSearchReturnPart)
+    assert not isinstance(return_part, BuiltinToolSearchReturnPart)
+    assert return_part.tool_name == 'search_tools'
+    assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
+
+
+def test_prepare_messages_passes_through_on_native_model() -> None:
+    """A model whose profile *does* include ``ToolSearchTool`` in
+    ``supported_builtin_tools`` keeps the prior exchange as-is — the native adapter
+    knows how to ship the typed builtin parts back on the wire."""
+
+    class NativeToolSearchTestModel(TestModel):
+        @classmethod
+        def supported_builtin_tools(cls):
+            return frozenset({ToolSearchTool})
+
+    model = NativeToolSearchTestModel()
+    assert ToolSearchTool in model.profile.supported_builtin_tools
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(
+                    args={'queries': ['mortgage']},
+                    tool_call_id='c1',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    tool_call_id='c1',
+                    provider_name='anthropic',
+                ),
+            ],
+        ),
+    ]
+
+    prepared = model.prepare_messages(history)
+
+    assert prepared is history

@@ -49,6 +49,8 @@ from ..messages import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    BuiltinToolSearchCallPart,
+    BuiltinToolSearchReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -68,8 +70,6 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    ToolSearchCallPart,
-    ToolSearchReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -3921,14 +3921,14 @@ def _map_tool_search_call(
     item: ResponseToolSearchCall,
     output_item: responses.ResponseToolSearchOutputItem | None,
     provider_name: str,
-) -> tuple[ToolSearchCallPart, ToolSearchReturnPart]:
+) -> tuple[BuiltinToolSearchCallPart, BuiltinToolSearchReturnPart]:
     """Map OpenAI native tool search (server-executed) into typed builtin call/return parts.
 
     Mirrors `_map_web_search_tool_call`: call and result are both server-side, so we
     emit both parts in the same response.
     """
     call_id = item.call_id or item.id
-    call_part = ToolSearchCallPart(
+    call_part = BuiltinToolSearchCallPart(
         provider_name=provider_name,
         args=_normalize_tool_search_args(item.arguments),
         tool_call_id=call_id,
@@ -4002,7 +4002,7 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: st
 
     Replay later detects this case from the surrounding context — the call carries
     ``tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME`` and there is no matching native
-    `ToolSearchCallPart` — so no envelope marker is required.
+    `BuiltinToolSearchCallPart` — so no envelope marker is required.
     """
     call_id = item.call_id or item.id
     args_dict = cast('dict[str, Any]', item.arguments)
@@ -4022,7 +4022,7 @@ def _build_tool_search_return_part(
     status: str,
     output_item: responses.ResponseToolSearchOutputItem | None,
     provider_name: str,
-) -> ToolSearchReturnPart:
+) -> BuiltinToolSearchReturnPart:
     """Build the typed return part for an OpenAI tool search, with or without output.
 
     Writes the cross-provider
@@ -4040,7 +4040,7 @@ def _build_tool_search_return_part(
         for t in output_item.tools:
             if isinstance(t, responses.FunctionTool):
                 matches.append({'name': t.name, 'description': t.description})
-    return ToolSearchReturnPart(
+    return BuiltinToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},
         tool_call_id=call_id,

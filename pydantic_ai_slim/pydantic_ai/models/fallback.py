@@ -220,7 +220,9 @@ class FallbackModel(Model):
         for model in self.models:
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                response = await model.request(messages, model_settings, model_request_parameters)
+                # Each inner model has its own profile, so re-run `prepare_messages` per model.
+                prepared_messages = model.prepare_messages(messages)
+                response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
@@ -251,8 +253,9 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                    prepared_messages = model.prepare_messages(messages)
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, model_settings, model_request_parameters, run_context)
+                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if await self._should_fallback(exc):
@@ -277,6 +280,11 @@ class FallbackModel(Model):
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        # `FallbackModel` doesn't have its own profile — defer per-model `prepare_messages`
+        # to each inner model's `request` call so the right profile gates the transformation.
+        return messages
 
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
         with suppress(Exception):

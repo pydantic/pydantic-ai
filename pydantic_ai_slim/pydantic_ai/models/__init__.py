@@ -761,6 +761,26 @@ class Model(ABC, Generic[InterfaceClient]):
 
         return model_settings, params
 
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process the message history before it's handed to the adapter's message-prep step.
+
+        Currently translates any typed `BuiltinToolSearch*Part` instances carried over from a
+        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
+        `ToolSearch*Part` instances when the active model's profile doesn't support
+        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
+        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
+        adapter sees a normal function-call exchange against `search_tools`.
+
+        Subclasses normally don't need to override this; the framework calls it on the
+        agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
+        sees a homogeneous shape regardless of which provider produced the prior turn.
+        """
+        if ToolSearchTool not in self.profile.supported_builtin_tools:
+            from .._tool_search_synthetic import synthesize_local_tool_search_messages
+
+            return synthesize_local_tool_search_messages(messages)
+        return messages
+
     def _resolve_builtin_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Swap builtin tools and function-tool fallbacks/corpus based on profile support.
 
