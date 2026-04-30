@@ -58,7 +58,7 @@ def _get_return_validator(function: Callable[..., Any]) -> SchemaValidator | Non
         return_type = type_hints.get('return', Any)
         if return_type is not Any and return_type is not type(None):
             return TypeAdapter(return_type).validator
-    except Exception:
+    except Exception:  # noqa: S110, BLE001
         pass
     return None
 
@@ -577,6 +577,11 @@ class Tool(Generic[ToolAgentDepsT]):
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+            validate_return: Whether to validate the tool's return value.
+            result_validator: custom method to validate or sanitize the tool result after execution.
+                See [`ResultValidatorFunc`][pydantic_ai.tools.ResultValidatorFunc].
+            return_type: The type of the tool's return value.
+                If `Any`, this is inferred from the function signature if `validate_return` is True.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -607,7 +612,7 @@ class Tool(Generic[ToolAgentDepsT]):
             try:
                 type_hints = typing.get_type_hints(function, include_extras=True)
                 return_type = type_hints.get('return', Any)
-            except Exception:
+            except Exception:  # noqa: S110, BLE001
                 pass
 
         self.return_type = return_type

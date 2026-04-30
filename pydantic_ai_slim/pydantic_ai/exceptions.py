@@ -17,23 +17,23 @@ if TYPE_CHECKING:
     from .messages import ModelResponse, RetryPromptPart
 
 __all__ = (
-    'ModelRetry',
-    'CallDeferred',
-    'ApprovalRequired',
-    'SkipModelRequest',
-    'SkipToolValidation',
-    'SkipToolExecution',
-    'UserError',
     'AgentRunError',
-    'UnexpectedModelBehavior',
-    'UsageLimitExceeded',
+    'ApprovalRequired',
+    'CallDeferred',
     'ConcurrencyLimitExceeded',
+    'ContentFilterError',
+    'FallbackExceptionGroup',
+    'IncompleteToolCall',
     'ModelAPIError',
     'ModelHTTPError',
-    'ContentFilterError',
-    'IncompleteToolCall',
+    'ModelRetry',
+    'SkipModelRequest',
+    'SkipToolExecution',
+    'SkipToolValidation',
     'ToolOutputValidationError',
-    'FallbackExceptionGroup',
+    'UnexpectedModelBehavior',
+    'UsageLimitExceeded',
+    'UserError',
 )
 
 
@@ -52,7 +52,7 @@ class ModelRetry(Exception):
         self.message = message
         super().__init__(message)
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and other.message == self.message
 
     def __hash__(self) -> int:

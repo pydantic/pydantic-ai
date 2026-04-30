@@ -58,7 +58,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = exit_stack.pop_all()
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         if self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None

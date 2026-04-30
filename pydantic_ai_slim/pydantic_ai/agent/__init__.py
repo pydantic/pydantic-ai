@@ -65,8 +65,8 @@ from ..tools import (
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
-    RunContext,
     ResultValidatorFunc,
+    RunContext,
     Tool,
     ToolFuncContext,
     ToolFuncEither,
@@ -95,7 +95,6 @@ from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
-    from pydantic_core import SchemaValidator, SchemaValidatorProt
     from starlette.applications import Starlette
 
     from pydantic_graph import GraphRunContext
@@ -2030,7 +2029,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         include_return_schema: bool | None = None,
         validate_return: bool = False,
         result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
-        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
+        return_type: Any = Any,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -2055,7 +2054,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         include_return_schema: bool | None = None,
         validate_return: bool = False,
         result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
-        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
+        return_type: Any = Any,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -2117,6 +2116,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+            validate_return: Whether to validate the tool's return value.
+            result_validator: custom method to validate or sanitize the tool result after execution.
+                See [`ResultValidatorFunc`][pydantic_ai.tools.ResultValidatorFunc].
+            return_type: The type of the tool's return value.
+                If `Any`, this is inferred from the function signature if `validate_return` is True.
         """
 
         def tool_decorator(
@@ -2143,7 +2147,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 include_return_schema=include_return_schema,
                 validate_return=validate_return,
                 result_validator=result_validator,
-                result_schema_validator=result_schema_validator,
+                return_type=return_type,
             )
             return func_
 
@@ -2174,7 +2178,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         include_return_schema: bool | None = None,
         validate_return: bool = False,
         result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
-        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
+        return_type: Any = Any,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -2199,7 +2203,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         include_return_schema: bool | None = None,
         validate_return: bool = False,
         result_validator: ResultValidatorFunc[AgentDepsT] | None = None,
-        result_schema_validator: SchemaValidator | SchemaValidatorProt | None = None,
+        return_type: Any = Any,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -2262,6 +2266,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+            validate_return: Whether to validate the tool's return value.
+            result_validator: custom method to validate or sanitize the tool result after execution.
+                See [`ResultValidatorFunc`][pydantic_ai.tools.ResultValidatorFunc].
+            return_type: The type of the tool's return value.
+                If `Any`, this is inferred from the function signature if `validate_return` is True.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -2286,7 +2295,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 include_return_schema=include_return_schema,
                 validate_return=validate_return,
                 result_validator=result_validator,
-                result_schema_validator=result_schema_validator,
+                return_type=return_type,
             )
             return func_
 
@@ -2552,7 +2561,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._entered_count += 1
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._exit_stack is not None:

@@ -612,7 +612,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             validate_return=validate_return,
             result_validator=result_validator,
-            result_schema_validator=result_schema_validator,
+            return_type=return_type,
             requires_approval=requires_approval,
             metadata=metadata,
             timeout=timeout,
