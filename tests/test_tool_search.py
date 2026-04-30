@@ -2820,3 +2820,175 @@ def test_pydantic_validation_accepts_search_tools_string_content_collision() -> 
     [part] = request.parts
     assert isinstance(part, ToolSearchReturnPart)
     assert part.content == 'hello world'
+
+
+def test_synthesize_local_from_builtin_call_str_args_passthrough() -> None:
+    """Streaming partial-args (`str`) are passed through unchanged when translating."""
+    from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_call
+    from pydantic_ai.messages import BuiltinToolSearchCallPart
+
+    part = BuiltinToolSearchCallPart(args='{"queries":', tool_call_id='c1')
+    result = synthesize_local_from_builtin_call(part)
+    assert result.args == '{"queries":'
+    assert result.tool_call_id == 'c1'
+
+
+def test_synthesize_local_from_builtin_call_none_args_falls_through() -> None:
+    """`None` args remain `None` after translation."""
+    from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_call
+    from pydantic_ai.messages import BuiltinToolSearchCallPart
+
+    part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1')
+    result = synthesize_local_from_builtin_call(part)
+    assert result.args is None
+
+
+def test_synthesize_local_from_builtin_return_malformed_content_defaults() -> None:
+    """A return part with non-dict-non-str content (shouldn't happen in practice but
+    type allows it via cast paths) gets a sensible empty-discoveries default."""
+    from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_return
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart
+
+    part = BuiltinToolSearchReturnPart(content=cast(Any, 12345), tool_call_id='c1')
+    result = synthesize_local_from_builtin_return(part)
+    assert result.content == {'discovered_tools': []}
+
+
+def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
+    """A response with only a `BuiltinToolSearchCallPart` (no return — streaming case)
+    translates the call but doesn't synthesize a trailing `ModelRequest`."""
+    from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+    from pydantic_ai.messages import BuiltinToolSearchCallPart
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')]),
+    ]
+    result = synthesize_local_tool_search_messages(history)
+    assert len(result) == 1
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+    assert len(response.parts) == 1
+    assert isinstance(response.parts[0], ToolSearchCallPart)
+
+
+def test_synthesize_messages_response_with_only_return_part_no_response_kept() -> None:
+    """A response with only a `BuiltinToolSearchReturnPart` (no remaining parts) — the
+    response is dropped since it'd be empty, and the return is lifted onto a fresh request."""
+    from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart
+
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'foo', 'description': None}]},
+                    tool_call_id='c1',
+                ),
+            ],
+        ),
+    ]
+    result = synthesize_local_tool_search_messages(history)
+    assert len(result) == 1
+    request = result[0]
+    assert isinstance(request, ModelRequest)
+    assert len(request.parts) == 1
+    return_part = request.parts[0]
+    assert isinstance(return_part, ToolSearchReturnPart)
+
+
+def test_synthesize_messages_request_with_unrelated_tool_return_passthrough() -> None:
+    """A `ToolReturnPart` with `tool_name != 'search_tools'` doesn't get promoted —
+    the request is returned unchanged."""
+    from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+
+    request = ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='c1')])
+    result = synthesize_local_tool_search_messages([request])
+    assert len(result) == 1
+    assert result[0] is request
+
+
+def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
+    """Narrowing an already-typed `ToolSearchReturnPart` returns the input instance."""
+    part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
+    assert ToolReturnPart.narrow_type(part) is part
+
+
+def test_model_request_part_discriminator_recognizes_tool_search_return_instance() -> None:
+    """Re-validation of a `ToolSearchReturnPart` instance preserves the typed subclass."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    request = ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')])
+    [revalidated] = ModelMessagesTypeAdapter.validate_python([request])
+    assert isinstance(revalidated, ModelRequest)
+    [part] = revalidated.parts
+    assert isinstance(part, ToolSearchReturnPart)
+
+
+def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch() -> None:
+    """A dict-shaped `ToolCallPart` with `tool_name='search_tools'` gets dispatched to
+    `ToolSearchCallPart` via the discriminator (covers the `'tool-call'` branch)."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    raw = [
+        {
+            'kind': 'response',
+            'parts': [
+                {
+                    'part_kind': 'tool-call',
+                    'tool_name': 'search_tools',
+                    'args': {'queries': ['x']},
+                    'tool_call_id': 'c1',
+                },
+            ],
+        },
+    ]
+    [resp] = ModelMessagesTypeAdapter.validate_python(raw)
+    assert isinstance(resp, ModelResponse)
+    [part] = resp.parts
+    assert isinstance(part, ToolSearchCallPart)
+
+
+def test_model_response_part_discriminator_passthrough_for_unknown_part_kind() -> None:
+    """Instance dispatch falls through to `getattr(v, 'part_kind', ...)` for other types."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, TextPart
+
+    resp = ModelResponse(parts=[TextPart(content='hello')])
+    [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
+    assert isinstance(revalidated, ModelResponse)
+    [part] = revalidated.parts
+    assert isinstance(part, TextPart)
+
+
+def test_model_response_instance_dispatch_for_local_call_part() -> None:
+    """Re-validation of a `ToolSearchCallPart` instance preserves the typed subclass
+    (covers the instance-side `isinstance(v, ToolSearchCallPart)` branch)."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    resp = ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')])
+    [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
+    [part] = revalidated.parts
+    assert isinstance(part, ToolSearchCallPart)
+
+
+async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
+    """Custom search functions can be `async`; the toolset awaits them."""
+
+    @dataclass
+    class _Deps: ...
+
+    async def async_match(_ctx: RunContext[_Deps], _query: str, tools: Sequence[ToolDefinition]) -> Sequence[str]:
+        return [t.name for t in tools]
+
+    base_toolset = FunctionToolset[_Deps]()
+
+    @base_toolset.tool_plain(defer_loading=True)
+    def calculate_mortgage() -> str:
+        return 'monthly: $X'
+
+    ts = ToolSearchToolset(wrapped=base_toolset, search_fn=cast(Any, async_match))
+    ctx = _build_run_context(_Deps())
+    tools = await ts.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
+    assert isinstance(result, ToolReturn)
+    assert result.return_value == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}

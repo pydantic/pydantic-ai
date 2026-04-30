@@ -2064,7 +2064,7 @@ class ToolSearchReturnPart(ToolReturnPart):
     tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (local `search_tools` function return)."""
 
-    content: ToolSearchReturnContent | str | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+    content: ToolSearchReturnContent | str | None = None
     """Discovered-tools payload.
 
     Narrows the parent's `ToolReturnContent` to a typed
