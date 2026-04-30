@@ -7578,6 +7578,35 @@ def test_prepare_output_tools_receives_output_max_retries():
     assert seen_per_tool_retries == [0, 1, 2, 3]
 
 
+def test_prepare_output_tools_sees_run_level_output_retries_override():
+    """`prepare_output_tools` sees the run-level `output_retries` override on `ctx.max_retries`,
+    not the agent-level default — so capability hooks observe the same budget the run will enforce.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5075#discussion_r3170685538.
+    """
+    seen_max_retries: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_max_retries.append(ctx.max_retries)
+        return tool_defs
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        output_retries=5,
+        prepare_output_tools=prep,
+    )
+
+    result = agent.run_sync('Hello', output_retries=2)
+    assert isinstance(result.output, Foo)
+    # Hook sees run-level override (2), not the agent-level default (5).
+    assert seen_max_retries == [2]
+
+
 async def test_explicit_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
