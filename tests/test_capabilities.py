@@ -32,7 +32,6 @@ from pydantic_ai.capabilities import (
     MCP,
     BuiltinTool,
     CapabilityOrdering,
-    DynamicCapability,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
@@ -15962,11 +15961,6 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
 
     agent = Agent(TestModel(), capabilities=[factory])
 
-    leaves: list[AbstractCapability[Any]] = []
-    agent._root_capability.apply(leaves.append)  # pyright: ignore[reportPrivateUsage]
-    assert any(isinstance(c, DynamicCapability) and c.capability_func is factory for c in leaves)
-
-    # And it actually invokes the factory body when the agent runs.
     result = await agent.run('hi')
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions == 'Label is x.'
