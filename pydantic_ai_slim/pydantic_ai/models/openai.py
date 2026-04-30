@@ -3228,11 +3228,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             # part manager resolves its pending args; there's no paired
                             # `tool_search_output` — the return part is produced by the
                             # local tool runner after the stream completes.
+                            #
+                            # OpenAI Responses streaming sometimes assigns a different
+                            # `call_id` between the `output_item.added` and `output_item.done`
+                            # frames for client-executed `tool_search_call`s; the server's
+                            # log of record is the latter. Pass it through here so the
+                            # `tool_search_output` we replay on the next turn references the
+                            # call_id the API actually expects.
                             client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
                             client_args_json = client_call_part.args_as_json_str()
                             maybe_event = self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=chunk.item.id,
                                 args=client_args_json,
+                                tool_call_id=client_call_part.tool_call_id,
                             )
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event

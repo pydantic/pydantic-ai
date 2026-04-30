@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
+import json
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -1948,9 +1949,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     elif isinstance(current_block, BetaServerToolUseBlock):
                         call_part = _map_server_tool_use_block(current_block, self.provider_name)
                         builtin_tool_calls[call_part.tool_call_id] = call_part
+                        # In streaming, the block's `input` is empty at start and arrives via
+                        # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
+                        # accumulating JSON deltas can attach as a string; the
+                        # `BetaRawContentBlockStopEvent` handler below normalizes the final
+                        # value back to the canonical part shape (matching non-streaming).
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
-                            part=call_part,
+                            part=replace(call_part, args=None),
                         )
                     elif isinstance(current_block, BetaWebSearchToolResultBlock):
                         yield self._parts_manager.handle_part(
@@ -2059,6 +2065,21 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
+                    elif isinstance(current_block, BetaServerToolUseBlock) and current_block.name in (
+                        'tool_search_tool_regex',
+                        'tool_search_tool_bm25',
+                    ):
+                        # The streaming start emitted the part with `args=None`; JSON deltas
+                        # have since accumulated as a string. Re-emit with the normalized
+                        # cross-provider `ToolSearchArgs` shape so downstream code (history
+                        # replay, typed-part dispatch) sees the same structure as the
+                        # non-streaming `_process_response` path produces.
+                        existing = self._parts_manager.get_part_by_vendor_id(event.index)
+                        if isinstance(existing, BuiltinToolSearchCallPart):  # pragma: no branch
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=event.index,
+                                part=_finalize_streamed_tool_search_call_part(existing),
+                            )
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
@@ -2186,9 +2207,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         # `{"queries": [...]}` shape carried on the typed call part. The bm25/regex
         # variant goes on `provider_details` so same-provider replay can pick the
         # original tool name back out (`_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
-        query_value = (tool_args or {}).get('query', '')
-        queries = [query_value] if isinstance(query_value, str) else []
-        normalized_args: ToolSearchArgs = {'queries': queries}
+        normalized_args = _normalize_tool_search_args(tool_args)
         return BuiltinToolSearchCallPart(
             provider_name=provider_name,
             args=normalized_args,
@@ -2198,6 +2217,38 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     if item.name in ('bash_code_execution', 'text_editor_code_execution', 'advisor'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     assert_never(item.name)
+
+
+def _normalize_tool_search_args(tool_args: dict[str, Any] | None) -> ToolSearchArgs:
+    """Normalize an Anthropic `tool_search_tool_*.input` payload into `ToolSearchArgs`.
+
+    The wire shape is `{"query": "..."}`; the cross-provider canonical shape is
+    `{"queries": [...]}`. Used by both the non-streaming `_process_response` path
+    (which has the full input at once) and the streaming finalizer (which has only
+    accumulated JSON-string deltas to reparse at content_block_stop time).
+    """
+    query_value = (tool_args or {}).get('query', '')
+    queries = [query_value] if isinstance(query_value, str) else []
+    return {'queries': queries}
+
+
+def _finalize_streamed_tool_search_call_part(part: BuiltinToolSearchCallPart) -> BuiltinToolSearchCallPart:
+    """Finalize a streamed tool-search call's args.
+
+    Converts a `BuiltinToolSearchCallPart` whose `args` accumulated as a JSON string
+    (via `BetaInputJSONDelta`) into the canonical dict shape produced by the
+    non-streaming path.
+    """
+    if isinstance(part.args, str):
+        try:
+            parsed = cast(dict[str, Any], json.loads(part.args))
+        except json.JSONDecodeError:  # pragma: no cover - malformed partial args
+            parsed = None
+    elif isinstance(part.args, dict):
+        parsed = cast(dict[str, Any], part.args)
+    else:
+        parsed = None
+    return replace(part, args=_normalize_tool_search_args(parsed))
 
 
 def _map_tool_search_tool_result_block(

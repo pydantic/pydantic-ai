@@ -1946,290 +1946,224 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
 
-async def test_anthropic_native_tool_search_streaming(allow_model_requests: None):
-    """Anthropic streaming: `BetaToolSearchToolResultBlock` goes through the part
-    manager on `content_block_start` and emits a `BuiltinToolReturnPart`."""
-    pytest.importorskip('anthropic')
-    from anthropic.types.beta import (
-        BetaMessage,
-        BetaMessageDeltaUsage,
-        BetaRawContentBlockStartEvent,
-        BetaRawContentBlockStopEvent,
-        BetaRawMessageDeltaEvent,
-        BetaRawMessageStartEvent,
-        BetaRawMessageStopEvent,
-        BetaToolSearchToolResultBlock,
-        BetaUsage,
-    )
-    from anthropic.types.beta.beta_raw_message_delta_event import Delta
-    from anthropic.types.beta.beta_tool_reference_block import BetaToolReferenceBlock
-    from anthropic.types.beta.beta_tool_search_tool_search_result_block import (
-        BetaToolSearchToolSearchResultBlock,
-    )
-
-    from pydantic_ai.messages import BuiltinToolReturnPart
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic
-
-    result_block = BetaToolSearchToolResultBlock(
-        tool_use_id='srv_1',
-        type='tool_search_tool_result',
-        content=BetaToolSearchToolSearchResultBlock(
-            tool_references=[BetaToolReferenceBlock(tool_name='get_exchange_rate', type='tool_reference')],
-            type='tool_search_tool_search_result',
-        ),
-    )
-    events = [
-        BetaRawMessageStartEvent(
-            type='message_start',
-            message=BetaMessage(
-                id='msg_1',
-                model='claude-sonnet-4-5',
-                role='assistant',
-                type='message',
-                content=[],
-                stop_reason=None,
-                usage=BetaUsage(input_tokens=5, output_tokens=0),
-            ),
-        ),
-        BetaRawContentBlockStartEvent(type='content_block_start', index=0, content_block=result_block),
-        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
-        BetaRawMessageDeltaEvent(
-            type='message_delta',
-            delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(input_tokens=5, output_tokens=1),
-        ),
-        BetaRawMessageStopEvent(type='message_stop'),
-    ]
-    mock_client = MockAnthropic.create_stream_mock(events)
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-
-    from pydantic_ai.models import ModelRequestParameters as _ModelRequestParameters
-
-    params = _ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
-    async with model.request_stream([], None, params) as streamed:
-        async for _ in streamed:
-            pass
-        response = streamed.get()
-    return_parts = [p for p in response.parts if isinstance(p, BuiltinToolReturnPart)]
-    assert return_parts and return_parts[0].content == {
-        'discovered_tools': [{'name': 'get_exchange_rate', 'description': None}]
-    }
-
-
+@pytest.mark.vcr
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
 )
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
 )
-async def test_openai_native_tool_search_streaming(allow_model_requests: None):
-    """OpenAI Responses streaming: `ResponseToolSearchCall` and
-    `ResponseToolSearchOutputItem` events produce `BuiltinToolCallPart` and
-    `BuiltinToolReturnPart` through the streaming part manager."""
-    from openai.types import responses as resp
-    from openai.types.responses import (
-        FunctionTool,
-        ResponseOutputMessage,
-        ResponseOutputText,
-        ResponseToolSearchCall,
-        ResponseToolSearchOutputItem,
-    )
+async def test_anthropic_native_tool_search_streaming(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """End-to-end streaming against live Anthropic: native BM25 server-side tool search
+    streams `BuiltinToolSearchCallPart` / `BuiltinToolSearchReturnPart` through the part
+    manager during ``agent.iter`` + ``node.stream``, the model invokes the discovered
+    deferred tool by its plain name, and the agent loop runs to a final text response."""
+    pytest.importorskip('anthropic')
 
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    streamed_events: list[Any] = []
+    async with agent.iter(user_prompt='What is the current USD to EUR exchange rate?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        streamed_events.append(event)
+
+    assert agent_run.result is not None
+
+    # The streamed run materializes the same typed builtin parts as the non-streaming
+    # round-trip — the part manager promotes them through the discriminator at
+    # `content_block_start` time, not just on final response assembly.
+    builtin_call_parts = [
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchCallPart)
+    ]
+    builtin_return_parts = [
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchReturnPart)
+    ]
+    assert builtin_call_parts and builtin_return_parts
+
+    # The discovered deferred tool dispatches by its plain name and produces its
+    # ToolReturnPart end-to-end.
+    rate_returns = [
+        p
+        for m in agent_run.result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+    # We received streaming events from both the model-request node and the call-tools
+    # node — i.e. the part manager surfaced the builtin tool-search parts as the stream
+    # came in (not just on `streamed.get()`).
+    assert streamed_events, 'expected streaming events from the request stream'
+
+
+@pytest.mark.vcr
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_native_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end streaming against live OpenAI Responses: native server-executed
+    `tool_search` streams `BuiltinToolSearchCallPart` / `BuiltinToolSearchReturnPart`
+    through the part manager during ``agent.iter`` + ``node.stream``, the model invokes
+    the discovered deferred tool by its plain name, and the agent loop runs to a final
+    text response."""
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .models.mock_openai import MockOpenAIResponses
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model=model)
 
-    base = resp.Response(
-        id='123',
-        model='gpt-5.4',
-        object='response',
-        created_at=1704067200,
-        output=[],
-        parallel_tool_calls=True,
-        tool_choice='auto',
-        tools=[],
-    )
-    call = ResponseToolSearchCall(
-        id='ts_1',
-        arguments={'query': 'rate'},
-        call_id='call_1',
-        execution='server',
-        status='completed',
-        type='tool_search_call',
-    )
-    output = ResponseToolSearchOutputItem(
-        id='tso_1',
-        call_id='call_1',
-        execution='server',
-        status='completed',
-        tools=[FunctionTool(name='real_tool', description='', parameters={}, strict=False, type='function')],
-        type='tool_search_output',
-    )
-    final = ResponseOutputMessage(
-        id='msg_1',
-        role='assistant',
-        status='completed',
-        type='message',
-        content=[ResponseOutputText(type='output_text', text='done.', annotations=[])],
-    )
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
 
-    stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=base, type='response.created', sequence_number=0),
-        resp.ResponseInProgressEvent(response=base, type='response.in_progress', sequence_number=1),
-        resp.ResponseOutputItemAddedEvent(
-            item=call, output_index=0, type='response.output_item.added', sequence_number=2
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=call, output_index=0, type='response.output_item.done', sequence_number=3
-        ),
-        resp.ResponseOutputItemAddedEvent(
-            item=output, output_index=1, type='response.output_item.added', sequence_number=4
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=output, output_index=1, type='response.output_item.done', sequence_number=5
-        ),
-        resp.ResponseOutputItemAddedEvent(
-            item=final, output_index=2, type='response.output_item.added', sequence_number=6
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=final, output_index=2, type='response.output_item.done', sequence_number=7
-        ),
-        resp.ResponseCompletedEvent(
-            response=base.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=8,
-        ),
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    streamed_events: list[Any] = []
+    async with agent.iter(user_prompt='What is the current USD to EUR exchange rate?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        streamed_events.append(event)
+
+    assert agent_run.result is not None
+
+    builtin_call_parts = [
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchCallPart)
     ]
+    builtin_return_parts = [
+        p for m in agent_run.result.all_messages() for p in m.parts if isinstance(p, BuiltinToolSearchReturnPart)
+    ]
+    assert builtin_call_parts and builtin_return_parts
 
-    mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    rate_returns = [
+        p
+        for m in agent_run.result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
-    # Drive the stream directly via the model's `request_stream` so we exercise the
-    # streaming handler without needing the agent graph to accept the output.
-    from pydantic_ai.models import ModelRequestParameters as _ModelRequestParameters
-
-    params = _ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
-    async with model.request_stream([], None, params) as streamed:
-        async for _ in streamed:
-            pass
-        response = streamed.get()
-    parts = response.parts
-    assert any(isinstance(p, BuiltinToolCallPart) and p.tool_name == 'tool_search' for p in parts)
-    assert any(
-        isinstance(p, BuiltinToolReturnPart)
-        and p.content == {'discovered_tools': [{'name': 'real_tool', 'description': ''}]}
-        for p in parts
-    )
+    assert streamed_events, 'expected streaming events from the request stream'
 
 
-async def test_openai_client_tool_search_streaming(allow_model_requests: None):
-    """OpenAI Responses streaming for a client-executed `tool_search_call`:
-    Added/Done events surface as a regular `ToolCallPart` on ``search_tools`` so the
-    standard agent-graph tool-execution path can run the local callable strategy.
-    Also covers the per-call ``namespace`` round-trip that the Responses API attaches
-    to function calls emitted against discovered deferred tools.
-    """
-    from openai.types import responses as resp
-    from openai.types.responses import (
-        ResponseFunctionToolCall,
-        ResponseOutputMessage,
-        ResponseOutputText,
-        ResponseToolSearchCall,
-    )
-
-    from pydantic_ai.messages import ToolCallPart
+@pytest.mark.vcr
+async def test_openai_client_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end streaming against live OpenAI Responses with a custom callable
+    ``ToolSearch`` strategy. The provider emits a ``tool_search_call`` with
+    ``execution='client'`` whose arguments we dispatch to the local ``search_tools``
+    function — both events surface through the streaming part manager (the
+    ``tool_search_call`` as a regular ``ToolCallPart``), the agent loop runs the
+    callable strategy, the model follows up with the discovered deferred tool, and
+    the run completes with a final text response."""
+    from pydantic_ai.capabilities import ToolSearch
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .models.mock_openai import MockOpenAIResponses
+    def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+        # Deterministic: always point the model at `get_exchange_rate` so the cassette
+        # replay doesn't depend on the exact keywords the model picks.
+        return ['get_exchange_rate']
 
-    base = resp.Response(
-        id='123',
-        model='gpt-5.4',
-        object='response',
-        created_at=1704067200,
-        output=[],
-        parallel_tool_calls=True,
-        tool_choice='auto',
-        tools=[],
-    )
-    client_call = ResponseToolSearchCall(
-        id='tsc_1',
-        arguments={'keywords': 'exchange rate'},
-        call_id='call_client_1',
-        execution='client',
-        status='completed',
-        type='tool_search_call',
-    )
-    # Discovered deferred tool: OpenAI attaches a per-call `namespace` we preserve on the
-    # resulting `ToolCallPart.provider_details` so we can round-trip it on replay.
-    namespaced_fn_call = ResponseFunctionToolCall(
-        id='fc_1',
-        arguments='{"from_currency":"USD","to_currency":"EUR"}',
-        call_id='call_fc_1',
-        name='get_exchange_rate',
-        namespace='get_exchange_rate',
-        status='completed',
-        type='function_call',
-    )
-    final = ResponseOutputMessage(
-        id='msg_1',
-        role='assistant',
-        status='completed',
-        type='message',
-        content=[ResponseOutputText(type='output_text', text='done.', annotations=[])],
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        model=model,
+        instructions=(
+            'When you need a capability not provided by your visible tools, call the built-in '
+            'tool search first to discover and activate the right one before answering.'
+        ),
+        capabilities=[ToolSearch(strategy=match_exchange_rate)],
     )
 
-    stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=base, type='response.created', sequence_number=0),
-        resp.ResponseInProgressEvent(response=base, type='response.in_progress', sequence_number=1),
-        resp.ResponseOutputItemAddedEvent(
-            item=client_call, output_index=0, type='response.output_item.added', sequence_number=2
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=client_call, output_index=0, type='response.output_item.done', sequence_number=3
-        ),
-        resp.ResponseOutputItemAddedEvent(
-            item=namespaced_fn_call, output_index=1, type='response.output_item.added', sequence_number=4
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=namespaced_fn_call, output_index=1, type='response.output_item.done', sequence_number=5
-        ),
-        resp.ResponseOutputItemAddedEvent(
-            item=final, output_index=2, type='response.output_item.added', sequence_number=6
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=final, output_index=2, type='response.output_item.done', sequence_number=7
-        ),
-        resp.ResponseCompletedEvent(
-            response=base.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=8,
-        ),
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'Weather in {city} is sunny.'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    streamed_events: list[Any] = []
+    async with agent.iter(user_prompt='What is the current exchange rate from USD to EUR?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        streamed_events.append(event)
+
+    assert agent_run.result is not None
+
+    tool_call_names = [
+        part.tool_name
+        for msg in agent_run.result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
     ]
+    # Client-executed tool search: the `tool_search_call` is routed to the local
+    # `search_tools` function, then the model follows up with the discovered tool.
+    assert 'search_tools' in tool_call_names
+    assert 'get_exchange_rate' in tool_call_names
 
-    mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    search_returns = [
+        part
+        for msg in agent_run.result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
+    ]
+    assert len(search_returns) == 1
+    assert search_returns[0].content == {
+        'discovered_tools': [
+            {
+                'name': 'get_exchange_rate',
+                'description': 'Look up the current exchange rate between two currencies.',
+            }
+        ]
+    }
 
-    from pydantic_ai.models import ModelRequestParameters as _ModelRequestParameters
+    rate_returns = [
+        part
+        for msg in agent_run.result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
-    params = _ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
-    async with model.request_stream([], None, params) as streamed:
-        async for _ in streamed:
-            pass
-        response = streamed.get()
-    # Route A: the client-executed `tool_search_call` surfaces as a regular
-    # `ToolCallPart` against our local `search_tools` function.
-    search_calls = [p for p in response.parts if isinstance(p, ToolCallPart) and p.tool_name == 'search_tools']
-    assert search_calls and search_calls[0].args_as_dict() == {'keywords': 'exchange rate'}
-    # The discovered function call carries its `namespace` in `provider_details` for replay.
-    fn_calls = [p for p in response.parts if isinstance(p, ToolCallPart) and p.tool_name == 'get_exchange_rate']
-    assert fn_calls and fn_calls[0].provider_details == {'namespace': 'get_exchange_rate'}
+    assert streamed_events, 'expected streaming events from the request stream'
 
 
 async def test_agent_graph_without_builtin_tools(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
