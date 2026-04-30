@@ -10,6 +10,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
@@ -51,6 +52,7 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -67,6 +69,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -203,8 +206,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
-    _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
     _tool_timeout: float | None = dataclasses.field(repr=False)
@@ -406,6 +407,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
+        if prepare_tools is not None:
+            capabilities.append(PrepareTools(prepare_tools))
+        if prepare_output_tools is not None:
+            capabilities.append(PrepareOutputTools(prepare_output_tools))
 
         _inject_auto_capabilities(capabilities)
 
@@ -446,9 +451,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._cap_model_settings = self._root_capability.get_model_settings()
 
-        self._prepare_tools = prepare_tools
-        self._prepare_output_tools = prepare_output_tools
-
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset and self._output_toolset.max_retries is None:
             self._output_toolset.max_retries = self._max_result_retries
@@ -486,6 +488,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
+        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentBuiltinTool[AgentDepsT]]]] = ContextVar(
+            '_override_builtin_tools', default=None
+        )
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
@@ -916,6 +921,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -938,6 +944,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -960,6 +967,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1016,6 +1024,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         ],
                         timestamp=datetime.datetime(...),
                         run_id='...',
+                        conversation_id='...',
                     )
                 ),
                 CallToolsNode(
@@ -1025,6 +1034,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
+                        conversation_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
@@ -1040,6 +1050,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1129,6 +1140,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             retries=0,
             run_step=0,
+            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
 
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
@@ -1196,6 +1208,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_builtin_tools = self._cap_builtin_tools
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
+
+        if some_builtin_tools := self._override_builtin_tools.get():
+            cap_builtin_tools = list(some_builtin_tools.value)
 
         # Build model settings resolver using per-run capability
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -1298,6 +1313,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
             'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.conversation.id': state.conversation_id,
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
@@ -1317,6 +1333,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if run_span.is_recording():
                     ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
                     ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
+                    ctx = _otel_set_baggage('gen_ai.conversation.id', state.conversation_id, context=ctx)
                     token = _otel_attach(ctx)
                     stack.callback(_otel_detach, token)
                 await stack.enter_async_context(
@@ -1655,12 +1672,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
+        """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1671,6 +1689,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            builtin_tools: The builtin tools to use instead of the agent's configured builtin tools.
+                Per-run `builtin_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
@@ -1723,6 +1743,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             tools_token = None
 
+        if _utils.is_set(builtin_tools):
+            builtin_tools_token = self._override_builtin_tools.set(_utils.Some(builtin_tools))
+        else:
+            builtin_tools_token = None
+
         if _utils.is_set(instructions):
             normalized_instructions = _instructions.normalize_instructions(instructions)
             instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
@@ -1763,6 +1788,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+            if builtin_tools_token is not None:
+                self._override_builtin_tools.reset(builtin_tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:
@@ -2431,19 +2458,45 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset: AbstractToolset[AgentDepsT] = CombinedToolset(toolsets)
 
-        if self._prepare_tools:
-            toolset = PreparedToolset(toolset, self._prepare_tools)
-
-        # Capability wrapper toolsets (including ToolSearch and CodeMode) are
-        # applied here via get_wrapper_toolset. ToolSearch is auto-injected
-        # into capabilities, replacing the previous hardcoded ToolSearchToolset wrap.
         if run_capability is not None:
+            # Dispatch the `prepare_tools` capability hook through a `PreparedToolset` wrapped
+            # **inside** any other capability `get_wrapper_toolset` results (e.g. `ToolSearch`,
+            # `CodeMode`), matching the original ordering of the agent-level `prepare_tools=`
+            # kwarg in main: filter/modify defs first, let other toolset transformations layer
+            # on top. The hook sees **function** tools only — output tools route through
+            # `prepare_output_tools` below.
+            fn_cap = run_capability
+
+            async def _dispatch_prepare_tools(
+                ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return await fn_cap.prepare_tools(ctx, tool_defs)
+
+            toolset = PreparedToolset(toolset, _dispatch_prepare_tools)
+
+            # Capability wrapper toolsets (including ToolSearch and CodeMode) are
+            # applied here via get_wrapper_toolset, around the prepare_tools wrap above.
             toolset = run_capability.get_wrapper_toolset(toolset) or toolset
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
-            if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            if run_capability is not None:
+                # Dispatch the new `prepare_output_tools` capability hook through a `PreparedToolset`
+                # wrapped around the output toolset specifically — so the hook only sees output
+                # tools, and the filtered/modified defs flow into `ToolManager.tools` and the model
+                # request parameters together. Override `ctx.max_retries` to the agent's output
+                # retry budget (matches `_build_output_run_context`'s contract — see #4745).
+                # `output_toolset.max_retries` is set to `max_result_retries` at agent construction.
+                output_cap = run_capability
+                output_max_retries = self._max_result_retries
+
+                async def _dispatch_prepare_output_tools(
+                    ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+                ) -> list[ToolDefinition]:
+                    output_ctx = replace(ctx, max_retries=output_max_retries)
+                    return await output_cap.prepare_output_tools(output_ctx, tool_defs)
+
+                output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
             toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
@@ -2750,7 +2803,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
