@@ -14,7 +14,6 @@ Pydantic AI supports the following built-in tools:
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
-- **[`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]**: Lets the provider discover tools marked with `defer_loading=True` (typically configured via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability rather than passed manually)
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -889,31 +888,6 @@ async def main():
 
 asyncio.run(main())
 ```
-
-## Tool Search Tool
-
-The [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool] lets the provider discover tools marked with `defer_loading=True` — keeping them out of the initial prompt and only materializing the ones that match a search.
-
-You typically don't register `ToolSearchTool` yourself; the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability is auto-injected into every agent and selects `ToolSearchTool` on providers that support it, falling back to a local `search_tools` function tool otherwise. See [Tool Search in tools-advanced](tools-advanced.md#tool-search) for the agent-level overview.
-
-### Provider Support
-
-| Provider | Supported | Models | Notes |
-|----------|-----------|--------|-------|
-| Anthropic | ✅ | Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ | Server-executed `bm25` (default) or `regex`. Custom callable surfaces via a regular `search_tools` function tool whose return value the adapter re-formats as `tool_reference` blocks. |
-| OpenAI Responses | ✅ | GPT-5.4+ | Server-executed `tool_search` by default. Custom callable surfaces as `ToolSearchToolParam(execution='client')` and routes back to the local `search_tools` function. Named `'bm25'`/`'regex'` strategies are not supported. |
-| OpenAI Chat Completions | ❌ | — | Responses-API-only feature. |
-| Google | ❌ | — | — |
-| xAI | ❌ | — | — |
-| Groq | ❌ | — | — |
-| Bedrock | ❌ | — | — |
-| Mistral | ❌ | — | — |
-| Cohere | ❌ | — | — |
-| OpenRouter | ❌ | — | — |
-| HuggingFace | ❌ | — | — |
-| Outlines | ❌ | — | — |
-
-On unsupported providers, [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] transparently falls back to a local `search_tools` function tool — including when the user passes a custom callable strategy.
 
 ## API Reference
 

@@ -23,11 +23,11 @@ from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
-    ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
     XSearchTool,
 )
+from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -1009,11 +1009,10 @@ though not all of these settings are supported by all models.\
                         'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'strategy': {
-                            'anyOf': [{'enum': ['bm25', 'regex'], 'type': 'string'}, {'type': 'null'}],
+                            'anyOf': [{'enum': ['bm25', 'regex', 'custom'], 'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Strategy',
                         },
-                        'custom': {'default': False, 'title': 'Custom', 'type': 'boolean'},
                     },
                     'title': 'ToolSearchTool',
                     'type': 'object',
@@ -1424,7 +1423,7 @@ Supported by:
                     'properties': {
                         'strategy': {
                             'anyOf': [
-                                {'const': 'substring', 'type': 'string'},
+                                {'const': 'keywords', 'type': 'string'},
                                 {'enum': ['bm25', 'regex'], 'type': 'string'},
                                 {'type': 'null'},
                             ],
@@ -1435,9 +1434,9 @@ Supported by:
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Tool Description',
                         },
-                        'search_guidance': {
+                        'parameter_description': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'title': 'Search Guidance',
+                            'title': 'Parameter Description',
                         },
                     },
                     'title': 'spec_params_ToolSearch',

@@ -519,12 +519,14 @@ Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability 
 ```python {title="tool_search_custom.py"}
 from collections.abc import Sequence
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import ToolSearch
 from pydantic_ai.tools import ToolDefinition
 
 
-def fuzzy_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+def fuzzy_search(
+    ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]
+) -> list[str]:
     """Match tools whose name or description contains any query word."""
     needles = query.lower().split()
     return [
@@ -541,10 +543,10 @@ Available strategy values:
 
 | `strategy` | Behavior |
 |---|---|
-| `None` (default) | Let Pydantic AI pick the best algorithm for the current provider — Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local token matching elsewhere. |
-| `'substring'` | Force the local token-overlap algorithm regardless of provider. |
+| `None` (default) | Let Pydantic AI pick the best algorithm for the current provider — Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
+| `'keywords'` | Force the local keyword-overlap algorithm regardless of provider. |
 | `'bm25'` / `'regex'` | Force a specific Anthropic-native strategy. The request fails on providers that can't honor the choice (including OpenAI) rather than silently substituting a different algorithm. |
-| Callable `(query, tools) -> names` | Custom search function. Runs locally and produces the matched names. |
+| Callable `(ctx, query, tools) -> names` | Custom search function (sync or async). Runs locally and produces the matched names. |
 
 A custom callable also benefits from provider-native tool search on models that support a client-executed mode (Anthropic, OpenAI Responses), where deferred tools still ship with `defer_loading` on the wire so the provider can keep them out of the prompt until the search picks them. On other providers, the callable runs as the local `search_tools` function tool with no behavioural change.
 

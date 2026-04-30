@@ -20,10 +20,10 @@ from ..builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
-    ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
 )
+from ..builtin_tools.tool_search import ToolSearchTool
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,

@@ -26,7 +26,8 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool, ToolSearchTool
+from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools.tool_search import ToolSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -755,7 +756,7 @@ class Model(ABC, Generic[InterfaceClient]):
             raise UserError('Image output is not supported by this model.')
 
         # Check builtin tools and handle fallback swap
-        if params.builtin_tools or any(t.unless_builtin or t.managed_by_builtin for t in params.function_tools):
+        if params.builtin_tools or any(t.unless_builtin or t.with_builtin for t in params.function_tools):
             params = self._resolve_builtin_tool_swap(params)
 
         return model_settings, params
@@ -766,15 +767,15 @@ class Model(ABC, Generic[InterfaceClient]):
         Four rules drive the per-tool filter:
 
         1. ``unless_builtin`` matches a supported builtin → drop from wire.
-        2. ``managed_by_builtin`` matches a supported builtin → keep on wire; the adapter
+        2. ``with_builtin`` matches a supported builtin → keep on wire; the adapter
            applies any builtin-specific format (e.g. Anthropic / OpenAI's wire-side
            ``defer_loading`` flag for ``ToolSearchTool``).
-        3. ``managed_by_builtin`` matches an *unsupported* builtin AND ``defer_loading=True``
+        3. ``with_builtin`` matches an *unsupported* builtin AND ``defer_loading=True``
            → drop from wire (the corpus member is currently undiscovered, so the model has
            no way to call it on this provider).
         4. Otherwise → keep.
 
-        Optional unsupported builtins (currently only [`ToolSearchTool`][pydantic_ai.builtin_tools.ToolSearchTool]
+        Optional unsupported builtins (currently only [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]
         carries the flag) with no remaining corpus are silently dropped instead of raising.
         """
         supported_types = self.profile.supported_builtin_tools
@@ -805,14 +806,14 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_builtin and t.unless_builtin in supported_ids:
                 continue
             # Rule 3: drop undiscovered corpus members when the builtin is unsupported.
-            if t.managed_by_builtin and t.managed_by_builtin not in supported_ids and t.defer_loading:
+            if t.with_builtin and t.with_builtin not in supported_ids and t.defer_loading:
                 continue
             # Rules 2 + 4: keep.
             function_tools.append(t)
 
         # Drop optional builtins whose managed corpus is empty after filtering —
         # they have nothing to do, so sending them would waste a tool slot.
-        remaining_corpus_ids = {t.managed_by_builtin for t in function_tools if t.managed_by_builtin}
+        remaining_corpus_ids = {t.with_builtin for t in function_tools if t.with_builtin}
         supported_builtins = [
             t
             for t in supported_builtins

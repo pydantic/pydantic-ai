@@ -21,7 +21,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.builtin_tools import ToolSearchTool
+from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -826,7 +826,7 @@ def test_tool_search_in_capability_registry():
 
 async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     """Every deferred tool appears once under its real name with
-    ``managed_by_builtin='tool_search'``. Visible tools and ``search_tools`` round
+    ``with_builtin='tool_search'``. Visible tools and ``search_tools`` round
     out the dispatch dict. ``Model.prepare_request`` filters per-model to decide what
     actually reaches the wire."""
     toolset = _create_function_toolset()
@@ -836,10 +836,10 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     tool_manager = ToolManager[None](searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
 
-    managed_names = {t.name for t in run_step_toolset.tool_defs if t.managed_by_builtin == 'tool_search'}
+    managed_names = {t.name for t in run_step_toolset.tool_defs if t.with_builtin == 'tool_search'}
     assert managed_names == {'calculate_mortgage', 'stock_price', 'crypto_price'}
 
-    local_names = [t.name for t in run_step_toolset.tool_defs if not t.managed_by_builtin]
+    local_names = [t.name for t in run_step_toolset.tool_defs if not t.with_builtin]
     assert 'get_weather' in local_names
     assert 'search_tools' in local_names
 
@@ -1072,9 +1072,9 @@ async def test_deferred_loading_toolset_marks_specific_tools():
     assert tools['tool_b'].tool_def.defer_loading is True
 
 
-async def test_tool_search_toolset_marks_corpus_with_managed_by_builtin():
+async def test_tool_search_toolset_marks_corpus_with_builtin():
     """Every deferred tool keeps its real name in the toolset output and carries
-    ``managed_by_builtin='tool_search'`` regardless of the current model — the adapter's
+    ``with_builtin='tool_search'`` regardless of the current model — the adapter's
     ``prepare_request`` decides what reaches the wire so the toolset can't commit early
     (e.g. under ``FallbackModel``)."""
     toolset = _create_function_toolset()
@@ -1083,10 +1083,10 @@ async def test_tool_search_toolset_marks_corpus_with_managed_by_builtin():
 
     tools = await searchable.get_tools(ctx)
 
-    managed = {name: tool.tool_def for name, tool in tools.items() if tool.tool_def.managed_by_builtin}
+    managed = {name: tool.tool_def for name, tool in tools.items() if tool.tool_def.with_builtin}
     assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
     for tool_def in managed.values():
-        assert tool_def.managed_by_builtin == 'tool_search'
+        assert tool_def.with_builtin == 'tool_search'
         assert tool_def.defer_loading
     # The local fallback is still present — dropped by the adapter via ``unless_builtin``.
     assert _SEARCH_TOOLS_NAME in tools
@@ -1108,10 +1108,10 @@ async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
 
 
 async def test_tool_search_toolset_custom_search_fn_is_used():
-    """A custom ``search_fn`` replaces the default token-matching algorithm."""
+    """A custom ``search_fn`` replaces the default keyword-matching algorithm."""
     calls: list[str] = []
 
-    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         calls.append(query)
         # Pick anything with 'price' in the name, regardless of query tokens.
         return [t.name for t in tools if 'price' in t.name]
@@ -1134,13 +1134,15 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
 
 async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
     """A custom ``search_fn`` handles local discovery, but the toolset still flags every
-    deferred tool with ``managed_by_builtin='tool_search'`` — when the model supports
+    deferred tool with ``with_builtin='tool_search'`` — when the model supports
     native tool search (including provider-side custom callable modes like Anthropic's
     tool_reference mechanism or OpenAI's ``execution='client'``), the adapter keeps them
     and applies ``defer_loading`` on the wire. Commitment to native-vs-local happens in
     ``Model.prepare_request``, not here."""
 
-    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
+    def custom_search(
+        ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]
+    ) -> list[str]:  # pragma: no cover
         return []
 
     toolset = _create_function_toolset()
@@ -1149,7 +1151,7 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
 
     tools = await searchable.get_tools(ctx)
 
-    managed = [t.tool_def.name for t in tools.values() if t.tool_def.managed_by_builtin == 'tool_search']
+    managed = [t.tool_def.name for t in tools.values() if t.tool_def.with_builtin == 'tool_search']
     assert set(managed) == {'calculate_mortgage', 'stock_price', 'crypto_price'}
     assert _SEARCH_TOOLS_NAME in tools
 
@@ -1256,7 +1258,7 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    def match_exchange_rate(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
@@ -1847,7 +1849,7 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    def match_exchange_rate(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
@@ -2247,7 +2249,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
 async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     """Names returned by ``search_fn`` that aren't in the deferred set are discarded."""
 
-    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         return ['stock_price', 'not_a_real_tool', 'crypto_price']
 
     toolset = _create_function_toolset()
@@ -2268,7 +2270,7 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
 async def test_tool_search_toolset_custom_search_fn_no_matches():
     """Custom search function returning no names produces the 'no matches' message."""
 
-    def custom_search(query: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         return []
 
     toolset = _create_function_toolset()
@@ -2283,12 +2285,12 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
 
 
 async def test_tool_search_capability_strategy_callable_registers_custom_builtin():
-    """A callable strategy still registers a ``ToolSearchTool`` builtin with ``custom=True``
+    """A callable strategy still registers a ``ToolSearchTool`` builtin with ``strategy='custom'``
     so provider adapters that support a custom-callable native surface (e.g. Anthropic's
     ``tool_reference`` result blocks, OpenAI's ``execution='client'``) can use it; models
     without support drop it as optional and fall back to the local ``search_tools`` tool."""
 
-    def noop(query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
+    def noop(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
         return []
 
     cap = ToolSearch(strategy=noop)
@@ -2296,8 +2298,7 @@ async def test_tool_search_capability_strategy_callable_registers_custom_builtin
     assert len(builtins) == 1
     tool = builtins[0]
     assert isinstance(tool, ToolSearchTool)
-    assert tool.strategy is None
-    assert tool.custom is True
+    assert tool.strategy == 'custom'
 
 
 async def test_tool_search_capability_strategy_named_registers_builtin():
@@ -2325,19 +2326,19 @@ async def test_tool_search_capability_strategy_none_optional_builtin():
     assert tool.optional is True
 
 
-async def test_tool_search_capability_strategy_substring_no_builtin():
-    """``strategy='substring'`` is explicitly local — no native builtin is registered,
-    the default token-overlap algorithm runs via the local ``search_tools`` function."""
-    cap = ToolSearch(strategy='substring')
+async def test_tool_search_capability_strategy_keywords_no_builtin():
+    """``strategy='keywords'`` is explicitly local — no native builtin is registered,
+    the default keyword-overlap algorithm runs via the local ``search_tools`` function."""
+    cap = ToolSearch(strategy='keywords')
     builtins = list(cap.get_builtin_tools())
     assert builtins == []
 
 
 async def test_tool_search_capability_wraps_with_tool_search_toolset():
-    """``strategy='substring'`` wraps with ``ToolSearchToolset`` so the corpus is
+    """``strategy='keywords'`` wraps with ``ToolSearchToolset`` so the corpus is
     exposed and ``search_tools`` carries the user's customizations."""
     toolset = _create_function_toolset()
-    cap = ToolSearch(strategy='substring')
+    cap = ToolSearch(strategy='keywords')
     wrapped = cap.get_wrapper_toolset(toolset)
     assert isinstance(wrapped, ToolSearchToolset)
     assert wrapped.search_fn is None
@@ -2367,8 +2368,8 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
         )
 
 
-async def test_tool_search_substring_ignores_builtin_support():
-    """``strategy='substring'`` never tries to use a native builtin — the swap is a
+async def test_tool_search_keywords_ignores_builtin_support():
+    """``strategy='keywords'`` never tries to use a native builtin — the swap is a
     no-op even on models that support ``ToolSearchTool``."""
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import ToolDefinition
@@ -2388,8 +2389,8 @@ async def test_tool_search_substring_ignores_builtin_support():
     assert [t.name for t in prepared.function_tools] == [_SEARCH_TOOLS_NAME]
 
 
-def test_managed_by_builtin_undiscovered_drops_on_unsupported_model():
-    """In `prepare_request`, `managed_by_builtin` corpus members with `defer_loading=True`
+def test_with_builtin_undiscovered_drops_on_unsupported_model():
+    """In `prepare_request`, `with_builtin` corpus members with `defer_loading=True`
     (still undiscovered) drop on a model that doesn't support the builtin — the model has
     no way to call them and the local `search_tools` fallback handles discovery."""
     from pydantic_ai.models.test import TestModel
@@ -2400,7 +2401,7 @@ def test_managed_by_builtin_undiscovered_drops_on_unsupported_model():
     # upgrade; on a model that doesn't support it, both the builtin and its undiscovered
     # corpus drop so the local `ToolSearch` fallback handles discovery.
     search_builtin = ToolSearchTool(optional=True)
-    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search', defer_loading=True)
+    corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search', defer_loading=True)
 
     _, prepared = m.prepare_request(
         None,
@@ -2413,14 +2414,14 @@ def test_managed_by_builtin_undiscovered_drops_on_unsupported_model():
     assert prepared.function_tools == []
 
 
-def test_managed_by_builtin_discovered_kept_on_unsupported_model():
+def test_with_builtin_discovered_kept_on_unsupported_model():
     """A discovered corpus member (`defer_loading=False`) stays in the request even when
     the builtin is unsupported — the model can call it directly by name on the local path."""
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import ToolDefinition
 
     m = TestModel()
-    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search', defer_loading=False)
+    corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search', defer_loading=False)
 
     _, prepared = m.prepare_request(
         None,
@@ -2433,7 +2434,7 @@ def test_managed_by_builtin_discovered_kept_on_unsupported_model():
     assert [t.name for t in prepared.function_tools] == ['deferred_tool']
 
 
-def test_managed_by_builtin_kept_on_supporting_model():
+def test_with_builtin_kept_on_supporting_model():
     """On a supporting model, managed tools are kept so the adapter can emit them
     with provider-specific wire-format tweaks."""
     from pydantic_ai.models.test import TestModel
@@ -2445,7 +2446,7 @@ def test_managed_by_builtin_kept_on_supporting_model():
             return frozenset({ToolSearchTool})
 
     m = ToolSearchTestModel()
-    corpus_tool = ToolDefinition(name='deferred_tool', managed_by_builtin='tool_search')
+    corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search')
     _, prepared = m.prepare_request(
         None,
         ModelRequestParameters(

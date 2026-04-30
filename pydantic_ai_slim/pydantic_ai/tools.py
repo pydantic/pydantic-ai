@@ -767,16 +767,24 @@ class ToolDefinition:
     stays in the request when the builtin isn't supported.
     """
 
-    managed_by_builtin: str | None = None
-    """If set, this tool is part of a corpus managed by the
-    [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] with the matching `kind`
-    (e.g. [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool] sets
-    `'tool_search'`).
+    with_builtin: Annotated[
+        str | None,
+        # Old name was `managed_by_builtin`; keep accepting it for serialized-history backward compat.
+        Field(validation_alias=AliasChoices('with_builtin', 'managed_by_builtin')),
+    ] = None
+    """If set, this tool is kept on the wire when the named builtin is supported, with the
+    builtin's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
+    on the request param for [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]).
 
-    Complementary to `unless_builtin`: a tool with `unless_builtin` is a local fallback that's
-    removed when the builtin is supported, while a tool with `managed_by_builtin` is part of
-    the builtin's corpus and kept when the builtin is supported (and dropped when the builtin
-    is unsupported and `defer_loading=True`).
+    Symmetric pair with `unless_builtin`:
+
+    * `unless_builtin='X'` — drop me from the wire when X is supported (local fallback).
+    * `with_builtin='X'` — keep me on the wire when X is supported, formatted via X's adapter
+      (corpus member managed by the builtin).
+
+    When the named builtin is unsupported, a tool with `with_builtin` and `defer_loading=True`
+    is dropped (the corpus member is currently undiscovered, so the model can't call it on
+    this provider); otherwise it's kept as a regular function tool.
     """
 
     return_schema: ObjectJsonSchema | None = None

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .._run_context import AgentDepsT
-from ..builtin_tools import (
+from ..builtin_tools.tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
     ToolSearchStrategy,
@@ -49,30 +49,30 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     # Force a specific Anthropic native strategy; errors on providers that can't honor it.
     agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='regex')])
 
-    # Always run the local token-overlap algorithm, regardless of provider.
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='substring')])
+    # Always run the local keyword-overlap algorithm, regardless of provider.
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='keywords')])
 
     # Custom search function — used locally, and by provider-native "client-executed" modes when supported.
-    def my_search(query, tools):
+    def my_search(ctx, query, tools):
         return [t.name for t in tools if query.lower() in (t.description or '').lower()]
 
     agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=my_search)])
     ```
     """
 
-    strategy: ToolSearchStrategy | None = None
+    strategy: ToolSearchStrategy[AgentDepsT] | None = None
     """The search strategy to use.
 
     * ``None`` (default): let Pydantic AI pick the best strategy for the current provider
       — native on supporting models (Anthropic BM25, OpenAI server-executed tool search),
-      local token matching elsewhere. The choice may change in future versions.
-    * ``'substring'``: always use the local token-overlap algorithm.
+      local keyword matching elsewhere. The choice may change in future versions.
+    * ``'keywords'``: always use the local keyword-overlap algorithm.
     * ``'bm25'`` / ``'regex'``: force a specific Anthropic native strategy. Raises on
       providers that can't honor the choice (including OpenAI, which has no named
       native strategies).
-    * Callable ``(query, tools) -> names``: custom search function. Used locally, and by
-      the native "client-executed" surface on providers that support it (Anthropic custom
-      tool-reference blocks, OpenAI ``execution='client'``).
+    * Callable ``(ctx, query, tools) -> names``: custom search function (sync or async).
+      Used locally, and by the native "client-executed" surface on providers that support
+      it (Anthropic custom tool-reference blocks, OpenAI ``execution='client'``).
     """
 
     max_results: int = 10
@@ -81,15 +81,15 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     tool_description: str | None = None
     """Custom description for the local ``search_tools`` function shown to the model."""
 
-    search_guidance: str | None = None
-    """Custom description for the local ``search_tools`` ``keywords`` parameter."""
+    parameter_description: str | None = None
+    """Custom description for the ``keywords`` parameter on the local ``search_tools`` function."""
 
-    _search_fn: ToolSearchFunc | None = field(init=False, repr=False, default=None)
+    _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
         # A callable strategy is used as the local search function. Named strategies
-        # (``'substring'``, ``'bm25'``, ``'regex'``) don't plug into the local callable:
-        # ``'substring'`` means the default token-matching algorithm runs locally, while
+        # (``'keywords'``, ``'bm25'``, ``'regex'``) don't plug into the local callable:
+        # ``'keywords'`` means the default keyword-matching algorithm runs locally, while
         # ``'bm25'``/``'regex'`` only take effect on the native provider path.
         self._search_fn = self.strategy if callable(self.strategy) else None
 
@@ -101,9 +101,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         return 'ToolSearch'
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        # ``'substring'`` is explicitly-local: no builtin, the local ``search_tools``
+        # ``'keywords'`` is explicitly-local: no builtin, the local ``search_tools``
         # function tool carries the full search workload.
-        if self.strategy == 'substring':
+        if self.strategy == 'keywords':
             return []
 
         # A callable strategy surfaces as the provider's "client-executed" native mode
@@ -112,7 +112,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # optional and fall back to the local ``search_tools`` function — same callable,
         # just executed locally instead of routed through the provider.
         if callable(self.strategy):
-            return [ToolSearchTool(custom=True, optional=True)]
+            return [ToolSearchTool(strategy='custom', optional=True)]
 
         # ``None`` means "pick the best native option available, otherwise fall back
         # locally" — ``optional=True`` so the swap silently falls back on unsupported
@@ -146,5 +146,5 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             search_fn=self._search_fn,
             max_results=self.max_results,
             tool_description=self.tool_description,
-            search_guidance=self.search_guidance,
+            parameter_description=self.parameter_description,
         )

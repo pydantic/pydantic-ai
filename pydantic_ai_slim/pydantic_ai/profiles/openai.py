@@ -12,9 +12,9 @@ from ..builtin_tools import (
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
-    ToolSearchTool,
     WebSearchTool,
 )
+from ..builtin_tools.tool_search import ToolSearchTool
 from ..exceptions import UserError
 from ..settings import ThinkingLevel
 from . import ModelProfile

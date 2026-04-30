@@ -6,10 +6,10 @@ from ..builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
-    ToolSearchTool,
     WebFetchTool,
     WebSearchTool,
 )
+from ..builtin_tools.tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
 

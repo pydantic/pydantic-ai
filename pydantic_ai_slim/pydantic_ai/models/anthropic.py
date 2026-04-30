@@ -15,16 +15,18 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..builtin_tools import (
-    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     AbstractBuiltinTool,
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from ..builtin_tools.tool_search import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchMatch,
     ToolSearchReturn,
     ToolSearchTool,
-    WebFetchTool,
-    WebSearchTool,
     extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
@@ -961,7 +963,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(tool, ToolSearchTool):  # pragma: no branch
                 # Custom-callable strategies go through the regular `search_tools` function tool
                 # (which is already in `function_tools`), so no server-side builtin is emitted.
-                if tool.custom:
+                if tool.strategy == 'custom':
                     pass
                 # Default strategy is BM25; regex is the alternative named strategy.
                 elif tool.strategy == 'regex':
@@ -1033,7 +1035,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Anthropic expects its results as `tool_reference` blocks so discovered tools get
         # unlocked on the provider side.
         custom_tool_search_active = any(
-            isinstance(t, ToolSearchTool) and t.custom for t in model_request_parameters.builtin_tools
+            isinstance(t, ToolSearchTool) and t.strategy == 'custom' for t in model_request_parameters.builtin_tools
         )
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -1676,11 +1678,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if f.managed_by_builtin == ToolSearchTool.kind:
+        if f.with_builtin == ToolSearchTool.kind:
             # `defer_loading` on the wire controls Anthropic's native tool search
             # caching. `ToolDefinition.defer_loading` is the local discovery flag and
             # is unrelated to what the provider API sees — hence the separate check on
-            # `managed_by_builtin` here.
+            # `with_builtin` here.
             tool_param['defer_loading'] = True
         return tool_param
 

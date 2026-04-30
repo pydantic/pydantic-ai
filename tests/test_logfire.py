@@ -519,7 +519,7 @@ def test_logfire(
                                 'timeout': None,
                                 'defer_loading': False,
                                 'unless_builtin': None,
-                                'managed_by_builtin': None,
+                                'with_builtin': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
                             }
@@ -1020,7 +1020,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'timeout': None,
                                 'defer_loading': False,
                                 'unless_builtin': None,
-                                'managed_by_builtin': None,
+                                'with_builtin': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
                             }

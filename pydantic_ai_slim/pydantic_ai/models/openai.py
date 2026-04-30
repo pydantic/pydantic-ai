@@ -27,17 +27,19 @@ from .._utils import (
     number_to_datetime,
 )
 from ..builtin_tools import (
-    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     AbstractBuiltinTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageAspectRatio,
     ImageGenerationTool,
     MCPServerTool,
+    WebSearchTool,
+)
+from ..builtin_tools.tool_search import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchMatch,
     ToolSearchReturn,
     ToolSearchTool,
-    WebSearchTool,
     extract_tool_search_return,
 )
 from ..capabilities.abstract import AbstractCapability
@@ -2201,19 +2203,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # OpenAI's Responses API has no concept of named native strategies — the
                 # `tool_search` builtin is one knob, decided server-side. Honor the user's
                 # explicit choice or fail loudly; do not silently run a different algorithm.
-                if tool.strategy is not None:
+                # `'custom'` is the internal marker for callable strategies and is handled
+                # below — only named native strategies (`'bm25'`/`'regex'`) raise here.
+                if tool.strategy is not None and tool.strategy != 'custom':
                     raise UserError(
                         f'`ToolSearch(strategy={tool.strategy!r})` is an Anthropic-native strategy '
                         'and is not supported by OpenAI Responses. Use `strategy=None` (default, '
-                        "provider-managed), `strategy='substring'` (local token matching), or "
+                        "provider-managed), `strategy='keywords'` (local keyword matching), or "
                         'a callable strategy.'
                     )
-                # With `custom=True`, the search runs client-side via our local
+                # With `strategy='custom'`, the search runs client-side via our local
                 # `search_tools` function tool: the provider surfaces the search as a
                 # `tool_search_call` with `execution='client'`, we dispatch it through the
                 # normal function-call path, and reply with a `tool_search_output` that
                 # carries the discovered tool definitions.
-                if tool.custom:
+                if tool.strategy == 'custom':
                     search_tool_def = _find_search_tool_definition(model_request_parameters)
                     parameters = dict(search_tool_def.parameters_json_schema) if search_tool_def else {}
                     # OpenAI's strict JSON schema mode is opt-in for client tool search — the
@@ -2247,10 +2251,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
-        if f.managed_by_builtin == ToolSearchTool.kind:
+        if f.with_builtin == ToolSearchTool.kind:
             # `defer_loading` on the wire controls OpenAI's native tool search caching.
             # `ToolDefinition.defer_loading` is the local discovery flag — separate
-            # concern — so we gate on `managed_by_builtin` to know we're on the native
+            # concern — so we gate on `with_builtin` to know we're on the native
             # path.
             tool_param['defer_loading'] = True
         return tool_param
@@ -3877,7 +3881,7 @@ def _map_code_interpreter_tool_call(
 
 def _has_custom_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
     """Whether the current run uses client-executed tool search (callable strategy)."""
-    return any(isinstance(t, ToolSearchTool) and t.custom for t in model_request_parameters.builtin_tools)
+    return any(isinstance(t, ToolSearchTool) and t.strategy == 'custom' for t in model_request_parameters.builtin_tools)
 
 
 def _find_search_tool_definition(
