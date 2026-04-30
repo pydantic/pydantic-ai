@@ -773,7 +773,7 @@ class ToolDefinition:
     """
 
     capability_id: str | None = None
-    """Gives the ownership tag to the tools, will be used by tool search to reveal tools from within capabilities."""
+    """The id of the capability that this tool belongs to."""
 
     @cached_property
     def function_signature(self) -> FunctionSignature:
