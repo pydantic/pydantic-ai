@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import sys
+import warnings
 from collections import defaultdict
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -10263,6 +10264,82 @@ def test_override_output_retries_wins_over_run_arg():
             agent.run_sync('Hello', output_retries=10)
 
     assert retries_log == [0, 1]
+
+
+def test_deprecated_retries_warns_and_preserves_cascade():
+    """`Agent(retries=N)` triggers a `DeprecationWarning` and still cascades to both budgets in 1.x.
+
+    Verified via behavior: an output validator with `retries=5` retries 5 times before raising,
+    proving the cascade reached `_max_output_retries`. The cascade itself is removed in v2; the
+    warning gives users time to migrate.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(5\)'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2, 3, 4, 5]
+
+
+def test_tool_retries_no_warning_and_no_cascade():
+    """`Agent(tool_retries=N)` is the new path: no warning, and `output_retries` falls back to the
+    constant default (1) instead of cascading from `tool_retries`."""
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), tool_retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    # `output_retries` defaults to 1 (no cascade from tool_retries) → exhausts after 1 retry.
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1]
+
+
+def test_tool_retries_wins_over_deprecated_retries():
+    """When both `retries` and `tool_retries` are passed, `tool_retries` wins for the tool budget
+    while `retries` still cascades to the output budget for backward compat. Verified via behavior:
+    output validator retries 5 times (cascade from `retries=5`), not 3 (`tool_retries=3`)."""
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), retries=5, tool_retries=3)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(5\)'):
+        agent.run_sync('Hello')
+
+    assert retries_log == [0, 1, 2, 3, 4, 5]
 
 
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():

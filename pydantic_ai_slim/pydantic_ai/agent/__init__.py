@@ -233,7 +233,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int = 1,
+        retries: int | None = None,
+        tool_retries: int | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
@@ -265,7 +266,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int = 1,
+        retries: int | None = None,
+        tool_retries: int | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
@@ -295,7 +297,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int = 1,
+        retries: int | None = None,
+        tool_retries: int | None = None,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
@@ -337,8 +340,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can be a static `ModelSettings` dict or a callable that takes a
                 [`RunContext`][pydantic_ai.tools.RunContext] and returns `ModelSettings`.
                 Callables are called before each model request, allowing dynamic per-step settings.
-            retries: The default number of retries to allow for tool calls and output validation, before raising an error.
-                For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
+            retries: Deprecated alias for `tool_retries`. In 1.x this also still cascades to `output_retries`
+                (when `output_retries` is unset) for backward compatibility, with a `DeprecationWarning`.
+                In v2 it will be removed and the cascade will go away — pass `output_retries` explicitly
+                if you depend on the cascade. For model request retries, see the
+                [HTTP Request Retries](../retries.md) documentation.
+            tool_retries: The default number of retries to allow for tool calls before raising an error. Defaults to 1.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             output_retries: Maximum number of retries for output validation. On the text path this is a global
                 budget across all output-validation retries in a run. On the tool path this is the default per-tool
@@ -445,8 +452,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        self._max_output_retries = output_retries if output_retries is not None else retries
-        self._max_tool_retries = retries
+        if retries is not None:
+            warnings.warn(
+                '`retries` is deprecated and will be removed in v2. Use `tool_retries` instead. '
+                'Note: in v2, `retries` will no longer also set `output_retries` as a fallback — '
+                'pass `output_retries` explicitly if you rely on the cascade.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        # TODO(v2): drop `retries`. Both `_max_tool_retries` and `_max_output_retries` should default
+        # to a constant 1 when their respective kwargs are unset — no cascade.
+        effective_retries = retries if retries is not None else 1
+        self._max_tool_retries = tool_retries if tool_retries is not None else effective_retries
+        self._max_output_retries = output_retries if output_retries is not None else effective_retries
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
