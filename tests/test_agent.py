@@ -9066,6 +9066,54 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
     )
 
 
+def test_agent_override_builtin_tools_empty_runs_with_test_model():
+    """Test that agent-level builtin tools can be removed when overriding the model."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+
+    with agent.override(model=model, builtin_tools=[]):
+        result = agent.run_sync('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+
+def test_agent_override_builtin_tools_replaces_agent_level_tools():
+    """Test that override builtin_tools replace, rather than append to, agent-level builtin tools."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+
+    with (
+        agent.override(builtin_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync('Hello')
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == snapshot([CodeExecutionTool()])
+
+
+def test_agent_override_builtin_tools_preserves_runtime_additive_tools():
+    """Test that runtime builtin_tools are still added to overridden builtin tools."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+
+    with (
+        agent.override(builtin_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync(
+            'Hello',
+            builtin_tools=[MCPServerTool(id='example', url='https://mcp.example.com/mcp')],
+        )
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == snapshot(
+        [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
+    )
+
+
 async def test_run_with_unapproved_tool_call_in_history():
     def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ValueError('The agent should not call the model.')  # pragma: no cover

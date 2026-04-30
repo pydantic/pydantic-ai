@@ -488,6 +488,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
+        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentBuiltinTool[AgentDepsT]]]] = ContextVar(
+            '_override_builtin_tools', default=None
+        )
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
@@ -1199,6 +1202,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
+        if some_builtin_tools := self._override_builtin_tools.get():
+            cap_builtin_tools = list(some_builtin_tools.value)
+
         # Build model settings resolver using per-run capability
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
             # Resolve settings in layers, each merged on top of the previous.
@@ -1657,12 +1663,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
+        """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1673,6 +1680,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            builtin_tools: The builtin tools to use instead of the agent's configured builtin tools.
+                Per-run `builtin_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
@@ -1725,6 +1734,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             tools_token = None
 
+        if _utils.is_set(builtin_tools):
+            builtin_tools_token = self._override_builtin_tools.set(_utils.Some(builtin_tools))
+        else:
+            builtin_tools_token = None
+
         if _utils.is_set(instructions):
             normalized_instructions = _instructions.normalize_instructions(instructions)
             instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
@@ -1765,6 +1779,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+            if builtin_tools_token is not None:
+                self._override_builtin_tools.reset(builtin_tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:
