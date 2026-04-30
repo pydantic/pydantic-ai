@@ -336,7 +336,6 @@ class GeminiModel(Model[httpx.AsyncClient]):
             _model_name=self._model_name,
             _content=content,
             _stream=aiter_bytes,
-            _http_response=http_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
         )
@@ -469,13 +468,9 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
-    _http_response: HTTPResponse
     _provider_name: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
-
-    async def close_stream(self) -> None:
-        await self._http_response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for gemini_response in self._get_gemini_responses():
