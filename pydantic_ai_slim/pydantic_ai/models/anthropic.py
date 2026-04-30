@@ -2237,15 +2237,16 @@ def _finalize_streamed_tool_search_call_part(part: BuiltinToolSearchCallPart) ->
 
     Converts a `BuiltinToolSearchCallPart` whose `args` accumulated as a JSON string
     (via `BetaInputJSONDelta`) into the canonical dict shape produced by the
-    non-streaming path.
+    non-streaming path. Already-canonical dict args (typed `ToolSearchArgs`) pass
+    through unchanged; `None` finalizes to an empty `queries` list.
     """
+    if isinstance(part.args, dict):
+        return part
     if isinstance(part.args, str):
         try:
-            parsed = cast(dict[str, Any], json.loads(part.args))
+            parsed: dict[str, Any] | None = cast(dict[str, Any], json.loads(part.args))
         except json.JSONDecodeError:  # pragma: no cover - malformed partial args
             parsed = None
-    elif isinstance(part.args, dict):
-        parsed = cast(dict[str, Any], part.args)
     else:
         parsed = None
     return replace(part, args=_normalize_tool_search_args(parsed))

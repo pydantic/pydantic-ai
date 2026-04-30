@@ -2992,3 +2992,202 @@ async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
+
+
+def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() -> None:
+    """When the typed return carries empty `discovered_tools` and a `message`, the
+    helper returns `([], message)`. The `_map_message` flow then renders the message
+    as a single text block (Anthropic rejects empty `tool_result.content`)."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai.models.anthropic import (
+        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    empty = ToolReturnPart(
+        tool_name='search_tools',
+        content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
+        tool_call_id='c1',
+    )
+    refs, message = _build_custom_tool_search_replay_blocks(empty, custom_tool_search_active=True)
+    assert refs == []
+    assert message == 'No matches; try other keywords.'
+
+
+def test_anthropic_custom_replay_blocks_matches_not_a_list() -> None:
+    """When `content['discovered_tools']` is the wrong type, fall through to text formatting."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai.models.anthropic import (
+        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    malformed = ToolReturnPart(
+        tool_name='search_tools',
+        content=cast(Any, {'discovered_tools': 'not-a-list'}),
+        tool_call_id='c1',
+    )
+    refs, message = _build_custom_tool_search_replay_blocks(malformed, custom_tool_search_active=True)
+    assert refs is None and message is None
+
+
+def test_anthropic_custom_replay_blocks_skips_non_dict_match_entries() -> None:
+    """Match entries that aren't dicts are silently skipped (defensive parsing)."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai.models.anthropic import (
+        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    mixed = ToolReturnPart(
+        tool_name='search_tools',
+        content=cast(
+            Any,
+            {
+                'discovered_tools': [
+                    'not-a-dict',
+                    {'name': 'foo'},
+                    {'name': 123},  # name not a string — skipped
+                    {'description': 'no name key'},  # no name — skipped
+                    {'name': 'bar'},
+                ],
+            },
+        ),
+        tool_call_id='c1',
+    )
+    refs, _msg = _build_custom_tool_search_replay_blocks(mixed, custom_tool_search_active=True)
+    assert refs is not None
+    tool_names = [r['tool_name'] for r in refs]
+    assert tool_names == ['foo', 'bar']
+
+
+def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_args() -> None:
+    """Already-canonical `ToolSearchArgs` dict passes through unchanged — the typed
+    contract guarantees `queries`, so re-running normalization would corrupt the data."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import BuiltinToolSearchCallPart
+    from pydantic_ai.models.anthropic import (
+        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    part = BuiltinToolSearchCallPart(
+        args={'queries': ['mortgage']},
+        tool_call_id='c1',
+        provider_name='anthropic',
+        provider_details={'strategy': 'bm25'},
+    )
+    result = _finalize_streamed_tool_search_call_part(part)
+    assert result.args == {'queries': ['mortgage']}
+
+
+def test_anthropic_finalize_streamed_tool_search_call_part_with_none_args() -> None:
+    """`args=None` finalizes to a normalized empty `queries` list."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import BuiltinToolSearchCallPart
+    from pydantic_ai.models.anthropic import (
+        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1', provider_name='anthropic')
+    result = _finalize_streamed_tool_search_call_part(part)
+    assert isinstance(result.args, dict) and 'queries' in result.args
+
+
+async def test_anthropic_map_message_empty_search_renders_message_text_block():
+    """When custom-callable tool search returns no matches, `_map_message` emits the
+    typed return as a single text-content `tool_result` block (not the default text
+    fallthrough). Anthropic rejects empty `tool_result.content` arrays — this is the
+    spec-compliant path for the custom-search empty-results case."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic
+
+    model = AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(()))
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find me a mortgage tool')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}, tool_call_id='c1')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_tools',
+                    content={
+                        'discovered_tools': [],
+                        'message': 'No matching tools found. Try other keywords.',
+                    },
+                    tool_call_id='c1',
+                ),
+            ],
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[ToolSearchTool(strategy='custom')],
+        allow_text_output=True,
+    )
+    _system, anthropic_messages = await model._map_message(history, params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    # Find the tool_result block across all user messages.
+    tool_results: list[dict[str, Any]] = [
+        c
+        for m in anthropic_messages
+        if m['role'] == 'user' and isinstance(m['content'], list)
+        for c in cast(list[Any], m['content'])
+        if isinstance(c, dict) and cast(dict[str, Any], c).get('type') == 'tool_result'
+    ]
+    [tool_result] = tool_results
+    assert tool_result['content'] == [{'text': 'No matching tools found. Try other keywords.', 'type': 'text'}]
+    assert tool_result['is_error'] is False
+
+
+async def test_anthropic_map_message_replays_tool_search_call_without_queries():
+    """A `BuiltinToolSearchCallPart` with `args=None` (streaming partial state, or a
+    history fragment that never carried args) falls through to forwarding the empty
+    `args_as_dict()` to the wire `input`. Covers the `else: wire_input = args_dict`
+    branch where the cross-provider `queries` slot isn't populated."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+    from pydantic_ai.messages import BuiltinToolSearchCallPart
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic
+
+    model = AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(()))
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(
+                    args=None,
+                    tool_call_id='srv_1',
+                    provider_name='anthropic',
+                    provider_details={'strategy': 'bm25'},
+                ),
+            ],
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[ToolSearchTool(strategy='bm25')],
+        allow_text_output=True,
+    )
+    _system, anthropic_messages = await model._map_message(history, params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    [assistant_msg] = [m for m in anthropic_messages if m['role'] == 'assistant']
+    assistant_content = cast(list[Any], assistant_msg['content'])
+    server_tool_uses: list[dict[str, Any]] = [
+        c for c in assistant_content if isinstance(c, dict) and cast(dict[str, Any], c).get('type') == 'server_tool_use'
+    ]
+    [server_tool_use] = server_tool_uses
+    assert server_tool_use['input'] == {}
