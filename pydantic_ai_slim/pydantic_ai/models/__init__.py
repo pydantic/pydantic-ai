@@ -1003,41 +1003,6 @@ class StreamedResponse(ABC):
         """
         if self._event_iterator is None:
 
-            async def iterator_with_final_event(
-                iterator: AsyncIterator[ModelResponseStreamEvent],
-            ) -> AsyncIterator[ModelResponseStreamEvent]:
-                # Tracks a text/image-based final result that is tentative because output tools
-                # are also defined. In the non-streaming path, tool calls always take priority
-                # over text (see CallToolsNode._run_stream). We replicate that here by deferring
-                # the text-based FinalResultEvent until we know no output tool call will appear.
-                pending_text_final_event: FinalResultEvent | None = None
-
-                async for event in iterator:
-                    yield event
-                    if (
-                        candidate := _get_final_result_event(event, self.model_request_parameters)
-                    ) is not None:
-                        if candidate.tool_name is None and self.model_request_parameters.output_tools:
-                            # Text/image result found, but output tools are also available.
-                            # Don't commit yet — a subsequent output tool call should win.
-                            if pending_text_final_event is None:
-                                pending_text_final_event = candidate
-                        else:
-                            # Output tool call (or deferred tool) found — takes priority.
-                            self.final_result_event = candidate
-                            yield candidate
-                            break
-
-                if pending_text_final_event is not None and self.final_result_event is None:
-                    # Stream ended without a tool-based result; use the pending text/image result.
-                    self.final_result_event = pending_text_final_event
-                    yield pending_text_final_event
-
-                # If we broke out of the above loop, we need to yield the rest of the events
-                # If we didn't, this will just be a no-op
-                async for event in iterator:
-                    yield event
-
             async def iterator_with_part_end(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -1075,7 +1040,7 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            self._event_iterator = iterator_with_part_end(_iterator_with_final_event(self, self._get_event_iterator()))
         return self._event_iterator
 
     @abstractmethod
@@ -1532,6 +1497,48 @@ def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfil
     if changed:
         return replace(params, function_tools=resolved)
     return params
+
+
+async def _iterator_with_final_event(
+    streamed: StreamedResponse,
+    iterator: AsyncIterator[ModelResponseStreamEvent],
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    """Wrap *iterator*, emitting a :class:`FinalResultEvent` at the right moment.
+
+    When output tools are defined, a plain text/image result must be deferred
+    until the end of the stream so that an output tool call seen later can take
+    priority (matching the non-streaming behaviour in ``CallToolsNode._run_stream``).
+    Deferred-tool results are committed immediately — first-seen wins in streaming.
+    """
+    params = streamed.model_request_parameters
+    pending_text_final_event: FinalResultEvent | None = None
+
+    async for event in iterator:
+        yield event
+        candidate = _get_final_result_event(event, params)
+        if candidate is None:
+            continue
+        is_text_or_image = isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, FilePart))
+        if is_text_or_image and params.output_tools:
+            # Text/image result found, but output tools are also available.
+            # Don't commit yet — a subsequent output tool call should win.
+            if pending_text_final_event is None:
+                pending_text_final_event = candidate
+        else:
+            # Output or deferred tool call found — first match wins in streaming.
+            streamed.final_result_event = candidate
+            yield candidate
+            break
+
+    if pending_text_final_event is not None and streamed.final_result_event is None:
+        # Stream ended without a tool-based result; use the pending text/image result.
+        streamed.final_result_event = pending_text_final_event
+        yield pending_text_final_event
+
+    # If we broke out of the loop above, drain the remaining events.
+    # If we didn't break, this is a no-op.
+    async for event in iterator:
+        yield event
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
