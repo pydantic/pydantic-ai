@@ -1192,7 +1192,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             if not task.done() and not _task_cancel_sent:
                 task.cancel()
 
-            with contextlib.suppress(cancelled_exc):
+            # Closing receive_stream during generator shutdown can race with
+            # event_stream_handler still awaiting send_stream.send(event).
+            # Suppress only those expected teardown errors so real failures still surface.
+            with contextlib.suppress(cancelled_exc, anyio.BrokenResourceError, anyio.ClosedResourceError):
                 await task
 
         yield AgentRunResultEvent(result)
