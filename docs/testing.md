@@ -132,6 +132,7 @@ async def test_forecast():
             instructions='Providing a weather forecast at the locations the user provides.',
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -151,6 +152,7 @@ async def test_forecast():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
         ModelRequest(
             parts=[
@@ -164,6 +166,7 @@ async def test_forecast():
             instructions='Providing a weather forecast at the locations the user provides.',
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -178,6 +181,7 @@ async def test_forecast():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
     ]
 ```

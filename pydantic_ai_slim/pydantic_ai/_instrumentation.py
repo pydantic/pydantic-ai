@@ -13,10 +13,11 @@ DEFAULT_INSTRUMENTATION_VERSION = 2
 
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
 RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
+CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
-    """Read agent name and run ID from OTel baggage and return as span attributes."""
+    """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
     attrs: dict[str, Any] = {}
     agent_name = get_baggage(AGENT_NAME_BAGGAGE_KEY)
     if agent_name is not None:
@@ -24,6 +25,9 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     run_id = get_baggage(RUN_ID_BAGGAGE_KEY)
     if run_id is not None:
         attrs[RUN_ID_BAGGAGE_KEY] = run_id
+    conversation_id = get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
+    if conversation_id is not None:
+        attrs[CONVERSATION_ID_BAGGAGE_KEY] = conversation_id
     return attrs
 
 
