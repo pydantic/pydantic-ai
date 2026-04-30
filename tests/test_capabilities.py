@@ -15793,7 +15793,7 @@ async def test_dynamic_capability_contributes_instructions_per_run() -> None:
 
 
 async def test_dynamic_capability_contributes_toolset() -> None:
-    """Resolved capability's toolset is exposed to the model."""
+    """Resolved capability's toolset is exposed to the model and its tools execute."""
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -15812,13 +15812,29 @@ async def test_dynamic_capability_contributes_toolset() -> None:
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        # On the first request call the tool if it's available; on the follow-up
+        # request after the tool return, finish.
+        already_called = any(
+            isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts
+        )
+        if not already_called and any(t.name == 'special' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart('special')])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(respond), deps_type=bool, capabilities=[factory])
 
-    await agent.run('hi', deps=True)
+    with_tool = await agent.run('hi', deps=True)
+    tool_returns = [
+        p.content
+        for m in with_tool.all_messages()
+        if isinstance(m, ModelRequest)
+        for p in m.parts
+        if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == ['used']
+
     await agent.run('hi', deps=False)
-    assert seen_tools == ['special', '']
+    assert seen_tools == ['special', 'special', '']
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -15938,16 +15954,22 @@ async def test_dynamic_capability_per_run_isolation() -> None:
         assert request.instructions == f'Label is user-{i}.'
 
 
-def test_dynamic_capability_wraps_func_in_constructor() -> None:
-    """Constructor wraps a bare function into a `DynamicCapability`."""
+async def test_dynamic_capability_wraps_func_in_constructor() -> None:
+    """Constructor wraps a bare function into a `DynamicCapability`, and the factory runs at run time."""
 
     def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')
 
     agent = Agent(TestModel(), capabilities=[factory])
+
     leaves: list[AbstractCapability[Any]] = []
     agent._root_capability.apply(leaves.append)  # pyright: ignore[reportPrivateUsage]
     assert any(isinstance(c, DynamicCapability) and c.capability_func is factory for c in leaves)
+
+    # And it actually invokes the factory body when the agent runs.
+    result = await agent.run('hi')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Label is x.'
 
 
 # endregion
