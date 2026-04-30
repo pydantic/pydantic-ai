@@ -10921,3 +10921,331 @@ async def test_openai_responses_compact_stateful_mode(allow_model_requests: None
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
     assert 'encrypted_content' in compaction.provider_details
+
+
+async def test_openai_responses_phase_non_streamed(allow_model_requests: None):
+    """`phase` on ResponseOutputMessage is captured into TextPart.provider_details."""
+    c = response_message(
+        [
+            ResponseOutputMessage.model_construct(
+                id='msg_commentary',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='Looking it up...', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='commentary',
+            ),
+            ResponseOutputMessage.model_construct(
+                id='msg_final',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='Paris.', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='final_answer',
+            ),
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('What is the capital of France?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    text_parts = [p for p in response.parts if isinstance(p, TextPart)]
+    assert [(p.id, p.content, (p.provider_details or {}).get('phase')) for p in text_parts] == snapshot(
+        [
+            ('msg_commentary', 'Looking it up...', 'commentary'),
+            ('msg_final', 'Paris.', 'final_answer'),
+        ]
+    )
+
+
+async def test_openai_responses_phase_streamed(allow_model_requests: None):
+    """`phase` on streamed ResponseOutputMessage is captured into TextPart.provider_details."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Paris.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Paris.',
+            type='response.output_text.done',
+            sequence_number=5,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=6,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=7,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    text_parts = [p for p in response.parts if isinstance(p, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
+
+
+async def test_openai_responses_phase_round_trip(allow_model_requests: None):
+    """When the profile supports phase, it's sent back on the assistant ResponseOutputMessageParam."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    phase='final_answer',
+                ),
+            ]
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5.5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Working on it...',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'commentary'},
+                ),
+                TextPart(
+                    content='All done.',
+                    id='msg_b',
+                    provider_name='openai',
+                    provider_details={'phase': 'final_answer'},
+                ),
+            ],
+            model_name='gpt-5.5',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    assert [(m['id'], m.get('phase')) for m in assistant_messages] == snapshot(
+        [('msg_a', 'commentary'), ('msg_b', 'final_answer')]
+    )
+
+
+async def test_openai_responses_phase_skipped_when_profile_unsupported(allow_model_requests: None):
+    """When the profile does NOT support phase, it must not leak into the request payload."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                ),
+            ]
+        )
+    )
+    # gpt-5.2 doesn't support phase; verify we don't send the field even if a previous turn carried it.
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Done.',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'final_answer'},
+                ),
+            ],
+            model_name='gpt-5.2',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    assert assistant_messages
+    assert all('phase' not in m for m in assistant_messages)
+
+
+async def test_openai_responses_phase_round_trip_without_item_id(allow_model_requests: None):
+    """Phase travels via `EasyInputMessageParam` when item ids aren't being sent."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    phase='final_answer',
+                ),
+            ]
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5.5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=False),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Working on it...',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'commentary'},
+                ),
+            ],
+            model_name='gpt-5.5',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    # No item id was sent, so we used EasyInputMessageParam — but phase still rides along.
+    assert [(m.get('id'), m.get('phase'), m.get('type')) for m in assistant_messages] == snapshot(
+        [(None, 'commentary', None)]
+    )
+
+
+async def test_openai_responses_phase_live(allow_model_requests: None, openai_api_key: str):
+    """Real cassette: gpt-5.5 sets `phase` on the preamble (commentary) and the final answer."""
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='Briefly narrate what you are about to do before calling each tool.',
+    )
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Potato City'
+
+    result = await agent.run('What is the capital of PotatoLand?')
+    text_parts_with_phase = [
+        (part.content, (part.provider_details or {}).get('phase'))
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, TextPart)
+    ]
+    assert text_parts_with_phase == snapshot(
+        [
+            ('I\'ll check the capital lookup tool for "PotatoLand."', 'commentary'),
+            ('The capital of PotatoLand is **Potato City**.', 'final_answer'),
+        ]
+    )
+
+
+def test_openai_responses_phase_profile_flag():
+    """Profile flag tracks the documented set of supporting models."""
+    assert cast(Any, openai_model_profile('gpt-5.5')).openai_supports_phase is True
+    assert cast(Any, openai_model_profile('gpt-5.4')).openai_supports_phase is True
+    assert cast(Any, openai_model_profile('gpt-5.3-codex')).openai_supports_phase is True
+    assert cast(Any, openai_model_profile('gpt-5.3')).openai_supports_phase is False
+    assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
+    assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
+    assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False

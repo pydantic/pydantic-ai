@@ -124,6 +124,10 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
+## Trust model
+
+Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.
+
 ## Tool Approval
 
 !!! note
@@ -146,6 +150,8 @@ When `sdk_version=6`, the adapter will:
 3. Emit `tool-output-denied` chunks for rejected tools
 
 On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.
+
+Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
 
 ## System prompts and instructions
 
