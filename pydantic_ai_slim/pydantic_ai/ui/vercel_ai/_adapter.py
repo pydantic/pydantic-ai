@@ -46,11 +46,12 @@ from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    decode_multimodal_tool_output,
     dump_provider_metadata,
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
-    tool_return_output,
+    tool_return_output_for_dump,
 )
 from .request_types import (
     DataUIPart,
@@ -386,7 +387,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    raw_output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    output = _restore_multimodal_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
                                     BuiltinToolReturnPart(
@@ -412,7 +414,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=_restore_multimodal_tool_output(part.output),
+                                    )
                                 )
                             elif part.state == 'output-error':
                                 builder.add(
@@ -598,7 +604,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
                                 input=part.args_as_dict(),
-                                output=tool_return_output(builtin_return),
+                                output=tool_return_output_for_dump(builtin_return),
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
                             )
@@ -689,7 +695,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=tool_return_output(tool_result),
+                        output=tool_return_output_for_dump(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -851,6 +857,25 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _restore_multimodal_tool_output(output: Any) -> Any:
+    """Decode a multimodal tool-return envelope back into `ToolReturnContent`.
+
+    When `output` is a `MultimodalToolOutputEnvelope`, returns the original `MultiModalContent`
+    items merged with any text/JSON data. Otherwise returns `output` unchanged.
+    """
+    decoded = decode_multimodal_tool_output(output)
+    if decoded is None:
+        return output
+    data, files = decoded
+    if not files:
+        return data
+    if data is None or data == '' or data == {}:
+        return files[0] if len(files) == 1 else files
+    if isinstance(data, list):
+        return [*data, *files]
+    return [data, *files]
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

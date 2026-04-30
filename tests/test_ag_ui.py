@@ -3432,6 +3432,116 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
     assert uploaded.identifier == 'my-doc.pdf'
 
 
+def _tool_return_roundtrip_assert(content: Any) -> None:
+    """Round-trip a `ToolReturnPart.content` through `dump_messages` / `load_messages`."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content)]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    # The sidecar activity is emitted right before the tool message.
+    activities = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activities) == 1
+    assert activities[0].activity_type == 'pydantic_ai_tool_return_file'
+    assert activities[0].content['tool_call_id'] == 'tc-1'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == content
+
+
+def test_dump_load_roundtrip_tool_return_single_image(image_content: BinaryImage) -> None:
+    """Test that a single multimodal `BinaryImage` `ToolReturnPart.content` round-trips via the sidecar `ActivityMessage`.
+
+    `ag_ui.core.ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18, so multimodal
+    items round-trip as a separate `ActivityMessage` paired by `tool_call_id`. Tracking issue
+    for native support: https://github.com/ag-ui-protocol/ag-ui/issues/126.
+    """
+    _tool_return_roundtrip_assert(image_content)
+
+
+def test_dump_load_roundtrip_tool_return_text_then_audio(audio_content: BinaryContent) -> None:
+    """Test that a `[text, audio]` mixed `ToolReturnPart.content` round-trips."""
+    _tool_return_roundtrip_assert(['the audio narration says...', audio_content])
+
+
+def test_dump_load_roundtrip_tool_return_image_and_video(
+    image_content: BinaryImage, video_content: BinaryContent
+) -> None:
+    """Test that multiple media items in `ToolReturnPart.content` round-trip in order."""
+    _tool_return_roundtrip_assert([image_content, video_content])
+
+
+def test_dump_load_roundtrip_tool_return_document_url() -> None:
+    """Test that a `DocumentUrl` `ToolReturnPart.content` round-trips (URL-typed media, no payload)."""
+    _tool_return_roundtrip_assert(DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'))
+
+
+def test_tool_return_multimodal_dropped_by_default(image_content: BinaryImage) -> None:
+    """Test that multimodal `ToolReturnPart.content` is silently dropped when `preserve_file_data=False`."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=image_content)]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=False)
+
+    # No sidecar activity is emitted; multimodal items are dropped (existing behavior).
+    assert not any(isinstance(m, ActivityMessage) for m in ag_ui_msgs)
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=False)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    # Content collapses to the empty text fallback (`model_response_str()` excludes files).
+    assert tool_returns[0].content == ''
+
+
+def test_dump_load_roundtrip_builtin_tool_return_multimodal(image_content: BinaryImage) -> None:
+    """Test multimodal `BuiltinToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    args='{"q": "test"}',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    content=['Search results', image_content],
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    activities = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activities) == 1
+    assert activities[0].activity_type == 'pydantic_ai_tool_return_file'
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+    ]
+    assert len(returns) == 1
+    assert returns[0].content == ['Search results', image_content]
+    assert returns[0].provider_name == 'anthropic'
+
+
 @pytest.mark.parametrize(
     'version,expected_reasoning',
     [
