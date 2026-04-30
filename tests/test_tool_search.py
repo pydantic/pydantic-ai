@@ -25,7 +25,17 @@ from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolReturn,
+    ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -2487,3 +2497,131 @@ def test_optional_builtin_dropped_with_empty_corpus():
         ModelRequestParameters(function_tools=[], builtin_tools=[ToolSearchTool(optional=True)]),
     )
     assert prepared.builtin_tools == []
+
+
+def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
+    """Direct construction of `BuiltinToolCallPart` with `tool_name='tool_search'`
+    promotes to `ToolSearchCallPart` via the narrowing registry."""
+    base = BuiltinToolCallPart(
+        tool_name='tool_search',
+        args={'queries': ['mortgage']},
+        tool_call_id='c1',
+        provider_name='anthropic',
+        provider_details={'strategy': 'bm25'},
+    )
+    narrowed = BuiltinToolCallPart.narrow_type(base)
+    assert isinstance(narrowed, ToolSearchCallPart)
+    assert narrowed.args == {'queries': ['mortgage']}
+    assert narrowed.tool_call_id == 'c1'
+    assert narrowed.provider_name == 'anthropic'
+    assert narrowed.provider_details == {'strategy': 'bm25'}
+
+    already_narrowed = ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c2')
+    assert BuiltinToolCallPart.narrow_type(already_narrowed) is already_narrowed
+
+
+def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
+    """Direct construction of `BuiltinToolReturnPart` with `tool_name='tool_search'`
+    promotes to `ToolSearchReturnPart` via the narrowing registry."""
+    base = BuiltinToolReturnPart(
+        tool_name='tool_search',
+        content={'discovered_tools': [{'name': 'foo', 'description': None}]},
+        tool_call_id='c1',
+        provider_name='anthropic',
+    )
+    narrowed = BuiltinToolReturnPart.narrow_type(base)
+    assert isinstance(narrowed, ToolSearchReturnPart)
+    assert narrowed.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
+
+    already_narrowed = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c2')
+    assert BuiltinToolReturnPart.narrow_type(already_narrowed) is already_narrowed
+
+
+def test_narrow_type_unknown_tool_name_returns_input_unchanged() -> None:
+    """Unknown `tool_name` values aren't promoted (future builtins not yet typed)."""
+    base = BuiltinToolCallPart(tool_name='something_unregistered', args={}, tool_call_id='c1')
+    assert BuiltinToolCallPart.narrow_type(base) is base
+
+
+def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
+    """Pydantic deserialization of a dict-shaped `ModelResponse` promotes
+    `tool_search` builtin parts to typed subclasses via the discriminator."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    raw: dict[str, Any] = {
+        'kind': 'response',
+        'parts': [
+            {
+                'part_kind': 'builtin-tool-call',
+                'tool_name': 'tool_search',
+                'args': {'queries': ['mortgage']},
+                'tool_call_id': 'c1',
+                'provider_name': 'anthropic',
+            },
+            {
+                'part_kind': 'builtin-tool-return',
+                'tool_name': 'tool_search',
+                'content': {'discovered_tools': [{'name': 'foo', 'description': None}]},
+                'tool_call_id': 'c1',
+                'provider_name': 'anthropic',
+            },
+            {
+                'part_kind': 'builtin-tool-call',
+                'tool_name': 'web_search',
+                'args': {'query': 'x'},
+                'tool_call_id': 'c2',
+            },
+        ],
+    }
+    [resp] = ModelMessagesTypeAdapter.validate_python([raw])
+    assert isinstance(resp, ModelResponse)
+    assert isinstance(resp.parts[0], ToolSearchCallPart)
+    assert isinstance(resp.parts[1], ToolSearchReturnPart)
+    # Unrecognized `tool_name` falls through to the base class.
+    assert isinstance(resp.parts[2], BuiltinToolCallPart)
+    assert not isinstance(resp.parts[2], ToolSearchCallPart)
+
+
+def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
+    """Re-validation of a `ModelResponse` instance preserves typed builtin parts."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    resp = ModelResponse(
+        parts=[
+            ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1'),
+            ToolSearchReturnPart(
+                content={'discovered_tools': [{'name': 'foo', 'description': None}]},
+                tool_call_id='c1',
+            ),
+            BuiltinToolCallPart(tool_name='web_search', args={}, tool_call_id='c2'),
+        ]
+    )
+    [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
+    assert isinstance(revalidated, ModelResponse)
+    assert isinstance(revalidated.parts[0], ToolSearchCallPart)
+    assert isinstance(revalidated.parts[1], ToolSearchReturnPart)
+    assert isinstance(revalidated.parts[2], BuiltinToolCallPart)
+
+
+async def test_tool_search_toolset_promotes_base_builtin_return_part() -> None:
+    """A `BuiltinToolReturnPart` (base class) carrying `tool_name='tool_search'`
+    is promoted by the toolset's parser via `narrow_type` so its discoveries
+    surface — covers the fall-through promotion branch."""
+    base_toolset = FunctionToolset[None]()
+
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name='tool_search',
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    tool_call_id='c1',
+                ),
+            ],
+        ),
+    ]
+    ts = ToolSearchToolset(wrapped=base_toolset)
+    discovered = ts._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        cast(Any, type('_Ctx', (), {'messages': history})()),
+    )
+    assert 'calculate_mortgage' in discovered
