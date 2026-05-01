@@ -141,7 +141,7 @@ class _VertexAIAuth(httpx.Auth):
         # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
         # it's first used; deferring creation until first access ensures it binds to the correct
         # running loop and avoids issues with Temporal's workflow sandbox.
-        return anyio.Lock()
+        return anyio.Lock()  # pragma: no cover
 
     def __init__(
         self,

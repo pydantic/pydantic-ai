@@ -169,12 +169,20 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
     # One active entry — the race only matters when both tasks see count > 0.
     server._running_count = 1  # pyright: ignore[reportPrivateUsage]
 
-    # Replace the real lock with one that yields before acquiring,
-    # opening the interleaving window the old code left unprotected.
-    class InterleavingLock(anyio.Lock):
-        async def acquire(self) -> None:
+    # Replace the real lock with a wrapper that yields before acquiring,
+    # opening the interleaving window the old code left unprotected. We can't
+    # subclass `anyio.Lock` directly because it returns a backend-specific
+    # adapter via `__new__` and bypasses subclass methods.
+    class InterleavingLock:
+        def __init__(self) -> None:
+            self._inner = anyio.Lock()
+
+        async def __aenter__(self) -> None:
             await anyio.sleep(0)  # yield - lets the other task reach the same point
-            await super().acquire()
+            await self._inner.__aenter__()
+
+        async def __aexit__(self, *args: Any) -> None:
+            await self._inner.__aexit__(*args)
 
     # `_enter_lock` is a `cached_property`; seeding the instance dict primes the cache.
     vars(server)['_enter_lock'] = InterleavingLock()
