@@ -445,6 +445,8 @@ class GoogleModel(Model[Client]):
         # "builtin + output tools" path. The `optional` flag lives on `ToolSearchTool`
         # specifically (the only consumer today); other builtin types are always treated
         # as user-requested.
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
         user_builtin_tools = [
             t for t in model_request_parameters.builtin_tools if not (isinstance(t, ToolSearchTool) and t.optional)
         ]

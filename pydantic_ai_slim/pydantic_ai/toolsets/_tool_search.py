@@ -99,9 +99,9 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
 
 @dataclass(kw_only=True)
 class _SearchTool(ToolsetTool[AgentDepsT]):
-    """The local ``search_tools`` function, carrying the corpus it should search over.
+    """The local `search_tools` function, carrying the corpus it should search over.
 
-    The real ``ToolDefinition``s flow through to user-supplied search functions so
+    The real `ToolDefinition`s flow through to user-supplied search functions so
     callables can read whatever metadata they need (parameters schema, kind, etc.) — not
     just the name/description pair we'd otherwise expose.
     """

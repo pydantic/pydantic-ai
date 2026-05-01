@@ -482,7 +482,8 @@ Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of end
 
 Tool search is handled provider-adaptively by the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability, which is auto-injected so it "just works":
 
-* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with ``defer_loading`` on the wire and the provider manages their visibility.
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility.
+* **Custom strategies** via a callable on [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] — runs locally and also benefits from provider-native `defer_loading` on models that support client-executed tool search.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
 For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.

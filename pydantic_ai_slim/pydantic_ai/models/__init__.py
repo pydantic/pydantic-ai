@@ -805,6 +805,8 @@ class Model(ABC, Generic[InterfaceClient]):
 
         supported_ids = {t.unique_id for t in supported_builtins}
         unsupported_ids = {t.unique_id for t in unsupported_builtins}
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
         optional_ids = {t.unique_id for t in unsupported_builtins if isinstance(t, ToolSearchTool) and t.optional}
         fallback_ids = {t.unless_builtin for t in params.function_tools if t.unless_builtin}
 
@@ -833,6 +835,8 @@ class Model(ABC, Generic[InterfaceClient]):
 
         # Drop optional builtins whose managed corpus is empty after filtering —
         # they have nothing to do, so sending them would waste a tool slot.
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
         remaining_corpus_ids = {t.with_builtin for t in function_tools if t.with_builtin}
         supported_builtins = [
             t

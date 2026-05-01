@@ -450,6 +450,8 @@ async def _prepare_request_parameters(
     # preserved so the request still fails loudly on unsupported models.
     has_tool_search_corpus = any(t.with_builtin == ToolSearchTool.kind for t in function_tools)
     if not has_tool_search_corpus:
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
         builtin_tools = [t for t in builtin_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
     return models.ModelRequestParameters(

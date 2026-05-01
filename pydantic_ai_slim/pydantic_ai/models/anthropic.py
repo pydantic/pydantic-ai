@@ -985,6 +985,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             name='tool_search_tool_bm25',
                         )
                     )
+                # No `beta_features.add(...)`: tool search is GA on Sonnet/Opus/Haiku 4.5+ and the
+                # provisional `tool-search-tool-2025-11-19` beta header is rejected by the API.
             elif isinstance(tool, MCPServerTool) and tool.url:
                 mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
                     type='url',
