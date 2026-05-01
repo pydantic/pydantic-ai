@@ -5,11 +5,11 @@ name: Harness Compat
 # workflow with the PR's HEAD SHA + repo (so fork PRs are tested against the
 # code in the fork, not main).
 #
-# Fork PRs are gated behind the `ok-to-test` label so a maintainer reviews the
-# diff before CI runs the fork's pydantic-ai code through the harness suite.
-# The called workflow itself runs without secrets and with `contents: read`
-# only — the label is defense-in-depth against running unreviewed code on CI
-# infrastructure, not a privilege escalation barrier.
+# Fork PRs are gated behind the `safe-for-ci` label so a maintainer reviews
+# the diff before CI runs the fork's pydantic-ai code through the harness
+# suite. The called workflow itself runs without secrets and with
+# `contents: read` only — the label is defense-in-depth against running
+# unreviewed code on CI infrastructure, not a privilege escalation barrier.
 #
 # Fork PRs without the label produce a `skipped` job result. Branch protection
 # should require this check to merge, so unlabeled fork PRs can't be merged
@@ -29,7 +29,7 @@ jobs:
     name: harness compat
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository ||
-      contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+      contains(github.event.pull_request.labels.*.name, 'safe-for-ci')
     uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
     with:
       pydantic-ai-ref: ${{ github.event.pull_request.head.sha }}
