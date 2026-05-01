@@ -1503,6 +1503,13 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
@@ -2231,6 +2238,13 @@ class ModelResponse:
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
+
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""

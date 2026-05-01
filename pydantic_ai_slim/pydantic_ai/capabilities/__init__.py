@@ -1,7 +1,9 @@
-from typing import Any
+from typing import Any, TypeAlias
 
+from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.output import OutputContext
 
+from ._dynamic import CapabilityFunc, DynamicCapability
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
@@ -45,6 +47,14 @@ from .web_fetch import WebFetch
 from .web_search import WebSearch
 from .wrapper import WrapperCapability
 
+AgentCapability: TypeAlias = AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]
+"""A capability or a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] that takes a run context and returns one.
+
+Use as the item type for `Agent(capabilities=[...])` and `agent.run(capabilities=[...])`.
+Functions are wrapped in a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] automatically.
+"""
+
+
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
@@ -72,7 +82,9 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
+    'AgentCapability',
     'AgentNode',
+    'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
     'CapabilityRef',
@@ -109,6 +121,7 @@ __all__ = [
     'WebSearch',
     'WrapperCapability',
     'CombinedCapability',
+    'DynamicCapability',
     'HandleDeferredToolCalls',
     'HookTimeoutError',
     'Hooks',
