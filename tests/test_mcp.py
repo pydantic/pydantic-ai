@@ -7,9 +7,10 @@ import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -170,12 +171,13 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
 
     # Replace the real lock with one that yields before acquiring,
     # opening the interleaving window the old code left unprotected.
-    class InterleavingLock(asyncio.Lock):
-        async def acquire(self) -> Literal[True]:
-            await asyncio.sleep(0)  # yield — lets the other task reach the same point
-            return await super().acquire()
+    class InterleavingLock(anyio.Lock):
+        async def acquire(self) -> None:
+            await anyio.sleep(0)  # yield - lets the other task reach the same point
+            await super().acquire()
 
-    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+    # `_enter_lock` is a `cached_property`; seeding the instance dict primes the cache.
+    vars(server)['_enter_lock'] = InterleavingLock()
 
     results = await asyncio.gather(
         server.__aexit__(None, None, None),

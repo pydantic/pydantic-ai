@@ -5,12 +5,13 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import functools
 from abc import ABC, abstractmethod
-from asyncio import Lock
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Generic
 
+import anyio
 import httpx
 from typing_extensions import Self, TypeVar
 
@@ -36,7 +37,13 @@ class Provider(ABC, Generic[InterfaceClient]):
     _own_http_client: httpx.AsyncClient | None = None
     _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
     _entered_count: int = 0
-    _enter_lock: Lock | None = None
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
 
     @property
     @abstractmethod
@@ -69,8 +76,6 @@ class Provider(ABC, Generic[InterfaceClient]):
         """
 
     async def __aenter__(self) -> Self:
-        if self._enter_lock is None:
-            self._enter_lock = Lock()
         async with self._enter_lock:
             if self._entered_count == 0 and self._own_http_client is not None:
                 if self._own_http_client.is_closed and self._http_client_factory is not None:
@@ -86,8 +91,6 @@ class Provider(ABC, Generic[InterfaceClient]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        if self._enter_lock is None:
-            return
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._own_http_client is not None:
