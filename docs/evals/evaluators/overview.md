@@ -16,6 +16,10 @@ Use deterministic evaluators when you can define exact rules:
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | Format validation |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | SLA compliance |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavior verification | Tool calls, code paths |
+| [`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness] | Required tool coverage | Multiset of tool names invoked |
+| [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch] | Tool-call sequence quality | F1 against expected trajectory |
+| [`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness] | Tool argument checks | Refund `order_id`, search query |
+| [`StepEfficiency`][pydantic_evals.evaluators.StepEfficiency] | Budget discipline | Max tool calls / model requests |
 
 **Advantages:**
 
@@ -475,3 +479,4 @@ dataset = Dataset(
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans
+- **[Agentic Evaluators](agentic.md)** - Trajectory, tool-correctness, argument, and step-budget checks for agents
