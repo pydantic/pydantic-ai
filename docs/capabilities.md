@@ -383,13 +383,13 @@ The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capabil
 
 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] is generic in the agent's dependency type — `AbstractCapability[MyDeps]` means the capability's hooks will receive a `RunContext[MyDeps]`. Use `AbstractCapability[Any]` when the capability works with any dependency type, or a specific type when it needs to access dependency fields:
 
-```python {title="typed_capability.py" test="skip" lint="skip"}
+```python {title="typed_capability.py"}
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
+from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -416,7 +416,16 @@ class PersonalGreeter(AbstractCapability[Deps]):
     ) -> ModelRequestContext:
         # ctx.deps is typed as Deps — IDE autocomplete works
         print(f'Request for {ctx.deps.user_name}')
+        #> Request for Alice
         return request_context
+
+
+agent = Agent(
+    TestModel(),
+    deps_type=Deps,
+    capabilities=[UserGreeter(), PersonalGreeter()],
+)
+agent.run_sync('hi', deps=Deps(user_name='Alice'))
 ```
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
