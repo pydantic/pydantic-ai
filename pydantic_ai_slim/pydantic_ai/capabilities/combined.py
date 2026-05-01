@@ -6,8 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from pydantic_ai import _system_prompt
-from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._instructions import AgentInstructions, Instruction, normalize_instructions
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -63,7 +62,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return replace(self, capabilities=list(new_caps))
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
+        instructions: list[Instruction[AgentDepsT]] = []
         for capability in self.capabilities:
             instructions.extend(normalize_instructions(capability.get_instructions()))
         return instructions or None

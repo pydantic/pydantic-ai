@@ -51,7 +51,7 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
-from ..capabilities.deferred import DeferredCapability, DeferredLoadingCapability
+from ..capabilities.deferred import DeferredLoadingCapability
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -133,7 +133,7 @@ class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
 
     capability: CombinedCapability[Any] | None
-    instructions: list[str | _system_prompt.SystemPromptFunc[Any]]
+    instructions: list[_instructions.Instruction[Any]]
     model: str | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
@@ -195,7 +195,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: list[_instructions.Instruction[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -403,22 +403,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
         capabilities = list(capabilities or [])
-        deferred: list[DeferredCapability[AgentDepsT]] = []
-        for i, cap in enumerate(capabilities):
+        filtered_capabilities = [cap for cap in capabilities if not cap.defer_loading]
+
+        deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
+        for cap in capabilities:
             if cap.defer_loading:
-                wrapped = DeferredCapability(wrapped=cap)
-                capabilities[i] = wrapped
-                deferred.append(wrapped)
-        if deferred:
-            capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred))
+                deferred_capabilities[cap.id or ''] = cap
+        if deferred_capabilities:
+            filtered_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred_capabilities))
         for history_processor in self.history_processors:
-            capabilities.append(ProcessHistory(history_processor))
+            filtered_capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
-            capabilities.append(BuiltinToolCap(builtin_tool))
+            filtered_capabilities.append(BuiltinToolCap(builtin_tool))
 
-        _inject_auto_capabilities(capabilities)
+        _inject_auto_capabilities(filtered_capabilities)
 
-        self._root_capability = CombinedCapability(capabilities)
+        self._root_capability = CombinedCapability(filtered_capabilities)
 
         self.model_settings = model_settings
 
@@ -496,7 +496,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
         self._override_instructions: ContextVar[
-            _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
+            _utils.Option[list[_instructions.Instruction[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
@@ -1179,15 +1179,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             extra_capabilities.extend(capabilities)
         if extra_capabilities:
-            deferred: list[DeferredCapability[AgentDepsT]] = []
-            for i, cap in enumerate(extra_capabilities):
+            filtered_extra_capabilities = [cap for cap in extra_capabilities if not cap.defer_loading]
+
+            deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
+            for cap in extra_capabilities:
                 if cap.defer_loading:
-                    wrapped = DeferredCapability(wrapped=cap)
-                    extra_capabilities[i] = wrapped
-                    deferred.append(wrapped)
-            if deferred:
-                extra_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred))
-            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
+                    deferred_capabilities[cap.id or ''] = cap
+            if deferred_capabilities:
+                filtered_extra_capabilities.append(
+                    DeferredLoadingCapability(deferred_capabilities=deferred_capabilities)
+                )
+            effective_capability = CombinedCapability([base_capability, *filtered_extra_capabilities])
         else:
             effective_capability = base_capability
 
@@ -1204,6 +1206,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if source_cap is not None:
             cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            # cap_capability_instructions = source_cap.get_capability_instructions()
+            # Not the right place I lost the information of which cap already
             cap_builtin_tools = list(source_cap.get_builtin_tools())
             cap_model_settings = source_cap.get_model_settings()
             cap_ts = source_cap.get_toolset()
@@ -1213,6 +1217,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_builtin_tools = self._cap_builtin_tools
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
+
+        # So capability instructions should use get_capability_instructions
+        # Let us see what that looks like
+        # print(cap_capability_instructions)
 
         # Build model settings resolver using per-run capability
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -1742,6 +1750,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if _utils.is_set(instructions):
             normalized_instructions = _instructions.normalize_instructions(instructions)
+            # Not sure about this one?
             instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
         else:
             instructions_token = None
@@ -1848,12 +1857,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDepsT],
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
-                self._instructions.append(func_)
+                self._instructions.append(_instructions.Instruction(content=func_))
                 return func_
 
             return decorator
         else:
-            self._instructions.append(func)
+            self._instructions.append(_instructions.Instruction(content=func))
             return func
 
     async def system_prompt_parts(
@@ -2386,7 +2395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
+        cap_instructions: list[_instructions.Instruction[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
@@ -2415,13 +2424,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
         for instruction in instructions:
-            if isinstance(instruction, str):
-                literal_parts.append(instruction)
+            content = instruction.content
+            if isinstance(content, str):
+                literal_parts.append(content)
             else:
                 # TemplateStr instances land here too: they are callable with a
                 # RunContext parameter, so SystemPromptRunner handles them like
                 # any other system prompt function.
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](content))
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions

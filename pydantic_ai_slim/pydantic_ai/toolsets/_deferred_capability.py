@@ -7,14 +7,16 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
+from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 if TYPE_CHECKING:
-    from pydantic_ai.capabilities.deferred import DeferredCapability
+    from pydantic_ai.capabilities.abstract import AbstractCapability
     from pydantic_ai.messages import ModelMessage
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
@@ -72,17 +74,17 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     are loaded, the ``load_capability`` tool is removed.
     """
 
-    deferred_capabilities: Sequence[DeferredCapability[AgentDepsT]]
+    deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
         loaded_ids = parse_loaded_capabilities(ctx.messages)
-        unloaded = [cap for cap in self.deferred_capabilities if cap.wrapped.id not in loaded_ids]
+        unloaded = [cap for cap in self.deferred_capabilities.values() if cap.id not in loaded_ids]
         if not unloaded:
             return all_tools
 
-        catalog = '\n'.join(f'- {cap.wrapped.id}: {cap.wrapped.get_description()}' for cap in unloaded)
+        catalog = '\n'.join(f'- {cap.id}: {cap.get_description()}' for cap in unloaded)
 
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,
@@ -107,22 +109,33 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if name == LOAD_CAPABILITY_TOOL_NAME:
-            return self._load_capability(tool_args)
+            return await self._load_capability(tool_args, ctx)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    def _load_capability(self, tool_args: dict[str, Any]) -> ToolReturn | str:
+    async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn | str:
         capability_id = tool_args['id']
-        for cap in self.deferred_capabilities:
-            if cap.wrapped.id == capability_id:
-                instructions = cap.wrapped.get_instructions()
-                if instructions is None:
-                    msg = f'Capability {capability_id!r} loaded (no additional instructions).'
-                elif isinstance(instructions, str):
-                    msg = instructions
-                else:
-                    msg = f'Capability {capability_id!r} loaded.'
-                return ToolReturn(return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=msg))
-        return f'No capability found with id {capability_id!r}.'
+        cap = self.deferred_capabilities.get(capability_id)
+        if cap is None:
+            return f'No capability found with id {capability_id!r}.'
+
+        instructions = normalize_instructions(cap.get_instructions())
+
+        parts: list[str] = []
+
+        # Do I like having to do this here? No not really, but unsure how to do it better right now
+
+        for instruction in instructions:
+            content = instruction.content
+            if isinstance(content, str):
+                parts.append(content)
+            else:
+                resolved = await SystemPromptRunner[AgentDepsT](content).run(ctx)
+                if resolved is not None:
+                    parts.append(resolved)
+
+        instructions = '\n'.join(parts)
+
+        return ToolReturn(return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions))
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:

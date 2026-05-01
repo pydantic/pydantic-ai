@@ -1435,12 +1435,6 @@ class InstructionPart:
     part_kind: Literal['instruction'] = 'instruction'
     """Part type identifier, used as a discriminator for deserialization."""
 
-    defer_loading: bool | None = None
-    """Whether this instruction is deferred loading."""
-
-    capability_id: str | None = None
-    """The id of the capability that this instruction belongs to."""
-
     @staticmethod
     def join(parts: Sequence[InstructionPart]) -> str | None:
         """Join instruction parts into a single string, separated by double newlines."""
