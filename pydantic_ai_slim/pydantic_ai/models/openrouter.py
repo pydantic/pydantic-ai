@@ -275,6 +275,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     When enabled, supported downstream providers (Anthropic, Gemini) can cache stable
     system instructions and reduce costs. If dynamic instructions are present, the cache
     point is placed before them, matching Anthropic's static-prefix caching behavior.
+    Ignored for other downstream providers.
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
@@ -288,6 +289,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     in the final message (regardless of role), which is useful for Anthropic's prefix-based
     caching in multi-turn conversations. In tool-use flows, this may target a tool result
     message rather than a user message, which is correct for prefix caching.
+    Ignored for downstream providers that do not support explicit cache control.
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
@@ -304,8 +306,9 @@ class OpenRouterModelSettings(ModelSettings, total=False):
 
     When enabled, the last tool in the ``tools`` array will have ``cache_control`` set,
     allowing supported downstream providers to cache tool definitions and reduce costs.
+    Ignored for downstream providers that do not support explicit tool definition caching.
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
-    TTL is only included for Anthropic models; Gemini does not support explicit TTL.
+    TTL is only included for Anthropic models.
 
     Currently only effective for Anthropic models via OpenRouter, as tool definition
     caching is not documented for other providers.
