@@ -23,9 +23,6 @@ InstructionInput = InstructionContent[AgentDepsT] | Instruction[AgentDepsT]
 AgentInstructions = InstructionInput[AgentDepsT] | Sequence[InstructionInput[AgentDepsT]] | None
 
 
-# We changed a lot of stuff here to make Instructions capture the defer_loading and capability_id metadata which is important for us to retain this information for later
-
-
 def normalize_instructions(
     instructions: AgentInstructions[AgentDepsT],
 ) -> list[Instruction[AgentDepsT]]:

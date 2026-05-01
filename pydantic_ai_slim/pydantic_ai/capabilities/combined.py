@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
+from pydantic_ai._deferred import inherit_defer_loading, prepare_capability_tool_definitions
 from pydantic_ai._instructions import AgentInstructions, Instruction, normalize_instructions
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
@@ -18,7 +19,6 @@ from pydantic_ai.tools import (
     DeferredToolResults,
     RunContext,
     ToolDefinition,
-    ToolsPrepareFunc,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -33,25 +33,6 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
-
-
-def _stamp_capability_tool_definitions(
-    capability_id: str | None,
-    capability_defer_loading: bool | None,
-) -> ToolsPrepareFunc[AgentDepsT]:
-    def prepare(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return [
-            replace(
-                tool_def,
-                capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
-                defer_loading=(
-                    tool_def.defer_loading if tool_def.defer_loading is not None else capability_defer_loading
-                ),
-            )
-            for tool_def in tool_defs
-        ]
-
-    return prepare
 
 
 @dataclass
@@ -85,8 +66,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[Instruction[AgentDepsT]] = []
 
-        # We stamp out all of the instructions with the capability id and defer loading information
-
         for capability in self.capabilities:
             cap_instructions = normalize_instructions(capability.get_instructions())
             for instruction in cap_instructions:
@@ -94,9 +73,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     replace(
                         instruction,
                         capability_id=instruction.capability_id or capability.id,
-                        defer_loading=instruction.defer_loading
-                        if instruction.defer_loading is not None
-                        else capability.defer_loading,
+                        defer_loading=inherit_defer_loading(instruction.defer_loading, capability.defer_loading),
                     )
                 )
 
@@ -148,7 +125,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             toolsets.append(
                 PreparedToolset(
                     cap_toolset,
-                    _stamp_capability_tool_definitions(
+                    prepare_capability_tool_definitions(
                         capability_id=capability.id,
                         capability_defer_loading=capability.defer_loading,
                     ),

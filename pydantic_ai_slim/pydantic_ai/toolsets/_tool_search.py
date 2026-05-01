@@ -7,11 +7,11 @@ from typing import Annotated, Any
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
+from .._deferred import finalize_defer_loading, parse_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..messages import ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
-from ._deferred_capability import parse_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -132,7 +132,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     @staticmethod
     def _resolve_tool(tool: ToolsetTool[AgentDepsT], loaded_capability_ids: set[str]) -> ToolsetTool[AgentDepsT]:
         tool_def = tool.tool_def
-        if tool_def.defer_loading is None:
+        if finalize_defer_loading(tool_def.defer_loading) is False:
             return replace(tool, tool_def=replace(tool_def, defer_loading=False))
         if tool_def.defer_loading is True and tool_def.capability_id in loaded_capability_ids:
             return replace(tool, tool_def=replace(tool_def, defer_loading=False))
@@ -154,7 +154,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                         isinstance(part, ToolReturnPart)
                         and part.tool_name == _SEARCH_TOOLS_NAME
                         and isinstance(metadata := part.metadata, dict)
-                        # Check if it belongs to a cap, if that cap is loaded already
                         and isinstance(tool_names := metadata.get(_DISCOVERED_TOOLS_METADATA_KEY), list)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     ):
                         discovered.update(item for item in tool_names if isinstance(item, str))  # pyright: ignore[reportUnknownVariableType]

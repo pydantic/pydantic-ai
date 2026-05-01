@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
+from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
@@ -30,7 +31,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets._deferred_capability import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]

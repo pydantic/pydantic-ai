@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai._deferred import DeferredLoadingRegistry
+from pydantic_ai._deferred import (
+    LOAD_CAPABILITY_TOOL_NAME,
+    DeferredLoadingRegistry,
+    LoadCapabilityReturn,
+    parse_loaded_capabilities,
+)
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
-from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
-
-if TYPE_CHECKING:
-    from pydantic_ai.messages import ModelMessage
-
-LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
-LOADED_CAPABILITY_METADATA_KEY = 'loaded_capability_id'
 
 
 class _LoadCapabilityArgs(TypedDict):
@@ -34,32 +32,6 @@ class _LoadCapabilityArgs(TypedDict):
 _load_capability_args_ta = TypeAdapter(_LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
-
-
-class LoadCapabilityReturn(TypedDict):
-    capability_id: str
-    instructions: str | None
-    # Maybe tools, not sure right now but basically showing that this capability has been revealed
-    # I am not entirely sure yet of this structure but let us take it
-
-
-def extract_load_capability_return(content: Any) -> LoadCapabilityReturn | None:
-    if not isinstance(content, dict):
-        return None
-
-    # Unfortunate that we are having to do this here, the tool return content is Mapping[str | Any]
-    # It is not inferred
-    content = cast(dict[str, Any], content)
-
-    capability_id = content.get('capability_id')
-    if not isinstance(capability_id, str):
-        return None
-
-    instructions = content.get('instructions')
-    if instructions is not None and not isinstance(instructions, str):
-        return None
-
-    return LoadCapabilityReturn(capability_id=capability_id, instructions=instructions)
 
 
 @dataclass
@@ -116,8 +88,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         if capability_id not in self.registry.catalog:
             return f'No capability found with id {capability_id!r}.'
 
-        outputs = self.registry.outputs.get(capability_id)
-        instructions = outputs.instructions if outputs is not None else []
+        instructions = self.registry.instructions.get(capability_id, [])
 
         parts: list[str] = []
 
@@ -134,17 +105,3 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         return ToolReturn(
             return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
         )
-
-
-def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via load_capability."""
-    loaded: set[str] = set()
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_name == LOAD_CAPABILITY_TOOL_NAME:
-                    parsed = extract_load_capability_return(part.content)
-                    if parsed is not None:
-                        loaded.add(parsed['capability_id'])
-
-    return loaded
