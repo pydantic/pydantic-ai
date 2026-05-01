@@ -795,6 +795,15 @@ async def test_handle_call_wrap_validation_errors_false():
 
     tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
 
+    # Sanity: a valid call still works in raw mode (no path differences for happy paths).
+    assert (
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='needs_int', args={'x': 5}),
+            wrap_validation_errors=False,
+        )
+        == 10
+    )
+
     # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
     with pytest.raises(ValidationError):
         await tool_manager.handle_call(

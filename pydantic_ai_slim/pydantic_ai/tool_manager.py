@@ -713,16 +713,18 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> Any:
         """Execute a validated tool call without tracing, with capability hooks.
 
+        `wrap_validation_errors` here only governs errors raised *during* execution
+        (tool body or execute-stage hooks). A `ValidatedToolCall` that already failed
+        validation carries a pre-wrapped `ToolRetryError`; raw-mode callers get raw
+        errors at the `validate_tool_call(wrap_validation_errors=False)` boundary.
+
         Raises ToolRetryError if validation previously failed or the tool raises ModelRetry
-        (when `wrap_validation_errors=True`); when False, the raw exception propagates.
-        Raises UnexpectedModelBehavior if max retries exceeded.
+        (when `wrap_validation_errors=True`); when False, ModelRetry from the tool body
+        or hooks propagates raw. Raises UnexpectedModelBehavior if max retries exceeded.
         """
         # Asserts narrow types for pyright; invariants guaranteed by ValidatedToolCall construction
         if not validated.args_valid:
             assert validated.validation_error is not None
-            if not wrap_validation_errors and isinstance(validated.validation_error.__cause__, Exception):
-                # Surface the original cause (ValidationError / ModelRetry) for raw-mode callers.
-                raise validated.validation_error.__cause__
             raise validated.validation_error
 
         assert validated.tool is not None

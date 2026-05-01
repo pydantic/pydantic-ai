@@ -14679,13 +14679,13 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
     # in its return value; if wrap_validation_errors hadn't been forwarded through
     # _resolve_single_deferred, outer_tool would have seen a ToolRetryError instead.
     inner_message = next(
-        msg for msg in result.all_messages() if isinstance(msg, ModelRequest) and any(
-            isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool' for part in msg.parts
-        )
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool' for part in msg.parts)
     )
     outer_return = next(
-        part for part in inner_message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool'
+        part for part in inner_message.parts if isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool'
     )
     assert outer_return.content == 'raw ModelRetry: post-approval retry'
 
