@@ -251,8 +251,30 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_chat_app_index_caching():
+def test_chat_app_index_caching(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that the UI HTML is cached after first fetch."""
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    test_content = b'<html>Test UI</html>'
+
+    class MockResponse:
+        content = test_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
     agent = Agent('test')
     app = create_web_app(agent)
 
@@ -260,7 +282,7 @@ def test_chat_app_index_caching():
         response1 = client.get('/')
         response2 = client.get('/')
 
-        assert response1.content == response2.content
+        assert response1.content == response2.content == test_content
         assert response1.status_code == 200
         assert response2.status_code == 200
 
