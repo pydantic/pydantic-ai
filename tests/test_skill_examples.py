@@ -40,7 +40,7 @@ def find_skill_examples() -> Iterable[ParameterSet]:
 def test_skill_examples_lint(example: CodeExample, eval_example: EvalExample):
     eval_example.config = ExamplesConfig(
         ruff_ignore=['D', 'Q001'],
-        target_version='py310',  # type: ignore[reportArgumentType]
+        target_version='py310',
         line_length=120,
         isort=True,
         upgrade=True,
