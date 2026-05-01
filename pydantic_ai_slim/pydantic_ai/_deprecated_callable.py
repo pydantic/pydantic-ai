@@ -146,7 +146,7 @@ def _wrap(value: Any, message: str) -> Any:
         return _DeprecatedCallableResponse(value, message)
     if isinstance(value, datetime):
         return _DeprecatedCallableDatetime(value, message)
-    raise TypeError(f'No deprecation wrapper registered for type {type(value).__name__!r}')
+    raise TypeError(f'No deprecation wrapper registered for type {type(value).__name__!r}')  # pragma: no cover
 
 
 class _DeprecatedCallableProperty:
@@ -161,11 +161,8 @@ class _DeprecatedCallableProperty:
         self._message = message
         self.__doc__ = fget.__doc__
 
-    def __set_name__(self, owner: type, name: str) -> None:
-        self._attr_name = name
-
     def __get__(self, instance: Any, owner: type | None = None) -> Any:
-        if instance is None:
+        if instance is None:  # pragma: no cover
             return self
         return _wrap(self._fget(instance), self._message)
 

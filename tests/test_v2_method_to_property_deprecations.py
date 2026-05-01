@@ -61,6 +61,9 @@ async def test_agent_run_result_usage_property_then_call():
         usage_call = result.usage()
     assert isinstance(usage_call, RunUsage)
     assert usage_attr == usage_call
+    # Wrapper repr/eq behave like the underlying type.
+    assert repr(usage_attr).startswith('RunUsage(')
+    assert (usage_attr == 'not-a-run-usage') is False
 
 
 async def test_agent_run_result_timestamp_property_then_call():
@@ -74,6 +77,9 @@ async def test_agent_run_result_timestamp_property_then_call():
         ts_call = result.timestamp()
     assert isinstance(ts_call, datetime)
     assert ts_attr == ts_call
+
+    # Wrappers preserve repr-as-parent so doc snapshots and user logs read naturally.
+    assert repr(ts_attr).startswith('datetime.datetime(')
 
 
 # AgentStream (returned via `agent.iter` while a streaming step is active) ──
@@ -164,9 +170,16 @@ def test_streamed_response_sync_get_and_usage_property_then_call():
         response_attr = _assert_no_deprecation(lambda: stream.response)
         assert isinstance(response_attr, ModelResponse)
         with pytest.warns(DeprecationWarning, match=r'`StreamedResponseSync\.get` is deprecated'):
-            stream.get()
+            response_call = stream.get()
+        # `__eq__` and `__repr__` make the wrapper indistinguishable from the underlying type.
+        assert response_call == response_attr
+        assert repr(response_call).startswith('ModelResponse(')
 
         usage_attr = _assert_no_deprecation(lambda: stream.usage)
         assert isinstance(usage_attr, RequestUsage)
         with pytest.warns(DeprecationWarning, match=r'`StreamedResponseSync\.usage` is no longer a method'):
-            stream.usage()
+            usage_call = stream.usage()
+        assert usage_call == usage_attr
+        assert repr(usage_call).startswith('RequestUsage(')
+        assert (usage_call == 'not-a-request-usage') is False
+        assert (response_call == 'not-a-model-response') is False
