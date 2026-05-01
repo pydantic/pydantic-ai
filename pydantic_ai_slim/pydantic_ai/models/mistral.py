@@ -149,7 +149,6 @@ class MistralModel(Model[Mistral]):
     [API Documentation](https://docs.mistral.ai/)
     """
 
-    client: Mistral = field(repr=False)
     json_mode_schema_prompt: str
 
     _model_name: MistralModelName = field(repr=False)
@@ -181,9 +180,12 @@ class MistralModel(Model[Mistral]):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> Mistral:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:

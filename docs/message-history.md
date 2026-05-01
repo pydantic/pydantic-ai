@@ -50,6 +50,7 @@ print(result.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -61,6 +62,7 @@ print(result.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -92,6 +94,7 @@ async def main():
                 timestamp=datetime.datetime(...),
                 instructions='Be a helpful assistant.',
                 run_id='...',
+                conversation_id='...',
             )
         ]
         """
@@ -117,6 +120,7 @@ async def main():
                 timestamp=datetime.datetime(...),
                 instructions='Be a helpful assistant.',
                 run_id='...',
+                conversation_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -128,6 +132,7 @@ async def main():
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             ),
         ]
         """
@@ -143,7 +148,7 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
-If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
+If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
@@ -171,6 +176,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -182,6 +188,7 @@ print(result2.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -193,6 +200,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -204,12 +212,55 @@ print(result2.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Correlating runs with `conversation_id`
+
+Each `ModelRequest` and `ModelResponse` carries two identifiers:
+
+- [`run_id`][pydantic_ai.messages.ModelRequest.run_id] — unique per agent run; emitted on the OpenTelemetry agent run span as `gen_ai.agent.call.id`.
+- [`conversation_id`][pydantic_ai.messages.ModelRequest.conversation_id] — shared across all runs that build on the same `message_history`; emitted as `gen_ai.conversation.id`.
+
+A fresh `conversation_id` is generated on the first run, stamped onto every message produced by that run, and inherited by subsequent runs that pass the messages back via `message_history`. This means you can correlate traces from a multi-turn conversation in [Logfire](logfire.md) (or any OpenTelemetry backend) without tracking anything yourself — as long as the message history round-trips, the conversation ID does too.
+
+```python {title="conversation_id is shared across runs in the same conversation"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+result1 = agent.run_sync('Tell me a joke.')
+result2 = agent.run_sync('Explain?', message_history=result1.all_messages())
+
+assert result1.conversation_id == result2.conversation_id
+```
+
+To override or fork:
+
+- Pass `conversation_id='<your-id>'` to use an ID from your own application (e.g. a chat thread ID stored in your database).
+- Pass `conversation_id='new'` to start a fresh conversation that ignores any `conversation_id` already on `message_history` — useful for branching off an existing thread without making the caller generate an ID.
+
+```python {title="forking a conversation"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+result1 = agent.run_sync('Tell me a joke.')
+forked = agent.run_sync(
+    'Tell me a different joke.',
+    message_history=result1.all_messages(),
+    conversation_id='new',
+)
+
+assert forked.conversation_id != result1.conversation_id
+```
+
+The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get correlation for free.
 
 ## Storing and loading messages (to JSON)
 
@@ -296,6 +347,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -307,6 +359,7 @@ print(result2.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -318,6 +371,7 @@ print(result2.all_messages())
         timestamp=datetime.datetime(...),
         instructions='Be a helpful assistant.',
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -329,6 +383,7 @@ print(result2.all_messages())
         model_name='gemini-3-pro-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -341,7 +396,7 @@ reasons (filtering out sensitive information), to save costs on tokens, to give 
 custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
-the message history before each model request. History processors can also be provided via the [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] capability.
+the message history before each model request. History processors can also be provided via the [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability.
 
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
