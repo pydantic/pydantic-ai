@@ -238,6 +238,7 @@ def test_logfire(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -296,6 +297,7 @@ def test_logfire(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -538,6 +540,7 @@ def test_logfire(
             ),
             'gen_ai.tool.definitions': '[{"type": "function", "name": "my_ret", "parameters": {"additionalProperties": false, "properties": {"x": {"type": "integer"}}, "required": ["x"], "type": "object"}}]',
             'logfire.json_schema': IsJson(),
+            'gen_ai.conversation.id': IsStr(),
             'logfire.span_type': 'span',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
@@ -609,6 +612,7 @@ def test_instructions_with_structured_output(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -730,6 +734,7 @@ def test_instructions_with_structured_output(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -823,6 +828,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'agent_name': 'my_agent',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
@@ -943,6 +949,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             'agent_name': 'my_agent',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
@@ -1037,6 +1044,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
             ),
             'gen_ai.tool.definitions': '[{"type": "function", "name": "final_result", "description": "The final response which ends this conversation", "parameters": {"properties": {"content": {"type": "string"}}, "required": ["content"], "title": "MyOutput", "type": "object"}}]',
             'logfire.span_type': 'span',
+            'gen_ai.conversation.id': IsStr(),
             'logfire.msg': 'chat test',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
@@ -1131,6 +1139,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             'agent_name': 'agent',
             'gen_ai.agent.name': 'agent',
             'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': 'agent run',
             'logfire.span_type': 'span',
@@ -1200,6 +1209,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.usage.input_tokens': 51,
@@ -1243,6 +1253,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
@@ -1351,6 +1362,7 @@ def test_include_tool_args_span_attributes(
                             }
                         )
                     ),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -1371,6 +1383,7 @@ Fix the errors and try again.\
                     'tool_arguments': '{"x":42,"y":42}',
                     'tool_response': '84',
                     'logfire.msg': 'running tool: add_numbers',
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot(
                             {
@@ -1408,6 +1421,7 @@ Fix the errors and try again.\
                             }
                         )
                     ),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -1432,6 +1446,7 @@ Fix the errors and try again.\
                             }
                         )
                     ),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -1502,6 +1517,7 @@ def test_logfire_output_function_v2_v3(
                 'gen_ai.tool.name': 'final_result',
                 'logfire.msg': 'running output function: final_result',
                 'gen_ai.tool.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1552,6 +1568,7 @@ def test_logfire_output_function_v2_v3(
                 'gen_ai.tool.name': 'final_result',
                 'logfire.msg': 'running output function: final_result',
                 'gen_ai.tool.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1608,6 +1625,7 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1635,6 +1653,7 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
@@ -1678,6 +1697,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1705,6 +1725,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
@@ -1756,6 +1777,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'tool_arguments': '{"city":"New York City"}',
                     'logfire.json_schema': IsJson(
                         snapshot(
@@ -1780,6 +1802,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'tool_arguments': '{"city":"Mexico City"}',
                     'logfire.json_schema': IsJson(
                         snapshot(
@@ -1809,6 +1832,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                     ),
@@ -1822,6 +1846,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                     ),
@@ -1866,6 +1891,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: get_weather',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1893,6 +1919,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: get_weather',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
@@ -1943,6 +1970,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1970,6 +1998,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
@@ -2021,6 +2050,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -2048,6 +2078,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
@@ -2094,6 +2125,7 @@ def test_output_type_async_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city":"Mexico City"}',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -2121,6 +2153,7 @@ def test_output_type_async_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
                     snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
                 ),
@@ -2172,6 +2205,7 @@ def test_text_output_function_logfire_attributes(
                 'gen_ai.tool.name': 'upcase_text',
                 'tool_arguments': '{"text":"hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -2197,6 +2231,7 @@ def test_text_output_function_logfire_attributes(
                 'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -2250,6 +2285,7 @@ def test_prompted_output_function_logfire_attributes(
                 'gen_ai.tool.name': 'upcase_text',
                 'tool_arguments': '{"text":"hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -2275,6 +2311,7 @@ def test_prompted_output_function_logfire_attributes(
                 'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -2328,6 +2365,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'tool_arguments': '{"city":"New York City"}',
                     'logfire.msg': 'running output function: get_weather_with_retry',
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot(
                             {
@@ -2350,6 +2388,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'tool_arguments': '{"city":"Mexico City"}',
                     'logfire.msg': 'running output function: get_weather_with_retry',
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.json_schema': IsJson(
                         snapshot(
                             {
@@ -2377,6 +2416,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -2387,6 +2427,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'get_weather_with_retry',
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -2425,6 +2466,7 @@ def test_static_function_instructions_in_agent_run_span(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -2546,6 +2588,7 @@ def test_static_function_instructions_in_agent_run_span(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -2653,6 +2696,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -2802,6 +2846,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -2940,6 +2985,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -3087,6 +3133,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -3197,6 +3244,7 @@ async def test_run_stream(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -3295,6 +3343,7 @@ async def test_run_stream(
                 'agent_name': 'my_agent',
                 'gen_ai.agent.name': 'my_agent',
                 'gen_ai.agent.call.id': IsStr(),
+                'gen_ai.conversation.id': IsStr(),
                 'gen_ai.operation.name': 'invoke_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
@@ -3386,6 +3435,7 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
                         'gen_ai.tool.call.id': {},
                     },
                 },
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -3446,6 +3496,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
                         'gen_ai.tool.call.id': {},
                     },
                 },
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -3506,6 +3557,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
                         'gen_ai.tool.call.id': {},
                     },
                 },
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -3553,6 +3605,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
                         'gen_ai.tool.call.id': {},
                     },
                 },
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -3602,6 +3655,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
                         'gen_ai.tool.call.id': {},
                     },
                 },
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),
@@ -3655,6 +3709,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
                         'gen_ai.tool.call.id': {},
                     },
                 },
+                'gen_ai.conversation.id': IsStr(),
                 'logfire.span_type': 'span',
                 'gen_ai.agent.name': 'agent',
                 'gen_ai.agent.call.id': IsStr(),

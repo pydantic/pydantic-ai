@@ -82,6 +82,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    conversation_id: str | None = None
+    """Unique identifier for the conversation this run belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Resolved at the start of `Agent.run` (etc.) from the explicit `conversation_id`
+    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7.
+    """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
     model_settings: ModelSettings | None = None

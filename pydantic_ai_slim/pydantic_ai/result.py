@@ -157,6 +157,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return self._run_ctx.run_id
 
     @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        assert self._run_ctx.conversation_id is not None
+        return self._run_ctx.conversation_id
+
+    @property
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         if self._metadata_getter is not None:
@@ -631,6 +637,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        if self._run_result is not None:
+            return self._run_result.conversation_id
+        elif self._stream_response is not None:
+            return self._stream_response.conversation_id
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -655,6 +671,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if message is not None:
             if self._stream_response:  # pragma: no branch
                 message.run_id = self._stream_response.run_id
+                message.conversation_id = self._stream_response.conversation_id
             self._all_messages.append(message)
         if self._on_complete is not None:
             await self._on_complete()
@@ -797,6 +814,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._streamed_run_result.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._streamed_run_result.conversation_id
 
     @property
     def metadata(self) -> dict[str, Any] | None:

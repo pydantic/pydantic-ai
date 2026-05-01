@@ -1167,6 +1167,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1202,6 +1203,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1221,6 +1223,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1247,6 +1250,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1308,6 +1312,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1343,6 +1348,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1362,6 +1368,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1388,6 +1395,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1424,6 +1432,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1454,6 +1463,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1466,6 +1476,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1496,6 +1507,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1508,6 +1520,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -1532,6 +1545,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
