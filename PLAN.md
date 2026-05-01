@@ -1,24 +1,27 @@
-# v2 deprecate-before — bundled 1.x deprecation plan
+# v2 deprecate-before — 1.x deprecation plan
 
-This PR is a **draft / planning artifact** for the four 1.x deprecation PRs in the `deprecate-before/` v2-card bucket. Each card describes a v2 breaking change that needs a `DeprecationWarning` to ship in 1.x first so users see warnings before removal.
+This PR is a **draft / planning artifact** for the 1.x deprecation PRs in the `deprecate-before/` v2-card bucket. Each card describes a v2 breaking change that needs a `DeprecationWarning` to ship in 1.x first so users see warnings before removal.
 
-The PR is filed as a single discussion artifact because the four items share two open questions:
+After the [2026-04-30 PR comments](https://github.com/pydantic/pydantic-ai/pull/5263), only **cards 01 and 03** remain in scope here, **bundled into this single PR**:
 
-1. **Bundle vs split** — should this land as 1 PR, 4 PRs, or 2 PRs (cards 01+03 ctor-side, cards 02+21 callback-side)?
-2. **Card 01 descriptor design** — the `_DeprecatedCallableProperty` approach affects 12 migration sites; the descriptor's behavior under `isinstance`, `repr`, `==`, etc. needs sign-off before all 12 land.
+- Card 02 deprecation is taken over by [#5075](https://github.com/pydantic/pydantic-ai/pull/5075) (commit cf8127ca1); cascade-removal deferred to a separate post-#5075 PR.
+- Card 21 is fully covered by [#5188](https://github.com/pydantic/pydantic-ai/pull/5188) (@dfm88).
+- This PR supersedes [#5076](https://github.com/pydantic/pydantic-ai/pull/5076) (closed) — actual code-side deprecation is authored here.
 
-The four cards live at `pydantic-ai-notes:david/v2-cards/deprecate-before/` (canonical; the working copy under `pydantic-ai-main/local-notes/v2-cards/` was retired on 2026-04-29).
+**Descriptor design — Approach B (per-type subclass) chosen.** `isinstance(result.usage, RunUsage)` correctness wins; one ~50-line private module with 4 subclasses is acceptable. Approach A (proxy with `__getattr__`) is rejected.
+
+Cards live at `pydantic-ai-notes:david/v2-cards/deprecate-before/` (canonical; the working copy under `pydantic-ai-main/local-notes/v2-cards/` was retired on 2026-04-29).
 
 ## Coordination with in-flight PRs
 
 | Card | Title | Status | In-flight PR | Plan for this draft |
 |------|-------|--------|--------------|---------------------|
-| 01 | result-class-consistency | no PR | — | author here |
-| 02 | retries-split | adjacent PR | [#5075](https://github.com/pydantic/pydantic-ai/pull/5075) (`rename-retry-fields` — runtime override + ctx.max_retries fix + internal rename) | **don't duplicate**; verify #5075 also adds `tool_retries=` kwarg + `retries=` deprecation, or layer that on top |
-| 03 | history-processors-deprecation | obsolete PR | [#5076](https://github.com/pydantic/pydantic-ai/pull/5076) (docs-only soft-deprecation in favor of `before_model_request` hooks — predates `ProcessHistory` direction) | close #5076; author actual code-side deprecation here |
-| 21 | prepare-tools-none | covered | [#5188](https://github.com/pydantic/pydantic-ai/pull/5188) by @dfm88 (`warn-prepare-tools-returning-none`) — exact 1.x warning called out in card | **don't duplicate**; this draft references #5188; the v2 raise lands in v2-cut PR (per card, owned by @adtyavrdhn) |
+| 01 | result-class-consistency | no PR | — | **author here** |
+| 02 | retries-split | covered | [#5075](https://github.com/pydantic/pydantic-ai/pull/5075) — adds `tool_retries=` kwarg + `DeprecationWarning` on `retries=` (commit cf8127ca1, pattern matches `mcp.py:1145` `sse_read_timeout`); 1.x cascade preserved; `TODO(v2)` left at resolution site | **out of scope here**; cascade-removal lands in a follow-up PR after #5075 merges |
+| 03 | history-processors-deprecation | superseded PR | [#5076](https://github.com/pydantic/pydantic-ai/pull/5076) **closed**; this PR supersedes | **author here** — code-side ctor-kwarg deprecation |
+| 21 | prepare-tools-none | covered | [#5188](https://github.com/pydantic/pydantic-ai/pull/5188) by @dfm88 — exact 1.x warning per card | **out of scope here**; v2 raise lands in v2-cut PR (per card, owned by @adtyavrdhn) |
 
-After this plan is blessed, the implementation commits land on `v2-changes` and the draft converts to ready-for-review (or gets split — see "Bundle vs split" below).
+Both cards land on `v2-changes` and ship as a single PR.
 
 ## Card 01 — result-class-consistency
 
@@ -43,84 +46,20 @@ After this plan is blessed, the implementation commits land on `v2-changes` and 
 
 12 sites total. 10 are method→property migrations; 2 are method removals (`get`).
 
-### Design — `_DeprecatedCallableProperty` descriptor
+### Design — `_DeprecatedCallable*` subclasses (Approach B)
 
-Card sketch:
-
-```python
-class _DeprecatedCallableProperty:
-    def __init__(self, fget, message):
-        self.fget = fget
-        self.message = message
-    def __set_name__(self, owner, name):
-        self.name = name
-    def __get__(self, instance, owner=None):
-        if instance is None:
-            return self
-        value = self.fget(instance)
-        return _CallableValue(value, self.message)
-```
-
-**Open question 1**: how does `_CallableValue(value, message)` make the underlying value transparent to attribute access, `repr`, `==`, `isinstance`, etc., while supporting `__call__` (with warning) that returns the underlying value?
-
-Two candidate approaches — picking one is the primary blocker for landing card 01:
-
-#### Approach A — generic proxy with `__getattr__` delegation
-
-```python
-class _DeprecatedCallableValue:
-    """Proxy: forwards all attribute access to wrapped value, but supports __call__ with deprecation warning."""
-
-    __slots__ = ('_value', '_message')
-
-    def __init__(self, value, message: str):
-        object.__setattr__(self, '_value', value)
-        object.__setattr__(self, '_message', message)
-
-    def __call__(self):
-        warnings.warn(self._message, DeprecationWarning, stacklevel=2)
-        return self._value
-
-    def __getattr__(self, name):
-        return getattr(self._value, name)
-
-    def __repr__(self):
-        return repr(self._value)
-
-    def __eq__(self, other):
-        return self._value == (other._value if isinstance(other, _DeprecatedCallableValue) else other)
-
-    # ... possibly more dunders for hash, str, bool, etc.
-```
-
-**Pros**: one class covers all return types (`RunUsage`, `RequestUsage`, `datetime`, `ModelResponse`).
-**Cons**: `isinstance(result.usage, RunUsage)` returns False — surprising. `type(result.usage)` is wrong. Type checkers (pyright) need `reveal_type`-friendly stubs. Some dunders won't proxy through `__getattr__` (e.g. `__iter__`, arithmetic operators).
-
-#### Approach B — per-type subclass with `__call__`
-
-For each concrete return type, subclass it and add `__call__`:
+Per-type subclass that adds `__call__` for the deprecation warning. `isinstance` and pyright stay happy because the wrapped value *is* an instance of the underlying type.
 
 ```python
 class _DeprecatedCallableRunUsage(RunUsage):
-    def __init__(self, *args, _message: str, **kwargs):
-        super().__init__(*args, **kwargs)
-        object.__setattr__(self, '_message', _message)
+    _message: str = PrivateAttr()
 
     def __call__(self) -> 'RunUsage':
         warnings.warn(self._message, DeprecationWarning, stacklevel=2)
-        return RunUsage(**self.model_dump())  # plain RunUsage
+        return self
 ```
 
-Repeat for `RequestUsage`, `datetime`, `ModelResponse`.
-
-**Pros**: `isinstance(result.usage, RunUsage)` is True. Type checkers happy. No proxy fragility.
-**Cons**: 4 subclasses to maintain. `RunUsage` is a Pydantic model — subclassing across `pydantic.BaseModel` + adding `_message` field needs validation off (`model_config = ConfigDict(extra='ignore')` or `PrivateAttr`). `datetime` is C-implemented and subclassing it is OK (Python stdlib does it; `datetime` is final-friendly).
-
-#### Recommendation
-
-Approach B. Pydantic AI's quality bar prefers `isinstance` correctness over code volume. The 4 subclasses can live in a single `pydantic_ai/_deprecated_callable.py` private module and be imported only at the migration sites.
-
-If approach B turns out worse than expected (e.g. Pydantic ConfigDict noise), fall back to A — but document the tradeoff in the PR description.
+Same shape for `_DeprecatedCallableRequestUsage(RequestUsage)`, `_DeprecatedCallableDatetime(datetime)`, `_DeprecatedCallableResponse(ModelResponse)`. All four live in `pydantic_ai_slim/pydantic_ai/_deprecated_callable.py` (private module) — import-only at the 12 migration sites.
 
 ### Migration commit shape (per file, after design blessed)
 
@@ -169,45 +108,17 @@ The `self.history_processors` instance attribute can stay (callers iterate it fo
 - `tests/deprecations/test_history_processors_kwarg.py` — passes `history_processors=[fn]`, asserts warning fires, asserts `agent.capabilities` contains a `ProcessHistory` wrapping `fn`.
 - Verify behavior parity with `capabilities=[ProcessHistory(fn)]`.
 
-## Card 02 — retries split (DEFERRED — coordinate with #5075)
+## Out of scope (already decided)
 
-**Status**: PR #5075 ("Add runtime `output_retries` override + fix `ctx.max_retries` on tool path + internal rename") is open by David SF on `rename-retry-fields`. The card calls for:
+- **Card 02** — deprecation lands in [#5075](https://github.com/pydantic/pydantic-ai/pull/5075) (commit cf8127ca1): `tool_retries: int | None = None` kwarg added; `DeprecationWarning` on `retries=` (matches `mcp.py:1145` `sse_read_timeout` pattern); 1.x cascade preserved per [version policy](https://github.com/pydantic/pydantic-ai/blob/main/docs/version-policy.md); `TODO(v2)` at the cascade-resolution site. Cascade removal + `retries=` removal go to a follow-up PR after #5075 merges.
+- **Card 21** — covered by [#5188](https://github.com/pydantic/pydantic-ai/pull/5188); v2 raise tracked separately by @adtyavrdhn.
 
-- Add `tool_retries=` kwarg (currently `retries=` controls both)
-- Add explicit `output_retries=` default of 1 (currently `None` falls back to `retries`)
-- Deprecate `retries=` kwarg with a warning that explicitly mentions the v2 behavior change (`retries=N` no longer also raises `output_retries`)
+## PR shape
 
-**Action**: confirm whether #5075 already covers all three. If not, coordinate (either expand #5075 or add a follow-up commit on this branch).
-
-(No code added in this draft for card 02.)
-
-## Card 21 — prepare_tools None warning (DEFERRED — covered by #5188)
-
-**Status**: PR #5188 by @dfm88 implements the exact 1.x warning called out in the card. v2-cut PR (the actual `TypeError` raise) is owned by @adtyavrdhn per card metadata.
-
-**Action**: review and merge #5188 ASAP so the warning ships before v2 cut. No code in this draft for card 21.
-
-## Bundle vs split — open question
-
-This draft PR currently bundles cards 01 + 03 + plan refs to 02 + 21. Three viable splits after the design questions resolve:
-
-1. **One PR per card** (4 PRs) — matches `v2-todos-david.md`'s original plan; each is reviewable independently. Card 02 is partly subsumed by #5075; card 21 fully subsumed by #5188. So in practice it's 2 new PRs (01, 03).
-2. **Two PRs** — card 01 (descriptor migration) on its own; card 03 alone or paired with anything else. Card 01 alone is large enough to deserve its own PR.
-3. **One bundled PR** (this draft, expanded) — 01 + 03 land together. Useful only if the team wants one big "v2 deprecation prep" commit; downside is the descriptor design + the kwarg remap aren't conceptually related.
-
-**Recommendation**: split (1) — one PR per actionable card. This draft converts to "card 01" once design is blessed; card 03 lands as a separate fast PR (small surface, no design Q). Cards 02 and 21 ride existing PRs.
+Single bundled PR on `v2-changes`: cards 01 + 03 together. Conceptually both are 1.x deprecations whose v2 removal lands later.
 
 ## Documentation
 
-- `CHANGELOG.md` — breaking-changes section gets an entry per deprecation, per PR (don't batch at release per project rule).
+- `CHANGELOG.md` — breaking-changes entry per deprecation, in this PR.
 - `docs/version-policy.md` already covers the rule; no doc change needed.
-- Per-card user-facing migration prose can live in the v2 release notes (separate doc, not in this PR).
-
-## Open questions for review
-
-1. Approach A (proxy) vs B (per-type subclass) for `_DeprecatedCallableValue`?
-2. Should card 02's deprecation warning land in #5075 or in a follow-up PR on this branch?
-3. Should we close #5076 in favor of authoring the actual code-side deprecation here?
-4. Bundle vs split — final preference?
-
-After these are settled, this draft PR shrinks to whichever cards make the cut, with implementation commits added.
+- User-facing migration prose lands in the v2 release notes (separate doc, not in this PR).

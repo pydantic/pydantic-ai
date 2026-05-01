@@ -1714,3 +1714,26 @@ async def test_history_processor_deprecated_alias(function_model: FunctionModel,
     assert [part for msg in received_messages for part in msg.parts if isinstance(part, UserPromptPart)] == snapshot(
         [UserPromptPart(content='Second', timestamp=IsDatetime())]
     )
+
+
+async def test_history_processors_kwarg_emits_deprecation_warning_and_remaps(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """Card 03: `Agent(history_processors=...)` emits DeprecationWarning and remaps to `capabilities=[ProcessHistory(...)]`."""
+
+    def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[1:]
+
+    with pytest.warns(DeprecationWarning, match=r'`history_processors=` is deprecated'):
+        agent = Agent(function_model, history_processors=[drop_first])
+
+    # The kwarg is remapped: running the agent applies the processor exactly once,
+    # matching the behavior of `capabilities=[ProcessHistory(drop_first)]`.
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First')]),
+        ModelResponse(parts=[TextPart(content='Answer')]),
+    ]
+    await agent.run('Second', message_history=message_history)
+
+    user_prompts = [part for msg in received_messages for part in msg.parts if isinstance(part, UserPromptPart)]
+    assert user_prompts == snapshot([UserPromptPart(content='Second', timestamp=IsDatetime())])

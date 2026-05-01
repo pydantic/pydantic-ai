@@ -400,6 +400,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.end_strategy = end_strategy
 
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
+        if history_processors:
+            warnings.warn(
+                '`history_processors=` is deprecated, use `capabilities=[ProcessHistory(p), ...]` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         capabilities = list(capabilities or [])
         for history_processor in self.history_processors:

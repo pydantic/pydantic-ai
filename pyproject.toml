@@ -239,6 +239,12 @@ testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
+    # v2 deprecations: result-class method-to-property migration (card 01) and history_processors kwarg (card 03).
+    # The 1.x deprecation warning is the contract; tests that assert on it use pytest.warns. All other sites
+    # (in this test suite, docs, and examples) still use the legacy call-style — that's a follow-up cleanup.
+    "ignore:.*is no longer a method.*:DeprecationWarning",
+    "ignore:.*is deprecated; use the .response. property.*:DeprecationWarning",
+    "ignore:.history_processors=. is deprecated.*:DeprecationWarning",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
     # boto3
