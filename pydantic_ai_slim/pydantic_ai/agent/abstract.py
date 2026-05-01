@@ -374,7 +374,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             # have already run the capability chain and handler against the
                             # live stream inside an activity/step/task. When that flag is set,
                             # drain the replay here without re-firing.
-                            if isinstance(stream, AgentStream) and stream.capabilities_already_applied:
+                            if isinstance(stream, AgentStream) and stream._capabilities_already_applied:  # pyright: ignore[reportPrivateUsage]
                                 async for _ in stream:
                                     pass
                             else:

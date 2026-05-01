@@ -92,7 +92,7 @@ class ReplayStreamedResponse(StreamedResponse):
     ):
         super().__init__(model_request_parameters)
         self.response = response
-        self.capabilities_already_applied = capabilities_already_applied
+        self._capabilities_already_applied = capabilities_already_applied
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for part in self.response.parts:

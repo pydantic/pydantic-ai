@@ -286,14 +286,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
-            from pydantic_ai.durable_exec import open_model_stream
+            from pydantic_ai.durable_exec import open_model_stream, process_event_stream
 
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = self._resolve_model_id(params.model_id)
-            agent = self._agent
-            assert agent is not None
             request_context = ModelRequestContext(
                 model=model_for_request,
                 messages=params.messages,
@@ -301,15 +299,15 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 model_request_parameters=params.model_request_parameters,
             )
             async with open_model_stream(model_for_request, request_context, run_context) as streamed_response:
-                # Fire the full capability chain's wrap_run_event_stream hooks against
+                # Fire the capability chain's wrap_run_event_stream hooks against
                 # the live stream — ProcessEventStream and any other outer capability
                 # sees real events here, not synthetic ones replayed in the workflow.
-                wrapped_stream = agent.root_capability.wrap_run_event_stream(run_context, stream=streamed_response)
-                if event_stream_handler is not None:
-                    await event_stream_handler(run_context, wrapped_stream)
-                else:
-                    async for _ in wrapped_stream:
-                        pass
+                await process_event_stream(
+                    run_context,
+                    request_context,
+                    streamed_response,
+                    handler=event_stream_handler,
+                )
             return streamed_response.get()
 
         request_stream_activity.__annotations__['deps'] = deps_type | None
@@ -513,7 +511,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             # Signal to the outer agent loop that the capability chain already ran
             # against the live stream inside the activity; do not re-fire it on the
             # replayed response.
-            request_context.capabilities_already_applied = True
+            request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
             return response
 
         activity_config = {'summary': f'request model: {model_name}', **self._model_activity_config}

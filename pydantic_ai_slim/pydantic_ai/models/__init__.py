@@ -566,11 +566,13 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
-    capabilities_already_applied: bool = False
-    """Set to `True` by a capability (e.g. `TemporalDurability`) when it has already
-    run the capability chain's `wrap_run_event_stream` hooks against the live model
-    stream — for example, inside a durable execution activity. Signals to the outer
-    agent loop (`_stream_and_advance`) that it should not re-wrap the replayed stream.
+    _capabilities_already_applied: bool = field(default=False, init=False)
+    """Internal coordination flag set by `pydantic_ai.durable_exec.process_event_stream`
+    when a durable-execution capability has already run the capability chain's
+    `wrap_run_event_stream` hooks against the live model stream inside an
+    activity/step/task. Read by the outer agent loop (`_stream_and_advance`) to skip
+    re-wrapping the replayed stream (which would double-emit hook side effects).
+    Not user API — set via the helper, not directly.
     """
 
 
@@ -997,7 +999,7 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
-    capabilities_already_applied: bool = field(default=False, init=False)
+    _capabilities_already_applied: bool = field(default=False, init=False)
     """When `True`, the capability chain's `wrap_run_event_stream` hooks already ran
     against the live stream (e.g. inside a durable execution activity) and the outer
     agent loop should not re-wrap this replayed stream."""
