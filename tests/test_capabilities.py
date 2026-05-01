@@ -387,6 +387,31 @@ def test_agent_from_spec_output_retries():
     assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_no_retries_does_not_warn():
+    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
+
+    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
+    user-set value; only an explicit value is forwarded to the deprecated
+    `Agent(retries=...)` kwarg.
+    """
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent.from_spec({'model': 'test'})
+
+    assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_explicit_retries_warns():
+    """An explicit `retries` in the spec still triggers the deprecation warning."""
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
 def test_agent_from_spec_end_strategy():
     agent = Agent.from_spec({'model': 'test', 'end_strategy': 'exhaustive'})
     assert agent.end_strategy == 'exhaustive'
