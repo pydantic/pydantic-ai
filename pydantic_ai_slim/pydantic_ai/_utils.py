@@ -5,6 +5,7 @@ import copy
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
@@ -15,33 +16,25 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generic,
-    TypeAlias,
-    TypeGuard,
-    TypeVar,
-    get_args,
-    get_origin,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
+import anyio
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeIs,
-    is_typeddict,
-)
+from typing_extensions import ParamSpec, TypeIs, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
@@ -181,6 +174,37 @@ class Some(Generic[T]):
 
 Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
+
+
+async def gather(*coros: Awaitable[T]) -> list[T]:
+    """Run awaitables concurrently via an `anyio` task group and return results in input order.
+
+    Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
+    as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
+    match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+    """
+    sentinel = Unset()
+    results: list[T | Unset] = [sentinel] * len(coros)
+
+    async def _run(index: int, coro: Awaitable[T]) -> None:
+        results[index] = await coro
+
+    try:
+        async with anyio.create_task_group() as tg:
+            for i, coro in enumerate(coros):
+                tg.start_soon(_run, i, coro)
+    except BaseExceptionGroup as eg:
+        if len(eg.exceptions) == 1:
+            exc = eg.exceptions[0]
+            exc.__suppress_context__ = True
+            raise exc
+        raise
+
+    final_results: list[T] = []
+    for result in results:
+        assert not isinstance(result, Unset)
+        final_results.append(result)
+    return final_results
 
 
 class Unset:

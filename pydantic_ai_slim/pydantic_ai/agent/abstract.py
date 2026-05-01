@@ -30,6 +30,7 @@ from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
 from ..builtin_tools import AbstractBuiltinTool
+from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.agent.spec import AgentSpec
+    from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 
@@ -69,6 +71,15 @@ EventStreamHandler: TypeAlias = Callable[
     [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]], Awaitable[None]
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
+
+EventStreamProcessor: TypeAlias = Callable[
+    [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]],
+    AsyncIterator[_messages.AgentStreamEvent],
+]
+"""An async generator that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events and yields a potentially modified stream.
+
+Used with the [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability to modify, drop, or add events visible to the rest of the capability chain."""
+
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
@@ -137,6 +148,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
 
     @property
+    def root_capability(self) -> CombinedCapability[AgentDepsT]:
+        """The root capability of the agent, containing all registered capabilities."""
+        raise NotImplementedError
+
+    @property
     @abstractmethod
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         """All toolsets registered on the agent.
@@ -144,6 +160,38 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Output tools are not included.
         """
         raise NotImplementedError
+
+    async def system_prompt_parts(
+        self,
+        *,
+        deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        prompt: str | Sequence[_messages.UserContent] | None = None,
+        usage: _usage.RunUsage | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> list[_messages.SystemPromptPart]:
+        """Resolve the agent's configured system prompts into `SystemPromptPart`s.
+
+        Returns a list suitable for prepending to a `ModelRequest`. Static strings and
+        runners decorated with [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt]
+        are evaluated using a minimal `RunContext` built from the provided kwargs — useful
+        when reconstructing a `message_history` that should carry the agent's configured
+        system prompt (e.g. in UI adapters or after history compaction).
+
+        Dynamic runners produce parts with `dynamic_ref` set so they can continue to be
+        re-evaluated by the standard agent graph path on subsequent turns.
+
+        Args:
+            deps: Optional dependencies for dynamic system prompt functions.
+            model: Optional model to use for `RunContext.model`. Falls back to the
+                agent's configured model; required only if the agent has no model set.
+            message_history: Optional message history to expose as `RunContext.messages`.
+            prompt: Optional user prompt to expose as `RunContext.prompt`.
+            usage: Optional usage to expose as `RunContext.usage`.
+            model_settings: Optional settings to expose as `RunContext.model_settings`.
+        """
+        return []  # pragma: no cover — concrete subclasses override this
 
     def output_json_schema(self, output_type: OutputSpec[OutputDataT | RunOutputDataT] | None = None) -> JsonSchema:
         """The output return JSON schema."""
@@ -175,6 +223,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -186,6 +235,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -197,6 +247,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -208,6 +259,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -218,6 +270,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -229,6 +282,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -254,6 +308,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -268,6 +323,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -283,6 +339,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -292,6 +349,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             metadata=metadata,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
             spec=spec,
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node.
@@ -349,6 +407,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -360,6 +419,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -371,6 +431,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -382,6 +443,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -392,6 +454,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -403,6 +466,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -427,6 +491,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -441,6 +506,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -455,6 +521,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -466,6 +533,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
+                capabilities=capabilities,
                 spec=spec,
             )
         )
@@ -478,6 +546,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -489,6 +558,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -500,6 +570,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -511,6 +582,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -522,6 +594,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -533,6 +606,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
@@ -565,6 +639,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -581,6 +656,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -599,6 +675,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             deps=deps,
             instructions=instructions,
@@ -609,6 +686,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name=False,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
             spec=spec,
         ) as agent_run:
             # Handle wrap_run short-circuit: result is already available
@@ -677,8 +755,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # When we get here, the `ModelRequestNode` has completed streaming after the final result was found.
                                 # When running an agent with `agent.run`, we'd then move to `CallToolsNode` to execute the tool calls and
                                 # find the final result.
-                                # We also want to execute tool calls (in case `agent.end_strategy == 'exhaustive'`) here, but
-                                # we don't want to use run the `CallToolsNode` logic to determine the final output, as it would be
+                                # We also want to execute tool calls (in case `agent.end_strategy` is not `'early'`) here, but
+                                # we don't want to run the `CallToolsNode` logic to determine the final output, as it would be
                                 # wasteful and could produce a different result (e.g. when text output is followed by tool calls).
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
@@ -699,7 +777,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 if parts:
                                     messages.append(
                                         _messages.ModelRequest(
-                                            parts, run_id=graph_ctx.state.run_id, timestamp=_utils.now_utc()
+                                            parts,
+                                            run_id=graph_ctx.state.run_id,
+                                            conversation_id=graph_ctx.state.conversation_id,
+                                            timestamp=_utils.now_utc(),
                                         )
                                     )
 
@@ -757,6 +838,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -767,6 +849,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
@@ -778,6 +861,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -788,6 +872,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
@@ -798,6 +883,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -808,6 +894,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
@@ -843,6 +930,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request, or a callable
@@ -858,6 +946,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -872,6 +961,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -882,6 +972,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler,
+                capabilities=capabilities,
                 spec=spec,
             ) as stream_result:
                 yield stream_result
@@ -897,6 +988,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -907,6 +999,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
 
@@ -918,6 +1011,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -928,6 +1022,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
 
@@ -938,6 +1033,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -948,6 +1044,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -990,6 +1087,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1003,6 +1101,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1020,6 +1119,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -1029,6 +1129,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             metadata=metadata,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            capabilities=capabilities,
             spec=spec,
         )
 
@@ -1039,6 +1140,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1048,6 +1150,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
@@ -1067,6 +1170,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     output_type=output_type,
                     message_history=message_history,
                     deferred_tool_results=deferred_tool_results,
+                    conversation_id=conversation_id,
                     model=model,
                     instructions=instructions,
                     deps=deps,
@@ -1078,6 +1182,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
+                    capabilities=capabilities,
                     spec=spec,
                 )
 
@@ -1104,6 +1209,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1114,6 +1220,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1125,6 +1232,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1135,6 +1243,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1147,6 +1256,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1157,6 +1267,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1202,6 +1313,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         ],
                         timestamp=datetime.datetime(...),
                         run_id='...',
+                        conversation_id='...',
                     )
                 ),
                 CallToolsNode(
@@ -1211,6 +1323,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
+                        conversation_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
@@ -1226,6 +1339,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1239,6 +1353,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1257,11 +1372,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
+        """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1272,6 +1388,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            builtin_tools: The builtin tools to use instead of the agent's configured builtin tools.
+                Per-run `builtin_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
@@ -1413,6 +1531,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         output_type: OutputSpec[OutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -1461,6 +1580,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -1498,6 +1618,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             deps=deps,
             model_settings=model_settings,

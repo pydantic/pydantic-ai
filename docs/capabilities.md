@@ -23,13 +23,16 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — builtin when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — builtin when supported, subagent fallback via `fallback_model` | Yes |
 | [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — builtin when supported, direct connection otherwise | Yes |
-| [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies [tool definitions](tools.md) per step | — |
+| [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies function [tool definitions](tools.md) per step | — |
+| [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] | Filters or modifies [output tool][pydantic_ai.output.ToolOutput] definitions per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
-| [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](deferred-tools.md#resolving-deferred-calls-with-a-handler) inline with a handler function | — |
+| [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](message-history.md#processing-message-history) | — |
+| [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards agent stream events to a handler function | — |
 | [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a custom thread executor for [sync functions](tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
@@ -170,9 +173,9 @@ from pydantic_ai.capabilities import BuiltinOrLocalTool
 cap = BuiltinOrLocalTool(builtin=CodeExecutionTool(), local=my_local_executor)
 ```
 
-### PrepareTools
+### PrepareTools and PrepareOutputTools
 
-[`PrepareTools`][pydantic_ai.capabilities.PrepareTools] wraps a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step:
+[`PrepareTools`][pydantic_ai.capabilities.PrepareTools] and [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] wrap a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step. `PrepareTools` handles function tools; `PrepareOutputTools` handles [output tools][pydantic_ai.output.ToolOutput]. The Agent constructor's [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc] arguments are sugar that injects these capabilities automatically.
 
 ```python {title="prepare_tools_builtin.py"}
 from pydantic_ai import Agent, RunContext, ToolDefinition
@@ -338,6 +341,37 @@ _(This example is complete, it can be run "as is")_
 
 The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](toolsets.md#setting-tool-metadata).
 
+### ReinjectSystemPrompt
+
+[`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] ensures the agent's configured [`system_prompt`](agent.md#system-prompts) is at the head of the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] on every model request. By default, if any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is already present in the history, the capability is a no-op (so multi-agent handoff and user-managed system prompts remain authoritative). Set `replace_existing=True` to instead strip any existing `SystemPromptPart`s before prepending the agent's configured prompt — useful when the history comes from an untrusted source and the server's prompt must win.
+
+Useful when `message_history` comes from a source that doesn't round-trip system prompts — UI frontends, database persistence layers, conversation compaction pipelines. Without this capability, an agent configured with a `system_prompt` will silently run without it if the history doesn't already include one.
+
+```python {title="reinject_system_prompt.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+agent = Agent('test', system_prompt='You are a helpful assistant.', capabilities=[ReinjectSystemPrompt()])
+
+# History that's missing the system prompt (e.g. reconstructed from a UI frontend).
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')]),
+    ModelResponse(parts=[TextPart(content='Hello!')]),
+]
+
+# Without the capability, the agent would run without its configured system prompt.
+# With the capability, the system prompt is reinjected at the head of the first request.
+result = agent.run_sync('Follow up', message_history=history)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+assert first_request.parts[0].content == 'You are a helpful assistant.'
+```
+
+_(This example is complete, it can be run "as is")_
+
+The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
+
 ## Building custom capabilities
 
 To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
@@ -389,7 +423,7 @@ For [builtin tools](builtin-tools.md), override [`get_builtin_tools`][pydantic_a
 
 [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] lets a capability wrap the agent's entire assembled toolset with a [`WrapperToolset`](toolsets.md#changing-tool-execution). This is more powerful than providing tools — it can intercept tool execution, add logging, or apply cross-cutting behavior.
 
-The wrapper receives the combined non-output toolset (after any agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping). Output tools are added separately and are not affected.
+The wrapper receives the combined non-output toolset (after the [`prepare_tools`](#tool-preparation) hook has wrapped it). Output tools are added separately and are not affected.
 
 ```python {title="wrapper_toolset_example.py"}
 from dataclasses import dataclass
@@ -434,7 +468,7 @@ result = agent.run_sync('hello')
 ```
 
 !!! note
-    `get_wrapper_toolset` wraps the non-output *toolset* once per run (during toolset assembly), intercepting tool execution. This is different from the [`prepare_tools`](#tool-preparation) hook, which operates on tool *definitions* per step and controls visibility rather than execution.
+    `get_wrapper_toolset` wraps the non-output *toolset* once per run (during toolset assembly). The [`prepare_tools`](#tool-preparation) and [`prepare_output_tools`](#tool-preparation) hooks also flow through `PreparedToolset` wrappers, so all three integrate at the toolset level — `get_wrapper_toolset` runs around `prepare_tools` (it sees the prepared defs), and `prepare_output_tools` wraps the output toolset independently.
 
 ### Providing instructions
 
@@ -660,9 +694,42 @@ To skip validation and provide pre-validated args, raise [`SkipToolValidation(ar
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
 
+#### Output hooks
+
+Like tool processing, [output](output.md) processing has two phases: **validation** (parsing the model's raw output against the output schema) and **processing** (extracting the value and calling any [output function](output.md#output-functions)). Each phase has its own hooks.
+
+All output hooks receive an `output_context` parameter with [`OutputContext`][pydantic_ai.capabilities.OutputContext] (mode, output type, schema info, and tool call details for [tool output](output.md#tool-output)).
+
+**Validate hooks** fire only for structured output that requires parsing (prompted, native, tool, union output). They do not fire for plain text or image output. **Process hooks** fire for **all output types** including text, structured, and image output. For [tool output](output.md#tool-output), only output hooks fire — tool hooks are skipped entirely.
+
+**Validation hooks** — fire for structured output only; `output` is `str` (raw text) or `dict` (tool args):
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`before_output_validate`][pydantic_ai.capabilities.AbstractCapability.before_output_validate] | `(ctx, *, output_context, output: RawOutput) -> RawOutput` | Modify raw output before validation (e.g. JSON repair) |
+| [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate] | `(ctx, *, output_context, output: Any) -> Any` | Modify validated output |
+| [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] | `(ctx, *, output_context, output: RawOutput, handler) -> Any` | Wrap the validation step |
+| [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | `(ctx, *, output_context, output: RawOutput, error: ValidationError \| ModelRetry) -> Any` | Handle validation errors (see [error hooks](#error-hooks)) |
+
+**Processing hooks** — fire for all output types; `output` is the validated/raw output. Output validators ([`@agent.output_validator`][pydantic_ai.Agent.output_validator]) run inside the processing pipeline (within `wrap_output_process`), so `after_output_process` sees the fully validated result:
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify output before processing |
+| [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process] | `(ctx, *, output_context, output: Any) -> Any` | Modify processed result |
+| [`wrap_output_process`][pydantic_ai.capabilities.AbstractCapability.wrap_output_process] | `(ctx, *, output_context, output: Any, handler) -> Any` | Wrap processing |
+| [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | `(ctx, *, output_context, output: Any, error: Exception) -> Any` | Handle processing errors (see [error hooks](#error-hooks)) |
+
+Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same pattern used in [output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions). See [Triggering retries with `ModelRetry`](hooks.md#triggering-retries-with-modelretry) for the full pattern.
+
 #### Tool preparation
 
-Capabilities can filter or modify which tool definitions the model sees on each step via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools]. This controls tool **visibility**, not execution — use execution hooks for that.
+Capabilities can filter or modify which tool definitions the model sees on each step via two hooks:
+
+- [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives **function** tools only. Use this for filtering or modifications to tools the model can call directly.
+- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle.
+
+Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
@@ -703,7 +770,7 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-The list includes all tool kinds (function, output, unapproved) — use `tool_def.kind` to distinguish. This hook runs after the agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc]. For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] capability wraps a callable without needing a custom subclass.
+For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] / [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] capabilities wrap a callable without a custom subclass — these are also what the agent-level [`prepare_tools=`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools=`][pydantic_ai.tools.ToolsPrepareFunc] kwargs inject, so kwarg and capability share one execution path.
 
 #### Event stream hook
 
@@ -775,6 +842,8 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | Model request fails | Return [`ModelResponse`][pydantic_ai.messages.ModelResponse] |
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Tool validation fails | Return validated args `dict` |
 | [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] | Tool execution fails | Return any tool result |
+| [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | Output validation fails | Return validated output |
+| [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | Output execution fails | Return any output result |
 
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field
@@ -804,6 +873,18 @@ class ErrorLogger(AbstractCapability[Any]):
         self.errors.append(f'Tool {call.tool_name} failed: {error}')
         raise error  # Re-raise to let the normal retry flow handle it
 ```
+
+#### Deferred tool calls
+
+Capabilities can resolve [deferred tool calls](deferred-tools.md) — calls that require approval, or that are executed externally — directly from the agent run, without ending the run and waiting for a follow-up:
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] | `(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults \| None` | Resolve some or all pending approval/external calls inline |
+
+Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output for the caller to handle.
+
+For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
 ### Wrapping capabilities
 
@@ -867,6 +948,60 @@ agent.run_sync('second run')
 print(counter.count)
 #> 0
 ```
+
+### Dynamically building a capability
+
+Capabilities can be built dynamically ahead of each agent run using a function that takes the agent [`RunContext`][pydantic_ai.tools.RunContext] and returns a capability or `None`. This is useful when the capability — its instructions, model settings, hooks, or contributed toolset — depends on information specific to a run, like its [dependencies](./dependencies.md).
+
+To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or [`agent.run()`][pydantic_ai.Agent.run]. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, builtin tools, and hooks all flow through normally.
+
+```python {title="dynamic_capability.py"}
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Skill(AbstractCapability[str]):
+    """Per-user skill loaded from a database at run time."""
+
+    name: str
+    role: Literal['admin', 'guest']
+
+    def get_instructions(self) -> str:
+        return f'You can use the {self.name} skill (role: {self.role}).'
+
+
+# Pretend this comes from a database keyed by user.
+SKILLS = {
+    'alice': Skill(name='refunds', role='admin'),
+    'bob': Skill(name='lookup', role='guest'),
+}
+
+
+def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
+    return SKILLS.get(ctx.deps)
+
+
+agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
+
+result = agent.run_sync('hi', deps='alice')
+print(result.all_messages()[0].instructions)
+#> You can use the refunds skill (role: admin).
+```
+
+_(This example is complete, it can be run "as is")_
+
+To return more than one capability from a single factory, wrap them in a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability].
+
+!!! note "Durable execution (Temporal, DBOS, Prefect)"
+
+    A dynamic capability whose resolved capability contributes only instructions, model settings, builtin tools, hooks, or `prepare_tools`/`get_wrapper_toolset` (i.e. no `get_toolset()` of its own) works seamlessly with durable execution — the factory runs in the workflow alongside the rest of the agent loop. This covers the common "load this user's skill from the database and add its instructions" pattern.
+
+    However, dynamic capabilities that contribute their own toolset via `get_toolset()` are not yet supported with durable execution. The toolset is only known at run time, so it bypasses the durable wrapper's construction-time toolset registration and would attempt I/O directly inside the workflow. As a workaround, register the toolsets statically via `Agent(toolsets=[...])` (where they get wrapped properly) and have the dynamic capability reference them indirectly — e.g. via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] to scope which tools are visible per-run, rather than constructing the toolset inside the factory. Full support is tracked in [#5253](https://github.com/pydantic/pydantic-ai/issues/5253).
 
 ### Composition and middleware semantics
 
@@ -1041,6 +1176,10 @@ result = agent.run_sync('hello')
 print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?
 ```
+
+## Pydantic AI Harness
+
+[**Pydantic AI Harness**](harness/overview.md) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode) live there rather than in core. See [What goes where?](harness/overview.md#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
 
 ## Third-party capabilities
 
