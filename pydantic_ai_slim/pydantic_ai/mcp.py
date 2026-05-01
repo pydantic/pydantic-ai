@@ -762,8 +762,14 @@ class MCPServer(AbstractToolset[Any], ABC):
         always exited in the same task they were entered in.
         """
         state = self._session_state
-        assert state.ready_event is not None
-        assert state.stop_event is not None
+        # Capture local references so a recycled session (new __aenter__ replacing
+        # state.ready_event/state.stop_event before this runner's `finally` runs)
+        # cannot corrupt the next session's events.
+        ready_event = state.ready_event
+        stop_event = state.stop_event
+        assert ready_event is not None
+        assert stop_event is not None
+        client: ClientSession | None = None
         try:
             async with AsyncExitStack() as stack:
                 read_stream, write_stream = await stack.enter_async_context(self.client_streams())
@@ -788,13 +794,19 @@ class MCPServer(AbstractToolset[Any], ABC):
                         await client.set_logging_level(log_level)
 
                 state.client = client
-                state.ready_event.set()
-                await state.stop_event.wait()
+                ready_event.set()
+                await stop_event.wait()
         except BaseException as e:
-            state.connect_error = e
+            # Only record the error if we are still the active session — otherwise
+            # __aenter__ has already moved on with a fresh session_task.
+            if state.session_task is asyncio.current_task():
+                state.connect_error = e
         finally:
-            state.client = None
-            state.ready_event.set()
+            # Only clear state.client if it still references *our* client; a
+            # recycled session may have already installed a new one.
+            if state.client is client:
+                state.client = None
+            ready_event.set()
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.

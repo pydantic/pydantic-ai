@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timezone
 from pathlib import Path
@@ -373,6 +374,89 @@ async def test_aexit_concurrent_does_not_corrupt_nesting_counter():
     errors = [r for r in results if isinstance(r, ValueError)]
     assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
     assert server._session_state.nesting_counter == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_recycled_session_state_does_not_corrupt_new_session():
+    """Regression test: an old `_session_runner`'s `finally` must not corrupt a recycled session.
+
+    Race: the last `__aexit__` releases the lock and then awaits the old session task
+    *outside* the lock. A concurrent `__aenter__` grabs the lock and reassigns
+    `state.ready_event` / `state.stop_event` for a fresh session. If the old runner's
+    `finally` writes to `state.*` directly, it can prematurely set the *new* session's
+    `ready_event`, causing the new `__aenter__` to return with `state.client is None`.
+
+    The fix captures local references in `_session_runner` so its `finally` only
+    signals events it owns. This test exercises `_session_runner` directly with
+    controlled timing to verify that contract.
+
+    Reported by Devin in https://github.com/pydantic/pydantic-ai/pull/4514#discussion_r3173639823
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    streams_entered = anyio.Event()
+    streams_can_exit = anyio.Event()
+
+    @asynccontextmanager
+    async def gated_streams() -> AsyncIterator[Any]:
+        # Yield streams that fail ClientSession initialization quickly, so the runner
+        # exits its try block and reaches finally — but block teardown until released.
+        send_a, recv_a = anyio.create_memory_object_stream[Any](0)
+        send_b, recv_b = anyio.create_memory_object_stream[Any](0)
+        try:
+            streams_entered.set()
+            yield (recv_a, send_b)
+        finally:
+            await streams_can_exit.wait()
+            await send_a.aclose()
+            await recv_a.aclose()
+            await send_b.aclose()
+            await recv_b.aclose()
+
+    state = server._session_state  # pyright: ignore[reportPrivateUsage]
+    state.ready_event = anyio.Event()
+    state.stop_event = anyio.Event()
+    state.session_task = asyncio.current_task()  # pretend this task is the active session
+
+    # Capture references to verify which event the runner's `finally` signals.
+    original_ready_event = state.ready_event
+    original_stop_event = state.stop_event
+
+    with patch.object(server, 'client_streams', gated_streams):
+        # Start the runner — it will hang inside ClientSession.initialize() because
+        # gated_streams sends nothing. We'll force it to teardown via task cancellation.
+        runner_task = asyncio.create_task(server._session_runner())  # pyright: ignore[reportPrivateUsage]
+        await streams_entered.wait()
+
+        # Cancel to force the runner into its except/finally path.
+        runner_task.cancel()
+        await asyncio.sleep(0)  # let the cancel propagate into the runner
+
+        # Simulate the recycled-session race: replace state events as if a new
+        # __aenter__ had begun while the old runner is mid-teardown.
+        new_ready_event = anyio.Event()
+        new_stop_event = anyio.Event()
+        state.ready_event = new_ready_event
+        state.stop_event = new_stop_event
+        state.connect_error = None
+
+        # Allow the runner's `client_streams.__aexit__` (and thus its finally) to run.
+        streams_can_exit.set()
+        try:
+            await runner_task
+        except BaseException:
+            pass
+
+        # The runner's `finally` must signal the event it captured at entry — NOT the
+        # event that was swapped in afterwards.
+        assert original_ready_event.is_set(), 'Old runner did not set its own ready_event'
+        assert not new_ready_event.is_set(), 'Old runner corrupted the new session by setting the recycled ready_event'
+        # And it must not have set state.connect_error on the new session — current_task
+        # is still this test, not the runner, so the guarded write should skip it.
+        assert state.connect_error is None
+        # The original stop_event was never used by the test, so it should remain unset.
+        assert not new_stop_event.is_set()
+        # State referenced by the test (acting as fake session_task) is left untouched.
+        _ = original_stop_event
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
