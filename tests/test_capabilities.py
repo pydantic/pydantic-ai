@@ -1504,7 +1504,7 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'retries': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'default': None, 'title': 'Retries'},
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
