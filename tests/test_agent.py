@@ -66,6 +66,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -4001,6 +4002,78 @@ def test_set_model(env: TestEnv):
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot((0, 'a'))
+
+
+class _RecordRunModel(AbstractCapability[None]):
+    model: Model | None = None
+
+    async def for_run(self, ctx: RunContext[None]) -> Self:
+        self.model = ctx.model
+        return self
+
+
+@requires_google
+async def test_run_model_string_reuses_agent_provider_for_same_model_family():
+    assert GoogleProvider is not None
+    from pydantic_ai.models.google import GoogleModel
+
+    provider = GoogleProvider(project='test-project', location='us-central1')
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+    record_model = _RecordRunModel()
+
+    with pytest.warns(DeprecationWarning, match='without a provider prefix'):
+        async with agent.iter('Hello', model='gemini-3-flash-preview', capabilities=[record_model]):
+            pass
+
+    model = record_model.model
+    assert isinstance(model, GoogleModel)
+    assert model.provider is provider
+    assert model.model_name == 'gemini-3-flash-preview'
+    assert model.system == 'google-vertex'
+
+
+@requires_google
+@requires_openai
+async def test_run_model_string_only_reuses_provider_for_same_model_family(env: TestEnv):
+    assert OpenAIProvider is not None
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.openai import OpenAIChatModel
+
+    env.set('GOOGLE_API_KEY', 'foobar')
+    openai_provider = OpenAIProvider(api_key='foobar')
+    agent = Agent(OpenAIChatModel('gpt-5-mini', provider=openai_provider))
+    record_model = _RecordRunModel()
+
+    with pytest.warns(DeprecationWarning, match='without a provider prefix'):
+        async with agent.iter('Hello', model='gemini-3-flash-preview', capabilities=[record_model]):
+            pass
+
+    model = record_model.model
+    assert isinstance(model, GoogleModel)
+    assert model.provider is not openai_provider
+
+
+async def test_run_model_string_without_agent_provider_uses_standard_inference():
+    agent = Agent(FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('ok')])))
+    record_model = _RecordRunModel()
+
+    async with agent.iter('Hello', model='test', capabilities=[record_model]):
+        pass
+
+    assert isinstance(record_model.model, TestModel)
+
+
+@requires_google
+async def test_run_model_string_unknown_name_still_raises_after_provider_reuse_attempt():
+    assert GoogleProvider is not None
+    from pydantic_ai.models.google import GoogleModel
+
+    provider = GoogleProvider(project='test-project', location='us-central1')
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider))
+
+    with pytest.raises(UserError, match='Unknown model: not-a-known-model'):
+        async with agent.iter('Hello', model='not-a-known-model'):
+            pass
 
 
 def test_override_model_no_model():

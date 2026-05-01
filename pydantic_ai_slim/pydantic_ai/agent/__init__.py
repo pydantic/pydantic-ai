@@ -2378,7 +2378,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             model_ = some_model.value
         elif model is not None:
-            model_ = models.infer_model(model)
+            model_ = self._infer_run_model(model)
         elif self.model is not None:
             # noinspection PyTypeChecker
             model_ = self.model = models.infer_model(self.model)
@@ -2390,6 +2390,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrument = self._instrument_default
 
         return instrument_model(model_, instrument)
+
+    def _infer_run_model(self, model: models.Model | models.KnownModelName | str) -> models.Model:
+        if isinstance(model, models.Model):
+            return model
+
+        base_model = self.model
+        if isinstance(model, str) and ':' not in model and isinstance(base_model, models.Model):
+            if provider := base_model.provider:
+                with warnings.catch_warnings(record=True) as caught_warnings:
+                    warnings.simplefilter('always', DeprecationWarning)
+                    try:
+                        inferred_model = models.infer_model(model, provider_factory=lambda _: provider)
+                    except (TypeError, ValueError, exceptions.UserError):
+                        inferred_model = None
+
+                if isinstance(inferred_model, type(base_model)):
+                    for warning in caught_warnings:
+                        warnings.warn(warning.message, warning.category, stacklevel=3)
+                    return inferred_model
+
+        return models.infer_model(model)
 
     def _get_deps(self: Agent[T, OutputDataT], deps: T) -> T:
         """Get deps for a run.
