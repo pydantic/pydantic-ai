@@ -294,6 +294,7 @@ def print_callback(s: str) -> str:
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
+    s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
     return s
 
 
