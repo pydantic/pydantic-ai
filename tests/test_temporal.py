@@ -3879,6 +3879,28 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
         assert params.function_tools[0].parameters_json_schema['additionalProperties'] is False
 
 
+def test_temporal_model_prepare_messages_with_unregistered_model_string() -> None:
+    """`prepare_messages` falls back to `Model.prepare_messages` for unregistered model strings.
+
+    Mirrors `prepare_request`: when `using_model('openai:...')` swaps in a model the
+    registry doesn't know, the temporal wrapper has no concrete `Model` instance to
+    delegate to, so it must invoke the grandparent `Model.prepare_messages` against
+    its own profile-derived behavior.
+    """
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__prepare_messages_unregistered',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+    with temporal_model.using_model('openai:gpt-5'):
+        prepared = temporal_model.prepare_messages(messages)
+    assert prepared == messages
+
+
 def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
     """Test customize_request_parameters delegates to the currently active registered model."""
 

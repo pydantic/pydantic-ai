@@ -2915,14 +2915,17 @@ def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
 
 
 def test_model_request_part_discriminator_recognizes_tool_search_return_instance() -> None:
-    """Re-validation of a `ToolSearchReturnPart` instance preserves the typed subclass."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
+    """The request-part discriminator returns the typed tag when called with a
+    `ToolSearchReturnPart` instance.
 
-    request = ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')])
-    [revalidated] = ModelMessagesTypeAdapter.validate_python([request])
-    assert isinstance(revalidated, ModelRequest)
-    [part] = revalidated.parts
-    assert isinstance(part, ToolSearchReturnPart)
+    Pydantic's discriminated-union fast path bypasses the discriminator when the input
+    already matches one of the tagged variants by isinstance, so this exercises the
+    function directly rather than via `ModelMessagesTypeAdapter`.
+    """
+    from pydantic_ai.messages import _model_request_part_discriminator  # pyright: ignore[reportPrivateUsage]
+
+    part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
+    assert _model_request_part_discriminator(part) == 'tool-search-return'
 
 
 def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch() -> None:
@@ -2960,15 +2963,29 @@ def test_model_response_part_discriminator_passthrough_for_unknown_part_kind() -
     assert isinstance(part, TextPart)
 
 
-def test_model_response_instance_dispatch_for_local_call_part() -> None:
-    """Re-validation of a `ToolSearchCallPart` instance preserves the typed subclass
-    (covers the instance-side `isinstance(v, ToolSearchCallPart)` branch)."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
+def test_model_response_part_discriminator_recognizes_typed_instances() -> None:
+    """The response-part discriminator returns the typed tag for each typed-instance branch.
 
-    resp = ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')])
-    [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
-    [part] = revalidated.parts
-    assert isinstance(part, ToolSearchCallPart)
+    Pydantic's discriminated-union fast path bypasses the discriminator when the input
+    already matches one of the tagged variants by isinstance, so the instance branches
+    in `_model_response_part_discriminator` are only reachable by calling the function
+    directly. This locks in the contract for any future caller (or pydantic version
+    that changes its short-circuit behavior).
+    """
+    from pydantic_ai.messages import _model_response_part_discriminator  # pyright: ignore[reportPrivateUsage]
+
+    builtin_call = BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1', provider_name='anthropic')
+    assert _model_response_part_discriminator(builtin_call) == 'builtin-tool-search-call'
+
+    builtin_return = BuiltinToolSearchReturnPart(
+        content={'discovered_tools': []},
+        tool_call_id='c1',
+        provider_name='anthropic',
+    )
+    assert _model_response_part_discriminator(builtin_return) == 'builtin-tool-search-return'
+
+    local_call = ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')
+    assert _model_response_part_discriminator(local_call) == 'tool-search-call'
 
 
 async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
