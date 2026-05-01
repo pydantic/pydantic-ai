@@ -2843,13 +2843,14 @@ def test_synthesize_local_from_builtin_call_none_args_falls_through() -> None:
     assert result.args is None
 
 
-def test_synthesize_local_from_builtin_return_malformed_content_defaults() -> None:
-    """A return part with non-dict-non-str content (shouldn't happen in practice but
-    type allows it via cast paths) gets a sensible empty-discoveries default."""
+def test_synthesize_local_from_builtin_return_none_content_defaults() -> None:
+    """A return part with `content=None` (legal per the typed signature) gets a
+    sensible empty-discoveries default. Covers the `else` branch in
+    `synthesize_local_from_builtin_return`."""
     from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_return
     from pydantic_ai.messages import BuiltinToolSearchReturnPart
 
-    part = BuiltinToolSearchReturnPart(content=cast(Any, 12345), tool_call_id='c1')
+    part = BuiltinToolSearchReturnPart(content=None, tool_call_id='c1')
     result = synthesize_local_from_builtin_return(part)
     assert result.content == {'discovered_tools': []}
 
@@ -2985,7 +2986,7 @@ async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     def calculate_mortgage() -> str:
         return 'monthly: $X'
 
-    ts = ToolSearchToolset(wrapped=base_toolset, search_fn=cast(Any, async_match))
+    ts = ToolSearchToolset(wrapped=base_toolset, search_fn=async_match)
     ctx = _build_run_context(_Deps())
     tools = await ts.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
@@ -3024,7 +3025,7 @@ def test_anthropic_custom_replay_blocks_matches_not_a_list() -> None:
 
     malformed = ToolReturnPart(
         tool_name='search_tools',
-        content=cast(Any, {'discovered_tools': 'not-a-list'}),
+        content={'discovered_tools': 'not-a-list'},
         tool_call_id='c1',
     )
     refs, message = _build_custom_tool_search_replay_blocks(malformed, custom_tool_search_active=True)
@@ -3041,18 +3042,15 @@ def test_anthropic_custom_replay_blocks_skips_non_dict_match_entries() -> None:
 
     mixed = ToolReturnPart(
         tool_name='search_tools',
-        content=cast(
-            Any,
-            {
-                'discovered_tools': [
-                    'not-a-dict',
-                    {'name': 'foo'},
-                    {'name': 123},  # name not a string — skipped
-                    {'description': 'no name key'},  # no name — skipped
-                    {'name': 'bar'},
-                ],
-            },
-        ),
+        content={
+            'discovered_tools': [
+                'not-a-dict',
+                {'name': 'foo'},
+                {'name': 123},  # name not a string — skipped
+                {'description': 'no name key'},  # no name — skipped
+                {'name': 'bar'},
+            ],
+        },
         tool_call_id='c1',
     )
     refs, _msg = _build_custom_tool_search_replay_blocks(mixed, custom_tool_search_active=True)
