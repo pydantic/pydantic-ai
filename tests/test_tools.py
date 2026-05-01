@@ -1504,6 +1504,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
@@ -1511,6 +1512,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1523,6 +1525,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -1530,6 +1533,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1897,6 +1901,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1912,6 +1917,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1952,6 +1958,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1992,6 +1999,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2007,6 +2015,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2047,6 +2056,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2076,6 +2086,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2083,6 +2094,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2117,6 +2129,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2124,6 +2137,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2139,6 +2153,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2154,6 +2169,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2345,6 +2361,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2356,6 +2373,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2368,6 +2386,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2400,6 +2419,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2411,6 +2431,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2423,6 +2444,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2442,6 +2464,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2449,6 +2472,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2591,6 +2615,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2598,6 +2623,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2610,6 +2636,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2617,6 +2644,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2629,6 +2657,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
@@ -2636,6 +2665,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2648,6 +2678,7 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
@@ -2655,6 +2686,7 @@ def test_retry_tool_until_last_attempt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3181,6 +3213,7 @@ def test_args_validator_success():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3192,6 +3225,7 @@ def test_args_validator_success():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3204,6 +3238,7 @@ def test_args_validator_success():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3211,6 +3246,7 @@ def test_args_validator_success():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3259,6 +3295,7 @@ async def test_args_validator_async():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3270,6 +3307,7 @@ async def test_args_validator_async():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3282,6 +3320,7 @@ async def test_args_validator_async():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3289,6 +3328,7 @@ async def test_args_validator_async():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3346,6 +3386,7 @@ def test_args_validator_tool_direct():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3357,6 +3398,7 @@ def test_args_validator_tool_direct():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3369,6 +3411,7 @@ def test_args_validator_tool_direct():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3376,6 +3419,7 @@ def test_args_validator_tool_direct():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3411,6 +3455,7 @@ def test_args_validator_toolset():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3422,6 +3467,7 @@ def test_args_validator_toolset():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3434,6 +3480,7 @@ def test_args_validator_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3441,6 +3488,7 @@ def test_args_validator_toolset():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3473,6 +3521,7 @@ def test_args_validator_tool_plain():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3484,6 +3533,7 @@ def test_args_validator_tool_plain():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3496,6 +3546,7 @@ def test_args_validator_tool_plain():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
@@ -3503,6 +3554,7 @@ def test_args_validator_tool_plain():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3728,6 +3780,54 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
+def test_args_validator_single_base_model_arg():
+    """`args_validator` works when a tool has a single BaseModel parameter.
+
+    The tool's JSON schema is the BaseModel's fields directly (unwrapped), but the validated
+    args dict remains keyed by parameter name so `args_validator_func(ctx, **args)` unpacks correctly.
+    """
+
+    class MyArgs(BaseModel):
+        x: int
+        y: int
+
+    validator_calls: list[MyArgs] = []
+
+    def my_validator(ctx: RunContext[int], argument: MyArgs) -> None:
+        validator_calls.append(argument)
+
+    agent = Agent(TestModel(), deps_type=int)
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], argument: MyArgs) -> int:
+        return argument.x + argument.y
+
+    agent.run_sync('call add_numbers', deps=42)
+    assert len(validator_calls) == 1
+    assert isinstance(validator_calls[0], MyArgs)
+
+
+def test_single_base_model_arg_validator_accepts_wrapped_input():
+    """The single-BaseModel-arg validator also accepts already-wrapped `{name: value}` input.
+
+    This shape arises when previously-validated args are serialized out (e.g. through Temporal's
+    activity boundary) and then re-validated with the same schema.
+    """
+
+    class Payload(BaseModel):
+        city: str
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)
@@ -3751,6 +3851,7 @@ def test_tool_ctx_agent():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
@@ -3758,6 +3859,7 @@ def test_tool_ctx_agent():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3770,6 +3872,7 @@ def test_tool_ctx_agent():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
@@ -3777,6 +3880,7 @@ def test_tool_ctx_agent():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3789,6 +3893,7 @@ def test_tool_ctx_agent():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3813,6 +3918,7 @@ def test_tool_ctx_agent_in_output_validator():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -3820,6 +3926,7 @@ def test_tool_ctx_agent_in_output_validator():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

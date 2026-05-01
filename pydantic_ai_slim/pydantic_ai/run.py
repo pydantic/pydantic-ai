@@ -68,6 +68,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     ],
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             CallToolsNode(
@@ -77,6 +78,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -163,9 +165,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[_messages.ModelMessage]:
-        """Return new messages for the run so far.
+        """Return the messages produced during this run so far.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
         """
         return self.all_messages()[self.ctx.deps.new_message_index :]
 
@@ -350,6 +352,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             ],
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     CallToolsNode(
@@ -359,6 +362,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     End(data=FinalResult(output='The capital of France is Paris.')),
@@ -393,6 +397,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._graph_run.state.conversation_id
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
@@ -478,9 +487,9 @@ class AgentRunResult(Generic[OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -537,6 +546,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._state.conversation_id
 
 
 @dataclasses.dataclass(repr=False)

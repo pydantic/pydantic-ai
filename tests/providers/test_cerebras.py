@@ -110,6 +110,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
         assert 'presence_penalty' in profile.openai_unsupported_model_settings
         assert 'parallel_tool_calls' in profile.openai_unsupported_model_settings
         assert 'service_tier' in profile.openai_unsupported_model_settings
+        assert 'openai_service_tier' in profile.openai_unsupported_model_settings
 
 
 def test_infer_cerebras_model(env: TestEnv):

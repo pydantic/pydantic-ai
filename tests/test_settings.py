@@ -85,3 +85,23 @@ class TestMergeModelSettingsThinking:
     def test_merge_with_both_none(self):
         result = merge_model_settings(None, None)
         assert result is None
+
+
+class TestMergeModelSettingsServiceTier:
+    """merge_model_settings with unified service_tier field."""
+
+    def test_merge_service_tier_override(self):
+        base: ModelSettings = {'service_tier': 'default'}
+        overrides: ModelSettings = {'service_tier': 'priority'}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('service_tier') == 'priority'
+
+    def test_merge_preserves_non_service_tier_settings(self):
+        base: ModelSettings = {'max_tokens': 1000, 'temperature': 0.5}
+        overrides: ModelSettings = {'service_tier': 'flex'}
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('max_tokens') == 1000
+        assert result.get('temperature') == 0.5
+        assert result.get('service_tier') == 'flex'
