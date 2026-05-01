@@ -450,8 +450,20 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         contribute would silently execute in workflow code (non-deterministic, no
         retry semantics). Reject by class identity: if a leaf in `ctx.root_capability`
         has a type the bound chain didn't see, raise `UserError`.
+
+        Skipped when the bound tree contains a `DynamicCapability` — the resolved
+        factory result replaces the `DynamicCapability` in the run-time tree, so the
+        runtime-class check would falsely reject any class produced by the factory.
+        Issue #5253 tracks proper end-to-end durable support for `DynamicCapability`
+        toolsets; until that lands, the static class check is relaxed for any agent
+        that uses dynamic capabilities.
         """
+        from pydantic_ai.capabilities import DynamicCapability
+
         if ctx.root_capability is None:  # pragma: no cover - always set inside an agent run
+            return
+
+        if any(issubclass(cls, DynamicCapability) for cls in self._bound_capability_classes):
             return
 
         runtime_classes: set[type[AbstractCapability[Any]]] = set()
