@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -896,6 +896,55 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.is_complete
 
 
+@dataclass(kw_only=True)
+class CancellableEventStream(Generic[AgentDepsT, OutputDataT]):
+    """An async iterable of events that also supports run-level cancellation.
+
+    Passed to user-defined `event_stream_handler` callbacks (after capability
+    [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream]
+    transforms have been applied) so that handlers can stop the agent run
+    cleanly via [`cancel()`][pydantic_ai.result.CancellableEventStream.cancel]
+    instead of having to raise.
+
+    Iterate with `async for event in stream:` to consume events; call
+    `await stream.cancel()` to terminate the run gracefully.
+    """
+
+    _source: AsyncIterable[AgentStreamEvent]
+    _agent_stream: AgentStream[AgentDepsT, OutputDataT]
+
+    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
+        return self._source.__aiter__()
+
+    async def cancel(self, *, end_run: bool = True, reason: str | None = None) -> None:
+        """Cancel the in-flight model stream and (by default) terminate the entire agent run.
+
+        Args:
+            end_run: If `True` (default), terminates the entire agent run by raising
+                [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] at the next
+                checkpoint in the agent graph. Pass `False` to stop only the
+                current model stream and let the run continue.
+            reason: Optional structured reason carried on the resulting
+                `RunCancelled` exception. Ignored when `end_run` is `False`.
+        """
+        await self._agent_stream.cancel(end_run=end_run, reason=reason)
+
+
+@dataclass
+class AgentEventStreamCancelState:
+    """Shared state for graceful cancellation of an in-flight `AgentEventStream`.
+
+    The producer-side `_run_stream_events` generator captures the latest
+    [`CancellableEventStream`][pydantic_ai.result.CancellableEventStream] into
+    this state on each model-request node so that the consumer-side
+    [`AgentEventStream.cancel()`][pydantic_ai.result.AgentEventStream.cancel]
+    can trigger a clean run-level cancel through it.
+    """
+
+    cancellable: CancellableEventStream[Any, Any] | None = None
+    user_cancelled: bool = False
+
+
 class AgentEventStream(Generic[OutputDataT]):
     """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
@@ -918,10 +967,16 @@ class AgentEventStream(Generic[OutputDataT]):
     is deprecated and will be removed in v2.
     """
 
-    def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
+    def __init__(
+        self,
+        generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None],
+        *,
+        _cancel_state: AgentEventStreamCancelState | None = None,
+    ) -> None:
         self._generator = generator
         self._managed = False
         self._closed = False
+        self._cancel_state = _cancel_state
 
     async def __aenter__(self) -> AgentEventStream[OutputDataT]:
         self._managed = True
@@ -975,19 +1030,46 @@ class AgentEventStream(Generic[OutputDataT]):
             self._closed = True
             raise
 
-    async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation.
+    async def cancel(self, *, end_run: bool = True, reason: str | None = None) -> None:
+        """Cancel the agent run gracefully.
 
-        Closes the underlying generator, which triggers task cancellation
-        and HTTP connection cleanup via the generator's finally block.
+        Sets the run-level cancel flag so the underlying agent graph terminates
+        via [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] at the next
+        checkpoint, closes the in-flight model stream so the producer task
+        unwinds promptly, then awaits cleanup.
+
+        The `RunCancelled` exception is absorbed at this layer — consumers see
+        a clean exit, not a raised exception. To learn the run was cancelled,
+        check [`cancelled`][pydantic_ai.result.AgentEventStream.cancelled].
+
+        Args:
+            end_run: If `True` (default), terminate the entire agent run.
+                `False` is reserved for symmetry but rarely useful here, since
+                an `AgentEventStream` may span multiple model responses.
+            reason: Optional structured reason carried on the resulting
+                `RunCancelled` exception. Ignored when `end_run` is `False`.
         """
-        await self.aclose()
+        if self._closed:
+            return
+        self._closed = True
+        if self._cancel_state is not None:
+            self._cancel_state.user_cancelled = True
+            if (cancellable := self._cancel_state.cancellable) is not None:
+                await cancellable.cancel(end_run=end_run, reason=reason)
+        await self._generator.aclose()
 
     async def aclose(self) -> None:
         """Close the stream and trigger any pending cleanup."""
         if not self._closed:
-            self._closed = True
-            await self._generator.aclose()
+            await self.cancel()
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream was cancelled via `cancel()` or by exiting the `async with` block early (e.g. via `break`).
+
+        See [`cancel()`][pydantic_ai.result.AgentEventStream.cancel].
+        """
+        return self._cancel_state is not None and self._cancel_state.user_cancelled
 
 
 @dataclass(repr=False)

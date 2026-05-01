@@ -383,7 +383,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                             if _handler is not None:
-                                await _handler(run_ctx, wrapped)
+                                # Wrap with CancellableEventStream so the handler can call
+                                # `cancel(end_run=True)`. Only valid for ModelRequestNode
+                                # since `stream` for CallToolsNode is a HandleResponseEvent
+                                # iterator with no underlying transport to cancel.
+                                if self.is_model_request_node(n):
+                                    agent_stream = cast('result.AgentStream[AgentDepsT, Any]', stream)
+                                    handler_arg: AsyncIterable[_messages.AgentStreamEvent] = (
+                                        result.CancellableEventStream(_source=wrapped, _agent_stream=agent_stream)
+                                    )
+                                    await _handler(run_ctx, handler_arg)
+                                else:
+                                    await _handler(run_ctx, wrapped)
                             else:
                                 async for _ in wrapped:
                                     pass
@@ -721,7 +732,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
                         if event_stream_handler is not None:
-                            await event_stream_handler(run_ctx, wrapped)
+                            cancellable = result.CancellableEventStream(_source=wrapped, _agent_stream=stream)
+                            await event_stream_handler(run_ctx, cancellable)
                         else:
                             async for _ in wrapped:
                                 pass
@@ -1098,6 +1110,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # unfortunately this hack of returning a generator rather than defining it right here is
         # required to allow overloads of this method to work in python's typing system, or at least with pyright
         # or at least I couldn't make it work without
+        cancel_state = result.AgentEventStreamCancelState()
         return AgentEventStream(
             generator=self._run_stream_events(
                 user_prompt,
@@ -1115,7 +1128,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 builtin_tools=builtin_tools,
                 capabilities=capabilities,
                 spec=spec,
-            )
+                _cancel_state=cancel_state,
+            ),
+            _cancel_state=cancel_state,
         )
 
     async def _run_stream_events(
@@ -1136,6 +1151,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
+        _cancel_state: result.AgentEventStreamCancelState | None = None,
     ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
@@ -1144,8 +1160,21 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         async def event_stream_handler(
             _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
         ) -> None:
-            async for event in events:
-                await send_stream.send(event)
+            # Capture the latest cancellable so that consumer-side `AgentEventStream.cancel()`
+            # can trigger a graceful run-level cancel via the active model stream.
+            if _cancel_state is not None and isinstance(events, result.CancellableEventStream):
+                _cancel_state.cancellable = events
+            try:
+                async for event in events:
+                    await send_stream.send(event)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                # Consumer closed receive_stream while we were mid-send. If they did so
+                # via `AgentEventStream.cancel()` / `__aexit__`, the run-level flag is
+                # already set; let `node.stream`'s finally run `_finish_handling` cleanly
+                # so it appends the interrupted response and raises `RunCancelled` at the
+                # checkpoint. Otherwise, propagate the cleanup error as before.
+                if _cancel_state is None or not _cancel_state.user_cancelled:
+                    raise
 
         async def run_agent() -> AgentRunResult[Any]:
             async with send_stream:
@@ -1174,14 +1203,34 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # TODO: Replace _task_cancel_sent flag with task.cancelling() when Python 3.10 is dropped (3.11+).
         _task_cancel_sent: bool = False
 
+        def _user_cancelled() -> bool:
+            return _cancel_state is not None and _cancel_state.user_cancelled
+
+        def _user_cancelled_gracefully() -> bool:
+            # True only if the consumer triggered cancel AND we captured a cancellable
+            # to wire it through. In durable execution paths the handler is wrapped by
+            # the durable layer and the inner CancellableEventStream isn't visible, so
+            # we fall back to the legacy hard-cancel path.
+            return _user_cancelled() and _cancel_state is not None and _cancel_state.cancellable is not None
+
         try:
             async with receive_stream:
                 async for message in receive_stream:
                     yield message
 
-            result = await task
+            try:
+                result_value = await task
+            except exceptions.RunCancelled:
+                # Producer raised `RunCancelled`. If the consumer initiated it via
+                # `AgentEventStream.cancel()` or `break`/`__aexit__`, absorb silently
+                # — the user explicitly asked to stop. Otherwise (e.g. a tool or
+                # capability raised it), propagate so the user sees the cancel.
+                if not _user_cancelled():
+                    raise
+                return
 
         except asyncio.CancelledError as e:
+            # External cancel of the consumer's task — propagate, hard-cancel producer.
             task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
             _task_cancel_sent = True
             raise
@@ -1189,16 +1238,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         finally:
             # We do not support trio but catching via anyio anyway
             cancelled_exc = anyio.get_cancelled_exc_class()
-            if not task.done() and not _task_cancel_sent:
+            # If the consumer cancelled gracefully, the run-level flag is set and the
+            # producer is unwinding via `RunCancelled`; let it finish on its own. If
+            # not, fall back to hard-cancel (e.g. on `GeneratorExit` / external cancel).
+            if not task.done() and not _task_cancel_sent and not _user_cancelled_gracefully():
                 task.cancel()
 
             # Closing receive_stream during generator shutdown can race with
             # event_stream_handler still awaiting send_stream.send(event).
             # Suppress only those expected teardown errors so real failures still surface.
-            with contextlib.suppress(cancelled_exc, anyio.BrokenResourceError, anyio.ClosedResourceError):
+            # Also suppress `RunCancelled` here only when the consumer initiated it,
+            # so the graceful-cancel path doesn't leak the exception out of `aclose()`.
+            suppressed: tuple[type[BaseException], ...] = (
+                cancelled_exc,
+                anyio.BrokenResourceError,
+                anyio.ClosedResourceError,
+            )
+            if _user_cancelled():
+                suppressed = (*suppressed, exceptions.RunCancelled)
+            with contextlib.suppress(*suppressed):
                 await task
 
-        yield AgentRunResultEvent(result)
+        yield AgentRunResultEvent(result_value)
 
     @overload
     def iter(

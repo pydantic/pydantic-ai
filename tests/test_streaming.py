@@ -4418,6 +4418,73 @@ async def test_iter_cancel_default_does_not_raise():
                 break  # user explicitly bails out of the iter loop
 
 
+async def test_run_stream_events_cancel_graceful():
+    """`AgentEventStream.cancel()` triggers a graceful run-level cancel through
+    the new `RunCancelled` propagation path: the producer task unwinds cleanly
+    via the cancel flag, the interrupted response lands in `capture_run_messages()`,
+    and no `RunCancelled` exception leaks out of the consumer's `async with`."""
+    tool_called: list[int] = []
+
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def my_tool(x: int = 1) -> int:
+        tool_called.append(x)  # pragma: no cover
+        return x * 2
+
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+    with capture_run_messages() as captured:
+        async with agent.run_stream_events('Hello') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, PartStartEvent):  # pragma: no branch
+                    await stream.cancel()
+                    break
+
+        assert stream.cancelled
+
+    assert tool_called == []
+    # The interrupted response is preserved in the run's captured messages.
+    assert any(isinstance(msg, ModelResponse) and msg.state == 'interrupted' for msg in captured)
+
+
+async def test_run_stream_events_break_graceful():
+    """Breaking out of `async for event in stream` (without explicitly calling
+    `cancel()`) should also trigger the graceful run-level cancel path via
+    `__aexit__` → `aclose()` → `cancel()`."""
+    tool_called: list[int] = []
+
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def my_tool(x: int = 1) -> int:
+        tool_called.append(x)  # pragma: no cover
+        return x * 2
+
+    async with agent.run_stream_events('Hello') as stream:
+        async for event in stream:  # pragma: no branch
+            if isinstance(event, PartStartEvent):  # pragma: no branch
+                break
+
+    assert stream.cancelled
+    assert tool_called == []
+
+
+async def test_run_stream_events_propagates_run_cancelled_from_tool():
+    """`RunCancelled` raised from inside a tool (not consumer-initiated) must
+    propagate to the consumer rather than being absorbed by the graceful path."""
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def my_tool(x: int = 1) -> int:
+        raise RunCancelled('tool decided to bail')
+
+    with pytest.raises(RunCancelled, match='tool decided to bail'):
+        async with agent.run_stream_events('Hello') as stream:
+            async for _event in stream:
+                pass
+
+
 async def test_run_stream_events_cancel():
     agent = Agent(TestModel())
 
