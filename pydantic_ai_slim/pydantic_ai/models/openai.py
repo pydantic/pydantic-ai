@@ -1067,7 +1067,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}} if supports else 'auto'
+                if supports:
+                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+                else:
+                    # Forcing not supported: filter so the model can only see the requested tool.
+                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = 'auto'
             else:
                 # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
@@ -2093,11 +2099,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = (
-                    ToolChoiceFunctionParam(type='function', name=next(iter(tool_names))) if supports else 'auto'
-                )
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
             else:
+                # `allowed_tools` filters via the API rather than the tools list,
+                # so caching is preserved. Used for the multi-tool case and as the
+                # cache-preserving fallback when forcing isn't supported.
                 effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
                 tool_choice = ToolChoiceAllowedParam(
                     type='allowed_tools',

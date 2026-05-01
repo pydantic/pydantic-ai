@@ -692,6 +692,9 @@ class XaiModel(Model[AsyncClient]):
                 if profile.grok_supports_tool_choice_required:
                     tool_choice = required_tool(next(iter(tool_names)))
                 else:
+                    # Forcing not supported: filter so the model can only see the requested tool.
+                    # Breaks caching, but xAI doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                     tool_choice = 'auto'
             else:
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}

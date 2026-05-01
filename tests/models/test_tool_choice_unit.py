@@ -519,7 +519,7 @@ def test_google_auto_tuple_filters_tool_defs():
 
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')
 async def test_xai_fallback_single_tool_without_required_support(allow_model_requests: None):
-    """Single tool with unsupported required falls back to auto."""
+    """Single tool with unsupported required falls back to auto and filters tool_defs to preserve user intent."""
     mock_client = MagicMock()
     provider = XaiProvider(xai_client=mock_client)
     profile = GrokModelProfile(grok_supports_tool_choice_required=False)
@@ -528,7 +528,7 @@ async def test_xai_fallback_single_tool_without_required_support(allow_model_req
 
     tool_defs, tool_choice = m._get_tool_choice({'tool_choice': ['tool_a']}, params)  # pyright: ignore[reportPrivateUsage]
     assert tool_choice == 'auto'
-    assert 'tool_a' in tool_defs
+    assert set(tool_defs.keys()) == {'tool_a'}
 
 
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')
@@ -545,6 +545,63 @@ async def test_xai_fallback_multiple_tools_without_required_support(allow_model_
     tool_defs, tool_choice = m._get_tool_choice({'tool_choice': ['tool_a', 'tool_c']}, params)  # pyright: ignore[reportPrivateUsage]
     assert tool_choice == 'auto'
     assert set(tool_defs.keys()) == {'tool_a', 'tool_c'}
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(allow_model_requests: None):
+    """`ToolOrOutput` single function tool with thinking enabled falls back to auto and filters tool_defs.
+
+    Explicit `tool_choice=['tool_a']` with thinking would raise UserError before reaching this branch;
+    `ToolOrOutput` is the path where the resolved `('required', {single_tool})` actually reaches the fallback.
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
+        'tool_choice': ToolOrOutput(function_tools=['tool_a']),
+    }
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+
+    tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == {'type': 'auto'}
+    tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
+    assert tool_names == {'tool_a'}
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_requests: None):
+    """`ToolOrOutput` single function tool on a no-forcing model falls back to auto and filters tool_defs."""
+    mock_client = MagicMock()
+    provider = OpenAIProvider(openai_client=mock_client)
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+
+    tools, tool_choice = m._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
+        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+    )
+    assert tool_choice == 'auto'
+    assert {t['function']['name'] for t in tools} == {'tool_a'}
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
+    """`ToolOrOutput` single function tool on a no-forcing Responses model uses `allowed_tools` to preserve cache."""
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
+    mock_client = MagicMock()
+    provider = OpenAIProvider(openai_client=mock_client)
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    m = OpenAIResponsesModel('gpt-4o-mini', provider=provider, profile=profile)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+
+    tools, tool_choice = m._get_responses_tool_choice(  # pyright: ignore[reportPrivateUsage]
+        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+    )
+    assert isinstance(tool_choice, dict)
+    assert tool_choice['type'] == 'allowed_tools'
+    assert tool_choice['mode'] == 'auto'
+    assert tool_choice['tools'] == [{'type': 'function', 'name': 'tool_a'}]
+    assert {t['name'] for t in tools} == {'tool_a', 'tool_b'}
 
 
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')

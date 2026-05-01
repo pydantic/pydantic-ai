@@ -880,7 +880,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'type': 'tool', 'name': next(iter(tool_names))} if supports else {'type': 'auto'}
+                if supports:
+                    tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
+                else:
+                    # Forcing not supported (e.g. thinking enabled): filter so the model can only
+                    # see the requested tool, since `auto` alone wouldn't restrict the choice.
+                    # Breaks caching, but Anthropic doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'type': 'auto'}
             else:
                 # Breaks caching, but Anthropic doesn't support limiting tools via API arg
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}

@@ -442,6 +442,28 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
 
+### Prompt caching implications {#tool-choice-caching}
+
+Restricting the available tool set via `tool_choice` can invalidate provider prompt caches because most provider APIs cache on the full tools array. Pydantic AI restricts the tool set in two ways:
+
+- **API-level filtering** (cache-preserving): the full tools array is sent and the provider is told to only allow a subset. Used by OpenAI Responses (`allowed_tools`), Google (`allowed_function_names`), and Bedrock when forcing a single tool.
+- **Client-side filtering** (breaks cache): the tools array is trimmed before the request. Used when the provider API has no native filter for the given case.
+
+The table below covers the cases where Pydantic AI must filter client-side and therefore breaks cache:
+
+| Provider | Cache-breaking case |
+|----------|---------------------|
+| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
+| OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| Bedrock | `tool_choice` is a list of multiple tools |
+| Groq / HuggingFace | `tool_choice` is a list of multiple tools |
+| Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
+| xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
+| OpenAI Responses | Never — `allowed_tools` handles all cases natively |
+| Google | Never — `allowed_function_names` handles all cases natively |
+
+If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
+
 ## Tool Execution and Retries {#tool-retries}
 
 When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
