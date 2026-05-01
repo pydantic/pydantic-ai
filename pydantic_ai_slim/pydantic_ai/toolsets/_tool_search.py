@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
-from .._deferred import finalize_defer_loading, parse_loaded_capabilities
+from .._deferred import parse_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..messages import ModelRequest, ToolReturn, ToolReturnPart
@@ -132,7 +132,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     @staticmethod
     def _resolve_tool(tool: ToolsetTool[AgentDepsT], loaded_capability_ids: set[str]) -> ToolsetTool[AgentDepsT]:
         tool_def = tool.tool_def
-        if finalize_defer_loading(tool_def.defer_loading) is False:
+        if tool_def.defer_loading is not True:
             return replace(tool, tool_def=replace(tool_def, defer_loading=False))
         if tool_def.defer_loading is True and tool_def.capability_id in loaded_capability_ids:
             return replace(tool, tool_def=replace(tool_def, defer_loading=False))

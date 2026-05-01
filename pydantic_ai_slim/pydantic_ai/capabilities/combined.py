@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
-from pydantic_ai._deferred import inherit_defer_loading, prepare_capability_tool_definitions
+from pydantic_ai._deferred import prepare_capability_tool_definitions
 from pydantic_ai._instructions import AgentInstructions, Instruction, normalize_instructions
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry
@@ -73,7 +73,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     replace(
                         instruction,
                         capability_id=instruction.capability_id or capability.id,
-                        defer_loading=inherit_defer_loading(instruction.defer_loading, capability.defer_loading),
+                        defer_loading=(
+                            instruction.defer_loading
+                            if instruction.defer_loading is not None
+                            else capability.defer_loading
+                        ),
                     )
                 )
 
