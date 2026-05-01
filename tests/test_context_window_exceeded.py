@@ -6,7 +6,7 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import httpx
 import pytest
@@ -434,8 +434,9 @@ async def test_bedrock_count_tokens_context_window(allow_model_requests: None):
         },
         'CountTokens',
     )
-    with patch.object(model, 'client') as mock_client:
-        mock_client.count_tokens.side_effect = error
+    mock_client = MagicMock()
+    mock_client.count_tokens.side_effect = error
+    with patch.object(BedrockConverseModel, 'client', new_callable=PropertyMock, return_value=mock_client):
         with pytest.raises(ContextWindowExceeded) as exc_info:
             params = ModelRequestParameters()
             await model.count_tokens([], None, params)
