@@ -16,6 +16,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec import StreamedActivityResult
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
@@ -148,7 +149,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
-        ) -> ModelResponse:
+        ) -> StreamedActivityResult:
             from pydantic_ai.durable_exec import open_model_stream, process_event_stream
 
             request_context = ModelRequestContext(
@@ -166,7 +167,10 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                     streamed_response,
                     handler=event_stream_handler,
                 )
-            return streamed_response.get()
+            return StreamedActivityResult(
+                response=streamed_response.get(),
+                events=request_context._buffered_stream_events or [],  # pyright: ignore[reportPrivateUsage]
+            )
 
         bound._request_stream_step = request_stream_step
 
@@ -297,20 +301,22 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         if DBOS.workflow_id is None or DBOS.step_id is not None:
             return await handler(request_context)
 
-        # Use the streaming step when we need to fire the capability chain's
-        # wrap_run_event_stream hooks against live events (outer capabilities that
-        # override the hook) or to run the event_stream_handler inside the step.
-        agent = self._agent
-        needs_chain = agent is not None and agent.root_capability.has_wrap_run_event_stream
-        if self._event_stream_handler is not None or needs_chain:
-            response = await self._request_stream_step(
+        # Use the streaming step when either the agent loop expects an event
+        # stream (per-run/instance handler, or a chain capability that overrides
+        # `wrap_run_event_stream`) OR this capability has its own construction-
+        # time handler that needs to fire inside the step. The streaming step
+        # fires the chain against live events inside the boundary and buffers
+        # events for replay through any per-run handler on the workflow side.
+        if request_context._streaming_requested or self._event_stream_handler is not None:  # pyright: ignore[reportPrivateUsage]
+            result: StreamedActivityResult = await self._request_stream_step(
                 request_context.messages,
                 request_context.model_settings,
                 request_context.model_request_parameters,
                 ctx,
             )
             request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
-            return response
+            request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
+            return result.response
 
         return await self._request_step(
             request_context.messages,

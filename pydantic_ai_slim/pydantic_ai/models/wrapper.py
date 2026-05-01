@@ -89,12 +89,35 @@ class ReplayStreamedResponse(StreamedResponse):
         response: ModelResponse,
         *,
         capabilities_already_applied: bool = False,
+        buffered_events: list[ModelResponseStreamEvent] | None = None,
     ):
         super().__init__(model_request_parameters)
         self.response = response
         self._capabilities_already_applied = capabilities_already_applied
+        self._buffered_events = buffered_events
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if self._buffered_events is None:
+            return super().__aiter__()
+        # Buffered events were already produced by the live stream's `__aiter__`,
+        # which means they include `PartEndEvent`s. Yield them directly so the
+        # parent `__aiter__` doesn't re-inject PartEnds (which would lookup parts
+        # in our empty `_parts_manager` and crash). Still register `PartStartEvent`s
+        # with the manager for downstream consumers that query it.
+        if self._event_iterator is None:
+            self._event_iterator = self._iter_buffered()
+        return self._event_iterator
+
+    async def _iter_buffered(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        assert self._buffered_events is not None
+        for event in self._buffered_events:
+            if isinstance(event, PartStartEvent):
+                self._parts_manager.handle_part(vendor_part_id=None, part=event.part)
+            yield event
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Only reached when `_buffered_events is None` — `__aiter__` short-circuits
+        # the buffered path above.
         for part in self.response.parts:
             # Register the part with the parts manager (always returns PartStartEvent for new parts)
             start_event = self._parts_manager.handle_part(vendor_part_id=None, part=part)

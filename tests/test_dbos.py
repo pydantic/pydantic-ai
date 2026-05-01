@@ -1879,6 +1879,46 @@ async def test_dbos_durability_process_event_stream_fires_live_inside_step(dbos:
     assert delta_events == ['ed ', 'response']
 
 
+async def test_dbos_durability_runtime_handler_receives_buffered_events(dbos: DBOS) -> None:
+    """A per-run `event_stream_handler` passed to `agent.run()` inside a DBOS workflow
+
+    receives the events captured inside the step (rather than being silently dropped).
+    The buffered replay preserves real granular deltas — the per-run handler sees the
+    same multi-chunk stream the construction-time handler would see.
+    """
+    from pydantic_ai.messages import PartDeltaEvent, TextPartDelta
+
+    events_received: list[AgentStreamEvent] = []
+
+    async def runtime_collect(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events_received.append(event)
+
+    stream_model = FunctionModel(_durability_model_fn, stream_function=_chunks_stream_fn)
+    agent = Agent(
+        stream_model,
+        name='durability_runtime_handler',
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello', event_stream_handler=runtime_collect)
+        return result.output
+
+    output = await run_durable_agent()
+    assert output == 'Streamed response'
+
+    # The runtime handler got real granular deltas (one PartDeltaEvent per chunk),
+    # not a single synthetic delta with the full text.
+    delta_events = [
+        e.delta.content_delta
+        for e in events_received
+        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
+    ]
+    assert delta_events == ['ed ', 'response']
+
+
 async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
     """DBOSDurability discovers MCPServerStdio and creates DBOS wrappers."""
     from pydantic_ai.durable_exec.dbos._mcp_server import DBOSMCPServer

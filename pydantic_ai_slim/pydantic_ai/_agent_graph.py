@@ -646,6 +646,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
+        # Signal to durability capabilities that the agent loop expects a real
+        # event stream — they'll route through the streaming activity/step/task.
+        wrap_request_context._streaming_requested = True  # pyright: ignore[reportPrivateUsage]
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
                 run_context,
@@ -688,6 +691,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_request_parameters,
                 model_response,
                 capabilities_already_applied=wrap_request_context._capabilities_already_applied,  # pyright: ignore[reportPrivateUsage]
+                buffered_events=wrap_request_context._buffered_stream_events,  # pyright: ignore[reportPrivateUsage]
             )
             agent_stream = self._build_agent_stream(ctx, replay_sr, model_request_parameters)
             yield agent_stream

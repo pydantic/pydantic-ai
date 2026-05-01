@@ -17,6 +17,7 @@ from pydantic_ai.capabilities.abstract import (
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
+from pydantic_ai.durable_exec import StreamedActivityResult
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -158,7 +159,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
-        ) -> ModelResponse:
+        ) -> StreamedActivityResult:
             from pydantic_ai.durable_exec import open_model_stream, process_event_stream
 
             request_context = ModelRequestContext(
@@ -176,7 +177,10 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                     streamed_response,
                     handler=event_stream_handler,
                 )
-            return streamed_response.get()
+            return StreamedActivityResult(
+                response=streamed_response.get(),
+                events=request_context._buffered_stream_events or [],  # pyright: ignore[reportPrivateUsage]
+            )
 
         bound._request_stream_task = request_stream_task
 
@@ -256,13 +260,14 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
 
         model_name = ctx.model.model_name
 
-        # Use the streaming task when we need to fire the capability chain's
-        # wrap_run_event_stream hooks against live events (outer capabilities that
-        # override the hook) or to run the event_stream_handler inside the task.
-        agent = self._agent
-        needs_chain = agent is not None and agent.root_capability.has_wrap_run_event_stream
-        if self._event_stream_handler is not None or needs_chain:
-            response = await self._request_stream_task.with_options(
+        # Use the streaming task when either the agent loop expects an event
+        # stream (per-run/instance handler, or a chain capability that overrides
+        # `wrap_run_event_stream`) OR this capability has its own construction-
+        # time handler that needs to fire inside the task. The streaming task
+        # fires the chain against live events inside the boundary and buffers
+        # events for replay through any per-run handler on the workflow side.
+        if request_context._streaming_requested or self._event_stream_handler is not None:  # pyright: ignore[reportPrivateUsage]
+            result: StreamedActivityResult = await self._request_stream_task.with_options(
                 name=f'Model Request (Streaming): {model_name}', **self._model_task_config
             )(
                 request_context.messages,
@@ -271,7 +276,8 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 ctx,
             )
             request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
-            return response
+            request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
+            return result.response
 
         return await self._request_task.with_options(name=f'Model Request: {model_name}', **self._model_task_config)(
             request_context.messages,

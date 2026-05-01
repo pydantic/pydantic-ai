@@ -373,10 +373,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             # A durable execution capability (e.g. TemporalDurability) may
                             # have already run the capability chain and handler against the
                             # live stream inside an activity/step/task. When that flag is set,
-                            # drain the replay here without re-firing.
+                            # don't re-fire the chain (would double-emit hook side effects),
+                            # but still drain through any per-run handler so it sees the
+                            # buffered events that were captured inside the activity.
                             if isinstance(stream, AgentStream) and stream._capabilities_already_applied:  # pyright: ignore[reportPrivateUsage]
-                                async for _ in stream:
-                                    pass
+                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                                if _handler is not None and _handler is not self.event_stream_handler:
+                                    # Per-run handler — chain already fired inside the activity
+                                    # for the construction-time handler. Feed the buffered events
+                                    # to the per-run handler so it isn't silently dropped.
+                                    await _handler(run_ctx, stream)
+                                else:
+                                    async for _ in stream:
+                                        pass
                             else:
                                 run_ctx = _agent_graph.build_run_context(agent_run.ctx)
                                 wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(

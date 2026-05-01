@@ -575,6 +575,23 @@ class ModelRequestContext:
     Not user API — set via the helper, not directly.
     """
 
+    _buffered_stream_events: list[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    """Internal buffer of events captured during chain consumption inside an
+    activity/step/task. The outer agent loop replays these through any per-run
+    `event_stream_handler` so it sees real (granular) events even though the live
+    stream was consumed at the durable-execution boundary. `None` when no buffer is
+    available (chain didn't run, or events weren't captured). Not user API.
+    """
+
+    _streaming_requested: bool = field(default=False, init=False)
+    """Set by the agent loop when it expects to iterate the model response as a
+    stream (i.e. an `event_stream_handler` was passed or the capability chain
+    overrides `wrap_run_event_stream`). Durable-execution capabilities read this
+    to decide whether to route through the streaming activity/step/task (which
+    fires the chain inside the boundary and buffers events for replay) or the
+    non-streaming one. Not user API.
+    """
+
 
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""

@@ -22,7 +22,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec import disable_threads
+from pydantic_ai.durable_exec import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, infer_model
@@ -285,7 +285,7 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
         activities.append(self.request_activity)
 
-        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> StreamedActivityResult:
             from pydantic_ai.durable_exec import open_model_stream, process_event_stream
 
             run_context = deserialize_run_context(
@@ -308,7 +308,10 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                     streamed_response,
                     handler=event_stream_handler,
                 )
-            return streamed_response.get()
+            return StreamedActivityResult(
+                response=streamed_response.get(),
+                events=request_context._buffered_stream_events or [],  # pyright: ignore[reportPrivateUsage]
+            )
 
         request_stream_activity.__annotations__['deps'] = deps_type | None
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
@@ -484,17 +487,18 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or ctx.model.model_id
 
-        # Use the streaming activity when we need to fire the capability chain's
-        # wrap_run_event_stream hooks against live events (outer capabilities that
-        # override the hook) or to run the event_stream_handler inside the activity.
-        agent = self._agent
-        needs_chain = agent is not None and agent.root_capability.has_wrap_run_event_stream
-        if self._event_stream_handler is not None or needs_chain:
+        # Use the streaming activity when either the agent loop expects an event
+        # stream (per-run/instance handler, or a chain capability that overrides
+        # `wrap_run_event_stream`) OR this capability has its own construction-
+        # time handler that needs to fire inside the activity. The streaming
+        # activity fires the chain against live events inside the boundary and
+        # buffers events for replay through any per-run handler on the workflow side.
+        if request_context._streaming_requested or self._event_stream_handler is not None:  # pyright: ignore[reportPrivateUsage]
             activity_config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            response = await workflow.execute_activity(
+            result: StreamedActivityResult = await workflow.execute_activity(
                 activity=self.request_stream_activity,
                 args=[
                     _RequestParams(
@@ -509,10 +513,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
                 **activity_config,
             )
             # Signal to the outer agent loop that the capability chain already ran
-            # against the live stream inside the activity; do not re-fire it on the
-            # replayed response.
+            # against the live stream inside the activity (do not re-fire it) and
+            # propagate the buffered events so any per-run `event_stream_handler`
+            # gets to see real granular events from inside the activity rather
+            # than the synthetic chunks `ReplayStreamedResponse` would produce.
             request_context._capabilities_already_applied = True  # pyright: ignore[reportPrivateUsage]
-            return response
+            request_context._buffered_stream_events = result.events  # pyright: ignore[reportPrivateUsage]
+            return result.response
 
         activity_config = {'summary': f'request model: {model_name}', **self._model_activity_config}
         return await workflow.execute_activity(
