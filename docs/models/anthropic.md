@@ -522,7 +522,7 @@ result = agent.run_sync(
 
 ## Code Execution Tool Version
 
-By default, Pydantic AI uses the latest Anthropic code execution tool version supported by the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific Anthropic tool version:
+By default, Pydantic AI chooses the Anthropic code execution tool version from the selected model profile. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:
 
 ```py {title="anthropic_code_execution_tool_version.py"}
 from pydantic_ai import Agent, CodeExecutionTool
@@ -534,3 +534,5 @@ agent = Agent(
     model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
 )
 ```
+
+Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you explicitly select a tool version that the model profile does not support.

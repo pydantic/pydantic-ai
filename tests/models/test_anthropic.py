@@ -6831,13 +6831,14 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
+                        tool_name='code_execution',
                         args={'command': 'echo $((3 * 12390))'},
                         tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
+                        tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
@@ -6848,6 +6849,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         timestamp=IsDatetime(),
                         tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(content='The result of **3 × 12,390 = 37,170**.'),
                 ],
@@ -6894,13 +6896,14 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
+                        tool_name='code_execution',
                         args={'command': 'echo $((4 * 12390))'},
                         tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
+                        tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
@@ -6911,6 +6914,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                         tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(content='**4 × 12,390 = 49,560**'),
                 ],
@@ -6978,13 +6982,14 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                     ),
                     TextPart(content="I'll calculate that expression for you right away!"),
                     BuiltinToolCallPart(
-                        tool_name='bash_code_execution',
+                        tool_name='code_execution',
                         args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                         tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='bash_code_execution',
+                        tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
@@ -6995,6 +7000,7 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                         tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(
                         content="""\
@@ -7076,9 +7082,10 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
             PartStartEvent(
                 index=2,
                 part=BuiltinToolCallPart(
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='text',
             ),
@@ -7120,17 +7127,18 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=3,
                 part=BuiltinToolReturnPart(
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     content={
                         'content': [],
                         'return_code': 0,
@@ -7141,6 +7149,7 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
@@ -7216,15 +7225,16 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     content={
                         'content': [],
                         'return_code': 0,
@@ -7235,33 +7245,35 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
                     tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 )
             ),
         ]
     )
 
 
-async def test_anthropic_code_execution_tool_haiku_4_5_support(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
-):
-    m = AnthropicModel('claude-haiku-4-5-20251001', provider=AnthropicProvider(api_key=anthropic_api_key))
+async def test_anthropic_code_execution_tool_version_unsupported(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-haiku-4-5-20251001',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
+    )
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
-    async with m.request_stream(
-        [ModelRequest.user_text_prompt('Use code execution to print 2 + 2.')],
-        # Anthropic docs don't list Haiku 4.5 as supporting `20260120`. This cassette only proves
-        # that forcing the newer tool currently works; the model profile should keep defaulting to `20250825`.
-        AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
-        ModelRequestParameters(
-            function_tools=[], builtin_tools=[CodeExecutionTool()], output_tools=[], allow_text_output=False
+    with pytest.raises(
+        UserError,
+        match=(
+            "`anthropic_code_execution_tool_version='20260120'` is not supported by model 'claude-haiku-4-5-20251001'"
         ),
-    ) as response:
-        async for _ in response:
-            pass
-        response.get()
+    ):
+        await agent.run('hello')
 
-    (request,) = vcr.requests
-    request_body = json.loads(request.body)
-    assert request_body['tools'] == [{'name': 'code_execution', 'type': 'code_execution_20260120'}]
+    assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
 @pytest.mark.parametrize(
@@ -7314,7 +7326,7 @@ async def test_anthropic_code_execution_tool_version_setting(
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel(
-        'claude-sonnet-4-0',
+        'claude-sonnet-4-5',
         provider=AnthropicProvider(anthropic_client=mock_client),
         settings=AnthropicModelSettings(anthropic_code_execution_tool_version=tool_version),
     )
@@ -8021,19 +8033,21 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         content="Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!"
                     ),
                     BuiltinToolCallPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     BuiltinToolCallPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         args={'command': 'view', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         content={
                             'error_code': 'unavailable',
                             'error_message': 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length, empty document: line 1 column 1 (char 0)',
@@ -8042,9 +8056,10 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         content={
                             'error_code': 'unavailable',
                             'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
@@ -8053,16 +8068,18 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     TextPart(content='Let me try again, this time sequentially -- first creating, then viewing.'),
                     BuiltinToolCallPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         content={
                             'is_file_update': False,
                             'type': 'text_editor_code_execution_create_result',
@@ -8070,16 +8087,18 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         timestamp=IsDatetime(),
                         tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     TextPart(content="File created! Now let's view it."),
                     BuiltinToolCallPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         args={'command': 'view', 'path': '/tmp/hello.txt'},
                         tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     BuiltinToolReturnPart(
-                        tool_name='text_editor_code_execution',
+                        tool_name='code_execution',
                         content={
                             'content': 'Hello, world!',
                             'file_type': 'text',
@@ -8091,6 +8110,7 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                         tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     TextPart(
                         content="""\
@@ -8172,9 +8192,10 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='text',
             ),
@@ -8230,19 +8251,21 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             PartEndEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
@@ -8278,28 +8301,30 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=3,
                 part=BuiltinToolReturnPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
                     timestamp=IsDatetime(),
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=4,
                 part=BuiltinToolReturnPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={
                         'error_code': 'unavailable',
                         'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
@@ -8308,6 +8333,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-return',
             ),
@@ -8341,9 +8367,10 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             PartStartEvent(
                 index=6,
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='text',
             ),
@@ -8379,17 +8406,18 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
             PartEndEvent(
                 index=6,
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
                 index=7,
                 part=BuiltinToolReturnPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={
                         'content': 'Hello, world!',
                         'file_type': 'text',
@@ -8401,6 +8429,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requ
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
@@ -8453,32 +8482,35 @@ Everything looks perfect! The file contains the text you specified.\
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
                     tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={
                         'error_code': 'unavailable',
                         'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
@@ -8487,19 +8519,21 @@ Everything looks perfect! The file contains the text you specified.\
                     tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args='{"command": "view", "path": "/tmp/hello.txt"}',
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={
                         'content': 'Hello, world!',
                         'file_type': 'text',
@@ -8511,6 +8545,7 @@ Everything looks perfect! The file contains the text you specified.\
                     tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 )
             ),
         ]
@@ -8518,7 +8553,7 @@ Everything looks perfect! The file contains the text you specified.\
 
 
 async def test_anthropic_text_editor_code_execution_tool_message_replay():
-    """Serialize text_editor_code_execution BuiltinToolCallPart/ReturnPart back to Anthropic block params."""
+    """Serialize Anthropic text editor code execution metadata back to Anthropic block params."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
 
     messages: list[ModelMessage] = [
@@ -8527,13 +8562,14 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
             parts=[
                 BuiltinToolCallPart(
                     provider_name=m.system,
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     args={'command': 'view', 'path': '/tmp/hello.txt'},
                     tool_call_id='srvtoolu_text_editor_1',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
                 BuiltinToolReturnPart(
                     provider_name=m.system,
-                    tool_name='text_editor_code_execution',
+                    tool_name='code_execution',
                     content={
                         'content': 'Hello, world!',
                         'file_type': 'text',
@@ -8543,6 +8579,7 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
                         'type': 'text_editor_code_execution_view_result',
                     },
                     tool_call_id='srvtoolu_text_editor_1',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                 ),
             ],
             model_name='claude-sonnet-4-6',
@@ -8585,7 +8622,7 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
 
 
 async def test_anthropic_bash_code_execution_tool_message_replay():
-    """Serialize bash_code_execution BuiltinToolCallPart/ReturnPart back to Anthropic block params."""
+    """Serialize Anthropic bash code execution metadata back to Anthropic block params."""
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
 
     messages: list[ModelMessage] = [
@@ -8594,13 +8631,14 @@ async def test_anthropic_bash_code_execution_tool_message_replay():
             parts=[
                 BuiltinToolCallPart(
                     provider_name=m.system,
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     args={'command': 'echo hello'},
                     tool_call_id='srvtoolu_bash_1',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 BuiltinToolReturnPart(
                     provider_name=m.system,
-                    tool_name='bash_code_execution',
+                    tool_name='code_execution',
                     content={
                         'content': [],
                         'return_code': 0,
@@ -8609,6 +8647,7 @@ async def test_anthropic_bash_code_execution_tool_message_replay():
                         'type': 'bash_code_execution_result',
                     },
                     tool_call_id='srvtoolu_bash_1',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
             ],
             model_name='claude-sonnet-4-6',
