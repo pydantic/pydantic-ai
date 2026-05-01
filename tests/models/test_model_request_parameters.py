@@ -74,10 +74,11 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
-                    'defer_loading': False,
+                    'defer_loading': None,
                     'prefer_builtin': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'builtin_tools': [
@@ -143,10 +144,11 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
-                    'defer_loading': False,
+                    'defer_loading': None,
                     'prefer_builtin': None,
                     'return_schema': None,
                     'include_return_schema': None,
+                    'capability_id': None,
                 }
             ],
             'prompted_output_template': None,

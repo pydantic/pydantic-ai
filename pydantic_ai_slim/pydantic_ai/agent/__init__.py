@@ -43,6 +43,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._deferred import DeferredCapabilityCatalogEntry, DeferredCapabilityOutputs, DeferredLoadingRegistry
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
@@ -403,12 +404,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
         capabilities = list(capabilities or [])
-        deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
-        for cap in capabilities:
-            if cap.defer_loading:
-                deferred_capabilities[cap.id or ''] = cap
-        if deferred_capabilities:
-            capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred_capabilities))
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
@@ -1177,12 +1172,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             extra_capabilities.extend(capabilities)
         if extra_capabilities:
-            deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
-            for cap in extra_capabilities:
-                if cap.defer_loading:
-                    deferred_capabilities[cap.id or ''] = cap
-            if deferred_capabilities:
-                extra_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred_capabilities))
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
@@ -1242,6 +1231,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_context.model_settings = merged
             return merged
 
+        # Build instructions with per-run capability contributions
+        collected_instructions = self._collect_instructions(
+            additional_instructions=instructions,
+            cap_instructions=cap_instructions,
+        )
+
+        deferred_registry = self._get_deferred_loading_registry(run_capability, collected_instructions)
+        if deferred_registry is not None:
+            run_capability = CombinedCapability([DeferredLoadingCapability(registry=deferred_registry), run_capability])
+
+        instructions_literal, instructions_functions = self._get_instructions(collected_instructions)
+
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
             output_toolset=output_toolset,
@@ -1252,12 +1253,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
             toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
-        )
-
-        # Build instructions with per-run capability contributions
-        instructions_literal, instructions_functions = self._get_instructions(
-            additional_instructions=instructions,
-            cap_instructions=cap_instructions,
         )
 
         async def get_instructions(
@@ -2386,41 +2381,73 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _get_instructions(
+    def _get_deferred_loading_registry(
+        self,
+        capability: AbstractCapability[AgentDepsT],
+        instructions: Sequence[_instructions.Instruction[AgentDepsT]],
+    ) -> DeferredLoadingRegistry[AgentDepsT] | None:
+        catalog: dict[str, DeferredCapabilityCatalogEntry] = {}
+
+        def collect_deferred_capability(cap: AbstractCapability[AgentDepsT]) -> None:
+            if cap.defer_loading is not True:
+                return
+
+            capability_id = cap.id
+            description = cap.get_description()
+            if capability_id is None:
+                raise ValueError('Capabilities with defer_loading=True must have an id.')
+            if description is None:
+                raise ValueError('Capabilities with defer_loading=True must have a description.')
+
+            catalog[capability_id] = DeferredCapabilityCatalogEntry(
+                capability_id=capability_id,
+                description=description,
+            )
+
+        capability.apply(collect_deferred_capability)
+        if not catalog:
+            return None
+
+        outputs = {capability_id: DeferredCapabilityOutputs[AgentDepsT](instructions=[]) for capability_id in catalog}
+        for instruction in instructions:
+            if instruction.defer_loading is not True:
+                continue
+            capability_id = instruction.capability_id
+            if capability_id in outputs:
+                outputs[capability_id].instructions.append(instruction)
+
+        return DeferredLoadingRegistry(catalog=catalog, outputs=outputs)
+
+    def _collect_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
         cap_instructions: list[_instructions.Instruction[AgentDepsT]] | None = None,
-    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
-        """Prepare agent-level instructions, splitting them into literal strings and functions.
-
-        Toolset instructions are collected separately during run execution.
-
-        Args:
-            additional_instructions: Additional instructions to include for this run.
-            cap_instructions: Instructions from capabilities, resolved at run time.
-
-        Returns:
-            A tuple of (literal_instructions, instruction_functions) where:
-            - literal_instructions: Combined literal string instructions or None
-            - instruction_functions: List of instruction functions that need to be evaluated at runtime
-        """
+    ) -> list[_instructions.Instruction[AgentDepsT]]:
         override_instructions = self._override_instructions.get()
         if override_instructions:
             # Override replaces all instructions, including capability contributions.
-            instructions = override_instructions.value
+            return override_instructions.value
         else:
             instructions = self._instructions.copy()
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 instructions.extend(_instructions.normalize_instructions(additional_instructions))
+            return instructions
 
+    def _get_instructions(
+        self,
+        instructions: Sequence[_instructions.Instruction[AgentDepsT]],
+    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        """Prepare instructions for the system prompt.
+
+        Deferred instructions are skipped here and made available via `load_capability`.
+        Toolset instructions are collected separately during run execution.
+        """
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
         for instruction in instructions:
-            # This is the golden bit, we skip instructions from rendering in the prompt if they are deferred
-            # They will show up from within the load_capability tool
-            if instruction.defer_loading:
+            if instruction.defer_loading is True:
                 continue
             content = instruction.content
             if isinstance(content, str):

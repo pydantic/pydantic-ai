@@ -419,6 +419,10 @@ async def _prepare_request_parameters(
     # Let capabilities filter/modify tool definitions
     run_context = build_run_context(ctx)
     all_tool_defs = await ctx.deps.root_capability.prepare_tools(run_context, all_tool_defs)
+    all_tool_defs = [
+        replace(tool_def, defer_loading=False) if tool_def.defer_loading is None else tool_def
+        for tool_def in all_tool_defs
+    ]
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []

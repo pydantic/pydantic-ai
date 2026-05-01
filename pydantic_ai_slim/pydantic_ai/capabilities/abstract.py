@@ -243,21 +243,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_capability_instructions(self) -> list[AgentInstructions[AgentDepsT]] | None:
-        """Return instructions to include in the system prompt for this capability, or None.
-
-        This method is called once at agent construction time. To get dynamic
-        per-request behavior, return a callable that receives
-        [`RunContext`][pydantic_ai.tools.RunContext] or a
-        [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
-        """
-        # instructions = self.get_instructions()
-        # if instructions is None:
-        #     return None
-
-        # return InstructionOutput(content=instructions, defer_loading=self.defer_loading, capability_id=self.id)
-        return None
-
     def get_description(self) -> str | None:
         """Return a human-readable description of this capability, or None.
 

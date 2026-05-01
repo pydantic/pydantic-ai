@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -18,9 +18,11 @@ from pydantic_ai.tools import (
     DeferredToolResults,
     RunContext,
     ToolDefinition,
+    ToolsPrepareFunc,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability
@@ -31,6 +33,25 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+
+def _stamp_capability_tool_definitions(
+    capability_id: str | None,
+    capability_defer_loading: bool | None,
+) -> ToolsPrepareFunc[AgentDepsT]:
+    def prepare(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [
+            replace(
+                tool_def,
+                capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
+                defer_loading=(
+                    tool_def.defer_loading if tool_def.defer_loading is not None else capability_defer_loading
+                ),
+            )
+            for tool_def in tool_defs
+        ]
+
+    return prepare
 
 
 @dataclass
@@ -117,12 +138,22 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             toolset = capability.get_toolset()
             if toolset is None:
-                pass
+                continue
             elif isinstance(toolset, AbstractToolset):
                 # Pyright can't narrow Callable type aliases out of unions after isinstance check
-                toolsets.append(toolset)  # pyright: ignore[reportUnknownArgumentType]
+                cap_toolset = cast(AbstractToolset[AgentDepsT], toolset)
             else:
-                toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
+                cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
+
+            toolsets.append(
+                PreparedToolset(
+                    cap_toolset,
+                    _stamp_capability_tool_definitions(
+                        capability_id=capability.id,
+                        capability_defer_loading=capability.defer_loading,
+                    ),
+                )
+            )
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:

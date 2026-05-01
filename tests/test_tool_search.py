@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -22,11 +22,15 @@ from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
+from pydantic_ai.capabilities.capability import Capability
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets._deferred_capability import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
@@ -735,6 +739,81 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     tool_names = list(tools.keys())
 
     assert tool_names == snapshot(['get_weather', 'get_time'])
+
+
+async def test_tool_search_inherits_defer_loading_from_capability():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain
+    def inherited_tool() -> str:  # pragma: no cover
+        """Inherited deferred tool."""
+        return 'inherited'
+
+    @toolset.tool_plain(defer_loading=False)
+    def eager_tool() -> str:  # pragma: no cover
+        """Explicit eager tool."""
+        return 'eager'
+
+    capability = Capability[None](
+        id='example',
+        description='Example capability.',
+        defer_loading=True,
+        toolset=toolset,
+    )
+    cap_toolset = CombinedCapability([capability]).get_toolset()
+    assert isinstance(cap_toolset, AbstractToolset)
+    cap_toolset = cast(AbstractToolset[None], cap_toolset)
+
+    searchable: ToolSearchToolset[None] = ToolSearchToolset(wrapped=cap_toolset)
+    ctx = _build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+
+    assert list(tools) == snapshot(['search_tools', 'eager_tool'])
+    assert tools['eager_tool'].tool_def.capability_id == 'example'
+    assert tools['eager_tool'].tool_def.defer_loading is False
+
+
+async def test_tool_search_reveals_loaded_capability_tools():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain
+    def inherited_tool() -> str:  # pragma: no cover
+        """Inherited deferred tool."""
+        return 'inherited'
+
+    @toolset.tool_plain(defer_loading=False)
+    def eager_tool() -> str:  # pragma: no cover
+        """Explicit eager tool."""
+        return 'eager'
+
+    capability = Capability[None](
+        id='example',
+        description='Example capability.',
+        defer_loading=True,
+        toolset=toolset,
+    )
+    cap_toolset = CombinedCapability([capability]).get_toolset()
+    assert isinstance(cap_toolset, AbstractToolset)
+    cap_toolset = cast(AbstractToolset[None], cap_toolset)
+
+    searchable: ToolSearchToolset[None] = ToolSearchToolset(wrapped=cap_toolset)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    content={'capability_id': 'example', 'instructions': None},
+                )
+            ]
+        )
+    ]
+    ctx = _build_run_context(None, messages=messages)
+
+    tools = await searchable.get_tools(ctx)
+
+    assert list(tools) == snapshot(['inherited_tool', 'eager_tool'])
+    assert tools['inherited_tool'].tool_def.defer_loading is False
 
 
 async def test_agent_auto_injects_tool_search_capability():

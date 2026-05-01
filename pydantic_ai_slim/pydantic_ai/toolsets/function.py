@@ -54,7 +54,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     schema_generator: type[GenerateJsonSchema]
-    _defer_loading: bool
+    _defer_loading: bool | None
     include_return_schema: bool | None
 
     def __init__(
@@ -70,7 +70,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
-        defer_loading: bool = False,
+        defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
         id: str | None = None,
         instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
@@ -100,9 +100,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
-            defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide tools from the model until discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, unless overridden when adding a tool. If `None`, the value is inherited
+                from the capability that provided this toolset.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
                 If `None`, defaults to `False` unless the
                 [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -592,6 +593,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None:
             tool.max_retries = self.max_retries
+        if tool.defer_loading is None:
+            tool.defer_loading = self._defer_loading
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool

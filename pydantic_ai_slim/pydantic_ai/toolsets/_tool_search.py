@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
@@ -11,6 +11,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..messages import ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
+from ._deferred_capability import parse_loaded_capabilities
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -66,17 +67,19 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
+        loaded_capability_ids = parse_loaded_capabilities(ctx.messages)
 
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            if tool.tool_def.defer_loading:
+            tool = self._resolve_tool(tool, loaded_capability_ids)
+            if tool.tool_def.defer_loading is True:
                 deferred[name] = tool
             else:
                 visible[name] = tool
 
         if not deferred:
-            return all_tools
+            return visible
 
         if _SEARCH_TOOLS_NAME in all_tools:
             raise UserError(
@@ -86,7 +89,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         discovered = self._parse_discovered_tools(ctx)
 
         if discovered.issuperset(deferred):
-            return all_tools
+            return visible | {name: self._make_visible(tool) for name, tool in deferred.items()}
 
         search_index = [
             _SearchIndexEntry(
@@ -122,9 +125,24 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         result.update(visible)
         for name, tool in deferred.items():
             if name in discovered:
-                result[name] = tool
+                result[name] = self._make_visible(tool)
 
         return result
+
+    @staticmethod
+    def _resolve_tool(tool: ToolsetTool[AgentDepsT], loaded_capability_ids: set[str]) -> ToolsetTool[AgentDepsT]:
+        tool_def = tool.tool_def
+        if tool_def.defer_loading is None:
+            return replace(tool, tool_def=replace(tool_def, defer_loading=False))
+        if tool_def.defer_loading is True and tool_def.capability_id in loaded_capability_ids:
+            return replace(tool, tool_def=replace(tool_def, defer_loading=False))
+        return tool
+
+    @staticmethod
+    def _make_visible(tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+        if tool.tool_def.defer_loading is False:
+            return tool
+        return replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))
 
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
         """Parse message history to find tools discovered via search_tools."""

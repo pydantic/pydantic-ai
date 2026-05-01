@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai._instructions import normalize_instructions
+from pydantic_ai._deferred import DeferredLoadingRegistry
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.messages import ModelRequest, ToolReturn, ToolReturnPart
@@ -16,7 +16,6 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 if TYPE_CHECKING:
-    from pydantic_ai.capabilities.abstract import AbstractCapability
     from pydantic_ai.messages import ModelMessage
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
@@ -74,17 +73,17 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     are loaded, the ``load_capability`` tool is removed.
     """
 
-    deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]]
+    registry: DeferredLoadingRegistry[AgentDepsT]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
         loaded_ids = parse_loaded_capabilities(ctx.messages)
-        unloaded = [cap for cap in self.deferred_capabilities.values() if cap.id not in loaded_ids]
+        unloaded = [entry for entry in self.registry.catalog.values() if entry.capability_id not in loaded_ids]
         if not unloaded:
             return all_tools
 
-        catalog = '\n'.join(f'- {cap.id}: {cap.get_description()}' for cap in unloaded)
+        catalog = '\n'.join(f'- {entry.capability_id}: {entry.description}' for entry in unloaded)
 
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,
@@ -114,15 +113,13 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
 
     async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn | str:
         capability_id = tool_args['id']
-        cap = self.deferred_capabilities.get(capability_id)
-        if cap is None:
+        if capability_id not in self.registry.catalog:
             return f'No capability found with id {capability_id!r}.'
 
-        instructions = normalize_instructions(cap.get_instructions())
+        outputs = self.registry.outputs.get(capability_id)
+        instructions = outputs.instructions if outputs is not None else []
 
         parts: list[str] = []
-
-        # Do I like having to do this here? No not really, but unsure how to do it better right now
 
         for instruction in instructions:
             content = instruction.content
@@ -133,9 +130,10 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                 if resolved is not None:
                     parts.append(resolved)
 
-        instructions = '\n'.join(parts)
-
-        return ToolReturn(return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions))
+        instructions_text = '\n\n'.join(parts) or None
+        return ToolReturn(
+            return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
+        )
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
