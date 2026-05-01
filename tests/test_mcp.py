@@ -169,10 +169,6 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
     # One active entry — the race only matters when both tasks see count > 0.
     server._running_count = 1  # pyright: ignore[reportPrivateUsage]
 
-    # Replace the real lock with a wrapper that yields before acquiring,
-    # opening the interleaving window the old code left unprotected. We can't
-    # subclass `anyio.Lock` directly because it returns a backend-specific
-    # adapter via `__new__` and bypasses subclass methods.
     class InterleavingLock:
         def __init__(self) -> None:
             self._inner = anyio.Lock()
