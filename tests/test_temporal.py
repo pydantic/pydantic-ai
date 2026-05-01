@@ -4217,6 +4217,20 @@ def test_durability_rejects_default_model_key():
         )
 
 
+def test_durability_rejects_construction_inside_workflow(monkeypatch: pytest.MonkeyPatch):
+    """`TemporalDurability.for_agent` rejects construction inside a workflow.
+
+    Activities have to be registered with the worker before the workflow runs, so
+    `for_agent` (which discovers and registers activities) must run at module level
+    or in worker setup code — not inside `@workflow.run`.
+    """
+    from temporalio import workflow as _wf
+
+    monkeypatch.setattr(_wf, 'in_workflow', lambda: True)
+    with pytest.raises(UserError, match=r'must be constructed outside of a Temporal workflow'):
+        Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
+
+
 def test_durability_image_output_rejected():
     """TemporalDurability rejects image output because of the 2MB payload limit."""
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])

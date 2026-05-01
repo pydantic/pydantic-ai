@@ -204,6 +204,12 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
         same instance can be passed to multiple agents. Use
         `TemporalDurability.from_agent(agent)` to retrieve the bound copy.
         """
+        if workflow.in_workflow():
+            raise UserError(
+                'An agent with `TemporalDurability` must be constructed outside of a Temporal workflow, '
+                'so its activities can be registered with the worker before the workflow runs. '
+                'Construct the agent at module level (or in worker setup code) and reference it from the workflow.'
+            )
         if not agent.name:
             raise UserError(
                 'An agent needs to have a unique `name` in order to be used with Temporal. '
