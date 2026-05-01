@@ -144,7 +144,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        provider, model_name = model_name.split('/', 1)
+        provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
             if provider == 'anthropic':

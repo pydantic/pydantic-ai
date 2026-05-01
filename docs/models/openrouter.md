@@ -85,8 +85,10 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
 
 !!! note "Provider Differences"
     - **Anthropic** models support prefix-based caching for both system instructions and user messages. TTL values (`'5m'`, `'1h'`) are passed through to the provider.
-    - **Gemini** models only reliably cache system-level content. For Gemini, prefer `openrouter_cache_instructions` over `openrouter_cache_messages`. TTL values are ignored by Gemini.
-    - **Minimum token thresholds** apply: Anthropic requires ~2048 tokens, Gemini requires ~1024 tokens for content to be eligible for caching.
+    - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
+      Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` for stable system context. TTL values are ignored by Gemini.
+      Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
+    - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.
 
 ### Caching via Model Settings
 
@@ -96,7 +98,7 @@ Use [`OpenRouterModelSettings`][pydantic_ai.models.openrouter.OpenRouterModelSet
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
-model = OpenRouterModel('anthropic/claude-sonnet-4-6')
+model = OpenRouterModel('anthropic/claude-sonnet-4.6')
 agent = Agent(
     model,
     instructions='You are a specialized assistant with deep domain knowledge...',
@@ -115,7 +117,7 @@ def search_docs(ctx: RunContext, query: str) -> str:
 ...
 ```
 
-Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` uses Anthropic's default `'5m'` TTL; Gemini ignores TTL values and manages cache lifetime itself. After running, check `result.usage().cache_write_tokens` and `result.usage().cache_read_tokens` to see caching in action. On subsequent calls with `message_history=result.all_messages()`, cached tokens are reused.
+Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` sends Anthropic's default `'5m'` TTL for Anthropic models; Gemini ignores TTL values and manages cache lifetime itself. Check `result.usage().cache_write_tokens` on initial writes and `result.usage().cache_read_tokens` on reuse, including subsequent calls with `message_history=result.all_messages()`.
 
 ### Fine-Grained Control with CachePoint
 
@@ -125,7 +127,7 @@ Use [`CachePoint`][pydantic_ai.messages.CachePoint] markers to control exactly w
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.openrouter import OpenRouterModel
 
-model = OpenRouterModel('anthropic/claude-sonnet-4-6')
+model = OpenRouterModel('anthropic/claude-sonnet-4.6')
 agent = Agent(model)
 
 prompt = [
@@ -140,13 +142,13 @@ Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePo
 
 ### Provider Routing for Cache Locality
 
-OpenRouter load-balances requests across providers by default. Since cache state is provider-specific, consecutive requests may be routed to different providers, resulting in cache misses. Use [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider] to pin requests to a specific downstream provider:
+OpenRouter uses [provider sticky routing](https://openrouter.ai/docs/guides/best-practices/prompt-caching#provider-sticky-routing) after prompt-cached requests to improve cache locality. If you need stricter provider control, or want to disable fallbacks for a cache-sensitive workflow, use [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider]:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
-model = OpenRouterModel('anthropic/claude-sonnet-4-6')
+model = OpenRouterModel('anthropic/claude-sonnet-4.6')
 agent = Agent(
     model,
     model_settings=OpenRouterModelSettings(

@@ -31,7 +31,7 @@ from pydantic_ai import (
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ImageUrl, SystemPromptPart
+from pydantic_ai.messages import ImageUrl, InstructionPart, SystemPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
@@ -1047,6 +1047,29 @@ async def test_openrouter_cache_point_gemini_omits_ttl() -> None:
     )
 
 
+async def test_openrouter_cache_point_tilde_providers_use_downstream_cache_capabilities() -> None:
+    """Test OpenRouter ``~provider`` aliases use the same cache controls as their downstream provider."""
+    anthropic_model = OpenRouterModel(
+        '~anthropic/claude-sonnet-latest', provider=OpenRouterProvider(api_key='test-key')
+    )
+    google_model = OpenRouterModel('~google/gemini-pro-latest', provider=OpenRouterProvider(api_key='test-key'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context', CachePoint(ttl='1h'), 'Question'])])
+    ]
+
+    anthropic_mapped = await anthropic_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters()
+    )
+    google_mapped = await google_model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    anthropic_content = anthropic_mapped[0].get('content')
+    google_content = google_mapped[0].get('content')
+    assert isinstance(anthropic_content, list)
+    assert isinstance(google_content, list)
+    assert cast(dict[str, Any], anthropic_content[0])['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+    assert cast(dict[str, Any], google_content[0])['cache_control'] == {'type': 'ephemeral'}
+
+
 async def test_openrouter_cache_point_first_content_raises_error(allow_model_requests: None) -> None:
     """Test that CachePoint as first content raises UserError."""
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
@@ -1249,6 +1272,75 @@ async def test_openrouter_cache_instructions_no_system_message() -> None:
     # No system message, so no cache_control should be added anywhere
     assert len(mapped) == 1
     assert mapped[0].get('role') == 'user'
+
+
+@pytest.mark.parametrize(
+    ('messages', 'instruction_parts', 'expected_system_messages'),
+    [
+        (
+            [ModelRequest(parts=[UserPromptPart(content='Hello')])],
+            [
+                InstructionPart(content='Static instructions.', dynamic=False),
+                InstructionPart(content='Dynamic instructions.', dynamic=True),
+            ],
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': 'Static instructions.',
+                            'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                        }
+                    ],
+                },
+                {'role': 'system', 'content': 'Dynamic instructions.'},
+            ],
+        ),
+        (
+            [
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(content='Static system prompt.'),
+                        UserPromptPart(content='Hello'),
+                    ]
+                )
+            ],
+            [InstructionPart(content='Dynamic instructions.', dynamic=True)],
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': 'Static system prompt.',
+                            'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                        }
+                    ],
+                },
+                {'role': 'system', 'content': 'Dynamic instructions.'},
+            ],
+        ),
+        (
+            [ModelRequest(parts=[UserPromptPart(content='Hello')])],
+            [InstructionPart(content='Dynamic instructions.', dynamic=True)],
+            [{'role': 'system', 'content': 'Dynamic instructions.'}],
+        ),
+    ],
+)
+async def test_openrouter_cache_instructions_skips_dynamic_instruction_blocks(
+    messages: list[ModelMessage],
+    instruction_parts: list[InstructionPart],
+    expected_system_messages: list[dict[str, Any]],
+) -> None:
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(openrouter_cache_instructions=True)
+    params = ModelRequestParameters(instruction_parts=instruction_parts)
+
+    mapped = await model._map_messages(messages, params, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+
+    system_messages = [dict(m) for m in mapped if m.get('role') == 'system']
+    assert system_messages == expected_system_messages
 
 
 # ===== openrouter_cache_messages =====
@@ -1878,14 +1970,10 @@ I have one tool available:
 async def test_openrouter_cache_messages_anthropic_real_api(
     allow_model_requests: None, openrouter_api_key: str
 ) -> None:
-    """Test that openrouter_cache_messages produces cache read metrics for Anthropic via OpenRouter.
+    """Test that openrouter_cache_messages produces cache write/read metrics for Anthropic via OpenRouter.
 
     Forces routing to the Anthropic provider directly (not Bedrock) to ensure cache locality.
     The first call populates the cache, and the second call reads from it.
-
-    Note: cache_write_tokens is not asserted because OpenRouter reports it via a non-standard
-    prompt_tokens_details.cache_write_tokens field that genai-prices does not currently map.
-    cache_read_tokens works via the standard prompt_tokens_details.cached_tokens field.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
@@ -1899,7 +1987,7 @@ async def test_openrouter_cache_messages_anthropic_real_api(
         ),
     )
 
-    # Must exceed 2048 tokens for Claude Sonnet caching
+    # Must exceed Claude Sonnet's cacheable prompt minimum.
     result1 = await agent.run(
         'Analyze the architectural patterns used in distributed database systems and their tradeoffs. ' * 200
     )
@@ -1907,6 +1995,7 @@ async def test_openrouter_cache_messages_anthropic_real_api(
 
     assert usage1.requests == 1
     assert usage1.input_tokens > 2000
+    assert usage1.cache_write_tokens > 0
     assert usage1.output_tokens > 0
 
     # Second call continues the conversation — the previous cached message is still in the request
@@ -1922,11 +2011,10 @@ async def test_openrouter_cache_messages_anthropic_real_api(
 async def test_openrouter_cache_instructions_gemini_real_api(
     allow_model_requests: None, openrouter_api_key: str
 ) -> None:
-    """Test that openrouter_cache_instructions produces cache read metrics for Gemini via OpenRouter.
+    """Test that openrouter_cache_instructions produces cache write/read metrics for Gemini via OpenRouter.
 
     Uses cache_instructions with a long system prompt so the cached content is identical across
     both calls. Forces routing to Google AI Studio to ensure cache locality.
-    Gemini 2.5 Flash requires 1024 tokens minimum for caching.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
@@ -1934,7 +2022,7 @@ async def test_openrouter_cache_instructions_gemini_real_api(
     long_instructions = (
         'You are a specialized assistant that helps with distributed systems design. '
         'You have deep expertise in consensus protocols, CAP theorem, and eventual consistency. '
-    ) * 80  # ~1200 tokens, well above 1024 minimum
+    ) * 80  # Long enough to exceed Gemini's current cacheable prompt minimum.
 
     agent = Agent(
         model,
@@ -1942,7 +2030,7 @@ async def test_openrouter_cache_instructions_gemini_real_api(
         model_settings=OpenRouterModelSettings(
             openrouter_cache_instructions=True,
             openrouter_provider={'order': ['google-ai-studio'], 'allow_fallbacks': False},
-            max_tokens=100,
+            max_tokens=300,
         ),
     )
 
@@ -1952,6 +2040,7 @@ async def test_openrouter_cache_instructions_gemini_real_api(
 
     assert usage1.requests == 1
     assert usage1.input_tokens > 1000
+    assert usage1.cache_write_tokens > 0
     assert usage1.output_tokens > 0
 
     # Second call reuses the same system instructions — should hit cache
@@ -2035,8 +2124,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
     """Test all cache settings combined with actual cache write+read metrics.
 
     Enables cache_instructions, cache_tool_definitions, and cache_messages together,
-    forces Anthropic routing for cache locality, and verifies cache_read_tokens on
-    the second call.
+    forces Anthropic routing for cache locality, and verifies cache write/read metrics.
     """
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
@@ -2047,7 +2135,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
             'You are an assistant that specializes in mathematics and calculations. '
             'Always show your work step by step. '
         )
-        * 100,  # ~2500 tokens, above 2048 minimum
+        * 100,  # Long enough to exceed Claude Sonnet's cacheable prompt minimum.
         model_settings=OpenRouterModelSettings(
             openrouter_cache_instructions=True,
             openrouter_cache_tool_definitions=True,
@@ -2067,6 +2155,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
 
     assert usage1.requests >= 1
     assert usage1.input_tokens > 2000
+    assert usage1.cache_write_tokens > 0
     assert usage1.output_tokens > 0
 
     # Second call with same agent — system instructions + tools should be cached

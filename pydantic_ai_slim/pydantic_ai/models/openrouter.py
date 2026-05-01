@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
+from .. import usage
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
@@ -40,6 +41,7 @@ try:
         OpenAIStreamedResponse,
         _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
+        _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -268,11 +270,11 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     """
 
     openrouter_cache_instructions: bool | Literal['5m', '1h']
-    """Whether to add ``cache_control`` to the last system prompt block.
+    """Whether to add ``cache_control`` to stable system instructions.
 
-    When enabled, the last system prompt will have ``cache_control`` set,
-    allowing supported downstream providers (Anthropic, Gemini) to cache system instructions
-    and reduce costs.
+    When enabled, supported downstream providers (Anthropic, Gemini) can cache stable
+    system instructions and reduce costs. If dynamic instructions are present, the cache
+    point is placed before them, matching Anthropic's static-prefix caching behavior.
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
@@ -289,9 +291,10 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
-    Note: Gemini models only reliably cache system-level content; for Gemini, prefer
-    ``openrouter_cache_instructions`` instead. Anthropic supports prefix-based caching
-    across multi-turn conversations with this setting.
+    Note: OpenRouter uses only the last breakpoint across normal message content for
+    Gemini caching. Use this when caching the final message boundary is intentional;
+    use ``openrouter_cache_instructions`` for stable system context. Anthropic supports
+    prefix-based caching across multi-turn conversations with this setting.
 
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
@@ -499,6 +502,8 @@ class _OpenRouterCostDetails:
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
     """Wraps OpenAI completion token details with OpenRouter specific attributes."""
 
+    cache_write_tokens: int | None = None
+
     video_tokens: int | None = None
 
 
@@ -583,6 +588,21 @@ def _map_openrouter_provider_details(
             provider_details['is_byok'] = is_byok
 
     return provider_details
+
+
+def _map_openrouter_usage(
+    response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> usage.RequestUsage:
+    request_usage = _map_openai_usage(response, provider, provider_url, model)
+
+    if response.usage and (details := response.usage.prompt_tokens_details):
+        if cache_write_tokens := details.cache_write_tokens:
+            request_usage.cache_write_tokens = cache_write_tokens
+
+    return request_usage
 
 
 def _openrouter_settings_to_openai_settings(
@@ -779,6 +799,44 @@ class OpenRouterModel(OpenAIChatModel):
             last_part = cast(dict[str, Any], content[-1])
             last_part['cache_control'] = self._build_cache_control(ttl)
 
+    def _add_cache_control_to_instructions(
+        self,
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        ttl: bool | Literal['5m', '1h'],
+    ) -> None:
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
+        if not instruction_parts:
+            for msg in reversed(openai_messages):
+                if msg.get('role') in ('system', 'developer'):
+                    self._add_cache_control_to_message(msg, ttl)
+                    break
+            return
+
+        instruction_role = self._cache_profile.openai_system_prompt_role or 'system'
+        if instruction_role not in ('system', 'developer'):
+            return
+
+        instruction_prefix_count = next(
+            (index for index, msg in enumerate(openai_messages) if msg.get('role') != instruction_role),
+            len(openai_messages),
+        )
+        first_instruction_index = instruction_prefix_count - len(instruction_parts)
+
+        if any(part.dynamic for part in instruction_parts):
+            static_instruction_count = sum(1 for part in instruction_parts if not part.dynamic)
+            if static_instruction_count:
+                cache_message_index = first_instruction_index + static_instruction_count - 1
+            elif first_instruction_index > 0:
+                cache_message_index = first_instruction_index - 1
+            else:
+                return
+        else:
+            cache_message_index = instruction_prefix_count - 1
+
+        self._add_cache_control_to_message(openai_messages[cache_message_index], ttl)
+
     @classmethod
     @override
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
@@ -858,10 +916,9 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_instructions := model_settings.get('openrouter_cache_instructions'))
             and self._cache_profile.openrouter_supports_cache_control
         ):
-            for msg in reversed(openai_messages):
-                if msg.get('role') in ('system', 'developer'):
-                    self._add_cache_control_to_message(msg, cache_instructions)
-                    break
+            self._add_cache_control_to_instructions(
+                openai_messages, messages, model_request_parameters, cache_instructions
+            )
 
         has_tool_cache_point = bool(
             model_settings
@@ -928,6 +985,11 @@ class OpenRouterModel(OpenAIChatModel):
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
         return provider_details or None
+
+    @override
+    def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
+        assert isinstance(response, _OpenRouterChatCompletion)
+        return _map_openrouter_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
@@ -1095,6 +1157,11 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         provider_details = super()._map_provider_details(chunk) or {}
         provider_details.update(_map_openrouter_provider_details(chunk))
         return provider_details or None
+
+    @override
+    def _map_usage(self, response: chat.ChatCompletionChunk) -> usage.RequestUsage:
+        assert isinstance(response, _OpenRouterChatCompletionChunk)
+        return _map_openrouter_usage(response, self._provider_name, self._provider_url, self.model_name)
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
