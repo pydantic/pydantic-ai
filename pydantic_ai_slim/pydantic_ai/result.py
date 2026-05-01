@@ -61,6 +61,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
+    _request_run_cancel: Callable[[str | None], None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -145,8 +146,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
 
-    async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation and closing the underlying connection."""
+    async def cancel(self, *, end_run: bool = False, reason: str | None = None) -> None:
+        """Cancel the stream, stopping token generation and closing the underlying connection.
+
+        Args:
+            end_run: If `True`, also terminate the entire agent run by raising
+                [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] at the next
+                checkpoint in the agent graph. The default (`False`) cancels only
+                this stream; the agent run may continue with the interrupted response
+                in its history (subject to the surface — see the
+                [stream cancellation docs](../output.md#stream-cancellation)).
+            reason: Optional structured reason carried on the resulting
+                `RunCancelled` exception. Ignored when `end_run` is `False`.
+        """
+        if end_run and self._request_run_cancel is not None:
+            self._request_run_cancel(reason)
         await self._raw_stream_response.cancel()
 
     async def drain(self) -> None:
@@ -690,14 +704,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if self._on_complete is not None:
             await self._on_complete()
 
-    async def cancel(self) -> None:
+    async def cancel(self, *, end_run: bool = False, reason: str | None = None) -> None:
         """Cancel the stream, stopping token generation and closing the underlying connection.
 
         The interrupted response state is recorded in the message history so that
         `all_messages()` includes it.
+
+        Args:
+            end_run: If `True`, also terminate the entire agent run by raising
+                [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] when the
+                surrounding `async with agent.run_stream(...)` block exits.
+            reason: Optional structured reason carried on the resulting
+                `RunCancelled` exception. Ignored when `end_run` is `False`.
         """
         if self._stream_response is not None:  # pragma: no branch
-            await self._stream_response.cancel()
+            await self._stream_response.cancel(end_run=end_run, reason=reason)
             # Record the interrupted response in _all_messages so all_messages()
             # includes it. is_complete guard prevents double-append if the stream
             # was already fully consumed before cancel was called.

@@ -96,6 +96,19 @@ class GraphAgentState:
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
 
+    _cancel_requested: bool = False
+    _cancel_reason: str | None = None
+
+    def request_cancel(self, *, reason: str | None = None) -> None:
+        """Request that the agent run terminate with `RunCancelled` at the next checkpoint."""
+        self._cancel_requested = True
+        self._cancel_reason = reason
+
+    def check_cancelled(self) -> None:
+        """Raise `RunCancelled` if cancellation was requested via `request_cancel()`."""
+        if self._cancel_requested:
+            raise exceptions.RunCancelled(reason=self._cancel_reason)
+
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
         if (
@@ -699,6 +712,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
+            _request_run_cancel=lambda reason: ctx.state.request_cancel(reason=reason),
         )
 
     async def _make_request(
@@ -888,6 +902,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
+
+        # Honor a run-level cancel requested via `stream.cancel(end_run=True)` etc.
+        # The interrupted response is already in history above; this raises before
+        # we hand a `CallToolsNode` back to the graph, so tool calls in the
+        # interrupted response are not executed.
+        ctx.state.check_cancelled()
 
         return self._result
 

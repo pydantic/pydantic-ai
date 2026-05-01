@@ -25,6 +25,7 @@ __all__ = (
     'SkipToolExecution',
     'UserError',
     'AgentRunError',
+    'RunCancelled',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
@@ -178,6 +179,30 @@ class AgentRunError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+class RunCancelled(AgentRunError):
+    """Raised to terminate the current agent run.
+
+    Propagates through the agent graph and out of `agent.run()`, `agent.run_sync()`,
+    `agent.run_stream()`, `agent.iter()`, and `agent.run_stream_events()`. The interrupted
+    model response and any partially-executed tool returns are retained in the message
+    history; use `capture_run_messages()` to access them.
+
+    Triggered from outside the run by calling `stream.cancel(end_run=True)` or
+    `StreamedRunResult.cancel(end_run=True)`. May also be raised directly from a tool
+    function or capability hook.
+    """
+
+    reason: str | None
+    """Optional structured reason set by the canceller (e.g. `'usage_limit'`, `'user_clicked_cancel'`)."""
+
+    def __init__(self, message: str = 'Agent run cancelled', *, reason: str | None = None):
+        self.reason = reason
+        super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
+        return self.__class__, (self.message,), {'reason': self.reason}
 
 
 class UsageLimitExceeded(AgentRunError):

@@ -52,7 +52,7 @@ from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import CombinedCapability
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, RunCancelled
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse
@@ -4341,6 +4341,81 @@ async def test_completed_streamed_response_cancel_noop():
     assert streamed_response.cancelled
     assert streamed_response.get() is response
     assert response.state == 'complete'
+
+
+async def test_run_stream_cancel_end_run_raises_run_cancelled():
+    """`StreamedRunResult.cancel(end_run=True)` raises `RunCancelled` when the
+    surrounding `async with agent.run_stream(...)` exits, with the partial response
+    preserved in `capture_run_messages()`."""
+    agent = Agent(TestModel())
+
+    with capture_run_messages() as captured, pytest.raises(RunCancelled) as exc_info:
+        async with agent.run_stream('Hello') as result:
+            async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                break
+            await result.cancel(end_run=True, reason='user cancel')
+
+    assert exc_info.value.reason == 'user cancel'
+
+    assert captured == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_iter_cancel_end_run_skips_tools():
+    """`stream.cancel(end_run=True)` from inside `agent.iter()` raises `RunCancelled`
+    before `CallToolsNode` runs, so tool calls in the interrupted response are not
+    executed."""
+    tool_called: list[int] = []
+
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def my_tool(x: int = 1) -> int:
+        tool_called.append(x)  # pragma: no cover
+        return x * 2
+
+    with pytest.raises(RunCancelled):
+        async with agent.iter('test') as run:
+            async for node in run:
+                if agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:  # pragma: no branch
+                            break
+                        await stream.cancel(end_run=True)
+
+    assert tool_called == []
+
+
+async def test_iter_cancel_default_does_not_raise():
+    """`stream.cancel()` (default `end_run=False`) is a stream-only signal — it
+    does not raise `RunCancelled`. Users opt into run-level cancel with
+    `end_run=True` (see `test_iter_cancel_end_run_skips_tools`)."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:  # pragma: no branch
+                        break
+                    await stream.cancel()
+                break  # user explicitly bails out of the iter loop
 
 
 async def test_run_stream_events_cancel():
