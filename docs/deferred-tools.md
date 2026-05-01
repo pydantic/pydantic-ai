@@ -193,6 +193,7 @@ print(result.all_messages())
         ],
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -216,6 +217,7 @@ print(result.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -228,6 +230,7 @@ print(result.all_messages())
         ],
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -251,6 +254,7 @@ print(result.all_messages())
         ],
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -264,6 +268,7 @@ print(result.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -276,6 +281,7 @@ print(result.all_messages())
         ],
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -287,6 +293,7 @@ print(result.all_messages())
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -404,6 +411,7 @@ async def main():
             ],
             timestamp=datetime.datetime(...),
             run_id='...',
+            conversation_id='...',
         ),
         ModelResponse(
             parts=[
@@ -419,6 +427,7 @@ async def main():
             model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
+            conversation_id='...',
         ),
         ModelRequest(
             parts=[
@@ -431,6 +440,7 @@ async def main():
             ],
             timestamp=datetime.datetime(...),
             run_id='...',
+            conversation_id='...',
         ),
         ModelResponse(
             parts=[
@@ -442,6 +452,7 @@ async def main():
             model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
+            conversation_id='...',
         ),
     ]
     """

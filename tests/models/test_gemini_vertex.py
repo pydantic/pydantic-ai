@@ -142,6 +142,7 @@ async def test_url_input(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -153,6 +154,7 @@ async def test_url_input(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -186,6 +188,7 @@ async def test_url_input_force_download(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -197,6 +200,7 @@ async def test_url_input_force_download(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
