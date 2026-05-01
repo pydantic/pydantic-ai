@@ -91,6 +91,9 @@ class Provider(ABC, Generic[InterfaceClient]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
+        if self._entered_count == 0:
+            # No matching `__aenter__` - keep this a no-op so the provider can be re-entered cleanly.
+            return
         async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._own_http_client is not None:
