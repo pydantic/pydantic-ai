@@ -866,7 +866,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if state.nesting_counter > 0:
                 return None
             if state.session_task is None:
-                return None  # pragma: no cover
+                return None
             assert state.stop_event is not None
             state.stop_event.set()
             session_task_to_await = state.session_task
