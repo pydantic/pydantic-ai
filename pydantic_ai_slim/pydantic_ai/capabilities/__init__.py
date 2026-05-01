@@ -1,4 +1,4 @@
-from typing import Any, Union
+from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.output import OutputContext
@@ -46,7 +46,7 @@ from .web_fetch import WebFetch
 from .web_search import WebSearch
 from .wrapper import WrapperCapability
 
-AgentCapability = Union[AbstractCapability[AgentDepsT], CapabilityFunc[AgentDepsT]]  # noqa: UP007 — Union needed at runtime (no future annotations)
+AgentCapability: TypeAlias = AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]
 """A capability or a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] that takes a run context and returns one.
 
 Use as the item type for `Agent(capabilities=[...])` and `agent.run(capabilities=[...])`.
