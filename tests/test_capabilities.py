@@ -4664,6 +4664,7 @@ class TestImageGenerationCapability:
                     parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4677,6 +4678,7 @@ class TestImageGenerationCapability:
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4689,6 +4691,7 @@ class TestImageGenerationCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
@@ -4696,6 +4699,7 @@ class TestImageGenerationCapability:
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4742,6 +4746,7 @@ class TestImageGenerationCapability:
                     parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4755,6 +4760,7 @@ class TestImageGenerationCapability:
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4767,6 +4773,7 @@ class TestImageGenerationCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
@@ -4774,6 +4781,7 @@ class TestImageGenerationCapability:
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4825,6 +4833,7 @@ class TestImageGenerationCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4838,6 +4847,7 @@ class TestImageGenerationCapability:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4850,6 +4860,7 @@ class TestImageGenerationCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Here is the generated image.')],
@@ -4857,6 +4868,7 @@ class TestImageGenerationCapability:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4891,6 +4903,7 @@ class TestImageGenerationCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4904,6 +4917,7 @@ class TestImageGenerationCapability:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4916,6 +4930,7 @@ class TestImageGenerationCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Here is the generated image.')],
@@ -4923,6 +4938,7 @@ class TestImageGenerationCapability:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5166,6 +5182,7 @@ class TestPrepareToolsCapability:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='secret_tool', args={}, tool_call_id=IsStr())],
@@ -5173,6 +5190,7 @@ class TestPrepareToolsCapability:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -5185,6 +5203,7 @@ class TestPrepareToolsCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
@@ -5192,6 +5211,7 @@ class TestPrepareToolsCapability:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5306,6 +5326,7 @@ class TestOverrideWithSpec:
                     timestamp=IsDatetime(),
                     instructions='from spec',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='instructions: from spec')],
@@ -5313,6 +5334,7 @@ class TestOverrideWithSpec:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5340,6 +5362,7 @@ class TestOverrideWithSpec:
                     timestamp=IsDatetime(),
                     instructions='explicit',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='instructions: explicit')],
@@ -5347,6 +5370,7 @@ class TestOverrideWithSpec:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5374,6 +5398,7 @@ class TestOverrideWithSpec:
                         timestamp=IsDatetime(),
                         instructions='from-spec-instructions',
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[TextPart(content='instructions: from-spec-instructions')],
@@ -5381,6 +5406,7 @@ class TestOverrideWithSpec:
                         model_name='function:model_fn:',
                         timestamp=IsDatetime(),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                 ]
             )
@@ -5424,6 +5450,7 @@ original
 also from spec\
 """,
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -5438,6 +5465,7 @@ also from spec\
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5454,6 +5482,7 @@ also from spec\
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='success (no tool calls)')],
@@ -5461,6 +5490,7 @@ also from spec\
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5488,6 +5518,7 @@ also from spec\
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='max_tokens=100 temperature=0.5')],
@@ -5495,6 +5526,7 @@ also from spec\
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5519,6 +5551,7 @@ also from spec\
                     timestamp=IsDatetime(),
                     instructions='be helpful',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='instructions: be helpful')],
@@ -5526,6 +5559,7 @@ also from spec\
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5578,6 +5612,7 @@ agent-level
 from-spec\
 """,
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -5592,6 +5627,7 @@ from-spec\
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5619,6 +5655,7 @@ from-spec\
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok')],
@@ -5626,6 +5663,7 @@ from-spec\
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5666,6 +5704,7 @@ class TestGetWrapperToolsetHook:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content="tools: ['cap_my_tool']")],
@@ -5673,6 +5712,7 @@ class TestGetWrapperToolsetHook:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5762,6 +5802,7 @@ class TestGetWrapperToolsetHook:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content="tools: ['my_tool']")],
@@ -5769,6 +5810,7 @@ class TestGetWrapperToolsetHook:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5806,6 +5848,7 @@ class TestGetWrapperToolsetHook:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content="tools: ['a_b_tool']")],
@@ -5813,6 +5856,7 @@ class TestGetWrapperToolsetHook:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5850,6 +5894,7 @@ class TestGetWrapperToolsetHook:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content="tools: ['runtime_my_tool']")],
@@ -5857,6 +5902,7 @@ class TestGetWrapperToolsetHook:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5896,6 +5942,7 @@ class TestGetWrapperToolsetHook:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content="tools: ['cap_my_tool'], descs: ['[prepared] Original.']")],
@@ -5903,6 +5950,7 @@ class TestGetWrapperToolsetHook:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -7847,6 +7895,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 parts=[UserPromptPart(content='greet world', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7860,6 +7909,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7872,6 +7922,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -7879,6 +7930,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8204,6 +8256,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='bad response')],
@@ -8211,6 +8264,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8222,6 +8276,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -8229,6 +8284,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8307,6 +8363,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8314,6 +8371,7 @@ class TestModelRetryFromHooks:
                     model_name='function:simple_model_function:stream_fn',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8325,6 +8383,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -8332,6 +8391,7 @@ class TestModelRetryFromHooks:
                     model_name='function:simple_model_function:stream_fn',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8371,6 +8431,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8382,6 +8443,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -8389,6 +8451,7 @@ class TestModelRetryFromHooks:
                     model_name='function:simple_model_function:stream_fn',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8440,6 +8503,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8447,6 +8511,7 @@ class TestModelRetryFromHooks:
                     model_name='function:simple_model_function:stream_fn',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8458,6 +8523,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -8465,6 +8531,7 @@ class TestModelRetryFromHooks:
                     model_name='function:simple_model_function:stream_fn',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8508,6 +8575,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='first attempt')],
@@ -8515,6 +8583,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8526,6 +8595,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
@@ -8533,6 +8603,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8601,6 +8672,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8612,6 +8684,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],
@@ -8619,6 +8692,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8676,6 +8750,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8683,6 +8758,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8695,6 +8771,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8702,6 +8779,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8711,6 +8789,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got: tool result')],
@@ -8718,6 +8797,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8768,6 +8848,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8775,6 +8856,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8787,6 +8869,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8794,6 +8877,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8803,6 +8887,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got: tool result')],
@@ -8810,6 +8895,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8868,6 +8954,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8875,6 +8962,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8894,6 +8982,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8901,6 +8990,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8910,6 +9000,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got: tool result')],
@@ -8917,6 +9008,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -8969,6 +9061,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -8976,6 +9069,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -8995,6 +9089,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -9002,6 +9097,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -9011,6 +9107,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got: tool result')],
@@ -9018,6 +9115,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9078,6 +9176,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -9085,6 +9184,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -9097,6 +9197,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got retry')],
@@ -9104,6 +9205,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9149,6 +9251,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -9156,6 +9259,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -9168,6 +9272,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got retry after error')],
@@ -9175,6 +9280,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9219,6 +9325,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -9226,6 +9333,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -9238,6 +9346,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got validation retry')],
@@ -9245,6 +9354,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9289,6 +9399,7 @@ class TestModelRetryFromHooks:
                     parts=[UserPromptPart(content='call tool', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
@@ -9296,6 +9407,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -9308,6 +9420,7 @@ class TestModelRetryFromHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got pre-validation retry')],
@@ -9315,6 +9428,7 @@ class TestModelRetryFromHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10251,6 +10365,7 @@ class TestOnOutputValidateError:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": "bad"}')],
@@ -10258,6 +10373,7 @@ class TestOnOutputValidateError:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10284,6 +10400,7 @@ class TestOnOutputValidateError:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": "bad"}')],
@@ -10291,6 +10408,7 @@ class TestOnOutputValidateError:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10309,6 +10427,7 @@ class TestOnOutputValidateError:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -10316,6 +10435,7 @@ class TestOnOutputValidateError:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10357,6 +10477,7 @@ class TestOnOutputValidateErrorModelRetry:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": "bad"}')],
@@ -10364,6 +10485,7 @@ class TestOnOutputValidateErrorModelRetry:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10375,6 +10497,7 @@ class TestOnOutputValidateErrorModelRetry:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -10382,6 +10505,7 @@ class TestOnOutputValidateErrorModelRetry:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10420,6 +10544,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": -1}')],
@@ -10427,6 +10552,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10438,6 +10564,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -10445,6 +10572,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10480,6 +10608,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 0}')],
@@ -10487,6 +10616,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10498,6 +10628,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -10505,6 +10636,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10539,6 +10671,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='short')],
@@ -10546,6 +10679,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10557,6 +10691,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='this is long enough')],
@@ -10564,6 +10699,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10608,6 +10744,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='bad')],
@@ -10615,6 +10752,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10626,6 +10764,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good')],
@@ -10633,6 +10772,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10669,6 +10809,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 0}')],
@@ -10676,6 +10817,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10687,6 +10829,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 5}')],
@@ -10694,6 +10837,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10740,6 +10884,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": -1}', tool_call_id='call-1')],
@@ -10747,6 +10892,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10759,6 +10905,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
@@ -10766,6 +10913,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10778,6 +10926,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10819,6 +10968,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 0}', tool_call_id='call-1')],
@@ -10826,6 +10976,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10838,6 +10989,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 10}', tool_call_id='call-2')],
@@ -10845,6 +10997,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10857,6 +11010,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10889,6 +11043,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1')],
@@ -10896,6 +11051,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10915,6 +11071,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
@@ -10922,6 +11079,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10934,6 +11092,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -10978,6 +11137,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": "bad"}', tool_call_id='call-1')],
@@ -10985,6 +11145,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -10997,6 +11158,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
@@ -11004,6 +11166,7 @@ class TestModelRetryFromOutputHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -11016,6 +11179,7 @@ class TestModelRetryFromOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -11766,6 +11930,7 @@ class TestOutputHookFullLifecycle:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 1}')],
@@ -11773,6 +11938,7 @@ class TestOutputHookFullLifecycle:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -11841,6 +12007,7 @@ class TestOutputHookFullLifecycle:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 100}', tool_call_id='call-1')],
@@ -11848,6 +12015,7 @@ class TestOutputHookFullLifecycle:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -11860,6 +12028,7 @@ class TestOutputHookFullLifecycle:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12066,6 +12235,7 @@ class TestOnOutputProcessError:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='trigger error')],
@@ -12073,6 +12243,7 @@ class TestOnOutputProcessError:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12165,6 +12336,7 @@ class TestOutputHookErrorPaths:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='not valid json')],
@@ -12172,6 +12344,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12190,6 +12363,7 @@ class TestOutputHookErrorPaths:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
@@ -12197,6 +12371,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12236,6 +12411,7 @@ class TestOutputHookErrorPaths:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -12249,6 +12425,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12261,6 +12438,7 @@ class TestOutputHookErrorPaths:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12317,6 +12495,7 @@ class TestOutputHookErrorPaths:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='invalid')],
@@ -12324,6 +12503,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12342,6 +12522,7 @@ class TestOutputHookErrorPaths:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 1}')],
@@ -12349,6 +12530,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12400,6 +12582,7 @@ class TestOutputHookErrorPaths:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -12413,6 +12596,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12425,6 +12609,7 @@ class TestOutputHookErrorPaths:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12462,6 +12647,7 @@ class TestOutputHookErrorPaths:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='bad json')],
@@ -12469,6 +12655,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12487,6 +12674,7 @@ class TestOutputHookErrorPaths:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 99}')],
@@ -12494,6 +12682,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12533,6 +12722,7 @@ class TestOutputHookErrorPaths:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -12546,6 +12736,7 @@ class TestOutputHookErrorPaths:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12558,6 +12749,7 @@ class TestOutputHookErrorPaths:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12668,6 +12860,7 @@ class TestDefaultOutputErrorHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='not json')],
@@ -12675,6 +12868,7 @@ class TestDefaultOutputErrorHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12693,6 +12887,7 @@ class TestDefaultOutputErrorHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 7}')],
@@ -12700,6 +12895,7 @@ class TestDefaultOutputErrorHooks:
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -12774,6 +12970,7 @@ class TestStreamingOutputHooks:
                     parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -12787,6 +12984,7 @@ class TestStreamingOutputHooks:
                     model_name='function::stream_fn',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -12799,6 +12997,7 @@ class TestStreamingOutputHooks:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -14115,6 +14314,7 @@ async def test_deferred_tool_handler_approve():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 5}, tool_call_id='call1')],
@@ -14122,6 +14322,7 @@ async def test_deferred_tool_handler_approve():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -14134,6 +14335,7 @@ async def test_deferred_tool_handler_approve():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -14141,6 +14343,7 @@ async def test_deferred_tool_handler_approve():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -15707,6 +15910,262 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     # Falls through to bubble-up since no handler resolved anything
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
+
+
+# --- Dynamic capabilities ---
+
+
+@dataclass
+class _RecordingCapability(AbstractCapability[Any]):
+    """Test capability that records every hook firing and contributes instructions."""
+
+    label: str
+    fired: list[str] = field(default_factory=list[str])
+
+    def get_instructions(self) -> str:
+        return f'Label is {self.label}.'
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.fired.append(f'{self.label}:before_run')
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.fired.append(f'{self.label}:before_model_request')
+        return request_context
+
+
+async def test_dynamic_capability_factory_called_with_run_context() -> None:
+    """The factory receives the run's RunContext (with deps) once per run."""
+    seen: list[Any] = []
+
+    def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
+        seen.append(ctx.deps)
+        return _RecordingCapability(label=ctx.deps)
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
+    await agent.run('hi', deps='admin')
+    await agent.run('hi', deps='guest')
+    assert seen == ['admin', 'guest']
+
+
+async def test_dynamic_capability_async_factory() -> None:
+    """Async factories are awaited."""
+    calls = 0
+
+    async def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        nonlocal calls
+        calls += 1
+        return _RecordingCapability(label='async')
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    await agent.run('hi')
+    assert calls == 1
+
+
+async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
+    """A factory returning None is a no-op for the run."""
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any] | None:
+        return None
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    result = await agent.run('hi')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions is None
+
+
+async def test_dynamic_capability_contributes_instructions_per_run() -> None:
+    """Resolved capability's instructions flow through to the model request."""
+
+    def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
+        if ctx.deps == 'admin':
+            return _RecordingCapability(label='admin')
+        return None
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
+
+    admin_result = await agent.run('hi', deps='admin')
+    admin_request = next(m for m in admin_result.all_messages() if isinstance(m, ModelRequest))
+    assert admin_request.instructions == 'Label is admin.'
+
+    guest_result = await agent.run('hi', deps='guest')
+    guest_request = next(m for m in guest_result.all_messages() if isinstance(m, ModelRequest))
+    assert guest_request.instructions is None
+
+
+async def test_dynamic_capability_contributes_toolset() -> None:
+    """Resolved capability's toolset is exposed to the model and its tools execute."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def special() -> str:
+        return 'used'
+
+    @dataclass
+    class ToolCap(AbstractCapability[None]):
+        def get_toolset(self):
+            return toolset
+
+    def factory(ctx: RunContext[bool]) -> AbstractCapability[Any] | None:
+        return ToolCap() if ctx.deps else None
+
+    seen_tools: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        # On the first request call the tool if it's available; on the follow-up
+        # request after the tool return, finish.
+        already_called = any(
+            isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts
+        )
+        if not already_called and any(t.name == 'special' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart('special')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), deps_type=bool, capabilities=[factory])
+
+    with_tool = await agent.run('hi', deps=True)
+    tool_returns = [
+        p.content
+        for m in with_tool.all_messages()
+        if isinstance(m, ModelRequest)
+        for p in m.parts
+        if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == ['used']
+
+    await agent.run('hi', deps=False)
+    assert seen_tools == ['special', 'special', '']
+
+
+async def test_dynamic_capability_hooks_fire() -> None:
+    """Hooks contributed by the resolved capability fire during the run."""
+    cap = _RecordingCapability(label='dyn')
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return cap
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    await agent.run('hi')
+    assert 'dyn:before_run' in cap.fired
+    assert 'dyn:before_model_request' in cap.fired
+
+
+async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> None:
+    """The factory is called once at for_run, not on every model request."""
+    calls = 0
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        nonlocal calls
+        calls += 1
+        return _RecordingCapability(label='once')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Two-step run: first a tool call, then a final text response.
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('echo', {'text': 'hi'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def echo(text: str) -> str:
+        return text
+
+    agent = Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[factory])
+    await agent.run('hi')
+    assert calls == 1
+
+
+async def test_dynamic_capability_returning_combined() -> None:
+    """A factory may return a CombinedCapability; all child contributions flow through."""
+    fired: list[str] = []
+
+    @dataclass
+    class A(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('A')
+
+    @dataclass
+    class B(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('B')
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return CombinedCapability([A(), B()])
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    await agent.run('hi')
+    assert fired == ['A', 'B']
+
+
+async def test_dynamic_capability_in_run_call() -> None:
+    """`agent.run(capabilities=[factory])` accepts callables as well."""
+    calls = 0
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        nonlocal calls
+        calls += 1
+        return _RecordingCapability(label='run-time')
+
+    agent = Agent(TestModel())
+    result = await agent.run('hi', capabilities=[factory])
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Label is run-time.'
+    assert calls == 1
+
+
+async def test_dynamic_capability_composes_with_static() -> None:
+    """Static and dynamic capabilities both contribute, in order."""
+    fired: list[str] = []
+
+    @dataclass
+    class Static(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('static')
+
+    @dataclass
+    class Dynamic(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('dynamic')
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return Dynamic()
+
+    agent = Agent(TestModel(), capabilities=[Static(), factory])
+    await agent.run('hi')
+    assert fired == ['static', 'dynamic']
+
+
+async def test_dynamic_capability_per_run_isolation() -> None:
+    """Concurrent runs see independent factory calls and resolved capabilities."""
+    seen_deps: list[str] = []
+
+    def factory(ctx: RunContext[str]) -> AbstractCapability[Any]:
+        seen_deps.append(ctx.deps)
+        return _RecordingCapability(label=ctx.deps)
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
+    results = await asyncio.gather(*(agent.run('hi', deps=f'user-{i}') for i in range(5)))
+
+    assert sorted(seen_deps) == ['user-0', 'user-1', 'user-2', 'user-3', 'user-4']
+    for i, result in enumerate(results):
+        request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+        assert request.instructions == f'Label is user-{i}.'
+
+
+async def test_dynamic_capability_wraps_func_in_constructor() -> None:
+    """Constructor wraps a bare function into a `DynamicCapability`, and the factory runs at run time."""
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return _RecordingCapability(label='x')
+
+    agent = Agent(TestModel(), capabilities=[factory])
+
+    result = await agent.run('hi')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Label is x.'
 
 
 # endregion

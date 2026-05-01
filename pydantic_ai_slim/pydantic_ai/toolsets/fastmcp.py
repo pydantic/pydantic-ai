@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import base64
-from asyncio import Lock
+import functools
 from contextlib import AsyncExitStack
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import anyio
 from pydantic import AnyUrl
 from typing_extensions import Self, assert_never
 
@@ -99,6 +100,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     _instructions: str | None
 
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
+
     def __init__(
         self,
         client: Client[Any]
@@ -130,7 +138,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self.include_return_schema = include_return_schema
         self.process_tool_call = process_tool_call
 
-        self._enter_lock: Lock = Lock()
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
 
