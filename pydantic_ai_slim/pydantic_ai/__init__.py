@@ -24,6 +24,7 @@ from .builtin_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
+from .capabilities import AgentCapability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -294,6 +295,9 @@ __all__ = (
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
+    # capabilities
+    'AgentCapability',
+    'CapabilityFunc',
     # output
     'ToolOutput',
     'NativeOutput',

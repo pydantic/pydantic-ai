@@ -1,5 +1,9 @@
-from typing import Any
+from typing import Any, TypeAlias
 
+from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai.output import OutputContext
+
+from ._dynamic import CapabilityFunc, DynamicCapability
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -7,10 +11,13 @@ from .abstract import (
     CapabilityPosition,
     CapabilityRef,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputProcessHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
@@ -18,13 +25,19 @@ from .abstract import (
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
-from .history_processor import HistoryProcessor
+from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .mcp import MCP
 from .prefix_tools import PrefixTools
-from .prepare_tools import PrepareTools
+from .prepare_tools import PrepareOutputTools, PrepareTools
+from .process_event_stream import ProcessEventStream
+from .process_history import (
+    HistoryProcessor,  # pyright: ignore[reportDeprecated]
+    ProcessHistory,
+)
+from .reinject_system_prompt import ReinjectSystemPrompt
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
 from .thread_executor import ThreadExecutor
@@ -33,16 +46,25 @@ from .web_fetch import WebFetch
 from .web_search import WebSearch
 from .wrapper import WrapperCapability
 
+AgentCapability: TypeAlias = AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]
+"""A capability or a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] that takes a run context and returns one.
+
+Use as the item type for `Agent(capabilities=[...])` and `agent.run(capabilities=[...])`.
+Functions are wrapped in a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] automatically.
+"""
+
+
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
-        HistoryProcessor,
         ImageGeneration,
         IncludeToolReturnSchemas,
         MCP,
         PrefixTools,
         PrepareTools,
+        ProcessHistory,
+        ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
         Toolset,
@@ -58,7 +80,9 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
+    'AgentCapability',
     'AgentNode',
+    'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
     'CapabilityRef',
@@ -70,6 +94,9 @@ __all__ = [
     'WrapRunHandler',
     'WrapToolExecuteHandler',
     'WrapToolValidateHandler',
+    'RawOutput',
+    'WrapOutputValidateHandler',
+    'WrapOutputProcessHandler',
     'BuiltinTool',
     'BuiltinOrLocalTool',
     'CAPABILITY_TYPES',
@@ -78,7 +105,11 @@ __all__ = [
     'IncludeToolReturnSchemas',
     'MCP',
     'PrefixTools',
+    'PrepareOutputTools',
     'PrepareTools',
+    'ProcessEventStream',
+    'ProcessHistory',
+    'ReinjectSystemPrompt',
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
@@ -87,6 +118,9 @@ __all__ = [
     'WebSearch',
     'WrapperCapability',
     'CombinedCapability',
+    'DynamicCapability',
+    'HandleDeferredToolCalls',
     'HookTimeoutError',
     'Hooks',
+    'OutputContext',
 ]

@@ -85,21 +85,29 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if new_toolset is self._toolset:
             return self
 
-        # Manage the transition: exit old toolset, enter new one.
-        # Use try/finally so self._toolset is updated even if __aexit__ raises.
-        try:
-            if self._toolset is not None:
-                await self._toolset.__aexit__(None, None, None)
-        finally:
-            self._toolset = new_toolset
-        if self._toolset is not None:
-            await self._toolset.__aenter__()
+        # Detach the old toolset first so that if either the exit-old or enter-new step
+        # raises, `__aexit__` does not try to exit a toolset that was never entered
+        # (or has already been exited).
+        old_toolset = self._toolset
+        self._toolset = None
+        if old_toolset is not None:
+            await old_toolset.__aexit__(None, None, None)
+        await self._enter_inner_toolset(new_toolset)
         return self
 
     async def __aenter__(self) -> Self:
-        if self._toolset is not None:
-            await self._toolset.__aenter__()
+        await self._enter_inner_toolset(self._toolset)
         return self
+
+    async def _enter_inner_toolset(self, toolset: AbstractToolset[AgentDepsT] | None) -> None:
+        # Only register `toolset` as the active inner toolset after a successful
+        # `__aenter__`, so `__aexit__` cannot be called on a toolset that was
+        # never entered.
+        self._toolset = None
+        if toolset is None:
+            return
+        await toolset.__aenter__()
+        self._toolset = toolset
 
     async def __aexit__(self, *args: Any) -> bool | None:
         try:

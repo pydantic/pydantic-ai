@@ -18,6 +18,10 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
+from pydantic_ai.capabilities import (
+    HistoryProcessor,  # pyright: ignore[reportDeprecated]
+    ProcessHistory,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -72,6 +76,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -84,6 +89,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -91,6 +97,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -142,11 +149,13 @@ async def test_history_processor_run_replaces_message_history(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -154,6 +163,7 @@ async def test_history_processor_run_replaces_message_history(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -207,11 +217,13 @@ async def test_history_processor_streaming_replaces_message_history(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -219,6 +231,7 @@ async def test_history_processor_streaming_replaces_message_history(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -269,6 +282,7 @@ async def test_history_processor_messages_sent_to_provider(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -276,6 +290,7 @@ async def test_history_processor_messages_sent_to_provider(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -330,6 +345,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -357,6 +373,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -364,6 +381,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -422,6 +440,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -429,6 +448,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -494,6 +514,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -501,6 +522,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -542,6 +564,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -557,6 +580,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -564,6 +588,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -600,6 +625,7 @@ async def test_history_processor_with_context_async(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -615,6 +641,7 @@ async def test_history_processor_with_context_async(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -622,6 +649,7 @@ async def test_history_processor_with_context_async(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -703,6 +731,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -710,6 +739,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -744,6 +774,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -759,6 +790,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -766,6 +798,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -819,6 +852,7 @@ async def test_callable_class_history_processor_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -831,6 +865,7 @@ async def test_callable_class_history_processor_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -838,6 +873,7 @@ async def test_callable_class_history_processor_no_op(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -869,6 +905,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -881,6 +918,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -888,6 +926,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -938,6 +977,7 @@ async def test_new_messages_index_during_iter_with_pruning():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -950,6 +990,7 @@ async def test_new_messages_index_during_iter_with_pruning():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -957,6 +998,7 @@ async def test_new_messages_index_during_iter_with_pruning():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1013,6 +1055,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1025,6 +1068,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1032,6 +1076,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1078,6 +1123,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1085,6 +1131,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1092,6 +1139,7 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1155,6 +1203,7 @@ async def test_history_processor_injects_into_new_stream(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1162,6 +1211,7 @@ async def test_history_processor_injects_into_new_stream(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1221,6 +1271,7 @@ async def test_history_processor_injects_without_run_id_before_current_run(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1228,6 +1279,7 @@ async def test_history_processor_injects_without_run_id_before_current_run(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1269,6 +1321,7 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(regex='.+-override'),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1276,6 +1329,7 @@ async def test_history_processor_overrides_run_id_uses_response_as_new_messages(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1341,6 +1395,7 @@ async def test_history_processor_resuming_without_prompt(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1348,6 +1403,7 @@ async def test_history_processor_resuming_without_prompt(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1388,6 +1444,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
                 parts=[UserPromptPart(content='Original prompt', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
@@ -1395,6 +1452,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1407,6 +1465,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1414,6 +1473,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1453,6 +1513,7 @@ async def test_resuming_without_prompt_excludes_request_with_different_run_id(
                 parts=[UserPromptPart(content='Previous run prompt', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=previous_run_id,
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1466,6 +1527,7 @@ async def test_resuming_without_prompt_excludes_request_with_different_run_id(
                 parts=[UserPromptPart(content='Previous run prompt', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=previous_run_id,
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1473,6 +1535,7 @@ async def test_resuming_without_prompt_excludes_request_with_different_run_id(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1515,6 +1578,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1522,6 +1586,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1590,6 +1655,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1597,6 +1663,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1663,6 +1730,7 @@ async def test_history_processor_replace_resumed_request_falls_through(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1670,6 +1738,7 @@ async def test_history_processor_replace_resumed_request_falls_through(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1688,3 +1757,25 @@ def test_takes_ctx_returns_false_for_untyped_processor():
 
     # When first param has no type annotation, takes_run_context returns False
     assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_history_processor_deprecated_alias(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[1:]
+
+    with pytest.warns(DeprecationWarning, match='`HistoryProcessor` is deprecated'):
+        capability = HistoryProcessor(drop_first)  # pyright: ignore[reportDeprecated]
+
+    assert isinstance(capability, ProcessHistory)
+
+    agent = Agent(function_model, capabilities=[capability])
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First')]),
+        ModelResponse(parts=[TextPart(content='Answer')]),
+    ]
+    await agent.run('Second', message_history=message_history)
+
+    # First message dropped by the processor before the provider sees it.
+    assert [part for msg in received_messages for part in msg.parts if isinstance(part, UserPromptPart)] == snapshot(
+        [UserPromptPart(content='Second', timestamp=IsDatetime())]
+    )

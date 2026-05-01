@@ -142,11 +142,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         sdk_version: Literal[5, 6] = 5,
         server_message_id: str | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` and `server_message_id` parameters."""
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
         return await super().from_request(
-            request, agent=agent, sdk_version=sdk_version, server_message_id=server_message_id, **kwargs
+            request,
+            agent=agent,
+            sdk_version=sdk_version,
+            server_message_id=server_message_id,
+            manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
+            **kwargs,
         )
 
     @classmethod
@@ -159,6 +167,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
@@ -171,9 +180,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> Response:
-        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` and `server_message_id` parameters."""
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
         return await super().dispatch_request(
             request,
             agent=agent,
@@ -181,6 +192,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -193,6 +205,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             on_complete=on_complete,
+            manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
             **kwargs,
         )
 
@@ -221,6 +235,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
         return self.load_messages(self.run_input.messages)
+
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID from the top-level `id` field of the Vercel AI request body (the chat ID)."""
+        return self.run_input.id
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
