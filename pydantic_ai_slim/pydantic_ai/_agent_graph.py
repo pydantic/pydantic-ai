@@ -58,6 +58,7 @@ __all__ = (
     'build_run_context',
     'capture_run_messages',
     'HistoryProcessor',
+    'resolve_conversation_id',
 )
 
 
@@ -69,6 +70,38 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+NEW_CONVERSATION: Literal['new'] = 'new'
+"""Sentinel value for `conversation_id` that forces a fresh conversation, ignoring any
+`conversation_id` present in `message_history`. See `resolve_conversation_id`."""
+
+
+def resolve_conversation_id(
+    explicit: str | None,
+    message_history: Sequence[_messages.ModelMessage] | None,
+) -> str:
+    """Resolve the `conversation_id` to use for an agent run.
+
+    Priority:
+
+    1. `explicit == 'new'` → fresh UUID7 (forks a conversation off the supplied history).
+    2. Explicit string → used as-is.
+    3. Most recent non-`None` `conversation_id` on `message_history` (scanned from the end).
+    4. Fresh UUID7.
+
+    A fresh UUID7 is intentionally distinct from the run's `run_id`, so callers can
+    treat the two identifiers as independent.
+    """
+    if explicit == NEW_CONVERSATION:
+        return str(uuid7())
+    if explicit is not None:
+        return explicit
+    if message_history:
+        for message in reversed(message_history):
+            if (cid := message.conversation_id) is not None:
+                return cid
+    return str(uuid7())
+
+
 @dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
@@ -78,6 +111,13 @@ class GraphAgentState:
     output_retries_used: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
+    conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
+    """The unique identifier of the conversation this run belongs to.
+
+    Resolved from the `conversation_id` argument to `Agent.run` (etc.), the most recent
+    `conversation_id` on `message_history`, or a freshly generated UUID7. See the
+    `Agent.iter` docstring for the resolution priority.
+    """
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
@@ -231,6 +271,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 next_message = _messages.ModelRequest(
                     parts=last_message.parts,
                     run_id=last_message.run_id,
+                    conversation_id=last_message.conversation_id,
                     metadata=last_message.metadata,
                 )
                 is_resuming_without_prompt = True
@@ -763,6 +804,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
             self.request.run_id = self.request.run_id or ctx.state.run_id
+            self.request.conversation_id = self.request.conversation_id or ctx.state.conversation_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -822,6 +864,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         if messages and messages[-1].run_id is None:
             messages[-1].run_id = ctx.state.run_id
+        if messages and messages[-1].conversation_id is None:
+            messages[-1].conversation_id = ctx.state.conversation_id
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -857,6 +901,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         response.run_id = response.run_id or ctx.state.run_id
+        response.conversation_id = response.conversation_id or ctx.state.conversation_id
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
@@ -909,6 +954,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Append a model response to history, updating usage tracking."""
         response.run_id = response.run_id or ctx.state.run_id
+        response.conversation_id = response.conversation_id or ctx.state.conversation_id
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
@@ -1257,7 +1303,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc()))
+            messages.append(
+                _messages.ModelRequest(
+                    parts=tool_responses,
+                    run_id=ctx.state.run_id,
+                    conversation_id=ctx.state.conversation_id,
+                    timestamp=now_utc(),
+                )
+            )
 
         return End(final_result)
 
@@ -1294,6 +1347,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
     )

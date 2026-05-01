@@ -3,10 +3,10 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextvars
 import dataclasses
+import functools
 import inspect
 import json
 import warnings
-from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
+import anyio
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import NoOpTracer, use_span
@@ -49,7 +50,8 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from ..builtin_tools import AbstractBuiltinTool
-from ..capabilities import AbstractCapability, CombinedCapability
+from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability
+from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
@@ -217,9 +219,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
-    _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
 
     @overload
     def __init__(
@@ -250,7 +258,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
     @overload
@@ -283,7 +291,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -314,7 +322,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -398,7 +406,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
-            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/) to configure the agent with.
+            capabilities: Optional list of [capabilities](https://ai.pydantic.dev/capabilities/) to configure the agent with,
+                including functions which take a run context and return a capability.
+                See [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] for more information.
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
@@ -413,7 +423,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
-        capabilities = list(capabilities or [])
+        capabilities = wrap_capability_funcs(capabilities)
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
@@ -510,6 +520,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
+        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentBuiltinTool[AgentDepsT]]]] = ContextVar(
+            '_override_builtin_tools', default=None
+        )
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
@@ -525,7 +538,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
-        self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
 
@@ -559,7 +571,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[None, str]: ...
 
     @overload
@@ -593,7 +605,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
 
     @classmethod
@@ -626,7 +638,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a spec dict or `AgentSpec`.
 
@@ -685,7 +697,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
         merged_instructions.extend(_instructions.normalize_instructions(instructions))
 
-        all_capabilities = _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
+        all_capabilities: list[AgentCapability[Any]] = list(
+            _capabilities_from_spec(validated_spec, custom_capability_types, template_context)
+        )
         if capabilities:
             all_capabilities.extend(capabilities)
 
@@ -757,7 +771,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[None, str]: ...
 
     @overload
@@ -792,7 +806,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
 
     @classmethod
@@ -826,7 +840,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[Any] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[Any, Any]:
         """Construct an Agent from a YAML or JSON spec file.
 
@@ -943,6 +957,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -954,7 +969,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
-        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -966,6 +981,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -977,7 +993,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
-        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -989,6 +1005,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -1000,7 +1017,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
-        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1046,6 +1063,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         ],
                         timestamp=datetime.datetime(...),
                         run_id='...',
+                        conversation_id='...',
                     )
                 ),
                 CallToolsNode(
@@ -1055,6 +1073,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
+                        conversation_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
@@ -1070,6 +1089,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1187,6 +1207,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
+            conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
 
         # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
@@ -1225,8 +1246,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
-        if capabilities:
-            extra_capabilities.extend(capabilities)
+        extra_capabilities.extend(wrap_capability_funcs(capabilities))
         if extra_capabilities:
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
@@ -1254,6 +1274,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_builtin_tools = self._cap_builtin_tools
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
+
+        if some_builtin_tools := self._override_builtin_tools.get():
+            cap_builtin_tools = list(some_builtin_tools.value)
 
         # Build model settings resolver using per-run capability
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -1357,6 +1380,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
             'gen_ai.agent.call.id': state.run_id,
+            'gen_ai.conversation.id': state.conversation_id,
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
@@ -1376,6 +1400,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if run_span.is_recording():
                     ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
                     ctx = _otel_set_baggage('gen_ai.agent.call.id', state.run_id, context=ctx)
+                    ctx = _otel_set_baggage('gen_ai.conversation.id', state.conversation_id, context=ctx)
                     token = _otel_attach(ctx)
                     stack.callback(_otel_detach, token)
                 await stack.enter_async_context(
@@ -1715,13 +1740,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         output_retries: int | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
+        """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1732,6 +1758,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            builtin_tools: The builtin tools to use instead of the agent's configured builtin tools.
+                Per-run `builtin_tools` are still added to these.
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
@@ -1788,6 +1816,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             tools_token = None
 
+        if _utils.is_set(builtin_tools):
+            builtin_tools_token = self._override_builtin_tools.set(_utils.Some(builtin_tools))
+        else:
+            builtin_tools_token = None
+
         if _utils.is_set(instructions):
             normalized_instructions = _instructions.normalize_instructions(instructions)
             instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
@@ -1833,6 +1866,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+            if builtin_tools_token is not None:
+                self._override_builtin_tools.reset(builtin_tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:

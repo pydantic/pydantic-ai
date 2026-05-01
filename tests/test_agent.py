@@ -205,6 +205,7 @@ def test_result_tuple():
             model_name='function:return_tuple:',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -296,6 +297,7 @@ def test_result_pydantic_model_retry():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
@@ -303,6 +305,7 @@ def test_result_pydantic_model_retry():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -322,6 +325,7 @@ def test_result_pydantic_model_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
@@ -329,6 +333,7 @@ def test_result_pydantic_model_retry():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -341,6 +346,7 @@ def test_result_pydantic_model_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -433,6 +439,7 @@ def test_output_validator():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
@@ -440,6 +447,7 @@ def test_output_validator():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -452,6 +460,7 @@ def test_output_validator():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
@@ -459,6 +468,7 @@ def test_output_validator():
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -471,6 +481,7 @@ def test_output_validator():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -600,6 +611,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -613,6 +625,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -625,6 +638,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -638,6 +652,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -650,6 +665,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -663,6 +679,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -675,6 +692,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -688,6 +706,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -700,6 +719,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -713,6 +733,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -725,6 +746,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -738,6 +760,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -750,6 +773,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -809,6 +833,7 @@ def test_tool_output_max_retries_per_tool():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -822,6 +847,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -834,6 +860,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -847,6 +874,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -859,6 +887,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -872,6 +901,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -884,6 +914,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -897,6 +928,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -909,6 +941,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -922,6 +955,7 @@ def test_tool_output_max_retries_per_tool():
                 model_name='function:return_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -934,6 +968,7 @@ def test_tool_output_max_retries_per_tool():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1094,6 +1129,7 @@ def test_plain_response_then_tuple():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -1101,6 +1137,7 @@ def test_plain_response_then_tuple():
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1112,6 +1149,7 @@ def test_plain_response_then_tuple():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1121,6 +1159,7 @@ def test_plain_response_then_tuple():
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1133,6 +1172,7 @@ def test_plain_response_then_tuple():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1146,6 +1186,7 @@ def test_plain_response_then_tuple():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
     assert result.all_messages()[-1] == snapshot(
@@ -1160,6 +1201,7 @@ def test_plain_response_then_tuple():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -1176,6 +1218,7 @@ def test_output_tool_return_content_str_return():
             model_name='test',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -1687,6 +1730,7 @@ def test_output_type_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1700,6 +1744,7 @@ def test_output_type_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1712,6 +1757,7 @@ def test_output_type_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1725,6 +1771,7 @@ def test_output_type_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1737,6 +1784,7 @@ def test_output_type_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1777,6 +1825,7 @@ def test_output_type_text_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='New York City')],
@@ -1784,6 +1833,7 @@ def test_output_type_text_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1795,6 +1845,7 @@ def test_output_type_text_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
@@ -1802,6 +1853,7 @@ def test_output_type_text_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1971,6 +2023,7 @@ def test_output_type_text_output_function():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -1978,6 +2031,7 @@ def test_output_type_text_output_function():
                 model_name='function:say_world:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2028,6 +2082,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2041,6 +2096,7 @@ def test_output_type_handoff_to_agent():
                 model_name='function:call_handoff_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2053,6 +2109,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2068,6 +2125,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2081,6 +2139,7 @@ def test_output_type_handoff_to_agent():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2093,6 +2152,7 @@ def test_output_type_handoff_to_agent():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2434,6 +2494,7 @@ def test_prompted_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
@@ -2441,6 +2502,7 @@ def test_prompted_output():
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2471,6 +2533,7 @@ def test_prompted_output_with_template():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
@@ -2478,6 +2541,7 @@ def test_prompted_output_with_template():
                 model_name='function:return_foo:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2575,6 +2639,7 @@ def test_prompted_output_with_defs():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2586,6 +2651,7 @@ def test_prompted_output_with_defs():
                 model_name='function:return_foo_bar:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2623,6 +2689,7 @@ def test_native_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -2630,6 +2697,7 @@ def test_native_output():
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2648,6 +2716,7 @@ def test_native_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2655,6 +2724,7 @@ def test_native_output():
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2706,6 +2776,7 @@ def test_prompted_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "New York City"}')],
@@ -2713,6 +2784,7 @@ def test_prompted_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2724,6 +2796,7 @@ def test_prompted_output_function_with_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
@@ -2731,6 +2804,7 @@ def test_prompted_output_function_with_retry():
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2755,6 +2829,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2762,6 +2837,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2771,6 +2847,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2778,6 +2855,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2793,6 +2871,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2800,6 +2879,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2809,6 +2889,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2816,11 +2897,13 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2828,6 +2911,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2861,6 +2945,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2868,6 +2953,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2877,6 +2963,7 @@ def test_run_with_history_new():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2884,11 +2971,13 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -2896,6 +2985,7 @@ def test_run_with_history_new():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2928,6 +3018,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2935,6 +3026,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2944,6 +3036,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2957,6 +3050,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2969,6 +3063,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2983,6 +3078,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -2990,6 +3086,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2999,6 +3096,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
@@ -3006,6 +3104,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3018,6 +3117,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             # second call, notice no repeated system prompt
             ModelRequest(
@@ -3026,6 +3126,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
@@ -3033,6 +3134,7 @@ def test_run_with_history_new_structured():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3045,6 +3147,7 @@ def test_run_with_history_new_structured():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3114,6 +3217,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -3121,6 +3225,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3172,6 +3277,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final response')],
@@ -3179,6 +3285,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                 model_name='function:simple_response:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3274,6 +3381,7 @@ Summarize this conversation to include all important facts about the user and
         what their interactions were about.\
 """,
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='James likes cars in general, especially the Fiat 126p that his parents had.')],
@@ -3281,6 +3389,7 @@ Summarize this conversation to include all important facts about the user and
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3308,6 +3417,7 @@ def test_empty_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -3315,11 +3425,13 @@ def test_empty_response():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
@@ -3327,6 +3439,7 @@ def test_empty_response():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3353,6 +3466,7 @@ def test_empty_response_without_recovery():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -3360,11 +3474,13 @@ def test_empty_response_without_recovery():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -3372,6 +3488,7 @@ def test_empty_response_without_recovery():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3386,6 +3503,89 @@ def test_agent_message_history_includes_run_id() -> None:
     run_ids = [message.run_id for message in history]
     assert run_ids == snapshot([IsStr(), IsStr()])
     assert len({*run_ids}) == snapshot(1)
+
+
+def test_agent_message_history_includes_conversation_id() -> None:
+    agent = Agent(TestModel(custom_output_text='testing conv_id'))
+
+    result = agent.run_sync('Hello')
+
+    assert result.conversation_id != result.run_id
+    conversation_ids = [message.conversation_id for message in result.all_messages()]
+    assert conversation_ids == [result.conversation_id, result.conversation_id]
+
+
+def test_agent_conversation_id_resolves_from_message_history() -> None:
+    agent = Agent(TestModel(custom_output_text='continuation'))
+
+    first = agent.run_sync('first turn')
+    second = agent.run_sync('second turn', message_history=first.all_messages())
+
+    assert second.conversation_id == first.conversation_id
+    new_conv_ids = [m.conversation_id for m in second.new_messages()]
+    assert all(cid == first.conversation_id for cid in new_conv_ids)
+
+
+def test_agent_conversation_id_explicit_override() -> None:
+    agent = Agent(TestModel(custom_output_text='explicit'))
+
+    result = agent.run_sync('hi', conversation_id='conv-app-42')
+    assert result.conversation_id == 'conv-app-42'
+    assert all(m.conversation_id == 'conv-app-42' for m in result.all_messages())
+
+
+def test_agent_conversation_id_new_sentinel_forks() -> None:
+    agent = Agent(TestModel(custom_output_text='fork'))
+
+    first = agent.run_sync('first')
+    forked = agent.run_sync('branch', message_history=first.all_messages(), conversation_id='new')
+
+    assert forked.conversation_id != first.conversation_id
+    new_conv_ids = [m.conversation_id for m in forked.new_messages()]
+    assert all(cid == forked.conversation_id for cid in new_conv_ids)
+
+
+def test_agent_conversation_id_available_in_run_context() -> None:
+    captured: list[str | None] = []
+
+    def capture_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+        captured.append(ctx.conversation_id)
+        return {}
+
+    agent = Agent(TestModel(custom_output_text='ctx'), metadata=capture_metadata)
+    result = agent.run_sync('hi', conversation_id='conv-from-ctx')
+
+    assert result.conversation_id == 'conv-from-ctx'
+    assert captured
+    assert all(cid == 'conv-from-ctx' for cid in captured)
+
+
+async def test_agent_conversation_id_surfaces_on_iter_and_async_stream() -> None:
+    """`conversation_id` is reachable from `AgentRun` and `StreamedRunResult`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+
+    async with agent.iter('hi', conversation_id='conv-iter') as agent_run:
+        assert agent_run.conversation_id == 'conv-iter'
+        async for _ in agent_run:
+            pass
+
+    async with agent.run_stream('hi', conversation_id='conv-async-stream') as stream:
+        assert stream.conversation_id == 'conv-async-stream'
+        await stream.get_output()
+
+
+def test_agent_conversation_id_surfaces_on_sync_stream() -> None:
+    """`conversation_id` is reachable from `StreamedRunResultSync`."""
+    agent = Agent(TestModel(custom_output_text='surfaced'))
+    result = agent.run_stream_sync('hi', conversation_id='conv-sync-stream')
+    assert result.conversation_id == 'conv-sync-stream'
+
+
+async def test_agent_run_result_conversation_id_property() -> None:
+    """`AgentRunResult.conversation_id` returns the run's conversation ID."""
+    agent = Agent(TestModel(custom_output_text='ok'))
+    result = await agent.run('hi', conversation_id='conv-result')
+    assert result.conversation_id == 'conv-result'
 
 
 async def test_agent_run_result_metadata_available() -> None:
@@ -3521,6 +3721,7 @@ def test_unknown_tool():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3528,6 +3729,7 @@ def test_unknown_tool():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3540,6 +3742,7 @@ def test_unknown_tool():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3547,6 +3750,7 @@ def test_unknown_tool():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3569,6 +3773,7 @@ def test_unknown_tool_fix():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3576,6 +3781,7 @@ def test_unknown_tool_fix():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3588,6 +3794,7 @@ def test_unknown_tool_fix():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -3595,6 +3802,7 @@ def test_unknown_tool_fix():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3617,6 +3825,7 @@ def test_unknown_tool_multiple_retries():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3624,6 +3833,7 @@ def test_unknown_tool_multiple_retries():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3636,6 +3846,7 @@ def test_unknown_tool_multiple_retries():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3643,6 +3854,7 @@ def test_unknown_tool_multiple_retries():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3655,6 +3867,7 @@ def test_unknown_tool_multiple_retries():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -3662,6 +3875,7 @@ def test_unknown_tool_multiple_retries():
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3927,6 +4141,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -3939,6 +4154,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -3969,6 +4185,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4021,6 +4238,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4031,6 +4249,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4049,6 +4268,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4079,6 +4299,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4089,6 +4310,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4107,6 +4329,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4164,6 +4387,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4181,6 +4405,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4217,6 +4442,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4282,6 +4508,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4301,6 +4528,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4325,6 +4553,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4377,6 +4606,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4391,6 +4621,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4403,6 +4634,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4435,6 +4667,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4448,6 +4681,7 @@ class TestMultipleToolCalls:
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4460,6 +4694,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4473,6 +4708,7 @@ class TestMultipleToolCalls:
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4485,6 +4721,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4532,6 +4769,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4543,6 +4781,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4564,6 +4803,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4616,6 +4856,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4626,6 +4867,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4644,6 +4886,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4674,6 +4917,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4684,6 +4928,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4702,6 +4947,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4764,6 +5010,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4781,6 +5028,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4817,6 +5065,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4874,6 +5123,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4892,6 +5142,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4931,6 +5182,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4983,6 +5235,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4993,6 +5246,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -5011,6 +5265,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5063,6 +5318,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -5073,6 +5329,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -5091,6 +5348,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5144,6 +5402,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -5154,6 +5413,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -5172,6 +5432,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5225,6 +5486,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive with tool retry', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -5235,6 +5497,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -5253,6 +5516,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5386,6 +5650,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -5396,6 +5661,7 @@ class TestMultipleToolCalls:
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -5421,6 +5687,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -5595,6 +5862,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5605,6 +5873,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5617,6 +5886,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -5624,6 +5894,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5646,6 +5917,7 @@ def test_nested_capture_run_messages() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5653,6 +5925,7 @@ def test_nested_capture_run_messages() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5674,6 +5947,7 @@ def test_double_capture_run_messages() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5681,6 +5955,7 @@ def test_double_capture_run_messages() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5725,6 +6000,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5733,6 +6009,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5755,6 +6032,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5763,12 +6041,14 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5777,6 +6057,7 @@ def test_dynamic_false_no_reevaluate():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5815,6 +6096,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5823,6 +6105,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5846,6 +6129,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5854,12 +6138,14 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc), part_kind='user-prompt')],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='request',
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -5868,6 +6154,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 kind='response',
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5966,6 +6253,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -5973,6 +6261,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5985,6 +6274,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foobar":"inner agent result"}')],
@@ -5992,6 +6282,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6064,6 +6355,7 @@ def test_binary_content_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
             {
@@ -6095,6 +6387,7 @@ def test_binary_content_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
         ]
@@ -6134,6 +6427,7 @@ def test_image_url_serializable_missing_media_type():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
             {
@@ -6165,6 +6459,7 @@ def test_image_url_serializable_missing_media_type():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
         ]
@@ -6211,6 +6506,7 @@ def test_image_url_serializable():
                 'instructions': None,
                 'kind': 'request',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
             {
@@ -6242,6 +6538,7 @@ def test_image_url_serializable():
                 'kind': 'response',
                 'finish_reason': None,
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             },
         ]
@@ -6310,6 +6607,7 @@ def test_tool_returning_binary_content_with_identifier():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6353,6 +6651,7 @@ def test_tool_returning_file_url_with_identifier():
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6374,6 +6673,7 @@ def test_instructions_raise_error_when_system_prompt_is_set():
             timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6399,6 +6699,7 @@ def test_instructions_raise_error_when_instructions_is_set():
             timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6415,6 +6716,7 @@ def test_instructions_both_instructions_and_system_prompt_are_set():
             timestamp=IsNow(tz=timezone.utc),
             instructions='An instructions!',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6433,6 +6735,7 @@ def test_instructions_decorator_without_parenthesis():
             timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6451,6 +6754,7 @@ def test_instructions_decorator_with_parenthesis():
             timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6471,6 +6775,7 @@ def test_instructions_with_message_history():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -6478,6 +6783,7 @@ def test_instructions_with_message_history():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6504,6 +6810,7 @@ You are a helpful assistant.
 You are a potato.\
 """,
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6520,6 +6827,7 @@ You are a helpful assistant.
 Your task is to greet people.\
 """,
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6530,6 +6838,7 @@ Your task is to greet people.\
             timestamp=IsNow(tz=timezone.utc),
             instructions='You are a helpful assistant.',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -6559,6 +6868,7 @@ def test_multi_agent_instructions_with_structured_output():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Agent 2 instructions',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'text': 'a'}, tool_call_id=IsStr())],
@@ -6566,6 +6876,7 @@ def test_multi_agent_instructions_with_structured_output():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6578,6 +6889,7 @@ def test_multi_agent_instructions_with_structured_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6611,6 +6923,7 @@ def test_empty_final_response():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6621,6 +6934,7 @@ def test_empty_final_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6630,6 +6944,7 @@ def test_empty_final_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6640,6 +6955,7 @@ def test_empty_final_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6649,6 +6965,7 @@ def test_empty_final_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -6656,6 +6973,7 @@ def test_empty_final_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6736,6 +7054,17 @@ async def test_provider_aexit_without_aenter():
     # Clean up the owned http client to avoid ResourceWarning from __del__
     assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
     await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_provider_aexit_without_aenter_then_async_with():
+    """Bare __aexit__ before any __aenter__ must not corrupt later lifecycle state."""
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+    async with provider:
+        assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
 
 
 # TODO(v2): uncomment when we re-enable the ResourceWarning in Provider.__del__
@@ -6953,6 +7282,7 @@ def test_tool_call_with_validation_value_error_serializable():
             'instructions': None,
             'kind': 'request',
             'run_id': IsStr(),
+            'conversation_id': IsStr(),
             'metadata': None,
         }
     )
@@ -7024,6 +7354,7 @@ def test_multimodal_tool_response():
                 parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7038,6 +7369,7 @@ def test_multimodal_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7059,6 +7391,7 @@ def test_multimodal_tool_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
@@ -7066,6 +7399,7 @@ def test_multimodal_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7107,6 +7441,7 @@ def test_plain_tool_response():
                 parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7121,6 +7456,7 @@ def test_plain_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7134,6 +7470,7 @@ def test_plain_tool_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
@@ -7141,6 +7478,7 @@ def test_plain_tool_response():
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7381,6 +7719,7 @@ def test_adding_tools_during_run():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='add_foo_tool', tool_call_id=IsStr())],
@@ -7388,6 +7727,7 @@ def test_adding_tools_during_run():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7400,6 +7740,7 @@ def test_adding_tools_during_run():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
@@ -7407,6 +7748,7 @@ def test_adding_tools_during_run():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7419,6 +7761,7 @@ def test_adding_tools_during_run():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
@@ -7426,6 +7769,7 @@ def test_adding_tools_during_run():
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7475,6 +7819,7 @@ def test_prepare_output_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7488,6 +7833,7 @@ def test_prepare_output_tools():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7500,6 +7846,7 @@ def test_prepare_output_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7513,6 +7860,7 @@ def test_prepare_output_tools():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7525,6 +7873,7 @@ def test_prepare_output_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7935,6 +8284,7 @@ async def test_thinking_only_response_retry():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Let me think about this...')],
@@ -7942,6 +8292,7 @@ async def test_thinking_only_response_retry():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7954,6 +8305,7 @@ async def test_thinking_only_response_retry():
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
@@ -7961,6 +8313,7 @@ async def test_thinking_only_response_retry():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7994,6 +8347,7 @@ async def test_retry_message_no_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='thinking...')],
@@ -8001,6 +8355,7 @@ async def test_retry_message_no_tools():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8012,6 +8367,7 @@ async def test_retry_message_no_tools():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='result')],
@@ -8019,6 +8375,7 @@ async def test_retry_message_no_tools():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8052,6 +8409,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='thinking...')],
@@ -8059,6 +8417,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8070,6 +8429,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8083,6 +8443,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8095,6 +8456,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8142,6 +8504,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8152,6 +8515,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8164,6 +8528,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Nothing more to say.')],
@@ -8171,6 +8536,7 @@ async def test_thinking_only_response_backward_looking_recovery():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8222,6 +8588,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8241,6 +8608,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8253,6 +8621,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8282,6 +8651,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8301,6 +8671,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8313,6 +8684,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8332,6 +8704,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -8339,6 +8712,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8364,6 +8738,7 @@ async def test_hitl_tool_approval():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -8371,6 +8746,7 @@ async def test_hitl_tool_approval():
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8513,6 +8889,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 parts=[UserPromptPart(content='Update .env file', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8524,6 +8901,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8551,6 +8929,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Approved and continue with the operation')],
@@ -8558,6 +8937,7 @@ async def test_user_prompt_with_deferred_tool_results():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8620,6 +9000,7 @@ async def test_consecutive_model_responses_in_history():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='All right then, goodbye!')],
@@ -8627,6 +9008,7 @@ async def test_consecutive_model_responses_in_history():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8642,6 +9024,7 @@ async def test_consecutive_model_responses_in_history():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='All right then, goodbye!')],
@@ -8649,6 +9032,7 @@ async def test_consecutive_model_responses_in_history():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8676,6 +9060,7 @@ async def test_consecutive_model_responses_in_history():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8947,6 +9332,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
@@ -8954,6 +9340,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8966,6 +9353,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8979,6 +9367,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8991,6 +9380,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9008,6 +9398,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id__roll_dice')],
@@ -9015,6 +9406,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9027,6 +9419,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9040,6 +9433,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9052,6 +9446,7 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9093,6 +9488,54 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
             MCPServerTool(id='github', url='https://mcp.githubcopilot.com/mcp', authorization_token='token'),
             MCPServerTool(id='example', url='https://mcp.example.com/mcp'),
         ]
+    )
+
+
+def test_agent_override_builtin_tools_empty_runs_with_test_model():
+    """Test that agent-level builtin tools can be removed when overriding the model."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+
+    with agent.override(model=model, builtin_tools=[]):
+        result = agent.run_sync('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == []
+
+
+def test_agent_override_builtin_tools_replaces_agent_level_tools():
+    """Test that override builtin_tools replace, rather than append to, agent-level builtin tools."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+
+    with (
+        agent.override(builtin_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync('Hello')
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == snapshot([CodeExecutionTool()])
+
+
+def test_agent_override_builtin_tools_preserves_runtime_additive_tools():
+    """Test that runtime builtin_tools are still added to overridden builtin tools."""
+    model = TestModel()
+    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+
+    with (
+        agent.override(builtin_tools=[CodeExecutionTool()]),
+        pytest.raises(UserError, match='TestModel does not support built-in tools'),
+    ):
+        agent.run_sync(
+            'Hello',
+            builtin_tools=[MCPServerTool(id='example', url='https://mcp.example.com/mcp')],
+        )
+
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.builtin_tools == snapshot(
+        [CodeExecutionTool(), MCPServerTool(id='example', url='https://mcp.example.com/mcp')]
     )
 
 
@@ -9143,6 +9586,7 @@ async def test_message_history():
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9158,6 +9602,7 @@ async def test_message_history():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
@@ -9165,6 +9610,7 @@ async def test_message_history():
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9340,6 +9786,7 @@ async def test_agent_allows_none_output_empty_response():
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -9347,6 +9794,7 @@ async def test_agent_allows_none_output_empty_response():
                 model_name='function:empty_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9379,6 +9827,7 @@ async def test_agent_allows_none_output_after_tool():
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
@@ -9386,6 +9835,7 @@ async def test_agent_allows_none_output_after_tool():
                 model_name='function:tool_then_empty_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9398,6 +9848,7 @@ async def test_agent_allows_none_output_after_tool():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -9405,6 +9856,7 @@ async def test_agent_allows_none_output_after_tool():
                 model_name='function:tool_then_empty_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9436,6 +9888,7 @@ async def test_agent_allows_none_output_validator_called():
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -9443,6 +9896,7 @@ async def test_agent_allows_none_output_validator_called():
                 model_name='function:empty_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9473,6 +9927,7 @@ async def test_agent_allows_none_output_validator_retry():
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -9480,6 +9935,7 @@ async def test_agent_allows_none_output_validator_retry():
                 model_name='function:model_then_text:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9491,6 +9947,7 @@ async def test_agent_allows_none_output_validator_retry():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -9498,6 +9955,7 @@ async def test_agent_allows_none_output_validator_retry():
                 model_name='function:model_then_text:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -10335,6 +10793,7 @@ async def test_image_output_validators_run():
                 parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
@@ -10342,6 +10801,7 @@ async def test_image_output_validators_run():
                 model_name='function:return_image:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -10496,6 +10956,7 @@ async def test_image_output_validators_run_stream():
                 parts=[UserPromptPart(content='Give me an image', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[FilePart(content=BinaryImage(data=b'original', media_type='image/png'))],
@@ -10504,6 +10965,7 @@ async def test_image_output_validators_run_stream():
                 provider_name='test',
                 provider_url='https://test.example.com',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

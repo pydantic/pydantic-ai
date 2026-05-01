@@ -798,6 +798,7 @@ async def test_toolset_max_retries_inherits_from_agent():
                 parts=[UserPromptPart(content='call always_fails', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
@@ -805,6 +806,7 @@ async def test_toolset_max_retries_inherits_from_agent():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -886,6 +888,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[UserPromptPart(content='call my_tool', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
@@ -893,6 +896,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -905,6 +909,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"my_tool":0}')],
@@ -912,6 +917,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
