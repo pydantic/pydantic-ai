@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import os
 import re
 import warnings
 from abc import ABC, abstractmethod
-from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -403,7 +403,6 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _id: str | None
 
-    _enter_lock: Lock = field(compare=False)
     _session_state: _MCPSessionState = field(compare=False)
 
     _server_info: mcp_types.Implementation
@@ -412,6 +411,10 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        return anyio.Lock()
 
     # TODO (v2): enforce the arguments to be passed as keyword arguments only
     def __init__(
@@ -455,7 +458,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.__post_init__()
 
     def __post_init__(self):
-        self._enter_lock = Lock()
         self._session_state = _MCPSessionState()
         self._cached_tools = None
         self._cached_resources = None

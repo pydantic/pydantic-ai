@@ -171,6 +171,7 @@ async def test_ollama_local_native_output_uses_json_schema(allow_model_requests:
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -190,6 +191,7 @@ async def test_ollama_local_native_output_uses_json_schema(allow_model_requests:
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -214,6 +216,7 @@ async def test_ollama_cloud_prompted_output(allow_model_requests: None, ollama_a
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -233,6 +236,7 @@ async def test_ollama_cloud_prompted_output(allow_model_requests: None, ollama_a
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -255,6 +259,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -274,6 +279,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -284,7 +290,6 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'Paris.',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -293,6 +298,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -320,6 +326,7 @@ We need to provide answer in JSON format. Let's do that.\
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -332,6 +339,7 @@ We need to provide answer in JSON format. Let's do that.\
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
