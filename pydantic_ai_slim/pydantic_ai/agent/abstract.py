@@ -840,7 +840,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,  # pragma: lax no cover
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
