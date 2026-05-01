@@ -615,6 +615,8 @@ def test_file_part_serialization_roundtrip():
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
+                'state': 'complete',
+                'continuation_delay': None,
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
