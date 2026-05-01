@@ -549,7 +549,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Reference an OpenAI conversation to continue durable conversation state server-side.
 
     - `'auto'`: use the most recent OpenAI conversation ID from `ModelResponse.provider_details['conversation_id']`
-      in the message history. If the history contains no such response, no `conversation` is sent.
+      in the message history with the same Pydantic AI `conversation_id`, when available. If the history
+      contains no such response, no `conversation` is sent.
     - A concrete conversation ID string: use it as the OpenAI Responses API `conversation` parameter.
 
     When a matching conversation ID is found in message history, messages that precede that response
@@ -2260,21 +2261,39 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self, setting: Literal['auto'] | str, messages: list[ModelMessage]
     ) -> tuple[str | None, list[ModelMessage]]:
         if setting == 'auto':
-            return self._get_conversation_id_and_new_messages(messages)
+            # Agent runs stamp the active Pydantic AI conversation ID on the final request.
+            # Direct model calls may still pass an empty message list.
+            pydantic_ai_conversation_id = next((m.conversation_id for m in messages[-1:]), None)
+            return self._get_conversation_id_and_new_messages(
+                messages, pydantic_ai_conversation_id=pydantic_ai_conversation_id
+            )
 
-        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, conversation_id=setting)
+        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, openai_conversation_id=setting)
         if conversation_id is not None:
             return conversation_id, trimmed
         return setting, messages
 
     def _get_conversation_id_and_new_messages(
-        self, messages: list[ModelMessage], *, conversation_id: str | None = None
+        self,
+        messages: list[ModelMessage],
+        *,
+        openai_conversation_id: str | None = None,
+        pydantic_ai_conversation_id: str | None = None,
     ) -> tuple[str | None, list[ModelMessage]]:
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
-                if isinstance(candidate, str) and (conversation_id is None or candidate == conversation_id):
+                if (
+                    pydantic_ai_conversation_id is not None
+                    and m.conversation_id is not None
+                    and m.conversation_id != pydantic_ai_conversation_id
+                ):
+                    trimmed_messages.append(m)
+                    continue
+                if isinstance(candidate, str) and (
+                    openai_conversation_id is None or candidate == openai_conversation_id
+                ):
                     return candidate, list(reversed(trimmed_messages))
             trimmed_messages.append(m)
 

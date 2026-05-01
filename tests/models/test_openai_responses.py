@@ -2861,6 +2861,42 @@ async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: No
         assert response.provider_details['conversation_id'] == conversation_id
 
 
+async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(model=model, instructions='Follow the user instructions exactly.')
+
+        result = await agent.run(
+            'Reply exactly: stored',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+        original_pydantic_ai_conversation_id = response.conversation_id
+        assert original_pydantic_ai_conversation_id is not None
+
+        forked = await agent.run(
+            'Reply exactly: forked',
+            message_history=result.all_messages(),
+            conversation_id='new',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        )
+
+        assert forked.output == snapshot('forked')
+        request = forked.all_messages()[-2]
+        assert isinstance(request, ModelRequest)
+        assert request.conversation_id != original_pydantic_ai_conversation_id
+        response = forked.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert 'conversation_id' not in response.provider_details
+
+
 async def test_openai_conversation_id_preserves_mismatched_history(allow_model_requests: None, openai_api_key: str):
     async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
         model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))

@@ -243,7 +243,9 @@ result = agent.run_sync('What did we discuss last time?', model_settings=model_s
 print(result.output)
 ```
 
-When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response:
+When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response.
+
+When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
