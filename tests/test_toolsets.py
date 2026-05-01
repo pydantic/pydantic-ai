@@ -783,11 +783,7 @@ async def test_handle_call_wrap_validation_errors_false():
     Mirrors the `wrap_validation_errors` flag on the output-tool methods.
     """
 
-    @dataclass
-    class TestDeps:
-        pass
-
-    toolset = FunctionToolset[TestDeps](max_retries=2)
+    toolset = FunctionToolset[None](max_retries=2)
 
     @toolset.tool_plain
     def needs_int(x: int) -> int:
@@ -797,7 +793,7 @@ async def test_handle_call_wrap_validation_errors_false():
     def retrying() -> int:
         raise ModelRetry('please retry')
 
-    tool_manager = await ToolManager[TestDeps](toolset).for_run_step(build_run_context(TestDeps()))
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
 
     # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
     with pytest.raises(ValidationError):

@@ -14635,6 +14635,61 @@ async def test_deferred_tool_handler_via_handle_call():
     assert result.output == 'All done.'
 
 
+async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_false():
+    """`wrap_validation_errors=False` propagates through deferred-tool resolution.
+
+    Regression for the case where a sandboxed caller (`handle_call(wrap_validation_errors=False)`)
+    invokes a tool that requires approval: after the handler approves, the re-execution must
+    keep the raw-error contract — `ModelRetry` from the approved tool body should propagate
+    as-is, not wrapped as `ToolRetryError`.
+    """
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('outer_tool', {}, tool_call_id='outer1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def outer_tool(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
+        try:
+            await ctx.tool_manager.handle_call(inner_call, wrap_validation_errors=False)
+        except ModelRetry as e:
+            return f'raw ModelRetry: {e}'
+        return 'no error'  # pragma: no cover
+
+    @agent.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        raise ModelRetry('post-approval retry')
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done.'
+    # outer_tool caught the raw ModelRetry from the approved inner_tool body and surfaced it
+    # in its return value; if wrap_validation_errors hadn't been forwarded through
+    # _resolve_single_deferred, outer_tool would have seen a ToolRetryError instead.
+    inner_message = next(
+        msg for msg in result.all_messages() if isinstance(msg, ModelRequest) and any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool' for part in msg.parts
+        )
+    )
+    outer_return = next(
+        part for part in inner_message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool'
+    )
+    assert outer_return.content == 'raw ModelRetry: post-approval retry'
+
+
 async def test_deferred_tool_handler_via_handle_call_no_handler():
     """handle_call(resolve_deferred=True) re-raises when no handler is available."""
     from pydantic_ai.toolsets import FunctionToolset

@@ -917,7 +917,7 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         except (CallDeferred, ApprovalRequired) as exc:
-            return await self._resolve_single_deferred(call, exc)
+            return await self._resolve_single_deferred(call, exc, wrap_validation_errors=wrap_validation_errors)
 
     async def resolve_deferred_tool_calls(
         self,
@@ -940,6 +940,8 @@ class ToolManager(Generic[AgentDepsT]):
         self,
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
+        *,
+        wrap_validation_errors: bool = True,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
@@ -952,6 +954,13 @@ class ToolManager(Generic[AgentDepsT]):
         [`_call_tool`][pydantic_ai._agent_graph._call_tool] — both paths must accept the
         full [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] surface.
 
+        `wrap_validation_errors` is forwarded to the post-approval re-validation and
+        re-execution so callers passing `False` (e.g. sandboxed dispatch) keep the
+        same raw-error contract through deferred-tool resolution. Handler-constructed
+        retry signals (`ModelRetry` / `RetryPromptPart` returned by the handler) still
+        surface as `ToolRetryError` regardless — those are handler outputs, not
+        exceptions raised by validation or the tool body.
+
         Returns:
             For approved calls, the raw tool return (possibly a `ToolReturn` wrapper).
             For external-call results, the value the handler supplied verbatim (plain
@@ -962,7 +971,10 @@ class ToolManager(Generic[AgentDepsT]):
 
         Raises:
             ToolRetryError: Handler requested a retry via `ModelRetry` or `RetryPromptPart`,
-                or the approved tool re-raised `ModelRetry`.
+                or the approved tool re-raised `ModelRetry` (only when
+                `wrap_validation_errors=True`).
+            ValidationError / ModelRetry: When `wrap_validation_errors=False` and the
+                approved tool's re-validation fails or its body raises `ModelRetry`.
             CallDeferred / ApprovalRequired: Handler couldn't resolve the call, or the
                 approved tool re-raised a deferral.
         """
@@ -991,8 +1003,13 @@ class ToolManager(Generic[AgentDepsT]):
             if tool_call_result.override_args is not None:
                 validate_call = replace(call, args=tool_call_result.override_args)
             call_metadata = deferred_results.metadata.get(call.tool_call_id)
-            validated = await self.validate_tool_call(validate_call, approved=True, metadata=call_metadata)
-            return await self.execute_tool_call(validated)
+            validated = await self.validate_tool_call(
+                validate_call,
+                approved=True,
+                metadata=call_metadata,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+            return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
                 _messages.RetryPromptPart(
