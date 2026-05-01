@@ -63,8 +63,22 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[Instruction[AgentDepsT]] = []
+
+        # We stamp out all of the instructions with the capability id and defer loading information
+
         for capability in self.capabilities:
-            instructions.extend(normalize_instructions(capability.get_instructions()))
+            cap_instructions = normalize_instructions(capability.get_instructions())
+            for instruction in cap_instructions:
+                instructions.append(
+                    replace(
+                        instruction,
+                        capability_id=instruction.capability_id or capability.id,
+                        defer_loading=instruction.defer_loading
+                        if instruction.defer_loading is not None
+                        else capability.defer_loading,
+                    )
+                )
+
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:

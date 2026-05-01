@@ -403,22 +403,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
 
         capabilities = list(capabilities or [])
-        filtered_capabilities = [cap for cap in capabilities if not cap.defer_loading]
-
         deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
         for cap in capabilities:
             if cap.defer_loading:
                 deferred_capabilities[cap.id or ''] = cap
         if deferred_capabilities:
-            filtered_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred_capabilities))
+            capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred_capabilities))
         for history_processor in self.history_processors:
-            filtered_capabilities.append(ProcessHistory(history_processor))
+            capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
-            filtered_capabilities.append(BuiltinToolCap(builtin_tool))
+            capabilities.append(BuiltinToolCap(builtin_tool))
 
-        _inject_auto_capabilities(filtered_capabilities)
+        _inject_auto_capabilities(capabilities)
 
-        self._root_capability = CombinedCapability(filtered_capabilities)
+        self._root_capability = CombinedCapability(capabilities)
 
         self.model_settings = model_settings
 
@@ -495,9 +493,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-        self._override_instructions: ContextVar[
-            _utils.Option[list[_instructions.Instruction[AgentDepsT]]]
-        ] = ContextVar('_override_instructions', default=None)
+        self._override_instructions: ContextVar[_utils.Option[list[_instructions.Instruction[AgentDepsT]]]] = (
+            ContextVar('_override_instructions', default=None)
+        )
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
         )
@@ -1179,17 +1177,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             extra_capabilities.extend(capabilities)
         if extra_capabilities:
-            filtered_extra_capabilities = [cap for cap in extra_capabilities if not cap.defer_loading]
-
             deferred_capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
             for cap in extra_capabilities:
                 if cap.defer_loading:
                     deferred_capabilities[cap.id or ''] = cap
             if deferred_capabilities:
-                filtered_extra_capabilities.append(
-                    DeferredLoadingCapability(deferred_capabilities=deferred_capabilities)
-                )
-            effective_capability = CombinedCapability([base_capability, *filtered_extra_capabilities])
+                extra_capabilities.append(DeferredLoadingCapability(deferred_capabilities=deferred_capabilities))
+            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
 
@@ -2424,6 +2418,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
         for instruction in instructions:
+            # This is the golden bit, we skip instructions from rendering in the prompt if they are deferred
+            # They will show up from within the load_capability tool
+            if instruction.defer_loading:
+                continue
             content = instruction.content
             if isinstance(content, str):
                 literal_parts.append(content)
