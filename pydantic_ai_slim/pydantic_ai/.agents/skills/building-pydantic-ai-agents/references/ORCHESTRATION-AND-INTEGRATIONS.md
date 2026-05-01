@@ -61,7 +61,13 @@ result = graph.run_sync(FirstNode(0))
 Use the direct API when the user wants a single model request without agent orchestration.
 
 ```python
+from pydantic_ai import ModelRequest
 from pydantic_ai.direct import model_request_sync
+
+response = model_request_sync(
+    'openai:gpt-5.2',
+    [ModelRequest.user_text_prompt('Summarize this in one sentence.')],
+)
 ```
 
 Reach for this when there is no need for tools, retries, or agent loop state.
@@ -71,6 +77,9 @@ Reach for this when there is no need for tools, retries, or agent loop state.
 Use `agent.to_a2a()` when the agent should be exposed as an ASGI app that speaks the A2A protocol.
 
 ```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
 app = agent.to_a2a()
 ```
 
