@@ -51,7 +51,7 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -1272,6 +1272,26 @@ async def test_openrouter_cache_instructions_no_system_message() -> None:
     # No system message, so no cache_control should be added anywhere
     assert len(mapped) == 1
     assert mapped[0].get('role') == 'user'
+
+
+async def test_openrouter_cache_instructions_ignores_user_role_profile() -> None:
+    """Test that cache_instructions ignores profiles that map instructions to user messages."""
+    model = OpenRouterModel(
+        'anthropic/claude-sonnet-4.6',
+        provider=OpenRouterProvider(api_key='test-key'),
+        profile=OpenRouterModelProfile(openai_system_prompt_role='user', openrouter_supports_cache_control=True),
+    )
+    settings = OpenRouterModelSettings(openrouter_cache_instructions=True)
+    params = ModelRequestParameters(instruction_parts=[InstructionPart(content='Static instructions.', dynamic=False)])
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content='Hello')])], params, model_settings=settings
+    )
+
+    for message in mapped:
+        content = message.get('content')
+        assert isinstance(content, str)
+        assert 'cache_control' not in content
 
 
 @pytest.mark.parametrize(
