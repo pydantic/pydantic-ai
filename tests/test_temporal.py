@@ -147,7 +147,7 @@ with workflow.unsafe.imports_passed_through():
     from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsDatetime, IsStr
+    from .conftest import IsDatetime, IsInt, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -4813,3 +4813,737 @@ async def test_durability_process_event_stream_fires_live_inside_activity(client
     # are deltas. Synthetic replay would collapse all chunks into a single delta with
     # the full text ('Streamed response').
     assert text_chunks == ['ed ', 'response']
+
+
+# ==========================================
+# TemporalDurability capability — parity with TemporalAgent wrapper tests
+# ==========================================
+#
+# Each test below is the capability-path equivalent of a `TemporalAgent`-based
+# test earlier in this file. They assert the same behaviors but use
+# `Agent(..., capabilities=[TemporalDurability(...)])` and `DurabilityPlugin`
+# instead of wrapping the agent.
+
+
+# --- Complex agent: full Logfire span tree ---
+
+complex_durability_for_logfire = TemporalDurability[Deps](
+    deps_type=Deps,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
+    toolset_activity_config={
+        'durability_complex_country': ActivityConfig(start_to_close_timeout=timedelta(seconds=120)),
+    },
+)
+complex_durable_logfire_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='durability_complex_country'),
+        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='durability_complex_mcp'),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='durability_complex_external'),
+    ],
+    tools=[get_weather],
+    event_stream_handler=event_stream_handler,
+    name='durability_complex_agent_logfire',
+    capabilities=[complex_durability_for_logfire],
+)
+
+
+@workflow.defn
+class ComplexDurableAgentLogfireWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: Deps) -> Response:
+        result = await complex_durable_logfire_agent.run(prompt, deps=deps)
+        return result.output
+
+
+@pytest.mark.xfail(
+    reason=(
+        'LogfirePlugin globally wraps models in InstrumentedModel, so the durability path falls back to '
+        'rebuilding the model from `model_id` inside the activity (losing the configured api_key). '
+        'Tracked separately from this parity test suite.'
+    ),
+    strict=False,
+)
+async def test_durability_complex_agent_logfire_span_tree(
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
+):
+    """Capability-path equivalent of `test_complex_agent_run_in_workflow`.
+
+    Asserts the Logfire span tree shape — span names will use
+    `agent__durability_complex_agent_logfire__*` instead of `agent__complex_agent__*`,
+    but the structure should otherwise match. Run with `--inline-snapshot=create`
+    to populate the expected value on first run; needs a fresh VCR cassette under
+    the new test name (record in CI / locally with `--record-mode=once`).
+    """
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ComplexDurableAgentLogfireWorkflow],
+        plugins=[DurabilityPlugin(complex_durable_logfire_agent)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            ComplexDurableAgentLogfireWorkflow.run,
+            args=[
+                'Tell me: the capital of the country; the weather there; the product name',
+                Deps(country='Mexico'),
+            ],
+            id=ComplexDurableAgentLogfireWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            Response(
+                answers=[
+                    Answer(label='Capital of the country', answer='Mexico City'),
+                    Answer(label='Weather in the capital', answer='Sunny'),
+                    Answer(label='Product Name', answer='Pydantic AI'),
+                ]
+            )
+        )
+    exporter = capfire.exporter
+
+    spans = exporter.exported_spans_as_dict()
+    basic_spans_by_id = {
+        span['context']['span_id']: BasicSpan(
+            parent_id=span['parent']['span_id'] if span['parent'] else None,
+            content=attributes.get('event') or attributes['logfire.msg'],
+        )
+        for span in spans
+        if (attributes := span.get('attributes'))
+    }
+    root_span = None
+    for basic_span in basic_spans_by_id.values():
+        if basic_span.parent_id is None:
+            root_span = basic_span
+        else:
+            parent_id = basic_span.parent_id
+            parent_span = basic_spans_by_id[parent_id]
+            parent_span.children.append(basic_span)
+
+    def _normalize_json_spans(span: BasicSpan) -> None:
+        """Normalize non-deterministic tool_call_ids in JSON event spans."""
+        import json
+
+        for child in span.children:
+            if child.content.startswith('{'):
+                try:
+                    data = json.loads(child.content)
+                    _strip_volatile_fields(data)
+                    child.content = json.dumps(data)
+                except json.JSONDecodeError:
+                    pass
+            _normalize_json_spans(child)
+
+    def _strip_volatile_fields(obj: dict[str, Any]) -> None:
+        for k, v in obj.items():
+            if k in ('tool_call_id', 'timestamp'):
+                obj[k] = None
+            elif isinstance(v, dict):
+                _strip_volatile_fields(cast(dict[str, Any], v))
+
+    assert root_span is not None
+    _normalize_json_spans(root_span)
+
+    assert root_span == snapshot()
+
+
+# --- Model retry ---
+
+
+_durability_model_retry_agent = Agent(model, name='durability_model_retry_agent', capabilities=[TemporalDurability()])
+
+
+@_durability_model_retry_agent.tool_plain
+def durability_get_weather_in_city(city: str) -> str:
+    if city != 'Mexico City':
+        raise ModelRetry('Did you mean Mexico City?')
+    return 'sunny'
+
+
+@workflow.defn
+class DurabilityModelRetryWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        result = await _durability_model_retry_agent.run(prompt)
+        return result
+
+
+async def test_durability_agent_with_model_retry(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_temporal_agent_with_model_retry`.
+
+    Needs a fresh VCR cassette (different test name from the wrapper test);
+    record locally with `--record-mode=once`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityModelRetryWorkflow],
+        plugins=[DurabilityPlugin(_durability_model_retry_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityModelRetryWorkflow.run,
+            args=['What is the weather in CDMX?'],
+            id=DurabilityModelRetryWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        assert result.output == snapshot()
+        assert result.all_messages() == snapshot()
+
+
+# --- Multi-model selection by ID ---
+
+_durability_model_1 = TestModel(custom_output_text='Response from model 1')
+_durability_model_2 = TestModel(custom_output_text='Response from model 2')
+_durability_model_3 = TestModel(custom_output_text='Response from model 3')
+
+_durability_multi_model_agent = Agent(
+    _durability_model_1,
+    name='durability_multi_model_agent',
+    capabilities=[
+        TemporalDurability(
+            models={
+                'model_2': _durability_model_2,
+                'model_3': _durability_model_3,
+            },
+            activity_config=BASE_ACTIVITY_CONFIG,
+        )
+    ],
+)
+
+
+@workflow.defn
+class DurabilityMultiModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await _durability_multi_model_agent.run(prompt, model=model_id)
+        return result.output
+
+
+async def test_durability_multi_model_selection_in_workflow(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_temporal_agent_multi_model_selection_in_workflow`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityMultiModelWorkflow],
+        plugins=[DurabilityPlugin(_durability_multi_model_agent)],
+    ):
+        # Default model (no model arg)
+        output = await client.execute_workflow(
+            DurabilityMultiModelWorkflow.run,
+            args=['Hello', None],
+            id='DurabilityMultiModelWorkflow_default',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 1'
+
+        # Selecting registered second model by ID
+        output = await client.execute_workflow(
+            DurabilityMultiModelWorkflow.run,
+            args=['Hello', 'model_2'],
+            id='DurabilityMultiModelWorkflow_model2',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 2'
+
+        # Selecting registered third model by ID
+        output = await client.execute_workflow(
+            DurabilityMultiModelWorkflow.run,
+            args=['Hello', 'model_3'],
+            id='DurabilityMultiModelWorkflow_model3',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Response from model 3'
+
+
+# --- Model selection by instance ---
+
+_durability_model_instance_map = {
+    'default_instance': _durability_model_1,
+    'model_2_instance': _durability_model_2,
+}
+
+
+@workflow.defn
+class DurabilityMultiModelInstanceWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, instance_key: str) -> str:
+        model_instance = _durability_model_instance_map[instance_key]
+        result = await _durability_multi_model_agent.run(prompt, model=model_instance)
+        return result.output
+
+
+@pytest.mark.parametrize(
+    ('instance_key', 'expected_output'),
+    [
+        pytest.param('default_instance', 'Response from model 1', id='default_instance'),
+        pytest.param('model_2_instance', 'Response from model 2', id='registered_instance'),
+    ],
+)
+async def test_durability_model_selection_by_instance(
+    allow_model_requests: None, client: Client, instance_key: str, expected_output: str
+):
+    """Capability-path equivalent of `test_temporal_agent_model_selection_by_instance`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityMultiModelInstanceWorkflow],
+        plugins=[DurabilityPlugin(_durability_multi_model_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityMultiModelInstanceWorkflow.run,
+            args=['Hello', instance_key],
+            id=f'DurabilityMultiModelInstanceWorkflow_{instance_key}',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == expected_output
+
+
+# --- Web search builtin tool ---
+
+_durability_web_search_agent = Agent(
+    web_search_model,
+    name='durability_web_search_agent',
+    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=300)),
+        )
+    ],
+)
+
+
+@workflow.defn
+class DurabilityWebSearchAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _durability_web_search_agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+)
+async def test_durability_web_search_in_workflow(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_web_search_agent_run_in_workflow`.
+
+    Needs a fresh VCR cassette (different test name from the wrapper test);
+    record in CI / locally with `--record-mode=once`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityWebSearchAgentWorkflow],
+        plugins=[DurabilityPlugin(_durability_web_search_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityWebSearchAgentWorkflow.run,
+            args=['In one sentence, what is the top news story in my country today?'],
+            id=DurabilityWebSearchAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot()
+
+
+# --- Dynamic builtin tools select-by-model ---
+
+_durability_builtin_tool_agent = Agent(
+    web_search_builtin_model,
+    name='durability_builtin_tool_dynamic_agent',
+    builtin_tools=[_select_builtin_tool],
+    capabilities=[
+        TemporalDurability(
+            models={'code': code_execution_builtin_model},
+            activity_config=BASE_ACTIVITY_CONFIG,
+        )
+    ],
+)
+
+
+@workflow.defn
+class DurabilityBuiltinToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await _durability_builtin_tool_agent.run(prompt, model=model_id)
+        return result.output
+
+
+async def test_durability_dynamic_builtin_tools_select_by_model(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_temporal_dynamic_builtin_tools_select_by_model`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBuiltinToolWorkflow],
+        plugins=[DurabilityPlugin(_durability_builtin_tool_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityBuiltinToolWorkflow.run,
+            args=['Hello', None],
+            id='DurabilityBuiltinToolWorkflow_default',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'search model'
+        assert isinstance(web_search_builtin_model.last_model_request_parameters, ModelRequestParameters)
+        assert web_search_builtin_model.last_model_request_parameters.builtin_tools
+        assert isinstance(web_search_builtin_model.last_model_request_parameters.builtin_tools[0], WebSearchTool)
+
+        output = await client.execute_workflow(
+            DurabilityBuiltinToolWorkflow.run,
+            args=['Hello', 'code'],
+            id='DurabilityBuiltinToolWorkflow_code',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'code model'
+        assert isinstance(code_execution_builtin_model.last_model_request_parameters, ModelRequestParameters)
+        assert code_execution_builtin_model.last_model_request_parameters.builtin_tools
+        assert isinstance(
+            code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
+            CodeExecutionTool,
+        )
+
+
+# --- @agent.toolset returning an MCP toolset ---
+
+_durability_mcp_dynamic_toolset_agent = Agent(
+    model,
+    name='durability_mcp_dynamic_toolset_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_durability_mcp_dynamic_toolset_agent.toolset(id='durability_mcp_toolset')
+def _durability_my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+
+
+@workflow.defn
+class DurabilityMCPDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_mcp_dynamic_toolset_in_workflow`.
+
+    Needs a fresh VCR cassette (different test name from the wrapper test);
+    record in CI / locally with `--record-mode=once`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityMCPDynamicToolsetAgentWorkflow],
+        plugins=[DurabilityPlugin(_durability_mcp_dynamic_toolset_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityMCPDynamicToolsetAgentWorkflow.run,
+            args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
+            id='test_durability_mcp_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        # The deepwiki MCP server should return info about the pydantic-ai repo
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+# --- FastMCP toolset ---
+
+_durability_fastmcp_agent = Agent(
+    model,
+    name='durability_fastmcp_agent',
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='durability_deepwiki')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityFastMCPAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _durability_fastmcp_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_fastmcp_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_fastmcp_toolset`.
+
+    Needs a fresh VCR cassette (different test name from the wrapper test);
+    record in CI / locally with `--record-mode=once`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityFastMCPAgentWorkflow],
+        plugins=[DurabilityPlugin(_durability_fastmcp_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityFastMCPAgentWorkflow.run,
+            args=['Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'],
+            id=DurabilityFastMCPAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot()
+
+
+# --- @agent.toolset returning a FunctionToolset ---
+
+_durability_dynamic_toolset_agent = Agent(
+    TestModel(),
+    name='durability_dynamic_toolset_agent',
+    deps_type=DynamicToolsetDeps,
+    capabilities=[
+        TemporalDurability[DynamicToolsetDeps](deps_type=DynamicToolsetDeps, activity_config=BASE_ACTIVITY_CONFIG)
+    ],
+)
+
+
+@_durability_dynamic_toolset_agent.toolset(id='durability_my_dynamic_tools')
+def _durability_my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
+    toolset = FunctionToolset[DynamicToolsetDeps](id='durability_dynamic_weather')
+
+    @toolset.tool_plain
+    def get_dynamic_weather(location: str) -> str:
+        """Get the weather for a location."""
+        user = ctx.deps.user_name
+        return f'Weather in {location} for {user}: sunny.'
+
+    return toolset
+
+
+@workflow.defn
+class DurabilityDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: DynamicToolsetDeps) -> str:
+        result = await _durability_dynamic_toolset_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_durability_dynamic_toolset_in_workflow(client: Client):
+    """Capability-path equivalent of `test_dynamic_toolset_in_workflow`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityDynamicToolsetAgentWorkflow],
+        plugins=[DurabilityPlugin(_durability_dynamic_toolset_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityDynamicToolsetAgentWorkflow.run,
+            args=['Get the weather for London', DynamicToolsetDeps(user_name='Alice')],
+            id='test_durability_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('{"get_dynamic_weather":"Weather in a for Alice: sunny."}')
+
+
+# --- ToolReturn metadata round-trip ---
+
+
+def _durability_tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('durability_analyze_data', {})])
+    else:
+        return ModelResponse(parts=[TextPart('done')])
+
+
+_durability_tool_return_metadata_agent = Agent(
+    FunctionModel(_durability_tool_return_metadata_model),
+    name='durability_tool_return_metadata_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_durability_tool_return_metadata_agent.tool_plain
+def durability_analyze_data() -> ToolReturn:
+    return ToolReturn(
+        return_value='analysis result',
+        content='extra content for model',
+        metadata={'key': 'value', 'count': 42},
+    )
+
+
+@workflow.defn
+class DurabilityToolReturnMetadataWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await _durability_tool_return_metadata_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_durability_tool_return_metadata_survives(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_tool_return_metadata_survives_temporal`.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4676 — `ToolReturn`
+    `metadata` and `content` survive Temporal serialization on the capability path too.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityToolReturnMetadataWorkflow],
+        plugins=[DurabilityPlugin(_durability_tool_return_metadata_agent)],
+    ):
+        messages = await client.execute_workflow(
+            DurabilityToolReturnMetadataWorkflow.run,
+            args=['analyze'],
+            id=DurabilityToolReturnMetadataWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='analyze', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='durability_analyze_data', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='function:_durability_tool_return_metadata_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='durability_analyze_data',
+                        content='analysis result',
+                        tool_call_id=IsStr(),
+                        metadata={'key': 'value', 'count': 42},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content='extra content for model', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='function:_durability_tool_return_metadata_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+# --- Passing image (BinaryImage) input through to a workflow ---
+
+_durability_multimodal_agent = Agent(
+    TestModel(),
+    name='durability_multimodal_content_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_durability_multimodal_agent.tool
+def _durability_get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalContent]:
+    """Return a list with text, BinaryContent, and DocumentUrl."""
+    return [
+        'test',
+        BinaryImage(data=b'\x89PNG', media_type='image/png'),
+        DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+    ]
+
+
+@workflow.defn
+class DurabilityMultiModalContentWorkflow:
+    @workflow.run
+    async def run(self, prompt: list[UserContent]) -> list[ModelMessage]:
+        result = await _durability_multimodal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_durability_passing_image_to_run(client: Client):
+    """Capability-path equivalent of `test_multimodal_content_serialization_in_workflow` — image input.
+
+    Verifies BinaryImage / DocumentUrl survive Temporal serialization both as workflow
+    input and as tool return values when running on the TemporalDurability capability path.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityMultiModalContentWorkflow],
+        plugins=[DurabilityPlugin(_durability_multimodal_agent)],
+    ):
+        prompt: list[str | MultiModalContent] = [
+            'Process these files and call the tool',
+            BinaryImage(data=b'\x89PNG', media_type='image/png'),
+            DocumentUrl(url='https://example.com/doc/12345', media_type='application/pdf'),
+        ]
+        messages = await client.execute_workflow(
+            DurabilityMultiModalContentWorkflow.run,
+            args=[prompt],
+            id='test_durability_passing_image_to_run',
+            task_queue=TASK_QUEUE,
+        )
+
+    # media_type is preserved through serialization for both BinaryContent and DocumentUrl.
+    media_types: list[tuple[str, str]] = []
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, UserPromptPart):
+                for content in part.content:
+                    if isinstance(content, (BinaryContent, DocumentUrl)):
+                        media_types.append((type(content).__name__, content.media_type))
+            elif isinstance(part, ToolReturnPart):
+                for content in part.content_items():
+                    if isinstance(content, (BinaryContent, DocumentUrl)):
+                        media_types.append((type(content).__name__, content.media_type))
+    assert media_types == [
+        ('BinaryContent', 'image/png'),
+        ('DocumentUrl', 'application/pdf'),
+        ('BinaryContent', 'image/png'),
+        ('DocumentUrl', 'application/pdf'),
+    ]
+
+
+# --- UploadedFile output round-trip ---
+
+_durability_uploaded_file_agent = Agent(
+    TestModel(
+        custom_output_args={
+            'file_id': 'file-abc123',
+            'provider_name': 'openai',
+            'media_type': 'image/png',
+            'identifier': 'file-1',
+        }
+    ),
+    name='durability_uploaded_file_agent',
+    output_type=UploadedFile,
+    capabilities=[TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityUploadedFileAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> UploadedFile:
+        result = await _durability_uploaded_file_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_uploaded_file_serialization_preserves_media_type(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_uploaded_file_serialization_preserves_media_type`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityUploadedFileAgentWorkflow],
+        plugins=[DurabilityPlugin(_durability_uploaded_file_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityUploadedFileAgentWorkflow.run,
+            args=['Return a file reference'],
+            id=DurabilityUploadedFileAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            UploadedFile(file_id='file-abc123', provider_name='openai', _media_type='image/png', _identifier='file-1')
+        )
