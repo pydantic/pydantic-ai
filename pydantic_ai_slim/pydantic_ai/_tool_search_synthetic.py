@@ -144,7 +144,10 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                     and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
                 ):
                     promoted = ToolReturnPart.narrow_type(part)
-                    if isinstance(promoted, ToolSearchReturnPart):
+                    # The registered narrower for `search_tools` always returns a
+                    # `ToolSearchReturnPart`; the isinstance guard is defensive in case
+                    # the registry is mutated at runtime.
+                    if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
                         new_request_parts.append(promoted)
                         request_changed = True
                         continue

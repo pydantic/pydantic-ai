@@ -2974,25 +2974,20 @@ def test_model_response_instance_dispatch_for_local_call_part() -> None:
 async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     """Custom search functions can be `async`; the toolset awaits them."""
 
-    @dataclass
-    class _Deps: ...
-
-    async def async_match(_ctx: RunContext[_Deps], _query: str, tools: Sequence[ToolDefinition]) -> Sequence[str]:
+    async def async_match(_ctx: RunContext[None], _query: str, tools: Sequence[ToolDefinition]) -> Sequence[str]:
         return [t.name for t in tools]
 
-    base_toolset = FunctionToolset[_Deps]()
-
-    @base_toolset.tool_plain(defer_loading=True)
-    def calculate_mortgage() -> str:
-        return 'monthly: $X'
-
-    ts = ToolSearchToolset(wrapped=base_toolset, search_fn=async_match)
-    ctx = _build_run_context(_Deps())
+    ts = ToolSearchToolset(wrapped=_create_function_toolset(), search_fn=async_match)
+    ctx = _build_run_context(None)
     tools = await ts.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
-    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
+    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'weather'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
+    return_value = cast(dict[str, Any], result.return_value)
+    discovered_names = {match['name'] for match in return_value['discovered_tools']}
+    # `_create_function_toolset` registers a fixed set of deferred tools; verify the
+    # async search function received the corpus and returned discoverable names.
+    assert 'calculate_mortgage' in discovered_names
 
 
 def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() -> None:
@@ -3189,3 +3184,101 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
     ]
     [server_tool_use] = server_tool_uses
     assert server_tool_use['input'] == {}
+
+
+def test_anthropic_build_tool_search_replay_block_skips_malformed_content_shapes() -> None:
+    """`_build_tool_search_replay_block` defensively handles malformed content:
+    non-dict content, non-list `discovered_tools`, non-dict entries, and entries
+    with missing/non-string names all get skipped without crashing."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart
+    from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
+
+    # Non-dict content — falls through with empty `tool_references`.
+    part_str_content = BuiltinToolSearchReturnPart(content='not a dict', tool_call_id='c1')
+    block_str = _build_tool_search_replay_block(part_str_content, 'srv_1')
+    assert block_str['content'] == {'type': 'tool_search_tool_search_result', 'tool_references': []}
+
+    # Dict content with non-list `discovered_tools` — same fall-through.
+    part_bad_list = BuiltinToolSearchReturnPart(
+        content=cast(Any, {'discovered_tools': 'not a list'}),
+        tool_call_id='c2',
+    )
+    block_bad_list = _build_tool_search_replay_block(part_bad_list, 'srv_2')
+    assert block_bad_list['content'] == {'type': 'tool_search_tool_search_result', 'tool_references': []}
+
+    # Mixed entries: non-dict, missing name, non-string name, valid — only valids surface.
+    part_mixed = BuiltinToolSearchReturnPart(
+        content=cast(
+            Any,
+            {
+                'discovered_tools': [
+                    'not a dict',
+                    {'description': 'no name'},
+                    {'name': 123},
+                    {'name': 'ok_tool'},
+                ],
+            },
+        ),
+        tool_call_id='c3',
+    )
+    block_mixed = _build_tool_search_replay_block(part_mixed, 'srv_3')
+    inner = cast(dict[str, Any], block_mixed['content'])
+    refs = cast(list[dict[str, Any]], inner['tool_references'])
+    assert [r['tool_name'] for r in refs] == ['ok_tool']
+
+
+def test_openai_normalize_tool_search_args_handles_non_dict_input() -> None:
+    """OpenAI's `_normalize_tool_search_args` falls through to an empty `queries` list
+    for any non-dict input (e.g. raw `None` from an empty server tool-search call)."""
+    pytest.importorskip('openai')
+    from pydantic_ai.models.openai import _normalize_tool_search_args  # pyright: ignore[reportPrivateUsage]
+
+    assert _normalize_tool_search_args(None) == {'queries': []}
+    assert _normalize_tool_search_args('') == {'queries': []}
+    # Dict without `paths` key — also empty.
+    assert _normalize_tool_search_args({'something_else': 'x'}) == {'queries': []}
+    # Dict with non-list `paths` — also empty.
+    assert _normalize_tool_search_args({'paths': 'not a list'}) == {'queries': []}
+
+
+def test_openai_build_client_tool_search_output_param_handles_malformed_content() -> None:
+    """`_build_client_tool_search_output_param` defensively handles malformed
+    `discovered_tools` shapes — non-dict content, non-list matches, non-dict entries,
+    non-string names — without crashing."""
+    pytest.importorskip('openai')
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import _build_client_tool_search_output_param  # pyright: ignore[reportPrivateUsage]
+
+    params = ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
+
+    # Non-dict content — no tools surface.
+    part_none = ToolReturnPart(tool_name='search_tools', content='not a dict', tool_call_id='c1')
+    out_none = _build_client_tool_search_output_param(part_none, 'c1', params)
+    assert out_none['tools'] == []
+
+    # Dict content with non-list `discovered_tools` — same fall-through.
+    part_bad_list = ToolReturnPart(
+        tool_name='search_tools',
+        content={'discovered_tools': 'not a list'},
+        tool_call_id='c2',
+    )
+    out_bad_list = _build_client_tool_search_output_param(part_bad_list, 'c2', params)
+    assert out_bad_list['tools'] == []
+
+    # Mixed entries: non-dict, missing name, non-string name — all skipped.
+    part_mixed = ToolReturnPart(
+        tool_name='search_tools',
+        content={
+            'discovered_tools': [
+                'not a dict',
+                {'description': 'no name'},
+                {'name': 123},
+                # No matching `function_tools` for any valid name; output stays empty
+                # because `_build_client_tool_search_output_param` looks up by name.
+            ],
+        },
+        tool_call_id='c3',
+    )
+    out_mixed = _build_client_tool_search_output_param(part_mixed, 'c3', params)
+    assert out_mixed['tools'] == []

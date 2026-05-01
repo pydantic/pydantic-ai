@@ -250,7 +250,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                         self._collect_discovered_from_typed_content(part.content, discovered)
                     elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                         promoted = ToolReturnPart.narrow_type(part)
-                        if isinstance(promoted, ToolSearchReturnPart):
+                        # Defensive: registered narrower for `search_tools` always returns
+                        # the typed subclass.
+                        if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
                             self._collect_discovered_from_typed_content(promoted.content, discovered)
                         self._collect_discovered_from_legacy_metadata(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
@@ -262,7 +264,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                         # constructed directly (e.g. legacy test fixtures) — promote and
                         # read off the typed view.
                         promoted = BuiltinToolReturnPart.narrow_type(part)
-                        if isinstance(promoted, BuiltinToolSearchReturnPart):
+                        # Defensive: registered narrower for `tool_search` always returns
+                        # the typed subclass.
+                        if isinstance(promoted, BuiltinToolSearchReturnPart):  # pragma: no branch
                             self._collect_discovered_from_typed_content(promoted.content, discovered)
         return discovered
 
