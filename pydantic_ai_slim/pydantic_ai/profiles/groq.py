@@ -29,7 +29,7 @@ def groq_model_profile(model_name: str) -> ModelProfile:
         )
     )
     return GroqModelProfile(
-        groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
+        groq_always_has_web_search_builtin_tool=model_name.startswith('compound'),
         supports_thinking=is_reasoning_model,
         # qwen3 can disable reasoning with reasoning_effort='none'; legacy models can't
         thinking_always_enabled=is_reasoning_model and not model_name.startswith('qwen/qwen3'),

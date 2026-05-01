@@ -160,5 +160,25 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     assert gpt_oss_profile.default_structured_output_mode == 'native'
     assert gpt_oss_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
+    gpt_oss_profile = provider.model_profile('openai/gpt-oss-safeguard-20b')
+    groq_gpt_oss_model_profile_mock.assert_called_with('gpt-oss-safeguard-20b')
+    assert gpt_oss_profile is not None
+    assert gpt_oss_profile.supports_json_object_output is True
+    assert gpt_oss_profile.supports_json_schema_output is True
+    assert gpt_oss_profile.default_structured_output_mode == 'native'
+    assert gpt_oss_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    compound_profile = provider.model_profile('groq/compound')
+    groq_model_profile_mock.assert_called_with('compound')
+    assert compound_profile is not None
+    assert isinstance(compound_profile, GroqModelProfile)
+    assert compound_profile.groq_always_has_web_search_builtin_tool is True
+
+    compound_profile = provider.model_profile('groq/compound-mini')
+    groq_model_profile_mock.assert_called_with('compound-mini')
+    assert compound_profile is not None
+    assert isinstance(compound_profile, GroqModelProfile)
+    assert compound_profile.groq_always_has_web_search_builtin_tool is True
+
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is None
