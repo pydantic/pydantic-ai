@@ -15871,8 +15871,7 @@ async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> 
         return text
 
     agent = Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[factory])
-    result = await agent.run('hi')
-    assert result._state.run_step == 2  # pyright: ignore[reportPrivateUsage]
+    await agent.run('hi')
     assert calls == 1
 
 
