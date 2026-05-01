@@ -1667,6 +1667,7 @@ async def test_openrouter_cache_point_anthropic_e2e(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1694,6 +1695,7 @@ async def test_openrouter_cache_point_anthropic_e2e(
                 provider_response_id='gen-1773009364-SjDV5yqNtQzbIiXso5JR',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1737,6 +1739,7 @@ async def test_openrouter_cache_point_gemini_e2e(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The provided text repeatedly emphasizes the importance of caching context.')],
@@ -1760,6 +1763,7 @@ async def test_openrouter_cache_point_gemini_e2e(
                 provider_response_id='gen-1773009367-3zFFs0yQRvCe01Kda6ID',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1798,6 +1802,7 @@ async def test_openrouter_cache_instructions_e2e(
                 timestamp=IsDatetime(),
                 instructions=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='I specialize in caching.')],
@@ -1821,6 +1826,7 @@ async def test_openrouter_cache_instructions_e2e(
                 provider_response_id='gen-1773009369-muGga581yy6h5yw9o2yt',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1857,6 +1863,7 @@ async def test_openrouter_cache_messages_e2e(
                 timestamp=IsDatetime(),
                 instructions='Be helpful.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
@@ -1880,6 +1887,7 @@ async def test_openrouter_cache_messages_e2e(
                 provider_response_id='gen-1773009372-jrp75p3HzyzBsmgfbEZn',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1923,6 +1931,7 @@ async def test_openrouter_cache_tool_definitions_e2e(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1954,6 +1963,7 @@ I have one tool available:
                 provider_response_id='gen-1773009374-OCscsda5VF5I9PRwtZv1',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2079,6 +2089,7 @@ async def test_openrouter_cache_streaming_e2e(
                 timestamp=IsDatetime(),
                 instructions=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
@@ -2099,6 +2110,7 @@ async def test_openrouter_cache_streaming_e2e(
                 provider_response_id='gen-1773012759-4u9w7As08eMtL75bWtu8',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
