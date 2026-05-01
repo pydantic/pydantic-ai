@@ -123,7 +123,7 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 | Capability | Local fallback | Notes |
 |---|---|---|
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Auto-detected (DuckDuckGo) | Requires the `duckduckgo` optional group (`pip install "pydantic-ai-slim[duckduckgo]"`) |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | Provide your own via `local=` | Default local fallback [coming soon](https://github.com/pydantic/pydantic-ai/pull/4906) |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | Auto-detected (markdownify) | Requires the `web-fetch` optional group (`pip install "pydantic-ai-slim[web-fetch]"`) |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Provide your own via `local=` | e.g. a tool that calls an image generation API, or a subagent with a model that supports image gen |
 | [`MCP`][pydantic_ai.capabilities.MCP] | Direct connection to MCP server | Auto-detects transport from URL |
 
@@ -1138,7 +1138,7 @@ Test custom capabilities the same way you test agents — using [`TestModel`][py
 
 ## Wrapping existing components as capabilities
 
-[`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool], [`Toolset`][pydantic_ai.capabilities.Toolset], and [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] wrap existing reusable components that haven't been repackaged as capabilities yet, so they can be composed alongside other capabilities in the `capabilities` list.
+[`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool], [`Toolset`][pydantic_ai.capabilities.Toolset], and [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] wrap existing reusable components that haven't been repackaged as capabilities yet, so they can be composed alongside other capabilities in the `capabilities` list.
 
 ### BuiltinTool
 
@@ -1166,20 +1166,20 @@ my_toolset = FunctionToolset()
 agent = Agent('openai:gpt-5.2', capabilities=[Toolset(my_toolset)])
 ```
 
-### HistoryProcessor
+### ProcessHistory
 
-[`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] wraps a [history processor](message-history.md#processing-message-history) as a capability:
+[`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] wraps a [history processor](message-history.md#processing-message-history) as a capability:
 
-```python {title="history_processor_wrapper.py"}
+```python {title="process_history_wrapper.py"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import HistoryProcessor
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import ModelMessage
 
 
 def trim_history(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-10:]  # keep only last 10 messages
 
-agent = Agent('openai:gpt-5.2', capabilities=[HistoryProcessor(trim_history)])
+agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(trim_history)])
 ```
 
 ## Examples
