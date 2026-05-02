@@ -4,6 +4,7 @@ import inspect
 import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
+from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -55,7 +56,7 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.run import AgentRunResult
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 
 from ._inline_snapshot import snapshot
@@ -67,6 +68,8 @@ with try_import() as starlette_import_successful:
 
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai._utils import (
+        apply_message_metadata,
+        dump_message_metadata,
         dump_provider_metadata,
         iter_tool_approval_responses,
         load_provider_metadata,
@@ -4643,6 +4646,172 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     assert reloaded_messages == original_messages
 
 
+async def test_adapter_dump_load_roundtrip_with_message_metadata():
+    """Test opt-in round-tripping for UIMessage.metadata and Pydantic AI message fields."""
+    request_timestamp = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
+    response_timestamp = datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc)
+    original_messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System message'),
+                UserPromptPart(content='User message'),
+            ],
+            timestamp=request_timestamp,
+            instructions='Use terse answers.',
+            run_id='run-123',
+            conversation_id='conversation-456',
+            metadata={'createdAt': '2026-04-15T12:00:00Z'},
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Response text')],
+            usage=RequestUsage(input_tokens=10, output_tokens=3),
+            model_name='gpt-4.1',
+            timestamp=response_timestamp,
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_details={'tier': 'default'},
+            provider_response_id='resp-789',
+            finish_reason='stop',
+            run_id='run-123',
+            conversation_id='conversation-456',
+            metadata={'createdAt': '2026-04-15T12:00:45Z'},
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages, preserve_message_metadata=True)
+
+    assert ui_messages[0].metadata == {
+        'createdAt': '2026-04-15T12:00:00Z',
+        'pydantic_ai': {
+            'timestamp': '2026-04-15T12:00:00+00:00',
+            'run_id': 'run-123',
+            'conversation_id': 'conversation-456',
+            'instructions': 'Use terse answers.',
+        },
+    }
+    assert ui_messages[2].metadata == {
+        'createdAt': '2026-04-15T12:00:45Z',
+        'pydantic_ai': {
+            'timestamp': '2026-04-15T12:00:45+00:00',
+            'run_id': 'run-123',
+            'conversation_id': 'conversation-456',
+            'usage': {'input_tokens': 10, 'output_tokens': 3},
+            'model_name': 'gpt-4.1',
+            'provider_name': 'openai',
+            'provider_url': 'https://api.openai.com/v1',
+            'provider_details': {'tier': 'default'},
+            'provider_response_id': 'resp-789',
+            'finish_reason': 'stop',
+        },
+    }
+
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages, preserve_message_metadata=True)
+
+    assert reloaded_messages[0].timestamp == request_timestamp
+    assert reloaded_messages[1].timestamp == response_timestamp
+    for original_message, reloaded_message in zip(original_messages, reloaded_messages):
+        for original_part, reloaded_part in zip(original_message.parts, reloaded_message.parts):
+            if hasattr(original_part, 'timestamp') and hasattr(reloaded_part, 'timestamp'):
+                reloaded_part.timestamp = original_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    assert reloaded_messages == original_messages
+
+
+async def test_adapter_message_metadata_preservation_is_opt_in():
+    """Test default behavior remains compatible for callers not opting in."""
+    ui_message = UIMessage(
+        id='msg-1',
+        role='assistant',
+        metadata={'createdAt': '2026-04-15T12:00:45Z'},
+        parts=[TextUIPart(text='Response text', state='done')],
+    )
+
+    dumped = VercelAIAdapter.dump_messages(
+        [ModelResponse(parts=[TextPart(content='Response text')], metadata={'createdAt': '2026-04-15T12:00:45Z'})]
+    )
+    loaded = VercelAIAdapter.load_messages([ui_message])
+
+    assert dumped[0].metadata is None
+    assert isinstance(loaded[0], ModelResponse)
+    assert loaded[0].metadata is None
+
+
+async def test_message_metadata_handles_empty_and_application_only_metadata():
+    request = ModelRequest(parts=[UserPromptPart(content='User message')])
+    response = ModelResponse(parts=[TextPart(content='Response text')], timestamp=cast(Any, None))
+    request_with_metadata = ModelRequest(parts=[], metadata={'createdAt': '2026-04-15T12:00:00Z'})
+
+    assert dump_message_metadata(request) is None
+    assert dump_message_metadata(response) is None
+    assert dump_message_metadata(request_with_metadata) == {'createdAt': '2026-04-15T12:00:00Z'}
+
+
+async def test_apply_message_metadata_ignores_non_pydantic_metadata():
+    request = ModelRequest(parts=[])
+
+    apply_message_metadata(request, None)
+    assert request.metadata is None
+
+    apply_message_metadata(request, {'createdAt': '2026-04-15T12:00:00Z'})
+    assert request.metadata == {'createdAt': '2026-04-15T12:00:00Z'}
+
+
+async def test_apply_message_metadata_ignores_invalid_pydantic_fields():
+    request = ModelRequest(parts=[])
+    response = ModelResponse(parts=[])
+
+    apply_message_metadata(
+        request,
+        {
+            'pydantic_ai': {
+                'timestamp': None,
+                'run_id': 123,
+                'conversation_id': [],
+                'instructions': {'not': 'a string'},
+            }
+        },
+    )
+    apply_message_metadata(
+        response,
+        {
+            'pydantic_ai': {
+                'timestamp': None,
+                'run_id': 123,
+                'conversation_id': [],
+                'usage': None,
+                'model_name': 123,
+                'provider_name': None,
+                'provider_url': [],
+                'provider_details': 'not a dict',
+                'provider_response_id': {},
+                'finish_reason': 'not-a-finish-reason',
+            }
+        },
+    )
+
+    assert request.metadata is None
+    assert request.instructions is None
+    assert response.metadata is None
+    assert not response.usage.has_values()
+    assert response.model_name is None
+    assert response.provider_name is None
+    assert response.provider_url is None
+    assert response.provider_details is None
+    assert response.provider_response_id is None
+    assert response.finish_reason is None
+
+
+async def test_adapter_message_metadata_without_target_message_is_ignored():
+    ui_message = UIMessage(
+        id='msg-empty',
+        role='assistant',
+        metadata={'pydantic_ai': {'run_id': 'run-123'}},
+        parts=[],
+    )
+
+    assert VercelAIAdapter.load_messages([ui_message], preserve_message_metadata=True) == []
+
+
 async def test_adapter_dump_messages_deterministic_ids():
     """Test that dump_messages produces deterministic IDs for the same messages.
 
@@ -4770,6 +4939,70 @@ async def test_event_stream_server_message_id():
     ]
 
     assert events[0] == snapshot({'type': 'start', 'messageId': 'server-generated-id-abc123'})
+
+
+async def test_event_stream_emits_opt_in_message_metadata():
+    """Test response metadata can be streamed without a custom on_complete callback."""
+    response = ModelResponse(
+        parts=[TextPart(content='Hello')],
+        usage=RequestUsage(input_tokens=4, output_tokens=2),
+        timestamp=datetime(2026, 4, 15, 12, 0, 45, tzinfo=timezone.utc),
+        provider_name='openai',
+        provider_details={'model': 'gpt-4.1'},
+        provider_response_id='resp-123',
+        finish_reason='stop',
+        metadata={'createdAt': '2026-04-15T12:00:45Z'},
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=response.parts[0])
+        yield PartEndEvent(index=0, part=response.parts[0])
+        result = AgentRunResult(output='Hello')
+        result._state.message_history = [response]  # pyright: ignore[reportPrivateUsage]
+        yield AgentRunResultEvent(result=result)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, preserve_message_metadata=True)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'Hello', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {
+                    'createdAt': '2026-04-15T12:00:45Z',
+                    'pydantic_ai': {
+                        'timestamp': '2026-04-15T12:00:45+00:00',
+                        'usage': {'input_tokens': 4, 'output_tokens': 2},
+                        'provider_name': 'openai',
+                        'provider_details': {'model': 'gpt-4.1'},
+                        'provider_response_id': 'resp-123',
+                        'finish_reason': 'stop',
+                    },
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish', 'finishReason': 'stop'},
+            '[DONE]',
+        ]
+    )
 
 
 async def test_adapter_server_message_id():

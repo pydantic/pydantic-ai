@@ -46,6 +46,8 @@ from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    apply_message_metadata,
+    dump_message_metadata,
     dump_provider_metadata,
     iter_metadata_chunks,
     iter_tool_approval_responses,
@@ -128,6 +130,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
+    preserve_message_metadata: bool = False
+    """Whether to round-trip Pydantic AI message metadata through Vercel AI `UIMessage.metadata`."""
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
@@ -142,6 +146,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         sdk_version: Literal[5, 6] = 5,
         server_message_id: str | None = None,
+        preserve_message_metadata: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
@@ -152,6 +157,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             agent=agent,
             sdk_version=sdk_version,
             server_message_id=server_message_id,
+            preserve_message_metadata=preserve_message_metadata,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             **kwargs,
@@ -165,6 +171,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
         sdk_version: Literal[5, 6] = 5,
         server_message_id: str | None = None,
+        preserve_message_metadata: bool = False,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -190,6 +197,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             agent=agent,
             sdk_version=sdk_version,
             server_message_id=server_message_id,
+            preserve_message_metadata=preserve_message_metadata,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
@@ -213,7 +221,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(
-            self.run_input, accept=self.accept, sdk_version=self.sdk_version, server_message_id=self.server_message_id
+            self.run_input,
+            accept=self.accept,
+            sdk_version=self.sdk_version,
+            server_message_id=self.server_message_id,
+            preserve_message_metadata=self.preserve_message_metadata,
         )
 
     @cached_property
@@ -234,7 +246,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     @cached_property
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the Vercel AI run input."""
-        return self.load_messages(self.run_input.messages)
+        return self.load_messages(self.run_input.messages, preserve_message_metadata=self.preserve_message_metadata)
 
     @cached_property
     def conversation_id(self) -> str | None:
@@ -242,11 +254,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         return self.run_input.id
 
     @classmethod
-    def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
+    def load_messages(  # noqa: C901
+        cls, messages: Sequence[UIMessage], *, preserve_message_metadata: bool = False
+    ) -> list[ModelMessage]:
         """Transform Vercel AI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
 
         for msg in messages:
+            previous_message_count = len(builder.messages)
+            previous_last_message = builder.messages[-1] if builder.messages else None
+            previous_last_parts_count = len(previous_last_message.parts) if previous_last_message else 0
+
             if msg.role == 'system':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
@@ -460,7 +478,36 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(msg.role)
 
+            if preserve_message_metadata:
+                cls._apply_ui_message_metadata(
+                    builder.messages,
+                    role=msg.role,
+                    metadata=msg.metadata,
+                    previous_last_message=previous_last_message,
+                    previous_last_parts_count=previous_last_parts_count,
+                    previous_message_count=previous_message_count,
+                )
+
         return builder.messages
+
+    @staticmethod
+    def _apply_ui_message_metadata(
+        messages: list[ModelMessage],
+        *,
+        role: Literal['system', 'user', 'assistant'],
+        metadata: Any,
+        previous_last_message: ModelMessage | None,
+        previous_last_parts_count: int,
+        previous_message_count: int,
+    ) -> None:
+        candidates: list[ModelMessage] = []
+        if previous_last_message is not None and len(previous_last_message.parts) > previous_last_parts_count:
+            candidates.append(previous_last_message)
+        candidates.extend(messages[previous_message_count:])
+
+        target_type = ModelResponse if role == 'assistant' else ModelRequest
+        if target := next((message for message in candidates if isinstance(message, target_type)), None):
+            apply_message_metadata(target, metadata)
 
     @staticmethod
     def _dump_builtin_tool_meta(
@@ -756,6 +803,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
         sdk_version: Literal[5, 6] = 5,
+        preserve_message_metadata: bool = False,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
@@ -773,6 +821,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
             sdk_version: Vercel AI SDK version to target. Defaults to 5 for backwards compatibility.
                 Set to 6 to emit tool approval parts for deferred tool calls.
+            preserve_message_metadata: Whether to populate `UIMessage.metadata` with application metadata and
+                Pydantic AI message fields needed for lossless round-trips.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -796,13 +846,23 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'system', message_index),
+                            role='system',
+                            metadata=dump_message_metadata(msg) if preserve_message_metadata else None,
+                            parts=system_ui_parts,
+                        )
                     )
                     message_index += 1
 
                 if user_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'user', message_index),
+                            role='user',
+                            metadata=dump_message_metadata(msg) if preserve_message_metadata else None,
+                            parts=user_ui_parts,
+                        )
                     )
                     message_index += 1
 
@@ -812,7 +872,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
                 if ui_parts:  # pragma: no branch
                     result.append(
-                        UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'assistant', message_index),
+                            role='assistant',
+                            metadata=dump_message_metadata(msg) if preserve_message_metadata else None,
+                            parts=ui_parts,
+                        )
                     )
                     message_index += 1
             else:
