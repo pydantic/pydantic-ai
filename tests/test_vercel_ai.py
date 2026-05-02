@@ -3061,11 +3061,13 @@ async def test_tool_approval_skipped_when_output_error_sibling_exists():
                 DynamicToolApprovalRespondedPart(
                     tool_name='delete_file',
                     tool_call_id='call_err',
+                    input={'path': 'x.txt'},
                     approval=ToolApprovalResponded(id='call_err', approved=True),
                 ),
                 DynamicToolOutputErrorPart(
                     tool_name='delete_file',
                     tool_call_id='call_err',
+                    input={'path': 'x.txt'},
                     error_text='disk full',
                 ),
             ],
@@ -3089,6 +3091,7 @@ async def test_tool_approval_skipped_when_output_denied_sibling_exists_same_id()
                 DynamicToolApprovalRespondedPart(
                     tool_name='delete_file',
                     tool_call_id='call_denied',
+                    input={'path': 'x.txt'},
                     approval=ToolApprovalResponded(id='call_denied', approved=False),
                 ),
                 DynamicToolOutputDeniedPart(
