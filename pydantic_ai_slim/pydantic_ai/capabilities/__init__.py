@@ -19,6 +19,7 @@ from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
 from .combined import CombinedCapability
 from .deferred_tool_handler import HandleDeferredToolCalls
+from .enforce_tool_return_validation import EnforceToolReturnValidation
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
@@ -43,6 +44,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         BuiltinTool,
+        EnforceToolReturnValidation,
         ImageGeneration,
         IncludeToolReturnSchemas,
         MCP,
@@ -79,6 +81,7 @@ __all__ = [
     'WrapToolValidateHandler',
     'BuiltinTool',
     'BuiltinOrLocalTool',
+    'EnforceToolReturnValidation',
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'HistoryProcessor',

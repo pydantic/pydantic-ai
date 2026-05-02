@@ -606,7 +606,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.validate_return = validate_return
         self.result_validator = result_validator
 
-        if validate_return and return_type is Any:
+        if return_type is Any:
             # try to infer the return type from the function signature
             import typing
             try:

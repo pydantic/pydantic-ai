@@ -512,9 +512,9 @@ class ToolManager(Generic[AgentDepsT]):
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
-        if validated.tool.validate_return:
+        if validated.tool.tool_def.validate_return:
             try:
-                if (validator := validated.tool._return_validator) is not None:
+                if (validator := validated.tool.tool_def._return_validator) is not None:
                     tool_result = validator.validate_python(tool_result)
                 if validated.tool.result_validator is not None:
                     result = validated.tool.result_validator(validated.ctx, tool_result)
