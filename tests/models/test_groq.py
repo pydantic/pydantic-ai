@@ -6060,6 +6060,7 @@ async def test_groq_default_native_output_gpt_oss(allow_model_requests: None, gr
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6077,6 +6078,7 @@ async def test_groq_default_native_output_gpt_oss(allow_model_requests: None, gr
                 provider_response_id='chatcmpl-6f2d9825-b5ca-465c-8762-b7cde23623fa',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6101,6 +6103,7 @@ async def test_groq_default_native_output_kimi(allow_model_requests: None, groq_
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Paris","country":"France"}')],
@@ -6113,6 +6116,7 @@ async def test_groq_default_native_output_kimi(allow_model_requests: None, groq_
                 provider_response_id='chatcmpl-61127624-2a26-440d-b9d6-79975ecc1227',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6137,6 +6141,7 @@ async def test_groq_default_native_output_llama4(allow_model_requests: None, gro
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6158,6 +6163,7 @@ async def test_groq_default_native_output_llama4(allow_model_requests: None, gro
                 provider_response_id='chatcmpl-d27fc01d-1b3c-4692-9e2e-2afef6af0027',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6186,6 +6192,7 @@ async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: N
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is **Paris**.')],
@@ -6195,6 +6202,7 @@ async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: N
                 provider_url='https://api.groq.com',
                 finish_reason='error',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6205,7 +6213,6 @@ async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: N
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'The capital of France is **Paris**.',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -6214,6 +6221,7 @@ async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: N
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6235,6 +6243,7 @@ async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: N
                 provider_response_id='chatcmpl-10de341a-7f97-4601-8254-96158e69442a',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6247,6 +6256,7 @@ async def test_groq_native_with_tools_falls_back_gpt_oss(allow_model_requests: N
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6275,6 +6285,7 @@ async def test_groq_native_with_tools_falls_back_kimi(allow_model_requests: None
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6293,6 +6304,7 @@ async def test_groq_native_with_tools_falls_back_kimi(allow_model_requests: None
                 provider_response_id='chatcmpl-f17dc497-fe1d-438c-98cc-9a623c4afffa',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -6305,6 +6317,7 @@ async def test_groq_native_with_tools_falls_back_kimi(allow_model_requests: None
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
