@@ -41,5 +41,5 @@ export CO_API_KEY="your-cohere-api-key"
 You may also switch to an OpenAI or Anthropic model if preferred:
 
 ```python
-MODEL = "openai:gpt-4o"
+MODEL = 'openai:gpt-5.2'
 ```
