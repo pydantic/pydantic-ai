@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -9,6 +9,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -78,6 +79,25 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             get_tools_activity
         )
 
+        async def get_instructions_activity(
+            params: GetToolsParams, deps: AgentDepsT
+        ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+            """Activity that resolves dynamic toolset and returns instructions."""
+            ctx = deserialize_run_context(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
+
+            run_toolset = await self.wrapped.for_run(ctx)
+            async with run_toolset:
+                run_toolset = await run_toolset.for_run_step(ctx)
+                return await run_toolset.get_instructions(ctx)
+
+        get_instructions_activity.__annotations__['deps'] = deps_type
+
+        self.get_instructions_activity = activity.defn(
+            name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__get_instructions'
+        )(get_instructions_activity)
+
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             """Activity that instantiates the dynamic toolset and calls the tool."""
             ctx = deserialize_run_context(
@@ -105,7 +125,24 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.get_tools_activity, self.call_tool_activity]
+        return [self.get_instructions_activity, self.get_tools_activity, self.call_tool_activity]
+
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        if not workflow.in_workflow():  # pragma: no cover
+            return await super().get_instructions(ctx)
+
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
+        return await workflow.execute_activity(
+            activity=self.get_instructions_activity,
+            args=[
+                GetToolsParams(serialized_run_context=serialized_run_context),
+                ctx.deps,
+            ],
+            **activity_config,
+        )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not workflow.in_workflow():  # pragma: no cover

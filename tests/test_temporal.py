@@ -2536,6 +2536,53 @@ async def test_temporal_mcp_toolset_instructions_propagate(client: Client):
         assert output == snapshot('Be a helpful assistant.')
 
 
+def return_dynamic_toolset_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
+
+
+dynamic_instructions_agent = Agent(
+    FunctionModel(return_dynamic_toolset_instructions),
+    name='dynamic_instructions_agent',
+    deps_type=DynamicToolsetDeps,
+)
+
+
+@dynamic_instructions_agent.toolset(id='dynamic_instructions_toolset')
+def dynamic_instructions_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
+    return FunctionToolset(
+        id='dynamic_instructions_inner',
+        instructions=f'Address user {ctx.deps.user_name}.',
+    )
+
+
+dynamic_instructions_temporal_agent = TemporalAgent(dynamic_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class DynamicInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, deps: DynamicToolsetDeps) -> str:
+        result = await dynamic_instructions_temporal_agent.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_temporal_dynamic_toolset_instructions_propagate(client: Client):
+    """Dynamic toolset instructions should propagate through Temporal wrapper toolsets."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsWorkflow],
+        plugins=[AgentPlugin(dynamic_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicInstructionsWorkflow.run,
+            args=['Use dynamic toolset instructions', DynamicToolsetDeps(user_name='Alice')],
+            id=DynamicInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('Address user Alice.')
+
+
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
