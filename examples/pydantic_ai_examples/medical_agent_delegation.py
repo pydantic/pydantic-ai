@@ -26,6 +26,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from textwrap import dedent
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -33,7 +34,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, RunContext
 
-MODEL = 'openai:gpt-4.1-mini'
+MODEL = 'openai:gpt-5.2'
 
 
 # Structured Outputs
@@ -85,42 +86,59 @@ class TestPatient(TypedDict):
     patient: PatientInfo
 
 
+class MedicalHistoryRecord(TypedDict):
+    timestamp: str
+    patient_id: str
+    path: str
+    specialty: Specialty | None
+    report_summary: list[str] | str
+    treatment_summary: str
+
+
 # Specialist and Senior Agents
 gp_agent = Agent(
     MODEL,
     output_type=MedicalReport,
     deps_type=PatientInfo,
-    system_prompt="""
-    You are a general practitioner.
-    """,
+    instructions=dedent(
+        """
+        You are a general practitioner.
+        """
+    ),
 )
 
 cardiology_agent = Agent(
     MODEL,
     output_type=MedicalReport,
     deps_type=PatientInfo,
-    system_prompt="""
-    You are a cardiology specialist.
-    """,
+    instructions=dedent(
+        """
+        You are a cardiology specialist.
+        """
+    ),
 )
 
 neurology_agent = Agent(
     MODEL,
     output_type=MedicalReport,
     deps_type=PatientInfo,
-    system_prompt="""
-    You are a neurology specialist.
-    """,
+    instructions=dedent(
+        """
+        You are a neurology specialist.
+        """
+    ),
 )
 
 senior_doctor_agent = Agent(
     MODEL,
     output_type=TreatmentPlan,
     deps_type=PatientInfo,
-    system_prompt="""
-    You are a senior clinician overseeing complex or ambiguous cases.
-    Integrate all prior findings to produce a clear treatment plan.
-    """,
+    instructions=dedent(
+        """
+        You are a senior clinician overseeing complex or ambiguous cases.
+        Integrate all prior findings to produce a clear treatment plan.
+        """
+    ),
 )
 
 SPECIALIST_MAP = {
@@ -134,17 +152,28 @@ triage_agent = Agent(
     MODEL,
     output_type=TriageFinalOutput,
     deps_type=PatientInfo,
-    system_prompt="""
-    You are a triage clinician coordinating medical workflow.
-    You can call tools to consult specialists or a senior doctor.
+    instructions=dedent(
+        """
+        You are a triage clinician coordinating medical workflow.
+        You can call tools to consult specialists or a senior doctor.
 
-    AVAILABLE SPECIALTIES:
-    - "general": General practitioner for common issues
-    - "cardiology": For heart, chest pain, cardiac symptoms
-    - "neurology": For brain, nerve, stroke, headache symptoms
+        AVAILABLE SPECIALTIES:
+        - "general": General practitioner for common issues
+        - "cardiology": For heart, chest pain, cardiac symptoms
+        - "neurology": For brain, nerve, stroke, headache symptoms
 
-    Always produce a structured TriageFinalOutput.
-    """,
+        ESCALATION RULES — call consult_senior_doctor immediately if ANY of:
+        - "Worst headache of my life" (possible subarachnoid hemorrhage)
+        - Sudden weakness, numbness, or paralysis in limbs (possible stroke)
+        - Sudden vision loss or blurry vision alongside other symptoms
+        - Loss of consciousness or repeated fainting
+        - Multi-system symptoms (e.g. neuro + cardiac combined)
+        - You are uncertain which specialist is appropriate
+
+        For all other cases, route to the appropriate specialist via consult_specialist.
+        Always produce a structured TriageFinalOutput.
+        """
+    ),
 )
 
 
@@ -215,11 +244,11 @@ class MedicalTriageSystem:
 
     def __init__(self):
         self.triage = triage_agent
-        self.medical_history: list[dict[str, Any]] = []
+        self.medical_history: list[MedicalHistoryRecord] = []
 
     async def handle_patient(
         self, complaint: str, patient: PatientInfo
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         timestamp = datetime.now(tz=timezone.utc).isoformat()
         print(f'\n[{timestamp}] Processing complaint: {complaint}')
 
@@ -233,7 +262,7 @@ class MedicalTriageSystem:
         triage_result = await self.triage.run(triage_prompt, deps=patient)
         final_output: TriageFinalOutput = triage_result.output
 
-        record = {
+        record: MedicalHistoryRecord = {
             'timestamp': timestamp,
             'patient_id': patient.patient_id,
             'path': final_output.final_status,
@@ -265,16 +294,24 @@ async def demo_medical_triage():
             'patient': PatientInfo(patient_id='P002', age=34, known_conditions=[]),
         },
         {
+            'complaint': 'Unresponsive patient, suspected multi-organ failure, unknown history.',
+            'patient': PatientInfo(
+                patient_id='P004',
+                age=85,
+                known_conditions=['heart failure', 'renal failure'],
+            ),
+        },
+        {
+            'complaint': 'Hard to breath and faint every few minutes.',
+            'patient': PatientInfo(patient_id='P003', age=71, known_conditions=[]),
+        },
+        {
             'complaint': "Sudden onset of the worst headache of my life, followed by blurry vision and now I can't feel my left leg. I took aspirin an hour ago.",
             'patient': PatientInfo(
                 patient_id='P003',
                 age=71,
                 known_conditions=['Type 2 Diabetes', 'Chronic Migraines'],
             ),
-        },
-        {
-            'complaint': 'Hard to breath and faint every few minutes.',
-            'patient': PatientInfo(patient_id='P003', age=71, known_conditions=[]),
         },
     ]
 
