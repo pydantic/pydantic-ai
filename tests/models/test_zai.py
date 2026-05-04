@@ -35,6 +35,7 @@ async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
                 parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -60,6 +61,7 @@ async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
                 provider_response_id='20260217121043e8de4e8178114889',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -95,6 +97,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                 parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -120,6 +123,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                 provider_response_id='20260325232441b45c991535c342af',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
