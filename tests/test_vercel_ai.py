@@ -6357,7 +6357,7 @@ async def test_event_stream_tool_call_part_end_does_not_emit_input_available():
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
     ]
 
-    chunk_types = [e['type'] for e in events if isinstance(e, dict)]
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
     assert 'tool-input-available' not in chunk_types
     assert 'tool-input-error' not in chunk_types
     assert chunk_types == snapshot(
