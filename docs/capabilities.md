@@ -177,6 +177,9 @@ cap = BuiltinOrLocalTool(builtin=CodeExecutionTool(), local=my_local_executor)
 
 [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] and [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] wrap a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step. `PrepareTools` handles function tools; `PrepareOutputTools` handles [output tools][pydantic_ai.output.ToolOutput]. The Agent constructor's [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc] arguments are sugar that injects these capabilities automatically.
 
+!!! warning
+    Both capabilities run through the same `PreparedToolset` wrapper as the `Agent` kwargs, so the [`None` → "disable all" semantics and `UserWarning`](tools-advanced.md#prepare-tools) apply equally here: return the `tool_defs` argument for passthrough, or `[]` to intentionally expose no tools.
+
 ```python {title="prepare_tools_builtin.py"}
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
