@@ -6,6 +6,7 @@ import base64
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -562,6 +563,48 @@ class TestFastMCPToolsetToolCalling:
 
             with pytest.raises(ModelRetry, match='This is a test error'):
                 await toolset.call_tool('error_tool', {}, run_context, error_tool)
+
+    async def test_call_tool_with_is_error_result_model_retry(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+    ):
+        """`is_error=True` results should follow `tool_error_behavior='model_retry'`."""
+        toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='model_retry')
+        fastmcp_client.call_tool = AsyncMock(
+            return_value=type(
+                'FakeCallToolResult',
+                (),
+                {
+                    'is_error': True,
+                    'content': [TextContent(type='text', text='failed from is_error')],
+                    'structured_content': None,
+                },
+            )()
+        )
+
+        with pytest.raises(ModelRetry, match='failed from is_error'):
+            await toolset.direct_call_tool('test_tool', {})
+
+    async def test_call_tool_with_is_error_result_tool_error(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+    ):
+        """`is_error=True` results should follow `tool_error_behavior='error'`."""
+        toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='error')
+        fastmcp_client.call_tool = AsyncMock(
+            return_value=type(
+                'FakeCallToolResult',
+                (),
+                {
+                    'is_error': True,
+                    'content': [TextContent(type='text', text='failed from is_error')],
+                    'structured_content': None,
+                },
+            )()
+        )
+
+        with pytest.raises(ToolError, match='failed from is_error'):
+            await toolset.direct_call_tool('test_tool', {})
 
     async def test_process_tool_call_invoked(
         self,
