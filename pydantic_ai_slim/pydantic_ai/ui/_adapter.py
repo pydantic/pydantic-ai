@@ -457,7 +457,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return self.build_event_stream().streaming_response(stream)
 
-    def run_stream_native(
+    async def run_stream_native(
         self,
         *,
         output_type: OutputSpec[Any] | None = None,
@@ -527,7 +527,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if self.manage_system_prompt == 'server':
             capabilities.append(ReinjectSystemPrompt(replace_existing=True))
 
-        return self.agent.run_stream_events(
+        async with self.agent.run_stream_events(
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
@@ -543,7 +543,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             capabilities=capabilities,
-        )
+        ) as stream:
+            async for event in stream:
+                yield event
 
     def run_stream(
         self,
