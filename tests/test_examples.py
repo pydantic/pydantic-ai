@@ -84,6 +84,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+        if '.agents' in ex.path.parts:
+            continue
         if ex.path.name != '_utils.py':
             try:
                 path = ex.path.relative_to(root_dir)
@@ -293,6 +295,7 @@ def print_callback(s: str) -> str:
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
+    s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
     return s
 
 
@@ -1105,6 +1108,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'embed-v4.0': 1024,
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
+        'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
     }

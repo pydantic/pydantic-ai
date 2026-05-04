@@ -151,7 +151,7 @@ class SupportOutput(BaseModel):
 support_agent = Agent(
     'openai:gpt-5.2',
     deps_type=SupportDependencies,
-    # The response from the agent will, be guaranteed to be a SupportOutput,
+    # The response from the agent will be guaranteed to be a SupportOutput,
     # if validation fails the agent is prompted to try again.
     output_type=SupportOutput,
     instructions=(

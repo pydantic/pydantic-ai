@@ -259,6 +259,7 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
                 'reason': None,
                 'source': {'arguments': {'evaluation_name': 'abc', 'result': 123}, 'name': 'CustomNameFieldEvaluator'},
                 'value': 123,
+                'evaluator_version': None,
             }
         ]
     )
@@ -284,6 +285,7 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
                 'reason': None,
                 'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNamePropertyEvaluator'},
                 'value': 123,
+                'evaluator_version': None,
             }
         ]
     )
@@ -306,6 +308,7 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
         error_message='ValueError: Simulated error',
         error_stacktrace=IsStr(),
         source=FailingEvaluator().as_spec(),
+        error_type='ValueError',
     )
 
 

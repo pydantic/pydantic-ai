@@ -9,17 +9,27 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentBuiltinTool,
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 from .abstract import (
     AbstractCapability,
     AgentNode,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputProcessHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
@@ -28,6 +38,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
 
@@ -88,6 +99,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
         return await self.wrapped.prepare_tools(ctx, tool_defs)
+
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        return await self.wrapped.prepare_output_tools(ctx, tool_defs)
 
     # --- Run lifecycle hooks ---
 
@@ -290,3 +308,99 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         return await self.wrapped.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
+
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+    ) -> RawOutput:
+        return await self.wrapped.before_output_validate(ctx, output_context=output_context, output=output)
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        return await self.wrapped.after_output_validate(ctx, output_context=output_context, output=output)
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        handler: WrapOutputValidateHandler,
+    ) -> Any:
+        return await self.wrapped.wrap_output_validate(
+            ctx, output_context=output_context, output=output, handler=handler
+        )
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        error: ValidationError | ModelRetry,
+    ) -> Any:
+        return await self.wrapped.on_output_validate_error(
+            ctx, output_context=output_context, output=output, error=error
+        )
+
+    # --- Output process lifecycle hooks ---
+
+    async def before_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        return await self.wrapped.before_output_process(ctx, output_context=output_context, output=output)
+
+    async def after_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        return await self.wrapped.after_output_process(ctx, output_context=output_context, output=output)
+
+    async def wrap_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        handler: WrapOutputProcessHandler,
+    ) -> Any:
+        return await self.wrapped.wrap_output_process(
+            ctx, output_context=output_context, output=output, handler=handler
+        )
+
+    async def on_output_process_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        error: Exception,
+    ) -> Any:
+        return await self.wrapped.on_output_process_error(
+            ctx, output_context=output_context, output=output, error=error
+        )
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        return await self.wrapped.handle_deferred_tool_calls(ctx, requests=requests)

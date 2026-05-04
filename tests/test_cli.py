@@ -1,10 +1,11 @@
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from io import StringIO
 from typing import Any
 
 import pytest
+import sniffio
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -28,6 +29,17 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
+
+
+@pytest.fixture(autouse=True)
+def reset_sniffio_cvar() -> Iterator[None]:
+    # The anyio pytest plugin sets `current_async_library_cvar` to 'asyncio' at session
+    # start and the value leaks into sync tests, causing `anyio.run` to refuse to start.
+    token = sniffio.current_async_library_cvar.set(None)
+    try:
+        yield
+    finally:
+        sniffio.current_async_library_cvar.reset(token)
 
 
 def test_cli_version(capfd: CaptureFixture[str]):

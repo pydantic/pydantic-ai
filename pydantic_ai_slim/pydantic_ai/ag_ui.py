@@ -9,7 +9,7 @@ for building interactive AI applications with streaming event-based communicatio
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from . import DeferredToolResults
 from .agent import AbstractAgent
@@ -59,6 +59,7 @@ async def handle_ag_ui_request(
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
+    conversation_id: str | None = None,
     model: Model | KnownModelName | str | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -68,6 +69,8 @@ async def handle_ag_ui_request(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    manage_system_prompt: Literal['server', 'client'] = 'server',
+    allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -82,6 +85,7 @@ async def handle_ag_ui_request(
             output validators since output validators would expect an argument that matches the agent's output type.
         message_history: History of the conversation so far.
         deferred_tool_results: Optional results for deferred tool calls in the message history.
+        conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
         model: Optional model to use for this run, required if `model` was not set when creating the agent.
         deps: Optional dependencies to use for this run.
         model_settings: Optional settings to use for this model's request.
@@ -93,6 +97,9 @@ async def handle_ag_ui_request(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+        allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
+            [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -106,6 +113,7 @@ async def handle_ag_ui_request(
         output_type=output_type,
         message_history=message_history,
         deferred_tool_results=deferred_tool_results,
+        conversation_id=conversation_id,
         model=model,
         model_settings=model_settings,
         usage_limits=usage_limits,
@@ -114,6 +122,8 @@ async def handle_ag_ui_request(
         infer_name=infer_name,
         toolsets=toolsets,
         on_complete=on_complete,
+        manage_system_prompt=manage_system_prompt,
+        allowed_file_url_schemes=allowed_file_url_schemes,
     )
 
 
@@ -127,6 +137,7 @@ def run_ag_ui(
     output_type: OutputSpec[Any] | None = None,
     message_history: Sequence[ModelMessage] | None = None,
     deferred_tool_results: DeferredToolResults | None = None,
+    conversation_id: str | None = None,
     model: Model | KnownModelName | str | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -136,6 +147,8 @@ def run_ag_ui(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    manage_system_prompt: Literal['server', 'client'] = 'server',
+    allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -151,6 +164,7 @@ def run_ag_ui(
             output validators since output validators would expect an argument that matches the agent's output type.
         message_history: History of the conversation so far.
         deferred_tool_results: Optional results for deferred tool calls in the message history.
+        conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
         model: Optional model to use for this run, required if `model` was not set when creating the agent.
         deps: Optional dependencies to use for this run.
         model_settings: Optional settings to use for this model's request.
@@ -162,6 +176,9 @@ def run_ag_ui(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+        allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
+            [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
@@ -172,12 +189,15 @@ def run_ag_ui(
         accept=accept,
         ag_ui_version=ag_ui_version,
         preserve_file_data=preserve_file_data,
+        manage_system_prompt=manage_system_prompt,
+        allowed_file_url_schemes=allowed_file_url_schemes,
     )
     return adapter.encode_stream(
         adapter.run_stream(
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
             model=model,
             deps=deps,
             model_settings=model_settings,

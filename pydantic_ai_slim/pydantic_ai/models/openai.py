@@ -585,6 +585,22 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
 
+def _resolve_openai_service_tier(
+    model_settings: OpenAIChatModelSettings,
+) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
+    """Resolve the value to send as `service_tier` on the OpenAI request.
+
+    Per-provider [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]
+    wins; otherwise the top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier]
+    maps 1:1 to OpenAI's accepted values.
+    """
+    if openai_tier := model_settings.get('openai_service_tier'):
+        return openai_tier
+    if unified := model_settings.get('service_tier'):
+        return unified
+    return OMIT
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -593,8 +609,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
-
-    client: AsyncOpenAI = field(repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -665,12 +679,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
             self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -854,7 +871,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=_resolve_openai_service_tier(model_settings),
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
@@ -995,10 +1012,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(message, field_name, None)
-            if reasoning:  # pragma: no branch
-                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
-                return items
+            reasoning: object = getattr(message, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
+                )
+                continue
+            items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
+            return items
 
         return items or None
 
@@ -1513,8 +1538,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
-    client: AsyncOpenAI = field(repr=False)
-
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1544,9 +1567,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -1758,6 +1784,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        if item.phase is not None:
+                            part_provider_details = part_provider_details or {}
+                            part_provider_details['phase'] = item.phase
                         # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
                         # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
@@ -1988,7 +2017,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     top_p=model_settings.get('top_p', OMIT),
                     truncation=model_settings.get('openai_truncation', OMIT),
                     timeout=model_settings.get('timeout', NOT_GIVEN),
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=_resolve_openai_service_tier(model_settings),
                     previous_response_id=previous_response_id or OMIT,
                     context_management=model_settings.get('openai_context_management', OMIT),
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
@@ -2258,6 +2287,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     )
 
                     if isinstance(item, TextPart):
+                        phase = (item.provider_details or {}).get('phase')
+                        send_phase = (
+                            profile.openai_supports_phase
+                            and item.provider_name == self.system
+                            and phase in ('commentary', 'final_answer')
+                        )
                         if item.id and should_send_item_id:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
@@ -2275,10 +2310,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     text=item.content, type='output_text', annotations=[]
                                 ),
                             ]
+                            if send_phase:
+                                message_item['phase'] = phase
                         else:
-                            openai_messages.append(
-                                responses.EasyInputMessageParam(role='assistant', content=item.content)
-                            )
+                            easy_message_item = responses.EasyInputMessageParam(role='assistant', content=item.content)
+                            if send_phase:
+                                easy_message_item['phase'] = phase
+                            openai_messages.append(easy_message_item)
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
@@ -2633,10 +2671,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if chunk.model:
                     self._model_name = chunk.model
 
-                try:
-                    choice = chunk.choices[0]
-                except IndexError:
+                # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
+                # malformed chunks that the openai SDK's loose constructor lets through (#5165).
+                if not chunk.choices:
                     continue
+                choice = chunk.choices[0]
 
                 # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
                 if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
@@ -2704,15 +2743,23 @@ class OpenAIStreamedResponse(StreamedResponse):
         for field_name in (custom_field, 'reasoning', 'reasoning_content'):
             if not field_name:
                 continue
-            reasoning: str | None = getattr(choice.delta, field_name, None)
-            if reasoning:  # pragma: no branch
-                yield from self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=field_name,
-                    id=field_name,
-                    content=reasoning,
-                    provider_name=self.provider_name,
+            reasoning: object = getattr(choice.delta, field_name, None)
+            if not reasoning:
+                continue
+            if not isinstance(reasoning, str):
+                warnings.warn(
+                    f'Unexpected non-string value for {field_name!r}: {type(reasoning).__name__}. '
+                    'Please open an issue at https://github.com/pydantic/pydantic-ai/issues.',
+                    UserWarning,
                 )
-                break
+                continue
+            yield from self._parts_manager.handle_thinking_delta(
+                vendor_part_id=field_name,
+                id=field_name,
+                content=reasoning,
+                provider_name=self.provider_name,
+            )
+            break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps text delta content to events.
@@ -2806,6 +2853,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
+            # Track `phase` (commentary | final_answer) on assistant message items, captured
+            # from the `output_item.added` event and merged into the corresponding
+            # `TextPart.provider_details` on `output_text.done`.
+            _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -2870,7 +2921,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
-                        pass
+                        if chunk.item.phase is not None:
+                            _phase_by_item[chunk.item.id] = chunk.item.phase
                     elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                         call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
@@ -3079,6 +3131,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
+                    if (phase := _phase_by_item.get(chunk.item_id)) is not None:
+                        provider_details['phase'] = phase
                     if provider_details:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
