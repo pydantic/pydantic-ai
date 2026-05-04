@@ -130,7 +130,7 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
             _mcp_types += (MCPServer, FastMCPToolset)
         except ImportError:
             pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
+        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:
             serialized_run_context = self.run_context_type.serialize_run_context(ctx)
             activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
             return await workflow.execute_activity(

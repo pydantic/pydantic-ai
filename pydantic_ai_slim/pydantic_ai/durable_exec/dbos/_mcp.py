@@ -121,7 +121,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             _mcp_types += (MCPServer, FastMCPToolset)
         except ImportError:
             pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
+        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:
             return await self._dbos_wrapped_get_instructions_step(ctx)
         return None
 
