@@ -246,6 +246,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenRouter
     * Cerebras
     * xAI
+    * Mistral
     """
 
     service_tier: ServiceTier
