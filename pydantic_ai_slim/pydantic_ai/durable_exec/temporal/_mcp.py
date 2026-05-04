@@ -125,14 +125,9 @@ class TemporalMCPToolset(TemporalWrapperToolset[AgentDepsT], ABC):
         _mcp_types: tuple[type, ...] = ()
         try:
             from pydantic_ai.mcp import MCPServer
-
-            _mcp_types += (MCPServer,)
-        except ImportError:
-            pass
-        try:
             from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-            _mcp_types += (FastMCPToolset,)
+            _mcp_types += (MCPServer, FastMCPToolset)
         except ImportError:
             pass
         if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
