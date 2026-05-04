@@ -6,7 +6,7 @@ _ADJUSTABLE_REASONING_MODELS_PREFIX = {'mistral-medium', 'mistral-small'}
 
 
 def mistral_model_profile(model_name: str) -> ModelProfile | None:
-    """Return the model profile for a Mistral model, or `None` if the model name is not recognized."""
+    """Get the model profile for a Mistral model."""
     is_magistral = model_name.startswith('magistral')
     if is_magistral:
         return ModelProfile(supports_thinking=True, thinking_always_enabled=True)
