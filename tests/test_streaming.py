@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import json
 import re
@@ -3943,6 +3944,52 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
             break
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
+
+
+async def test_run_stream_early_break_does_not_drain_response():
+    cleanup_called = False
+    pulled_after_break = False
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal cleanup_called, pulled_after_break
+        try:
+            yield 'first'
+            pulled_after_break = True  # pragma: no cover
+            yield 'second'  # pragma: no cover
+        finally:
+            cleanup_called = True
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream('test') as result:
+        async for text in result.stream_text(delta=True, debounce_by=None):
+            assert text == 'first'
+            break
+
+    assert cleanup_called
+    assert not pulled_after_break
+    assert result.response.text == 'first'
+
+
+async def test_run_stream_events_context_manager_closes_producer():
+    cleanup_called = False
+    never_resume = asyncio.Event()
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal cleanup_called
+        try:
+            yield 'first'
+            await never_resume.wait()  # pragma: no cover
+        finally:
+            cleanup_called = True
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream_events('test') as events:
+        async for _event in events:
+            break
+
+    assert cleanup_called
 
 
 async def test_args_validator_failure_events():

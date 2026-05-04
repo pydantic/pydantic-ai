@@ -666,11 +666,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Normal path: handler was called, stream is ready
         stream_error: BaseException | None = None
+        agent_stream = agent_stream_holder[0]
         try:
-            yield agent_stream_holder[0]
-            # Ensure stream is fully consumed for proper usage counting
-            async for _ in agent_stream_holder[0]:
-                pass
+            yield agent_stream
         except BaseException as exc:
             stream_error = exc
             raise

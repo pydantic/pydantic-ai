@@ -144,6 +144,22 @@ async def test_peekable_async_stream(peek_first: bool):
     assert items == [1, 2, 3]
 
 
+async def test_peekable_async_stream_closes_unstarted_source() -> None:
+    class ClosableAsyncStream(MockAsyncStream[int]):
+        closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async_stream = ClosableAsyncStream(iter([1]))
+    peekable_async_stream = PeekableAsyncStream(async_stream)
+
+    await peekable_async_stream.aclose()
+
+    assert async_stream.closed
+    assert await peekable_async_stream.is_exhausted()
+
+
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
     if os.getenv('CI'):
         with capsys.disabled():  # pragma: lax no cover

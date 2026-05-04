@@ -32,7 +32,7 @@ from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
-    from .run import AgentRunResult
+    from .run import AgentRunResult, AgentRunResultEvent
 
 __all__ = (
     'OutputDataT',
@@ -345,6 +345,28 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
 
         return self._agent_stream_iterator
+
+
+@dataclass
+class AgentEventStream(Generic[OutputDataT]):
+    """Async event stream returned by `Agent.run_stream_events()`."""
+
+    _events: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]
+
+    def __aiter__(self) -> AgentEventStream[OutputDataT]:
+        return self
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
+        return await anext(self._events)
+
+    async def __aenter__(self) -> AgentEventStream[OutputDataT]:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        await _utils.aclose_if_available(self._events)
 
 
 @dataclass(init=False)

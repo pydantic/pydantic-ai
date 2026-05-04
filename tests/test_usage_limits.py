@@ -143,6 +143,8 @@ async def test_streamed_text_limits() -> None:
                     tool_calls=1,
                 )
             )
+            async for _ in result.stream_text(debounce_by=None):
+                pass
             succeeded = True
 
     assert succeeded

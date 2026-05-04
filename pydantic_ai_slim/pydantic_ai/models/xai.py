@@ -784,7 +784,10 @@ class XaiModel(Model[AsyncClient]):
 
         chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
         response_stream = chat.stream()
-        yield await self._process_streamed_response(response_stream, model_request_parameters)
+        try:
+            yield await self._process_streamed_response(response_stream, model_request_parameters)
+        finally:
+            await _utils.aclose_if_available(response_stream)
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.

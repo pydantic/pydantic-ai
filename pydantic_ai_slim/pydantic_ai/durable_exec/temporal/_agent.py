@@ -18,7 +18,6 @@ from typing_extensions import Never
 
 from pydantic_ai import (
     AbstractToolset,
-    AgentRunResultEvent,
     _instructions,
     _utils,
     messages as _messages,
@@ -31,7 +30,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.result import StreamedRunResult
+from pydantic_ai.result import AgentEventStream, StreamedRunResult
 from pydantic_ai.tools import (
     AgentBuiltinTool,
     AgentDepsT,
@@ -745,7 +744,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> AgentEventStream[OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -768,7 +767,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> AgentEventStream[RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -790,7 +789,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> AgentEventStream[Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
