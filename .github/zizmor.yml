@@ -19,3 +19,11 @@ rules:
       - bots.yml
       - ci.yml
       - manually-deploy-docs.yml
+
+  # `harness-compat.yml` calls a reusable workflow in `pydantic/pydantic-ai-harness`, an
+  # org-internal repo under the same maintenance group. SHA-pinning the cross-repo reference
+  # would force coordinated bumps on every harness change without meaningful security benefit
+  # (the maintainer set is identical, so no additional supply-chain boundary is crossed).
+  unpinned-uses:
+    ignore:
+      - harness-compat.yml

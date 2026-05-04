@@ -40,6 +40,8 @@ jobs:
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
       contains(github.event.pull_request.labels.*.name, 'safe-for-ci')
+    # Same-org reusable workflow under shared maintenance; SHA pinning would force a coordination bump
+    # on every harness change without security benefit. Ignore configured in `.github/zizmor.yml`.
     uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
     with:
       pydantic-ai-ref: ${{ github.event.pull_request.head.sha || github.sha }}
