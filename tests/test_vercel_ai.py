@@ -78,6 +78,7 @@ with try_import() as starlette_import_successful:
         DynamicToolInputStreamingPart,
         DynamicToolOutputAvailablePart,
         DynamicToolOutputDeniedPart,
+        DynamicToolOutputErrorPart,
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
@@ -85,6 +86,7 @@ with try_import() as starlette_import_successful:
         TextUIPart,
         ToolApprovalRequested,
         ToolApprovalResponded,
+        ToolApprovalRespondedPart,
         ToolInputAvailablePart,
         ToolInputStreamingPart,
         ToolOutputAvailablePart,
@@ -3034,6 +3036,172 @@ async def test_tool_approval_ignores_output_denied_parts():
 
     results = dict(iter_tool_approval_responses(messages))
     assert results == {'tool_B': ToolApprovalResponded(id='deny-B', approved=False)}
+
+
+async def test_tool_approval_skipped_when_output_available_sibling_exists():
+    """Regression for #5154 — stale `approval-responded` must not be yielded.
+
+    When a tool is approved AND executed in the same continuation round, the
+    Vercel AI SDK v6 leaves the original `approval-responded` part alongside
+    the new `output-available` part for the same `tool_call_id`. Both parts
+    end up on the same assistant message. On the *next* continuation,
+    `iter_tool_approval_responses` used to yield that stale approval,
+    which `deferred_tool_results` then fed into the approval-resolution
+    logic as if pending — mismatching the (now empty) `DeferredToolRequests`
+    set for the current round. Skip any `approval-responded` whose
+    `tool_call_id` already has a terminal output sibling.
+    """
+    messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-my_tool',
+                    tool_call_id='call_abc',
+                    approval=ToolApprovalResponded(id='call_abc', approved=True),
+                ),
+                ToolOutputAvailablePart(
+                    type='tool-my_tool',
+                    tool_call_id='call_abc',
+                    output='done',
+                ),
+            ],
+        )
+    ]
+
+    assert dict(iter_tool_approval_responses(messages)) == {}
+
+
+async def test_tool_approval_skipped_when_output_error_sibling_exists():
+    """Same as #5154 but the terminal sibling is `output-error` (tool was
+    approved, ran, and raised). The stale `approval-responded` must not
+    re-surface on the next round.
+    """
+    messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='delete_file',
+                    tool_call_id='call_err',
+                    input={'path': 'x.txt'},
+                    approval=ToolApprovalResponded(id='call_err', approved=True),
+                ),
+                DynamicToolOutputErrorPart(
+                    tool_name='delete_file',
+                    tool_call_id='call_err',
+                    input={'path': 'x.txt'},
+                    error_text='disk full',
+                ),
+            ],
+        )
+    ]
+
+    assert dict(iter_tool_approval_responses(messages)) == {}
+
+
+async def test_tool_approval_skipped_when_output_denied_sibling_exists_same_id():
+    """If a denied tool is re-submitted in the same assistant message (same
+    `tool_call_id` carries both `approval-responded(approved=False)` and
+    `output-denied`), the approval is already materialized by
+    `load_messages()` and must not be re-yielded as pending.
+    """
+    messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DynamicToolApprovalRespondedPart(
+                    tool_name='delete_file',
+                    tool_call_id='call_denied',
+                    input={'path': 'x.txt'},
+                    approval=ToolApprovalResponded(id='call_denied', approved=False),
+                ),
+                DynamicToolOutputDeniedPart(
+                    tool_name='delete_file',
+                    tool_call_id='call_denied',
+                    input={'path': 'x.txt'},
+                    approval=ToolApprovalResponded(id='call_denied', approved=False),
+                ),
+            ],
+        )
+    ]
+
+    assert dict(iter_tool_approval_responses(messages)) == {}
+
+
+async def test_tool_approval_mixed_executed_and_pending():
+    """With two tool calls in history — one already executed, one still
+    pending — only the pending one should be yielded.
+    """
+    messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-do_a',
+                    tool_call_id='call_executed',
+                    approval=ToolApprovalResponded(id='call_executed', approved=True),
+                ),
+                ToolOutputAvailablePart(
+                    type='tool-do_a',
+                    tool_call_id='call_executed',
+                    output='done',
+                ),
+                ToolApprovalRespondedPart(
+                    type='tool-do_b',
+                    tool_call_id='call_pending',
+                    approval=ToolApprovalResponded(id='call_pending', approved=True),
+                ),
+            ],
+        )
+    ]
+
+    assert dict(iter_tool_approval_responses(messages)) == {
+        'call_pending': ToolApprovalResponded(id='call_pending', approved=True),
+    }
+
+
+async def test_tool_approval_terminal_sibling_on_different_message():
+    """The terminal output may live on an *earlier* assistant message than
+    the stale `approval-responded` (multi-round continuation where the
+    client re-sends the whole assembled history). The tool_call_id match
+    is history-wide, not per-message.
+    """
+    messages = [
+        UIMessage(
+            id='assistant-round-1',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-ran_already',
+                    tool_call_id='call_xyz',
+                    output='first-round-result',
+                ),
+            ],
+        ),
+        UIMessage(
+            id='user-1',
+            role='user',
+            parts=[TextUIPart(text='follow-up')],
+        ),
+        UIMessage(
+            id='assistant-round-2',
+            role='assistant',
+            parts=[
+                ToolApprovalRespondedPart(
+                    type='tool-ran_already',
+                    tool_call_id='call_xyz',
+                    approval=ToolApprovalResponded(id='call_xyz', approved=True),
+                ),
+            ],
+        ),
+    ]
+
+    assert dict(iter_tool_approval_responses(messages)) == {}
 
 
 async def test_run_stream_with_deferred_tool_results_no_model_response():
