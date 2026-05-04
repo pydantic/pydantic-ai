@@ -44,22 +44,24 @@ agent = Agent(model)
 
 ## Thinking mode
 
-Z.AI's `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. You can enable this via [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings]:
+Z.AI's `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. Configure this through the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.zai import ZaiModelSettings
+from pydantic_ai.settings import ModelSettings
 
 agent = Agent(
     'zai:glm-5',
-    model_settings=ZaiModelSettings(zai_thinking=True),
+    model_settings=ModelSettings(thinking=True),
 )
 ...
 ```
 
+`thinking=True` enables thinking, `thinking=False` disables it, and the effort levels (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) all collapse to enabled since Z.AI does not expose effort granularity. Omit the field to use each model's default behavior.
+
 ### Preserved thinking
 
-For multi-turn conversations, you can enable preserved thinking to retain reasoning content from prior assistant responses. This improves coherence across turns:
+For multi-turn conversations, you can enable preserved thinking to retain reasoning content from prior assistant responses. This improves coherence across turns. Use [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings] for the Z.AI-specific `zai_clear_thinking` knob:
 
 ```python
 from pydantic_ai import Agent
@@ -67,7 +69,7 @@ from pydantic_ai.models.zai import ZaiModelSettings
 
 agent = Agent(
     'zai:glm-5',
-    model_settings=ZaiModelSettings(zai_thinking=True, zai_clear_thinking=False),
+    model_settings=ZaiModelSettings(thinking=True, zai_clear_thinking=False),
 )
 ...
 ```

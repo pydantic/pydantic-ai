@@ -80,6 +80,8 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile is not None
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.supports_thinking is True
+    assert profile.thinking_always_enabled is False
     assert profile.openai_chat_thinking_field == 'reasoning_content'
     assert profile.openai_chat_send_back_thinking_parts == 'field'
 
@@ -87,14 +89,26 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     zai_model_profile_mock.assert_called_with('glm-4.5-air')
     assert profile_air is not None
     assert isinstance(profile_air, OpenAIModelProfile)
+    assert profile_air.supports_thinking is True
     assert profile_air.openai_chat_thinking_field == 'reasoning_content'
     assert profile_air.openai_chat_send_back_thinking_parts == 'field'
 
+    # The provider always sets the Z.AI response-shape fields, even on non-thinking
+    # models — those fields describe Z.AI's API regardless of whether a given model
+    # produces reasoning content. `supports_thinking` is what gates client behavior.
     profile_vision = provider.model_profile('glm-4.6v')
     zai_model_profile_mock.assert_called_with('glm-4.6v')
     assert profile_vision is not None
     assert isinstance(profile_vision, OpenAIModelProfile)
-    assert profile_vision.openai_chat_thinking_field is None
+    assert profile_vision.supports_thinking is False
+    assert profile_vision.openai_chat_thinking_field == 'reasoning_content'
+
+    profile_non_thinking = provider.model_profile('glm-4-32b-0414-128k')
+    zai_model_profile_mock.assert_called_with('glm-4-32b-0414-128k')
+    assert profile_non_thinking is not None
+    assert isinstance(profile_non_thinking, OpenAIModelProfile)
+    assert profile_non_thinking.supports_thinking is False
+    assert profile_non_thinking.openai_chat_thinking_field == 'reasoning_content'
 
 
 def test_infer_zai_model(env: TestEnv):

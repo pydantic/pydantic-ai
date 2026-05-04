@@ -13,7 +13,7 @@ from ..settings import ModelSettings
 from . import ModelRequestParameters
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, Omit, omit
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
 except ImportError as _import_error:  # pragma: no cover
@@ -59,23 +59,17 @@ class ZaiModelSettings(ModelSettings, total=False):
     ALL FIELDS MUST BE `zai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    zai_thinking: bool
-    """Enable thinking/reasoning mode for the model.
-
-    When enabled, the model will produce reasoning content before the final response.
-    Supported on `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking).
-
-    See [the Z.AI docs](https://docs.z.ai/guides/capabilities/thinking-mode) for more details.
-    """
-
     zai_clear_thinking: bool
-    """Whether to clear thinking content between turns.
+    """Whether to clear historical thinking content from prior turns.
 
     Set to `False` for preserved thinking, which retains reasoning content from prior
-    assistant responses for improved multi-turn coherence. Defaults to `True` when not set.
+    assistant responses for improved multi-turn coherence. Defaults to `True` (clear) when not set.
 
-    When using preserved thinking, you must return the complete, unmodified reasoning_content
-    back to the API. All consecutive reasoning_content blocks must exactly match the original sequence.
+    Only affects cross-turn historical thinking blocks; it does not change whether the model
+    generates thinking in the current turn (controlled by the unified `thinking` setting).
+
+    When using preserved thinking, you must return the complete, unmodified `reasoning_content`
+    back to the API. All consecutive `reasoning_content` blocks must exactly match the original sequence.
 
     See [the Z.AI docs](https://docs.z.ai/guides/capabilities/thinking-mode#preserved-thinking) for more details.
     """
@@ -116,37 +110,59 @@ class ZaiModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _zai_settings_to_openai_settings(cast(ZaiModelSettings, merged_settings or {}))
+        new_settings = _zai_settings_to_openai_settings(
+            cast(ZaiModelSettings, merged_settings or {}), customized_parameters
+        )
         return new_settings, customized_parameters
 
+    @override
+    def _translate_thinking(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Omit:
+        # Z.AI uses `extra_body.thinking.type`, not the OpenAI `reasoning_effort` parameter,
+        # which `prepare_request` translates the unified `thinking` setting into.
+        del model_settings, model_request_parameters
+        return omit
 
-def _zai_settings_to_openai_settings(model_settings: ZaiModelSettings) -> OpenAIChatModelSettings:
+
+def _zai_settings_to_openai_settings(
+    model_settings: ZaiModelSettings,
+    model_request_parameters: ModelRequestParameters,
+) -> OpenAIChatModelSettings:
     """Transforms a 'ZaiModelSettings' object into an 'OpenAIChatModelSettings' object.
 
-    Converts Z.AI-specific thinking settings into the `extra_body` format expected
-    by the Z.AI API's OpenAI-compatible endpoint.
+    Maps the unified `thinking` setting and Z.AI-specific `zai_clear_thinking` into the
+    `extra_body.thinking` payload expected by the Z.AI API's OpenAI-compatible endpoint.
 
     Args:
         model_settings: The 'ZaiModelSettings' object to transform.
+        model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
     extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
 
-    thinking_enabled = model_settings.get('zai_thinking')
-    clear_thinking = model_settings.get('zai_clear_thinking')
+    thinking_payload: dict[str, Any] = {}
+    thinking_level = model_request_parameters.thinking
+    if thinking_level is False:
+        thinking_payload['type'] = 'disabled'
+    elif thinking_level is not None:
+        # `True` and any effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`)
+        # collapse to enabled — Z.AI has no effort granularity.
+        thinking_payload['type'] = 'enabled'
 
-    if thinking_enabled is not None:
-        thinking: dict[str, Any] = {
-            'type': 'enabled' if thinking_enabled else 'disabled',
-        }
-        if clear_thinking is not None:
-            thinking['clear_thinking'] = clear_thinking
-        extra_body['thinking'] = thinking
+    clear_thinking = model_settings.get('zai_clear_thinking')
+    if clear_thinking is not None:
+        thinking_payload['clear_thinking'] = clear_thinking
+
+    if thinking_payload:
+        extra_body['thinking'] = thinking_payload
 
     filtered = {k: v for k, v in model_settings.items() if not k.startswith('zai_')}
     if extra_body:
         filtered['extra_body'] = extra_body
 
-    return OpenAIChatModelSettings(**filtered)  # type: ignore[reportCallIssue]
+    return cast(OpenAIChatModelSettings, filtered)
