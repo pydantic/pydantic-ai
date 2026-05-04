@@ -360,6 +360,31 @@ async def test_prepared_toolset_user_error_change_tool_names():
         await ToolManager[None](prepared_toolset).for_run_step(context)
 
 
+async def test_prepared_toolset_warns_on_none_return():
+    """Direct PreparedToolset usage emits a UserWarning when the callback returns None.
+
+    Mirrors the same `None`-return guard at the capability layer (`_call_prepare_func`);
+    this covers the direct/`toolset.prepared()` path where the result reaches
+    `PreparedToolset.get_tools` without prior normalization.
+    """
+    context = build_run_context(None)
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    async def returns_none(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        return None
+
+    prepared_toolset = PreparedToolset(base_toolset, returns_none)
+
+    with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+        result = await prepared_toolset.get_tools(context)
+    assert result == {}
+
+
 async def test_comprehensive_toolset_composition():
     """Test that all toolsets can be composed together and work correctly."""
 
