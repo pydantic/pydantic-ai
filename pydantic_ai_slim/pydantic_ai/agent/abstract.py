@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar, deprecated
+from typing_extensions import Self, TypedDict, TypeIs, TypeVar, Unpack, deprecated
 
 from pydantic_graph import End
 
@@ -91,6 +91,36 @@ Instructions = AgentInstructions
 
 AgentModelSettings = ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
 """Type alias for agent model settings — a static `ModelSettings` dict, or a callable receiving `RunContext` that returns one dynamically per request."""
+
+
+class IterKwargs(TypedDict, Generic[AgentDepsT], total=False):
+    """Shared kwargs for `iter` and (by composition with `event_stream_handler`) the run-style methods.
+
+    `run` / `run_sync` / `run_stream` / `run_stream_sync` / `run_stream_events`.
+
+    `total=False` makes every entry optional — impls treat a missing key as the
+    documented default.
+
+    Used via `**kwargs: Unpack[IterKwargs[AgentDepsT]]` (PEP 692). Keeps
+    overloads down to 2 per method (one per `output_type` shape) instead of 3
+    full-kwarg copies, so adding a kwarg is a one-line TypedDict edit.
+    """
+
+    message_history: Sequence[_messages.ModelMessage] | None
+    deferred_tool_results: DeferredToolResults | None
+    conversation_id: str | None
+    model: models.Model | models.KnownModelName | str | None
+    instructions: _instructions.AgentInstructions[AgentDepsT]
+    deps: AgentDepsT
+    model_settings: AgentModelSettings[AgentDepsT] | None
+    usage_limits: _usage.UsageLimits | None
+    usage: _usage.RunUsage | None
+    metadata: AgentMetadata[AgentDepsT] | None
+    infer_name: bool
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
+    builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None
+    capabilities: Sequence[AgentCapability[AgentDepsT]] | None
+    spec: dict[str, Any] | AgentSpec | None
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -221,22 +251,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
+        **kwargs: Unpack[IterKwargs[AgentDepsT]],
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -245,22 +261,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
+        **kwargs: Unpack[IterKwargs[AgentDepsT]],
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -268,22 +270,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
+        **kwargs: Unpack[IterKwargs[AgentDepsT]],
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -329,7 +317,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        if infer_name and self.name is None:
+        if kwargs.get('infer_name', True) and self.name is None:
             self._infer_name(inspect.currentframe())
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
@@ -337,20 +325,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         async with self.iter(
             user_prompt=user_prompt,
             output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
-            capabilities=capabilities,
-            spec=spec,
+            **kwargs,
         ) as agent_run:
             # Drive via next() so capability hooks fire for each node.
             # When event_stream_handler is set or a capability overrides wrap_run_event_stream,

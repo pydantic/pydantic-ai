@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
-from typing_extensions import Never
+from typing_extensions import Never, Unpack
 
 from pydantic_ai import (
     AbstractToolset,
@@ -24,7 +24,7 @@ from pydantic_ai.agent import (
     ParallelExecutionMode,
     WrapperAgent,
 )
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, RunOutputDataT
+from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, IterKwargs, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -150,45 +150,15 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: str | Sequence[_messages.UserContent] | None = None,
             *,
             output_type: OutputSpec[RunOutputDataT] | None = None,
-            message_history: Sequence[_messages.ModelMessage] | None = None,
-            deferred_tool_results: DeferredToolResults | None = None,
-            conversation_id: str | None = None,
-            model: models.Model | models.KnownModelName | str | None = None,
-            instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-            deps: AgentDepsT,
-            model_settings: AgentModelSettings[AgentDepsT] | None = None,
-            usage_limits: _usage.UsageLimits | None = None,
-            usage: _usage.RunUsage | None = None,
-            metadata: AgentMetadata[AgentDepsT] | None = None,
-            infer_name: bool = True,
-            toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-            builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-            capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-            spec: dict[str, Any] | AgentSpec | None = None,
-            **_deprecated_kwargs: Never,
+            **kwargs: Unpack[IterKwargs[AgentDepsT]],
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides():
                 return await super(WrapperAgent, self).run(
                     user_prompt,
                     output_type=output_type,
-                    message_history=message_history,
-                    deferred_tool_results=deferred_tool_results,
-                    conversation_id=conversation_id,
-                    model=model,
-                    instructions=instructions,
-                    deps=deps,
-                    model_settings=model_settings,
-                    usage_limits=usage_limits,
-                    usage=usage,
-                    metadata=metadata,
-                    infer_name=infer_name,
-                    toolsets=toolsets,
-                    builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
-                    capabilities=capabilities,
-                    spec=spec,
-                    **_deprecated_kwargs,
+                    **kwargs,
                 )
 
         self.dbos_wrapped_run_workflow = wrapped_run_workflow
@@ -300,22 +270,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
+        **kwargs: Unpack[IterKwargs[AgentDepsT]],
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -324,22 +280,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
+        **kwargs: Unpack[IterKwargs[AgentDepsT]],
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -347,23 +289,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        infer_name: bool = True,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Never,
+        **kwargs: Unpack[IterKwargs[AgentDepsT]],
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
@@ -407,6 +334,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
+        model = kwargs.get('model')
         if model is not None and not isinstance(model, DBOSModel):
             raise UserError(
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
@@ -414,23 +342,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         return await self.dbos_wrapped_run_workflow(
             user_prompt,
             output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
-            capabilities=capabilities,
-            spec=spec,
-            **_deprecated_kwargs,
+            **kwargs,
         )
 
     @overload
