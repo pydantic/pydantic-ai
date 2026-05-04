@@ -815,6 +815,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                     tool_call_id=IsStr(),
                 ),
                 args_valid=True,
+                validated_args={'country': 'France'},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -843,6 +844,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                     tool_call_id=IsStr(),
                 ),
                 args_valid=True,
+                validated_args={'city': 'Paris'},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -5964,6 +5966,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_details={'thought_signature': IsStr()},
                 ),
                 args_valid=True,
+                validated_args={},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
