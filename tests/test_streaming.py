@@ -3958,14 +3958,15 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
 
 async def test_run_stream_early_break_does_not_drain_response():
     cleanup_called = False
-    pulled_after_break = False
+    pulled_chunks: list[str] = []
+    streamed_text: list[str] = []
 
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        nonlocal cleanup_called, pulled_after_break
+        nonlocal cleanup_called
         try:
-            yield 'first'
-            pulled_after_break = True  # pragma: no cover
-            yield 'second'  # pragma: no cover
+            for chunk in ['first', 'second']:
+                pulled_chunks.append(chunk)
+                yield chunk
         finally:
             cleanup_called = True
 
@@ -3973,12 +3974,33 @@ async def test_run_stream_early_break_does_not_drain_response():
 
     async with agent.run_stream('test') as result:
         async for text in result.stream_text(delta=True, debounce_by=None):
-            assert text == 'first'
+            streamed_text.append(text)
             break
 
-    assert cleanup_called
-    assert not pulled_after_break
-    assert result.response.text == 'first'
+    assert {
+        'streamed_text': streamed_text,
+        'pulled_chunks': pulled_chunks,
+        'cleanup_called': cleanup_called,
+        'response_text': result.response.text,
+        'usage': result.usage(),
+        'message_history': result.all_messages(),
+    } == snapshot(
+        {
+            'streamed_text': ['first'],
+            'pulled_chunks': ['first'],
+            'cleanup_called': True,
+            'response_text': 'first',
+            'usage': RunUsage(requests=1, input_tokens=50, output_tokens=1),
+            'message_history': [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                )
+            ],
+        }
+    )
 
 
 async def test_run_stream_events_context_manager_closes_producer():
