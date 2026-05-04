@@ -26,7 +26,7 @@ capabilities:
 
 ## Loading specs
 
-[`Agent.from_file`][pydantic_ai.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
+[`Agent.from_file`][pydantic_ai.agent.Agent.from_file] loads a spec from a YAML or JSON file and constructs an agent:
 
 ```python {title="from_file_example.py" test="skip"}
 from pydantic_ai import Agent
@@ -34,7 +34,7 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
-[`Agent.from_spec`][pydantic_ai.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
+[`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec] accepts a dict or [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] instance and supports additional keyword arguments that supplement or override the spec:
 
 ```python {title="from_spec_example.py"}
 from dataclasses import dataclass

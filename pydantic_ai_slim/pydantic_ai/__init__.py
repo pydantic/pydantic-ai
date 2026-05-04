@@ -1,6 +1,5 @@
 from importlib.metadata import version as _metadata_version
 
-from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -124,6 +123,7 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
+from .template import TemplateStr
 from .tools import (
     AgentBuiltinTool,
     DeferredToolRequests,
