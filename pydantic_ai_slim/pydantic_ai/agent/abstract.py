@@ -1106,8 +1106,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
-            An [`AgentEventStream`][pydantic_ai.result.AgentEventStream], which is both an async iterator of stream
-            events and an async context manager for deterministic cleanup.
+            An [`AgentEventStream`][pydantic_ai.result.AgentEventStream], which should be used as an async context
+            manager for deterministic cleanup. Direct iteration without `async with` is deprecated.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())

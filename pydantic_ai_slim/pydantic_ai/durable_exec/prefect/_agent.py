@@ -731,8 +731,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             spec: Optional agent spec to apply for this run.
 
         Returns:
-            An [`AgentEventStream`][pydantic_ai.result.AgentEventStream], which is both an async iterator of stream
-            events and an async context manager for deterministic cleanup.
+            An [`AgentEventStream`][pydantic_ai.result.AgentEventStream], which should be used as an async context
+            manager for deterministic cleanup. Direct iteration without `async with` is deprecated.
         """
         if FlowRunContext.get() is not None:
             raise UserError(

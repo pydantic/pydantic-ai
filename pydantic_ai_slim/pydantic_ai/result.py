@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
@@ -351,27 +352,53 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 class AgentEventStream(Generic[OutputDataT]):
     """Async event stream returned by `Agent.run_stream_events()`.
 
-    Wraps the underlying async generator so callers can either iterate over it
-    directly or use it as an async context manager for deterministic cleanup.
+    Use it as an async context manager for deterministic cleanup.
+
+    Direct iteration with `async for event in stream:` (without `async with`)
+    is deprecated and will be removed in v2.
     """
 
     def __init__(self, generator: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]) -> None:
         self._generator = generator
+        self._managed = False
+        self._closed = False
 
     def __aiter__(self) -> AgentEventStream[OutputDataT]:
+        # TODO(v2): remove standalone iteration support and require `async with`.
+        if not self._managed:
+            warnings.warn(
+                'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated. '
+                'Use `async with agent.run_stream_events(...) as stream:` and '
+                '`async for event in stream:` instead to ensure proper cleanup.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
         return self
 
     async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
-        return await anext(self._generator)
+        if self._closed:
+            raise StopAsyncIteration
+
+        try:
+            return await anext(self._generator)
+        except StopAsyncIteration:
+            # Not strictly necessary (aclose() on an exhausted generator is a no-op),
+            # but keeps _closed accurate after natural exhaustion so __aexit__/aclose()
+            # don't call aclose() unnecessarily.
+            self._closed = True
+            raise
 
     async def __aenter__(self) -> AgentEventStream[OutputDataT]:
+        self._managed = True
         return self
 
     async def __aexit__(self, *args: object) -> None:
         await self.aclose()
 
     async def aclose(self) -> None:
-        await _utils.aclose_if_available(self._generator)
+        if not self._closed:
+            self._closed = True
+            await _utils.aclose_if_available(self._generator)
 
 
 @dataclass(init=False)

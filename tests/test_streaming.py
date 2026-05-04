@@ -3798,7 +3798,8 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    async with test_agent.run_stream_events('Hello') as stream:
+        events = [event async for event in stream]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -3830,6 +3831,15 @@ async def test_run_stream_events():
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
+
+
+async def test_run_stream_events_direct_iteration_warns():
+    agent = Agent(TestModel())
+
+    with pytest.warns(DeprecationWarning, match='Iterating `AgentEventStream` directly'):
+        events = [event async for event in agent.run_stream_events('Hello')]
+
+    assert any(isinstance(event, AgentRunResultEvent) for event in events)
 
 
 def test_structured_response_sync_validation():
