@@ -8102,6 +8102,7 @@ async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: N
                 timestamp=IsDatetime(),
                 instructions='Use only the text editor `create` and `view` commands from the code execution sandbox. Do not run any shell commands.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8219,6 +8220,7 @@ Everything looks perfect! 🎉\
                 provider_response_id='msg_015ZT9schxByyYqpexx5ir4o',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
