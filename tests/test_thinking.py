@@ -903,13 +903,15 @@ class TestMistralThinkingTranslation:
         result = MistralModel._translate_thinking(settings, params)
         assert result == 'none'
 
-    def test_thinking_none_returns_none(self):
+    def test_thinking_none_returns_unset(self):
+        from mistralai.client.types.basemodel import Unset as MistralUnset
+
         from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
 
         params = ModelRequestParameters(thinking=None)
         settings = MistralModelSettings()
         result = MistralModel._translate_thinking(settings, params)
-        assert result is None
+        assert isinstance(result, MistralUnset)
 
     def test_provider_specific_takes_precedence(self):
         """mistral_reasoning_effort set -> unified thinking is ignored."""
