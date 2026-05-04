@@ -1511,17 +1511,13 @@ async def process_tool_calls(  # noqa: C901
                     f'Exceeded maximum retries ({max_retries}) for output validation'
                 ) from (e.__cause__ or e)
             except ToolRetryError as e:
-                yield _messages.FunctionToolCallEvent(
-                    call, args_valid=True, validated_args=validated.validated_args
-                )
+                yield _messages.FunctionToolCallEvent(call, args_valid=True, validated_args=validated.validated_args)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
                 ctx.state.retries += 1
                 continue
 
-            yield _messages.FunctionToolCallEvent(
-                call, args_valid=True, validated_args=validated.validated_args
-            )
+            yield _messages.FunctionToolCallEvent(call, args_valid=True, validated_args=validated.validated_args)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Final result processed.',
