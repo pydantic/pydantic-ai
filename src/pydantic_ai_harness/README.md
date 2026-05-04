@@ -26,8 +26,10 @@ uv add pydantic-ai-harness
 Extras for specific capabilities:
 
 ```bash
-uv add "pydantic-ai-harness[code-mode]"   # CodeMode (adds the Monty sandbox)
+uv add "pydantic-ai-harness[codemode]"   # CodeMode (adds the Monty sandbox)
 ```
+
+The `code-mode` extra is also supported as an alias.
 
 Requires Python 3.10+ and `pydantic-ai-slim>=1.80.0`.
 

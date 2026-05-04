@@ -35,6 +35,10 @@ dependencies = [
 code-mode = [
     'pydantic-monty>=0.0.16',
 ]
+# Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
+codemode = [
+    'pydantic-monty>=0.0.16',
+]
 temporal = [
     'pydantic-ai-slim[temporal]',
 ]

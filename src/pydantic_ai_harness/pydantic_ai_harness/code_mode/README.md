@@ -56,8 +56,10 @@ tokyo_c = await convert_temp(fahrenheit=tokyo['temp_f'])
 Code mode requires the Monty sandbox:
 
 ```bash
-uv add "pydantic-ai-harness[code-mode]"
+uv add "pydantic-ai-harness[codemode]"
 ```
+
+The `code-mode` extra is also supported as an alias.
 
 ## Selective tool sandboxing
 
