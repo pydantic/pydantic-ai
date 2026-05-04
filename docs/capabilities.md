@@ -1208,6 +1208,7 @@ Capabilities for spawning and delegating to specialized subagents help agents ta
 Capabilities for cost control, input/output filtering, and tool permissions help keep agents safe and within budget:
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+* [`agent-aegis`](https://github.com/Acacian/aegis) - `AegisCapability` (`from aegis.contrib.pydantic_ai`) wraps a guardrail engine into capability lifecycle hooks: prompt injection detection (13 categories, multi-language, encoding evasion), PII masking (Luhn/IBAN validation), toxicity filtering, hallucination pattern detection, prompt-leak detection, keyword/regex matching, and YAML policy-as-code rules via `GuardrailEngine.from_pack()`. Supports `on_block="raise"/"warn"` and per-agent `check_input`/`check_output` control.
 
 ### File Operations & Sandboxing
 
