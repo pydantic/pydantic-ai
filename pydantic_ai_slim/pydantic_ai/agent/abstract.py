@@ -1190,27 +1190,32 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         task = asyncio.create_task(run_agent())
-        task_cancel_sent = False
 
         try:
             async with receive_stream:
                 async for message in receive_stream:
                     yield message
 
-            result = await task
-
         except asyncio.CancelledError as e:
             task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-            task_cancel_sent = True
+            with suppress(BaseException):
+                await task
             raise
-        finally:
-            if not task.done() and not task_cancel_sent:
+
+        except BaseException:
+            if not task.done():
                 task.cancel()
 
-            with suppress(asyncio.CancelledError, anyio.BrokenResourceError, anyio.ClosedResourceError):
+            # The consumer side is already exiting. Await the producer only to
+            # retrieve its exception and finish cleanup; it must not replace the
+            # exception that is already propagating from the consumer side.
+            with suppress(BaseException):
                 await task
+            raise
 
-        yield AgentRunResultEvent(result)
+        else:
+            result = await task
+            yield AgentRunResultEvent(result)
 
     @overload
     def iter(

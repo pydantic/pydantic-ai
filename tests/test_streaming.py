@@ -4002,6 +4002,34 @@ async def test_run_stream_events_context_manager_closes_producer():
     assert cleanup_called
 
 
+async def test_run_stream_events_early_exit_preserves_consumer_close():
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        try:
+            yield 'first'
+            await asyncio.Event().wait()  # pragma: no cover
+        finally:
+            raise RuntimeError('producer cleanup failed')
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream_events('test') as events:
+        async for _event in events:
+            break
+
+
+async def test_run_stream_events_propagates_producer_error():
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'first'
+        raise RuntimeError('producer failed')
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    with pytest.raises(RuntimeError, match='producer failed'):
+        async with agent.run_stream_events('test') as events:
+            async for _event in events:
+                pass
+
+
 async def test_args_validator_failure_events():
     """Test that failed validation emits args_valid=False, retries with error message, then succeeds."""
     validator_calls = 0
