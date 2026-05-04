@@ -14635,6 +14635,61 @@ async def test_deferred_tool_handler_via_handle_call():
     assert result.output == 'All done.'
 
 
+async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_false():
+    """`wrap_validation_errors=False` propagates through deferred-tool resolution.
+
+    Regression for the case where a sandboxed caller (`handle_call(wrap_validation_errors=False)`)
+    invokes a tool that requires approval: after the handler approves, the re-execution must
+    keep the raw-error contract — `ModelRetry` from the approved tool body should propagate
+    as-is, not wrapped as `ToolRetryError`.
+    """
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('outer_tool', {}, tool_call_id='outer1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    @agent.tool
+    async def outer_tool(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
+        try:
+            await ctx.tool_manager.handle_call(inner_call, wrap_validation_errors=False)
+        except ModelRetry as e:
+            return f'raw ModelRetry: {e}'
+        return 'no error'  # pragma: no cover
+
+    @agent.tool
+    def inner_tool(ctx: RunContext[None]) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        raise ModelRetry('post-approval retry')
+
+    result = await agent.run('Hello')
+    assert result.output == 'Done.'
+    # outer_tool caught the raw ModelRetry from the approved inner_tool body and surfaced it
+    # in its return value; if wrap_validation_errors hadn't been forwarded through
+    # _resolve_single_deferred, outer_tool would have seen a ToolRetryError instead.
+    inner_message = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool' for part in msg.parts)
+    )
+    outer_return = next(
+        part for part in inner_message.parts if isinstance(part, ToolReturnPart) and part.tool_name == 'outer_tool'
+    )
+    assert outer_return.content == 'raw ModelRetry: post-approval retry'
+
+
 async def test_deferred_tool_handler_via_handle_call_no_handler():
     """handle_call(resolve_deferred=True) re-raises when no handler is available."""
     from pydantic_ai.toolsets import FunctionToolset
@@ -15910,6 +15965,262 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     # Falls through to bubble-up since no handler resolved anything
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
+
+
+# --- Dynamic capabilities ---
+
+
+@dataclass
+class _RecordingCapability(AbstractCapability[Any]):
+    """Test capability that records every hook firing and contributes instructions."""
+
+    label: str
+    fired: list[str] = field(default_factory=list[str])
+
+    def get_instructions(self) -> str:
+        return f'Label is {self.label}.'
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.fired.append(f'{self.label}:before_run')
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.fired.append(f'{self.label}:before_model_request')
+        return request_context
+
+
+async def test_dynamic_capability_factory_called_with_run_context() -> None:
+    """The factory receives the run's RunContext (with deps) once per run."""
+    seen: list[Any] = []
+
+    def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
+        seen.append(ctx.deps)
+        return _RecordingCapability(label=ctx.deps)
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
+    await agent.run('hi', deps='admin')
+    await agent.run('hi', deps='guest')
+    assert seen == ['admin', 'guest']
+
+
+async def test_dynamic_capability_async_factory() -> None:
+    """Async factories are awaited."""
+    calls = 0
+
+    async def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        nonlocal calls
+        calls += 1
+        return _RecordingCapability(label='async')
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    await agent.run('hi')
+    assert calls == 1
+
+
+async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
+    """A factory returning None is a no-op for the run."""
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any] | None:
+        return None
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    result = await agent.run('hi')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions is None
+
+
+async def test_dynamic_capability_contributes_instructions_per_run() -> None:
+    """Resolved capability's instructions flow through to the model request."""
+
+    def factory(ctx: RunContext[str]) -> AbstractCapability[Any] | None:
+        if ctx.deps == 'admin':
+            return _RecordingCapability(label='admin')
+        return None
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
+
+    admin_result = await agent.run('hi', deps='admin')
+    admin_request = next(m for m in admin_result.all_messages() if isinstance(m, ModelRequest))
+    assert admin_request.instructions == 'Label is admin.'
+
+    guest_result = await agent.run('hi', deps='guest')
+    guest_request = next(m for m in guest_result.all_messages() if isinstance(m, ModelRequest))
+    assert guest_request.instructions is None
+
+
+async def test_dynamic_capability_contributes_toolset() -> None:
+    """Resolved capability's toolset is exposed to the model and its tools execute."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def special() -> str:
+        return 'used'
+
+    @dataclass
+    class ToolCap(AbstractCapability[None]):
+        def get_toolset(self):
+            return toolset
+
+    def factory(ctx: RunContext[bool]) -> AbstractCapability[Any] | None:
+        return ToolCap() if ctx.deps else None
+
+    seen_tools: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(','.join(sorted(t.name for t in info.function_tools)))
+        # On the first request call the tool if it's available; on the follow-up
+        # request after the tool return, finish.
+        already_called = any(
+            isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts
+        )
+        if not already_called and any(t.name == 'special' for t in info.function_tools):
+            return ModelResponse(parts=[ToolCallPart('special')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), deps_type=bool, capabilities=[factory])
+
+    with_tool = await agent.run('hi', deps=True)
+    tool_returns = [
+        p.content
+        for m in with_tool.all_messages()
+        if isinstance(m, ModelRequest)
+        for p in m.parts
+        if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == ['used']
+
+    await agent.run('hi', deps=False)
+    assert seen_tools == ['special', 'special', '']
+
+
+async def test_dynamic_capability_hooks_fire() -> None:
+    """Hooks contributed by the resolved capability fire during the run."""
+    cap = _RecordingCapability(label='dyn')
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return cap
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    await agent.run('hi')
+    assert 'dyn:before_run' in cap.fired
+    assert 'dyn:before_model_request' in cap.fired
+
+
+async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> None:
+    """The factory is called once at for_run, not on every model request."""
+    calls = 0
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        nonlocal calls
+        calls += 1
+        return _RecordingCapability(label='once')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Two-step run: first a tool call, then a final text response.
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('echo', {'text': 'hi'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def echo(text: str) -> str:
+        return text
+
+    agent = Agent(FunctionModel(respond), toolsets=[toolset], capabilities=[factory])
+    await agent.run('hi')
+    assert calls == 1
+
+
+async def test_dynamic_capability_returning_combined() -> None:
+    """A factory may return a CombinedCapability; all child contributions flow through."""
+    fired: list[str] = []
+
+    @dataclass
+    class A(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('A')
+
+    @dataclass
+    class B(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('B')
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return CombinedCapability([A(), B()])
+
+    agent = Agent(TestModel(), capabilities=[factory])
+    await agent.run('hi')
+    assert fired == ['A', 'B']
+
+
+async def test_dynamic_capability_in_run_call() -> None:
+    """`agent.run(capabilities=[factory])` accepts callables as well."""
+    calls = 0
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        nonlocal calls
+        calls += 1
+        return _RecordingCapability(label='run-time')
+
+    agent = Agent(TestModel())
+    result = await agent.run('hi', capabilities=[factory])
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Label is run-time.'
+    assert calls == 1
+
+
+async def test_dynamic_capability_composes_with_static() -> None:
+    """Static and dynamic capabilities both contribute, in order."""
+    fired: list[str] = []
+
+    @dataclass
+    class Static(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('static')
+
+    @dataclass
+    class Dynamic(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            fired.append('dynamic')
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return Dynamic()
+
+    agent = Agent(TestModel(), capabilities=[Static(), factory])
+    await agent.run('hi')
+    assert fired == ['static', 'dynamic']
+
+
+async def test_dynamic_capability_per_run_isolation() -> None:
+    """Concurrent runs see independent factory calls and resolved capabilities."""
+    seen_deps: list[str] = []
+
+    def factory(ctx: RunContext[str]) -> AbstractCapability[Any]:
+        seen_deps.append(ctx.deps)
+        return _RecordingCapability(label=ctx.deps)
+
+    agent = Agent(TestModel(), deps_type=str, capabilities=[factory])
+    results = await asyncio.gather(*(agent.run('hi', deps=f'user-{i}') for i in range(5)))
+
+    assert sorted(seen_deps) == ['user-0', 'user-1', 'user-2', 'user-3', 'user-4']
+    for i, result in enumerate(results):
+        request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+        assert request.instructions == f'Label is user-{i}.'
+
+
+async def test_dynamic_capability_wraps_func_in_constructor() -> None:
+    """Constructor wraps a bare function into a `DynamicCapability`, and the factory runs at run time."""
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return _RecordingCapability(label='x')
+
+    agent = Agent(TestModel(), capabilities=[factory])
+
+    result = await agent.run('hi')
+    request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
+    assert request.instructions == 'Label is x.'
 
 
 # endregion

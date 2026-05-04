@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import anyio
 import pytest
+from pydantic import ValidationError
 from typing_extensions import Self
 
 if sys.version_info < (3, 11):
@@ -771,6 +772,62 @@ async def test_tool_manager_retry_logic():
     # Call the failing tool _again_, now we should finally hit the limit
     with pytest.raises(UnexpectedModelBehavior, match="Tool 'failing_tool' exceeded max retries count of 2"):
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+
+async def test_handle_call_wrap_validation_errors_false():
+    """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
+
+    Used by sandboxed callers (e.g. code-mode dispatch) that want validation and
+    `ModelRetry` failures to surface at the sandbox `await` site as the original
+    exception type, without consuming the agent's retry budget for the wrapping call.
+    Mirrors the `wrap_validation_errors` flag on the output-tool methods.
+    """
+
+    toolset = FunctionToolset[None](max_retries=2)
+
+    @toolset.tool_plain
+    def needs_int(x: int) -> int:
+        return x * 2
+
+    @toolset.tool_plain
+    def retrying() -> int:
+        raise ModelRetry('please retry')
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+
+    # Sanity: a valid call still works in raw mode (no path differences for happy paths).
+    assert (
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='needs_int', args={'x': 5}),
+            wrap_validation_errors=False,
+        )
+        == 10
+    )
+
+    # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
+    with pytest.raises(ValidationError):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='needs_int', args={'x': 'not an int'}),
+            wrap_validation_errors=False,
+        )
+    assert tool_manager.failed_tools == set()
+
+    # ModelRetry from the tool body propagates raw too.
+    with pytest.raises(ModelRetry, match='please retry'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='retrying', args={}),
+            wrap_validation_errors=False,
+        )
+    assert tool_manager.failed_tools == set()
+
+    # Default (wrap=True) still wraps as ToolRetryError and tracks failed tools.
+    with pytest.raises(ToolRetryError):
+        await tool_manager.handle_call(ToolCallPart(tool_name='needs_int', args={'x': 'not an int'}))
+    assert tool_manager.failed_tools == {'needs_int'}
+
+    with pytest.raises(ToolRetryError):
+        await tool_manager.handle_call(ToolCallPart(tool_name='retrying', args={}))
+    assert tool_manager.failed_tools == {'needs_int', 'retrying'}
 
 
 async def test_toolset_max_retries_inherits_from_agent():

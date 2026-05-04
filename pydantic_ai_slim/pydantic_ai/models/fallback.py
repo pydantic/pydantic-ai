@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -8,6 +7,7 @@ from functools import cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
+import anyio
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
@@ -78,6 +78,13 @@ class FallbackModel(Model):
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
     _response_handlers: list[ResponseHandler] = field(repr=False)
 
+    @cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
+
     def __init__(
         self,
         default_model: Model | KnownModelName | str,
@@ -103,7 +110,6 @@ class FallbackModel(Model):
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
         self._entered_count = 0
-        self._enter_lock = Lock()
 
         # Parse fallback_on into exception handlers and response handlers
         self._exception_handlers = []
