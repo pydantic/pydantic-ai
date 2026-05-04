@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
 
 from . import _utils, exceptions, messages as _messages, models
+from ._deprecated_callable import deprecated_callable_property
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -159,7 +160,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return self._metadata_getter()
         return self._run_ctx.metadata
 
-    # TODO (v2): Drop in favor of `response` property
+    @deprecated_callable_property('`AgentStream.get` is deprecated; use the `response` property instead.')
     def get(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
         return self._raw_stream_response.get()
@@ -167,9 +168,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     @property
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
-        return self.get()
+        return self._raw_stream_response.get()
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentStream.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -178,7 +181,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """
         return self._initial_run_ctx_usage + self._raw_stream_response.usage()
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentStream.timestamp` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._raw_stream_response.timestamp
@@ -579,7 +584,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if self._run_result is not None:
             return self._run_result.response
         elif self._stream_response is not None:
-            return self._stream_response.get()
+            return self._stream_response.response
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -593,7 +598,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             return None
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedRunResult.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -601,19 +608,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             This won't return the full usage until the stream is finished.
         """
         if self._run_result is not None:
-            return self._run_result.usage()
+            return self._run_result.usage
         elif self._stream_response is not None:
-            return self._stream_response.usage()
+            return self._stream_response.usage
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedRunResult.timestamp` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         if self._run_result is not None:
-            return self._run_result.timestamp()
+            return self._run_result.timestamp
         elif self._stream_response is not None:
-            return self._stream_response.timestamp()
+            return self._stream_response.timestamp
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -788,17 +797,23 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """Return the current state of the response."""
         return self._streamed_run_result.response
 
+    @deprecated_callable_property(
+        '`StreamedRunResultSync.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._streamed_run_result.usage()
+        return self._streamed_run_result.usage
 
+    @deprecated_callable_property(
+        '`StreamedRunResultSync.timestamp` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
-        return self._streamed_run_result.timestamp()
+        return self._streamed_run_result.timestamp
 
     @property
     def run_id(self) -> str:
