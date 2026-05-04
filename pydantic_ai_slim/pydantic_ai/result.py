@@ -73,7 +73,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return
 
         last_response: _messages.ModelResponse | None = None
-        async for response in self.stream_responses(debounce_by=debounce_by):
+        async for response in self.stream_response(debounce_by=debounce_by):
             if self._raw_stream_response.final_result_event is None or (
                 last_response and response.parts == last_response.parts
             ):
@@ -95,7 +95,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             self._cached_output = await self.validate_response_output(response)
             yield deepcopy(self._cached_output)
 
-    async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
+    async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
         # if the message currently has any parts with content, yield before streaming
         msg = self.response
@@ -107,6 +107,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async with _utils.group_by_temporal(self, debounce_by) as group_iter:
             async for _items in group_iter:
                 yield self.response  # current state of the response
+
+    @deprecated(
+        '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0; '
+        'use `stream_response()` (singular) instead. The yielded type is unchanged in 1.x.'
+    )
+    async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
+        async for response in self.stream_response(debounce_by=debounce_by):
+            yield response
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -365,7 +373,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     This is set to `True` when one of
     [`stream_output`][pydantic_ai.result.StreamedRunResult.stream_output],
     [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
-    [`stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] or
+    [`stream_response`][pydantic_ai.result.StreamedRunResult.stream_response] or
     [`get_output`][pydantic_ai.result.StreamedRunResult.get_output] completes.
     """
 
@@ -525,14 +533,14 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
+    @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_response` instead.')
     async def stream_structured(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg, last in self.stream_responses(debounce_by=debounce_by):
+        async for msg, last in self.stream_response(debounce_by=debounce_by):
             yield msg, last
 
-    async def stream_responses(
+    async def stream_response(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
@@ -550,7 +558,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed()
         elif self._stream_response is not None:
             # if the message currently has any parts with content, yield before streaming
-            async for msg in self._stream_response.stream_responses(debounce_by=debounce_by):
+            async for msg in self._stream_response.stream_response(debounce_by=debounce_by):
                 yield msg, False
 
             msg = self.response
@@ -559,6 +567,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(msg)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @deprecated(
+        '`StreamedRunResult.stream_responses()` is deprecated and will be removed in v2.0; '
+        'use `stream_response()` (singular) instead. The yielded type is unchanged in 1.x.'
+    )
+    async def stream_responses(
+        self, *, debounce_by: float | None = 0.1
+    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
+        async for item in self.stream_response(debounce_by=debounce_by):
+            yield item
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -766,7 +784,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """
         return _utils.sync_async_iterator(self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
 
-    def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
+    def stream_response(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an iterable of Structured LLM Messages.
 
         Args:
@@ -777,7 +795,14 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the structured response message and whether that is the last message.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_responses(debounce_by=debounce_by))
+        return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
+
+    @deprecated(
+        '`StreamedRunResultSync.stream_responses()` is deprecated and will be removed in v2.0; '
+        'use `stream_response()` (singular) instead. The yielded type is unchanged in 1.x.'
+    )
+    def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
+        return self.stream_response(debounce_by=debounce_by)
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -828,7 +853,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         This is set to `True` when one of
         [`stream_output`][pydantic_ai.result.StreamedRunResultSync.stream_output],
         [`stream_text`][pydantic_ai.result.StreamedRunResultSync.stream_text],
-        [`stream_responses`][pydantic_ai.result.StreamedRunResultSync.stream_responses] or
+        [`stream_response`][pydantic_ai.result.StreamedRunResultSync.stream_response] or
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
