@@ -675,6 +675,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in AG-UI
+            elif isinstance(part, UploadedFile):  # pragma: no cover
+                # UploadedFile references a provider-specific file by ID with no inline
+                # data, so there's no content to represent in AG-UI messages.
+                pass
             else:
                 assert_never(part)
 

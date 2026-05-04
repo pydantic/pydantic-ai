@@ -5,15 +5,20 @@ from pydantic import TypeAdapter
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
+    BUILTIN_TOOL_TYPES,
+    SUPPORTED_BUILTIN_TOOLS,
     AbstractBuiltinTool,
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     FileSearchTool,
+    ShellTool,
+    SkillReference,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
 
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test', 'outlines'), indirect=True)
@@ -248,3 +253,128 @@ def test_prefer_builtin_mixed_support():
     assert len(result.builtin_tools) == 1
     assert isinstance(result.builtin_tools[0], WebSearchTool)
     assert [t.name for t in result.function_tools] == ['local_code']
+
+
+def test_shell_tool_in_builtin_tool_types():
+    assert 'shell' in BUILTIN_TOOL_TYPES
+    assert BUILTIN_TOOL_TYPES['shell'] is ShellTool
+
+
+def test_shell_tool_in_supported_builtin_tools():
+    assert ShellTool in SUPPORTED_BUILTIN_TOOLS
+
+
+def test_shell_tool_default_serialization_roundtrip():
+    adapter = TypeAdapter(AbstractBuiltinTool)
+    tool = ShellTool()
+    serialized = adapter.dump_python(tool)
+    assert serialized['kind'] == 'shell'
+    assert serialized['skills'] == ()
+    assert serialized['network_policy'] is None
+
+    deserialized = adapter.validate_python(serialized)
+    assert isinstance(deserialized, ShellTool)
+    assert deserialized.kind == 'shell'
+    assert deserialized.skills == ()
+    assert deserialized.network_policy is None
+
+
+def test_shell_tool_with_skills_and_network_policy_roundtrip():
+    adapter = TypeAdapter(AbstractBuiltinTool)
+    tool = ShellTool(
+        skills=[SkillReference(skill_id='test', version='1', source='provider')],
+        network_policy=CodeExecutionNetworkPolicy(mode='allowlist', allowed_domains=['example.com']),
+    )
+    serialized = adapter.dump_python(tool)
+    deserialized = adapter.validate_python(serialized)
+
+    assert isinstance(deserialized, ShellTool)
+    assert len(deserialized.skills) == 1
+    assert deserialized.skills[0].skill_id == 'test'
+    assert deserialized.skills[0].version == '1'
+    assert deserialized.skills[0].source == 'provider'
+    assert deserialized.network_policy is not None
+    assert deserialized.network_policy.mode == 'allowlist'
+    assert list(deserialized.network_policy.allowed_domains) == ['example.com']
+
+
+def test_skill_reference_creation():
+    ref = SkillReference(skill_id='computer-use', version='2', source='provider')
+    assert ref.skill_id == 'computer-use'
+    assert ref.version == '2'
+    assert ref.source == 'provider'
+
+
+def test_skill_reference_defaults():
+    ref = SkillReference(skill_id='data-analysis')
+    assert ref.skill_id == 'data-analysis'
+    assert ref.version is None
+    assert ref.source == 'custom'
+
+
+def test_code_execution_network_policy_creation():
+    policy = CodeExecutionNetworkPolicy(mode='allowlist', allowed_domains=['example.com', 'api.example.com'])
+    assert policy.mode == 'allowlist'
+    assert list(policy.allowed_domains) == ['example.com', 'api.example.com']
+
+
+def test_code_execution_network_policy_disabled():
+    policy = CodeExecutionNetworkPolicy(mode='disabled')
+    assert policy.mode == 'disabled'
+    assert policy.allowed_domains == ()
+
+
+@pytest.mark.parametrize('model', ('anthropic',), indirect=True)
+async def test_shell_tool_network_policy_not_supported(model: Model):
+    with pytest.raises(UserError, match='`ShellTool.network_policy` is not supported by this model'):
+        model.prepare_request(
+            None,
+            ModelRequestParameters(
+                builtin_tools=[ShellTool(network_policy=CodeExecutionNetworkPolicy(mode='disabled'))],
+            ),
+        )
+
+
+@pytest.mark.parametrize('model', ('anthropic',), indirect=True)
+async def test_shell_tool_and_code_execution_tool_mutual_exclusion(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[ShellTool(), CodeExecutionTool()])
+
+    with pytest.raises(UserError, match='`ShellTool` and `CodeExecutionTool` are mutually exclusive'):
+        await agent.run('test')
+
+
+@pytest.mark.parametrize('model', ('anthropic',), indirect=True)
+async def test_shell_tool_and_code_execution_tool_mutual_exclusion_stream(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[ShellTool(), CodeExecutionTool()])
+
+    with pytest.raises(UserError, match='`ShellTool` and `CodeExecutionTool` are mutually exclusive'):
+        async with agent.run_stream('test'):
+            ...  # pragma: no cover
+
+
+def test_get_container_id_from_anthropic_provider_details():
+    """ShellTool.get_container_id extracts container_id from Anthropic provider_details."""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[TextPart(content='world')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'cntr_anthropic_abc'},
+        ),
+    ]
+    assert ShellTool.get_container_id(messages) == 'cntr_anthropic_abc'
+
+
+async def test_shell_tool_and_code_execution_tool_mutual_exclusion_openai_responses(allow_model_requests: None):
+    pytest.importorskip('openai')
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='api-key'))
+    agent = Agent(model=model, builtin_tools=[ShellTool(), CodeExecutionTool()])
+
+    with pytest.raises(UserError, match='`ShellTool` and `CodeExecutionTool` are mutually exclusive'):
+        await agent.run('test')
