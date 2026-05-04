@@ -24,7 +24,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import UnexpectedModelBehavior
+from .exceptions import ToolRetryError, UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -2491,6 +2491,25 @@ class FunctionToolCallEvent:
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.
     - `None`: Validation was not performed.
+    """
+
+    validated_args: dict[str, Any] | None = None
+    """The post-coercion args produced by the tool's validator, when validation ran and succeeded.
+
+    Populated only when `args_valid` is `True`. Mirrors `ValidatedToolCall.validated_args`.
+
+    For function tools, always a `dict[str, Any]` matching the tool schema. For output tools,
+    this holds whatever the tool's `args_validator` produced — typically a dict, but for bare
+    `BaseModel` outputs it can be the model instance itself (the `dict[str, Any]` typing is a
+    mild lie in that case, preserved for consistency with regular tool calls).
+    """
+
+    validation_error: ToolRetryError | None = field(default=None, compare=False)
+    """The `ToolRetryError` produced when validation ran and failed.
+
+    Populated only when `args_valid` is `False`. Mirrors `ValidatedToolCall.validation_error`.
+    Excluded from equality comparison; the same information is carried by the following
+    `FunctionToolResultEvent`'s `RetryPromptPart`.
     """
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'

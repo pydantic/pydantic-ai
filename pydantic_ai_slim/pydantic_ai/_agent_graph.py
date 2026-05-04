@@ -1387,9 +1387,13 @@ def _emit_skipped_output_tool(
     output_parts: list[_messages.ModelRequestPart],
     *,
     args_valid: bool | None = None,
+    validated_args: dict[str, Any] | None = None,
+    validation_error: ToolRetryError | None = None,
 ) -> Iterator[_messages.HandleResponseEvent]:
     """Yield events for an output tool call that was skipped, and append the result to output_parts."""
-    yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
+    yield _messages.FunctionToolCallEvent(
+        call, args_valid=args_valid, validated_args=validated_args, validation_error=validation_error
+    )
     part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         content=message,
@@ -1468,12 +1472,18 @@ async def process_tool_calls(  # noqa: C901
                 assert validated.validation_error is not None
                 if final_result:
                     for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
+                        call,
+                        'Output tool not used - output failed validation.',
+                        output_parts,
+                        args_valid=False,
+                        validation_error=validated.validation_error,
                     ):
                         yield event
                     continue
 
-                yield _messages.FunctionToolCallEvent(call, args_valid=False)
+                yield _messages.FunctionToolCallEvent(
+                    call, args_valid=False, validation_error=validated.validation_error
+                )
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
                 ctx.state.retries += 1
@@ -1485,7 +1495,11 @@ async def process_tool_calls(  # noqa: C901
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output function execution failed.', output_parts, args_valid=True
+                        call,
+                        'Output tool not used - output function execution failed.',
+                        output_parts,
+                        args_valid=True,
+                        validated_args=validated.validated_args,
                     ):
                         yield event
                     continue
@@ -1497,12 +1511,17 @@ async def process_tool_calls(  # noqa: C901
                     f'Exceeded maximum retries ({max_retries}) for output validation'
                 ) from (e.__cause__ or e)
             except ToolRetryError as e:
-                yield _messages.FunctionToolCallEvent(call, args_valid=True)
+                yield _messages.FunctionToolCallEvent(
+                    call, args_valid=True, validated_args=validated.validated_args
+                )
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
                 ctx.state.retries += 1
                 continue
 
+            yield _messages.FunctionToolCallEvent(
+                call, args_valid=True, validated_args=validated.validated_args
+            )
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content='Final result processed.',
@@ -1584,7 +1603,12 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
             validated_calls[call.tool_call_id] = validated
-            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+            yield _messages.FunctionToolCallEvent(
+                call,
+                args_valid=validated.args_valid,
+                validated_args=validated.validated_args,
+                validation_error=validated.validation_error,
+            )
 
         async for event in _call_tools(
             tool_manager=tool_manager,
@@ -1620,7 +1644,12 @@ async def process_tool_calls(  # noqa: C901
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
-                yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+                yield _messages.FunctionToolCallEvent(
+                    call,
+                    args_valid=validated.args_valid,
+                    validated_args=validated.validated_args,
+                    validation_error=validated.validation_error,
+                )
 
                 if validated.args_valid:
                     if call in tool_calls_by_kind['external']:

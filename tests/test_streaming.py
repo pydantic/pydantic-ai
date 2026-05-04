@@ -3054,6 +3054,7 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                 ),
                 args_valid=True,
+                validated_args={'x': 5},
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -3086,6 +3087,7 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                 ),
                 args_valid=True,
+                validated_args={'x': 5},
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -3147,8 +3149,15 @@ async def test_output_tool_validation_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
-            # Note: No FunctionToolCallEvent for the successful output tool call
-            # Output tools only emit FunctionToolCallEvent on validation/execution failure
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'valid'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+                validated_args=OutputType(value='valid'),  # pyright: ignore[reportArgumentType]
+            ),
         ]
     )
 
@@ -3473,10 +3482,14 @@ async def test_deferred_tool_iter():
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 0},
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 0},
             ),
         ]
     )
@@ -3531,10 +3544,14 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 0},
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 0},
             ),
         ]
     )
@@ -3577,7 +3594,9 @@ async def test_run_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 'a'},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3655,7 +3674,9 @@ def test_run_sync_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 'a'},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3706,7 +3727,9 @@ async def test_run_stream_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 'a'},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3751,7 +3774,9 @@ async def test_stream_tool_returning_user_content():
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -3811,7 +3836,9 @@ async def test_run_stream_events():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+                args_valid=True,
+                validated_args={'x': 'a'},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -4002,6 +4029,7 @@ async def test_args_validator_failure_events():
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
                 args_valid=True,
+                validated_args={'x': 0, 'y': 0},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -4060,6 +4088,7 @@ async def test_args_validator_event_args_valid_field():
                     tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
                 ),
                 args_valid=True,
+                validated_args={'x': 0, 'y': 0},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(

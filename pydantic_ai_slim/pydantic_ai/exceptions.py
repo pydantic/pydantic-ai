@@ -273,6 +273,12 @@ class ToolRetryError(Exception):
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.tool_retry,)
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, ToolRetryError) and other.tool_retry == self.tool_retry
+
+    def __hash__(self) -> int:
+        return hash((self.__class__, id(self.tool_retry)))
+
     @staticmethod
     def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
         """Format ErrorDetails as a human-readable message.
