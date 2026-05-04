@@ -1203,8 +1203,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             raise
 
         except BaseException:
-            if not task.done():
-                task.cancel()
+            task.cancel()
 
             # The consumer side is already exiting. Await the producer only to
             # retrieve its exception and finish cleanup; it must not replace the

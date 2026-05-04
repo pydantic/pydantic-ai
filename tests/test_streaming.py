@@ -3950,7 +3950,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
+        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):  # pragma: no branch
             break
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
@@ -3964,16 +3964,17 @@ async def test_run_stream_early_break_does_not_drain_response():
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         nonlocal cleanup_called
         try:
-            for chunk in ['first', 'second']:
-                pulled_chunks.append(chunk)
-                yield chunk
+            pulled_chunks.append('first')
+            yield 'first'
+            pulled_chunks.append('second')  # pragma: no cover
+            yield 'second'  # pragma: no cover
         finally:
             cleanup_called = True
 
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for text in result.stream_text(delta=True, debounce_by=None):
+        async for text in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
             streamed_text.append(text)
             break
 
@@ -4018,10 +4019,11 @@ async def test_run_stream_events_context_manager_closes_producer():
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream_events('test') as events:
-        async for _event in events:
+        async for _event in events:  # pragma: no branch
             break
 
     assert cleanup_called
+    assert [event async for event in events] == []
 
 
 async def test_run_stream_events_early_exit_preserves_consumer_close():
@@ -4035,7 +4037,7 @@ async def test_run_stream_events_early_exit_preserves_consumer_close():
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream_events('test') as events:
-        async for _event in events:
+        async for _event in events:  # pragma: no branch
             break
 
 
