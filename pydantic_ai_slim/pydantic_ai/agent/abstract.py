@@ -840,9 +840,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     yielded = True
                     break
                 if not isinstance(next_node, _agent_graph.AgentNode):
-                    raise exceptions.AgentRunError(  # pragma: no cover
-                        'Should have produced a StreamedRunResult before getting here'
-                    )
+                    raise exceptions.AgentRunError('Should have produced a StreamedRunResult before getting here')
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
