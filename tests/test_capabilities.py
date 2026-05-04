@@ -5468,7 +5468,8 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        result = await agent.run('hello')
+        with pytest.warns(UserWarning, match=r'prepare callback .*returned `None`'):
+            result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
     async def test_only_sees_output_tools(self):
