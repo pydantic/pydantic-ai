@@ -269,7 +269,6 @@ class MistralModel(Model[Mistral]):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
-        reasoning_effort = self._translate_thinking(model_settings, model_request_parameters)
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
@@ -288,7 +287,7 @@ class MistralModel(Model[Mistral]):
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
                 stop=model_settings.get('stop_sequences', None),
-                reasoning_effort=reasoning_effort if reasoning_effort else UNSET,
+                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -325,7 +324,7 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
-                reasoning_effort=reasoning_effort if reasoning_effort else UNSET,
+                reasoning_effort=reasoning_effort,
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -352,7 +351,7 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
-                reasoning_effort=reasoning_effort if reasoning_effort else UNSET,
+                reasoning_effort=reasoning_effort,
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -362,7 +361,7 @@ class MistralModel(Model[Mistral]):
                 model=str(self._model_name),
                 messages=mistral_messages,
                 stream=True,
-                reasoning_effort=reasoning_effort if reasoning_effort else UNSET,
+                reasoning_effort=reasoning_effort,
                 http_headers={'User-Agent': get_user_agent()},
             )
         assert response, 'An unexpected empty response from Mistral.'
@@ -573,13 +572,13 @@ class MistralModel(Model[Mistral]):
     def _translate_thinking(
         model_settings: MistralModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> Literal['none', 'high'] | None:
+    ) -> Literal['none', 'high'] | MistralUnset:
         """Get reasoning effort, falling back to unified thinking when provider-specific setting is not set."""
         if effort := model_settings.get('mistral_reasoning_effort'):
             return effort
         thinking = model_request_parameters.thinking
         if thinking is None:
-            return None
+            return UNSET
         return MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
