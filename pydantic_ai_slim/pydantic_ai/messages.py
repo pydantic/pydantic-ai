@@ -1710,14 +1710,12 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = field(
-        default=None, init=False, repr=False, compare=False
-    )
-    """Metadata from the tool definition to include in OpenTelemetry tool call events.
-
-    This is populated by the instrumentation layer from [`ToolDefinition.metadata`][pydantic_ai.tools.ToolDefinition.metadata]
-    and is not intended to be set directly. It is not serialized or sent to any model provider.
-    """
+    def __post_init__(self) -> None:
+        # Per-instance attribute populated by the instrumentation layer from
+        # `ToolDefinition.metadata` to drive OTel rendering hints (e.g. syntax highlighting).
+        # Declared here rather than as a dataclass field so it stays out of `__init__`,
+        # equality, repr, Pydantic JSON schema, and serialization.
+        self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
 
     def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
