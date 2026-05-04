@@ -15,7 +15,7 @@ Get an API key at [synap.maximem.ai](https://synap.maximem.ai).
 
 ## Usage
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
 from maximem_synap import MaximemSynapSDK
 from synap_pydantic_ai import SynapDeps, register_synap_tools
