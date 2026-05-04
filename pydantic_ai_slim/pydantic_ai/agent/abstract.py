@@ -1060,8 +1060,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         async def main():
             events: list[AgentStreamEvent | AgentRunResultEvent] = []
-            async for event in agent.run_stream_events('What is the capital of France?'):
-                events.append(event)
+            async with agent.run_stream_events('What is the capital of France?') as stream:
+                async for event in stream:
+                    events.append(event)
             print(events)
             '''
             [
@@ -1079,7 +1080,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ```
 
         Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
-        except that `event_stream_handler` is now allowed.
+        except that `event_stream_handler` is managed internally by this method.
 
         Args:
             user_prompt: User input to start/continue the conversation.
@@ -1105,8 +1106,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
-            An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
-            run result.
+            An [`AgentEventStream`][pydantic_ai.result.AgentEventStream], which is both an async iterator of stream
+            events and an async context manager for deterministic cleanup.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())

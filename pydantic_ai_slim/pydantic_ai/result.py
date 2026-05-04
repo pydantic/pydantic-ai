@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .run import AgentRunResult, AgentRunResultEvent
 
 __all__ = (
+    'AgentEventStream',
     'OutputDataT',
     'OutputDataT_inv',
     'ToolOutput',
@@ -347,17 +348,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return self._agent_stream_iterator
 
 
-@dataclass
 class AgentEventStream(Generic[OutputDataT]):
-    """Async event stream returned by `Agent.run_stream_events()`."""
+    """Async event stream returned by `Agent.run_stream_events()`.
 
-    _events: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]
+    Wraps the underlying async generator so callers can either iterate over it
+    directly or use it as an async context manager for deterministic cleanup.
+    """
+
+    def __init__(self, generator: AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]) -> None:
+        self._generator = generator
 
     def __aiter__(self) -> AgentEventStream[OutputDataT]:
         return self
 
     async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
-        return await anext(self._events)
+        return await anext(self._generator)
 
     async def __aenter__(self) -> AgentEventStream[OutputDataT]:
         return self
@@ -366,7 +371,7 @@ class AgentEventStream(Generic[OutputDataT]):
         await self.aclose()
 
     async def aclose(self) -> None:
-        await _utils.aclose_if_available(self._events)
+        await _utils.aclose_if_available(self._generator)
 
 
 @dataclass(init=False)

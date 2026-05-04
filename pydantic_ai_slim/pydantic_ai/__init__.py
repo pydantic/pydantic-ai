@@ -122,6 +122,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import (
@@ -314,6 +315,8 @@ __all__ = (
     'RunUsage',
     'RequestUsage',
     'UsageLimits',
+    # result
+    'AgentEventStream',
     # run
     'AgentRun',
     'AgentRunResult',
