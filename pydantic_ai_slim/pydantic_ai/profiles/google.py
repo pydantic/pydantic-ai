@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from dataclasses import dataclass
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -23,9 +24,34 @@ class GoogleModelProfile(ModelProfile):
     ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    google_supports_native_output_with_builtin_tools: bool = False
-    """Whether the model supports native output with builtin tools.
-    See https://ai.google.dev/gemini-api/docs/structured-output?example=recipe#structured_outputs_with_tools"""
+    google_supports_tool_combination: bool = False
+    """Whether the model supports combining function declarations with builtin tools and response_schema.
+
+    Gemini 3+ supports all tool combinations:
+    - function_declarations + builtin_tools
+    - output_tools (function declarations) + builtin_tools
+    - response_schema (NativeOutput) + function_declarations
+    See https://ai.google.dev/gemini-api/docs/tool-combination
+    """
+
+    google_supports_server_side_tool_invocations: bool = False
+    """Whether the model accepts the `include_server_side_tool_invocations` tool-config field.
+
+    When enabled, Gemini emits explicit `tool_call`/`tool_response` parts for server-side
+    builtin tools (Google Search, URL Context, File Search) that we round-trip through
+    [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] /
+    [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Pre-Gemini-3 models
+    reject the field with `'Tool call context circulation is not enabled'`.
+
+    Distinct from [`google_supports_tool_combination`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_tool_combination]
+    even though both currently flip on for Gemini 3+ — the former gates the SDK request
+    field, the latter gates which combinations of builtin / function / output tools are
+    allowed in the same request.
+    """
+
+    # TODO(v2): remove google_supports_native_output_with_builtin_tools
+    google_supports_native_output_with_builtin_tools: bool | None = None
+    """Deprecated: use `google_supports_tool_combination` instead."""
 
     google_supported_mime_types_in_tool_returns: tuple[str, ...] = ()
     """MIME types supported in native FunctionResponseDict.parts.
@@ -36,6 +62,19 @@ class GoogleModelProfile(ModelProfile):
 
     Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
     """
+
+    def __post_init__(self):
+        if self.google_supports_native_output_with_builtin_tools is not None:
+            warnings.warn(
+                '`google_supports_native_output_with_builtin_tools` is deprecated, '
+                'use `google_supports_tool_combination` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # New flag wins on conflict — silently overwriting an explicitly-set new value with
+            # the deprecated alias would surprise users mid-migration.
+            if not self.google_supports_tool_combination:
+                self.google_supports_tool_combination = self.google_supports_native_output_with_builtin_tools
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
@@ -55,7 +94,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_tool_return_schema=not is_image_model,
         supports_thinking=is_thinking_model,
         thinking_always_enabled=thinking_always_enabled,
-        google_supports_native_output_with_builtin_tools=is_3_or_newer,
+        google_supports_tool_combination=is_3_or_newer,
+        google_supports_server_side_tool_invocations=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
         google_supports_thinking_level=is_3_or_newer,
     )

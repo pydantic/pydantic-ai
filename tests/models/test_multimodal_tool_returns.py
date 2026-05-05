@@ -53,7 +53,10 @@ with try_import() as anthropic_available:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as google_available:
-    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google import (
+        _DEFAULT_FLAGS,  # pyright: ignore[reportPrivateUsage]
+        GoogleModel,
+    )
     from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
 
 with try_import() as bedrock_available:
@@ -937,7 +940,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
             with unittest.mock.patch.object(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
             ):
-                await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+                await m_google._map_messages(messages, params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     else:
         assert_never(provider)  # pyright: ignore[reportArgumentType]
 
@@ -953,5 +956,5 @@ async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
         ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
     ]
     with unittest.mock.patch.object(type(model), 'system', new_callable=lambda: property(lambda self: 'google-vertex')):
-        _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+        _, contents = await model._map_messages(messages, ModelRequestParameters(), _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert len(contents) == 1
