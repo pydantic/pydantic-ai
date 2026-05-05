@@ -67,8 +67,6 @@ from .mock_openai import (
     response_message,
 )
 
-from dirty_equals import IsDatetime
-
 with try_import() as imports_successful:
     from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import chat
