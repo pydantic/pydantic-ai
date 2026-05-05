@@ -1175,6 +1175,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_capability = base_capability
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
+
         run_capability = await effective_capability.for_run(initial_ctx)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
@@ -1258,6 +1259,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             return parts or None
 
+        def collect_capabilities() -> dict[str, AbstractCapability[AgentDepsT]]:
+            capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
+
+            def collect(cap: AbstractCapability[AgentDepsT]) -> None:
+                if cap.id is not None:
+                    capabilities[cap.id] = cap
+
+            run_capability.apply(collect)
+            return capabilities
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1273,6 +1284,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
+            capabilities=collect_capabilities(),
             builtin_tools=[*cap_builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,

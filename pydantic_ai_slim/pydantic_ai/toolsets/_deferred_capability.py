@@ -9,7 +9,6 @@ from typing_extensions import TypedDict
 from pydantic_ai._deferred import (
     LOAD_CAPABILITY_TOOL_NAME,
     LoadCapabilityReturn,
-    parse_loaded_capabilities,
 )
 from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -48,7 +47,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        loaded_ids = parse_loaded_capabilities(ctx.messages)
+        loaded_ids = ctx.loaded_capability_ids
         unloaded = [entry for entry in ctx.capabilities.values() if entry.id not in loaded_ids]
         if not unloaded:
             return all_tools

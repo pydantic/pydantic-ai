@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
@@ -134,6 +135,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
     root_capability: AbstractCapability[DepsT]
+
+    capabilities: dict[str, AbstractCapability[DepsT]]
 
     builtin_tools: list[AgentBuiltinTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -1258,9 +1261,13 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         run_id=ctx.state.run_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        capabilities=ctx.deps.capabilities,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-    run_context = replace(run_context, validation_context=validation_context)
+    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
+    run_context = replace(
+        run_context, validation_context=validation_context, loaded_capability_ids=loaded_capability_ids
+    )
     return run_context
 
 

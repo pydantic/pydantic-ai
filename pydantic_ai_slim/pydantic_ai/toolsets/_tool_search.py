@@ -7,7 +7,6 @@ from typing import Annotated, Any
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
 
-from .._deferred import parse_loaded_capabilities
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..messages import ModelRequest, ToolReturn, ToolReturnPart
@@ -67,7 +66,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
-        loaded_capability_ids = parse_loaded_capabilities(ctx.messages)
+        loaded_capability_ids = ctx.loaded_capability_ids
 
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
