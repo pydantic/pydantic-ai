@@ -40,7 +40,7 @@ class String2Length(BaseNode):
 
 
 @dataclass
-class Double(BaseNode[None, None, int]):
+class Double(BaseNode[object, object, int]):
     input_data: int
 
     async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
@@ -147,7 +147,7 @@ async def test_node_error(tmp_path: Path, mock_snapshot_id: object):
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise RuntimeError('test error')
 

@@ -1666,7 +1666,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    def get_weather_with_ctx(ctx: RunContext[None], city: str) -> WeatherInfo:
+    def get_weather_with_ctx(ctx: RunContext[object], city: str) -> WeatherInfo:
         assert ctx is not None
         return WeatherInfo(temperature=28.7, description='sunny')
 
@@ -2017,7 +2017,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
         temperature: float
         description: str
 
-        def get_weather(self, ctx: RunContext[None], city: str):
+        def get_weather(self, ctx: RunContext[object], city: str):
             assert ctx is not None
             return self
 
@@ -2323,7 +2323,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    def get_weather_with_retry(ctx: RunContext[None], city: str) -> WeatherInfo:
+    def get_weather_with_retry(ctx: RunContext[object], city: str) -> WeatherInfo:
         assert ctx is not None
         if city != 'Mexico City':
             from pydantic_ai import ModelRetry
@@ -2675,7 +2675,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
     my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.instructions
-    def instructions(ctx: RunContext[None]):
+    def instructions(ctx: RunContext[object]):
         return f'This is step {ctx.run_step}'
 
     @my_agent.tool_plain
@@ -2957,7 +2957,7 @@ def test_function_instructions_with_history_in_agent_run_span(
     my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.instructions
-    def instructions(ctx: RunContext[None]):
+    def instructions(ctx: RunContext[object]):
         return 'Instructions for the current agent run'
 
     result = my_agent.run_sync(
@@ -3226,7 +3226,7 @@ async def test_run_stream(
     my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.instructions
-    def instructions(ctx: RunContext[None]):
+    def instructions(ctx: RunContext[object]):
         return 'Instructions for the current agent run'
 
     async with my_agent.run_stream('Hello') as stream:

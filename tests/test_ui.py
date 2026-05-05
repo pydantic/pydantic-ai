@@ -984,7 +984,7 @@ def _make_dummy_adapter(
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
 ) -> DummyUIAdapter[None, str]:
-    agent: Agent[None, str] = Agent(model=TestModel())
+    agent: Agent[object, str] = Agent(model=TestModel())
     return DummyUIAdapter(
         agent=agent,
         run_input=DummyUIRunInput(messages=messages),
@@ -1175,7 +1175,7 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
         captured.append(list(messages))
         yield 'done'
 
-    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+    agent: Agent[object, str] = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = DummyUIRunInput(
         messages=[
@@ -1205,7 +1205,7 @@ async def test_run_stream_strips_file_urls_with_disallowed_schemes():
         captured.append(list(messages))
         yield 'ok'
 
-    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+    agent: Agent[object, str] = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = DummyUIRunInput(
         messages=[

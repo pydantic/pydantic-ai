@@ -1907,7 +1907,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
     """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-    agent: Agent[None, str] = Agent(m, model_settings=settings)
+    agent: Agent[object, str] = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 1+1? Reply in one word.')
     original = result.all_messages()
@@ -4086,7 +4086,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[None]) -> str:
+    def dynamic_prompt(ctx: RunContext[object]) -> str:
         return 'Dynamic system prompt'
 
     run_input = create_input(

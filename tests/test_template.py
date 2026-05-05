@@ -159,7 +159,7 @@ class TestValidateFromSpecArgs:
         """Capabilities without TemplateStr in from_spec hints are unchanged."""
 
         @dataclass
-        class PlainCap(AbstractCapability[None]):
+        class PlainCap(AbstractCapability[object]):
             value: str = ''
 
             @classmethod
@@ -221,7 +221,7 @@ class TestAgentFromSpecDeps:
         assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_without_deps_type_returns_agent_none(self) -> None:
-        """Without deps_type, from_spec returns Agent[None, str]."""
+        """Without deps_type, from_spec returns Agent[object, str]."""
         agent = Agent.from_spec({'model': 'test'})
         assert agent._deps_type is type(None)  # pyright: ignore[reportPrivateUsage]
 

@@ -111,7 +111,7 @@ class Failed(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[None, SeatPreference | Failed](
+seat_preference_agent = Agent[object, SeatPreference | Failed](
     'openai:gpt-5.2',
     output_type=SeatPreference | Failed,
     system_prompt=(

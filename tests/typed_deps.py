@@ -66,7 +66,7 @@ tool_1 = Tool(my_plain_tool)
 assert_type(tool_1, Tool[object])
 
 tool_2 = Tool(my_plain_tool, prepare=my_prepare_none)
-assert_type(tool_2, Tool[None])  # due to default parameter of RunContext being None and inferring from prepare
+assert_type(tool_2, Tool[object])  # due to default parameter of RunContext being None and inferring from prepare
 
 tool_3 = Tool(my_plain_tool, prepare=my_prepare_object)
 assert_type(tool_3, Tool[object])

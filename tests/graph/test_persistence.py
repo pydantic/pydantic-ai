@@ -42,7 +42,7 @@ class Foo(BaseNode[MyState]):
 
 
 @dataclass
-class Bar(BaseNode[MyState, None, int]):
+class Bar(BaseNode[MyState, object, int]):
     async def run(self, ctx: GraphRunContext[MyState]) -> End[int]:
         ctx.state.y += 'y'
         return End(ctx.state.x * 2)
@@ -164,7 +164,7 @@ async def test_dump_load_state(graph: Graph[MyState, None, int], mock_snapshot_i
 
 def test_one_node(mock_snapshot_id: object):
     @dataclass
-    class MyNode(BaseNode[None, None, int]):
+    class MyNode(BaseNode[object, object, int]):
         node_field: int
 
         async def run(self, ctx: GraphRunContext) -> End[int]:  # pragma: no cover
@@ -244,7 +244,7 @@ async def test_node_error(mock_snapshot_id: object):
             return Spam()
 
     @dataclass
-    class Spam(BaseNode[None, None, int]):
+    class Spam(BaseNode[object, object, int]):
         async def run(self, ctx: GraphRunContext) -> End[int]:
             raise RuntimeError('test error')
 
@@ -278,7 +278,7 @@ async def test_node_error(mock_snapshot_id: object):
 
 async def test_rerun_node(mock_snapshot_id: object):
     @dataclass
-    class Foo(BaseNode[None, None, int]):
+    class Foo(BaseNode[object, object, int]):
         async def run(self, ctx: GraphRunContext) -> End[int]:
             return End(123)
 
@@ -297,14 +297,16 @@ async def test_rerun_node(mock_snapshot_id: object):
 
 
 @pytest.mark.parametrize('persistence_cls', [SimpleStatePersistence, FullStatePersistence])
-async def test_next_from_persistence(persistence_cls: type[BaseStatePersistence[None, int]], mock_snapshot_id: object):
+async def test_next_from_persistence(
+    persistence_cls: type[BaseStatePersistence[object, int]], mock_snapshot_id: object
+):
     @dataclass
     class Foo(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Spam:
             return Spam()
 
     @dataclass
-    class Spam(BaseNode[None, None, int]):
+    class Spam(BaseNode[object, object, int]):
         async def run(self, ctx: GraphRunContext) -> End[int]:
             return End(123)
 
@@ -354,7 +356,7 @@ async def test_full_state_persistence_snapshot_state_stability():
         counter: int
 
     @dataclass
-    class CountDown(BaseNode[CountDownState, None, int]):
+    class CountDown(BaseNode[CountDownState, object, int]):
         async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
             if ctx.state.counter <= 0:
                 return End(ctx.state.counter)
@@ -385,7 +387,7 @@ async def test_simple_state_persistence_snapshot_state_stability():
         counter: int
 
     @dataclass
-    class CountDown(BaseNode[CountDownState, None, int]):
+    class CountDown(BaseNode[CountDownState, object, int]):
         async def run(self, ctx: GraphRunContext[CountDownState]) -> CountDown | End[int]:
             ctx.state.counter -= 1
             return CountDown()

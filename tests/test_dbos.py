@@ -885,7 +885,7 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     # DBOS workflow input must be serializable, so we cannot use an inner function as an argument.
     # It's fine to pass in an event_stream_handler that is defined as a top-level function.
     async def simple_event_stream_handler(
-        ctx: RunContext[None],
+        ctx: RunContext[object],
         stream: AsyncIterable[AgentStreamEvent],
     ):
         pass
@@ -1054,8 +1054,8 @@ test_model = TestModel()
 dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=ToggleableDeps)
 
 
-@dynamic_agent.toolset  # type: ignore
-def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[None]:
+@dynamic_agent.toolset
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[object]:
     if ctx.deps.active == 'weather':
         return weather_toolset
     else:
@@ -1093,13 +1093,13 @@ hitl_agent = Agent(
 
 @hitl_agent.tool
 @DBOS.step()
-def create_file(ctx: RunContext[None], path: str) -> None:
+def create_file(ctx: RunContext[object], path: str) -> None:
     raise CallDeferred
 
 
 @hitl_agent.tool
 @DBOS.step()
-def delete_file(ctx: RunContext[None], path: str) -> bool:
+def delete_file(ctx: RunContext[object], path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True

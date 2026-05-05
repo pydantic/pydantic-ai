@@ -4634,7 +4634,7 @@ async def test_xai_prompted_output_json_object(allow_model_requests: None):
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     # Use PromptedOutput explicitly - uses json_object mode when no tools
-    agent: Agent[None, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
+    agent: Agent[object, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
 
     result = await agent.run('What is the meaning of life?')
     assert result.output == SimpleResult(answer='42')

@@ -2100,7 +2100,7 @@ async def test_google_instructions_only_with_tool_calls(allow_model_requests: No
     role=user. The fix prepends an empty user turn when the first content is a model response.
     """
     m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
-    agent: Agent[None, list[str]] = Agent(m, output_type=list[str])
+    agent: Agent[object, list[str]] = Agent(m, output_type=list[str])
 
     @agent.instructions
     def agent_instructions() -> str:

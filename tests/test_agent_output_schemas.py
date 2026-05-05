@@ -650,7 +650,7 @@ class DCWithNestedField:
     ],
 )
 async def test_output_type_description(output_type: type, expected_schema: dict[str, object]):
-    agent: Agent[None, str] = Agent('test', output_type=output_type)
+    agent: Agent[object, str] = Agent('test', output_type=output_type)
     assert agent.output_json_schema() == expected_schema
 
 
@@ -700,5 +700,5 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
     ],
 )
 async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
-    agent: Agent[None, str] = Agent('test', output_type=output_type)
+    agent: Agent[object, str] = Agent('test', output_type=output_type)
     assert agent.output_json_schema() == expected_schema

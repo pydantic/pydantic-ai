@@ -582,7 +582,7 @@ def search(*, query: str, limit: int | None = None) -> Any:
 def test_function_signature_special_params():
     """RunContext skipped, unannotated params become Any via schema path."""
 
-    def with_ctx(ctx: RunContext[None], x: int) -> int:
+    def with_ctx(ctx: RunContext[object], x: int) -> int:
         return x  # pragma: no cover
 
     td = Tool(with_ctx, takes_ctx=True).tool_def

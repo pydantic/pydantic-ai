@@ -957,7 +957,7 @@ async def test_new_messages_index_during_iter_with_pruning():
     agent = Agent(model=FunctionModel(model_function, model_name='test'), history_processors=[keep_last_2])
 
     @agent.tool
-    async def my_tool(ctx: RunContext[None]) -> str:
+    async def my_tool(ctx: RunContext[object]) -> str:
         return 'tool executed'
 
     with capture_run_messages() as captured_messages:
@@ -1030,7 +1030,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
     agent = Agent(model=FunctionModel(model_function, model_name='test'), history_processors=[keep_last_2])
 
     @agent.tool
-    async def my_tool(ctx: RunContext[None]) -> str:
+    async def my_tool(ctx: RunContext[object]) -> str:
         return 'tool executed'
 
     history = [
@@ -1431,7 +1431,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
     agent = Agent(model=FunctionModel(model_function, model_name='test'))
 
     @agent.tool
-    async def my_tool(_ctx: RunContext[None]) -> str:
+    async def my_tool(_ctx: RunContext[object]) -> str:
         return 'tool executed'
 
     with capture_run_messages() as captured_messages:

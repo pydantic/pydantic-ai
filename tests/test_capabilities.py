@@ -201,12 +201,12 @@ def test_agent_from_spec_bad_args():
 
 
 @dataclass
-class CustomCapability(AbstractCapability[None]):
+class CustomCapability(AbstractCapability[object]):
     greeting: str = 'hello'
 
 
 @dataclass
-class CapabilityWithCallbackParam(AbstractCapability[None]):
+class CapabilityWithCallbackParam(AbstractCapability[object]):
     """Custom capability with a mix of serializable and non-serializable params."""
 
     max_retries: int = 3
@@ -432,7 +432,7 @@ def test_agent_from_spec_model_override():
 
 def test_agent_from_spec_capabilities_merged():
     @dataclass
-    class ExtraCap(AbstractCapability[None]):
+    class ExtraCap(AbstractCapability[object]):
         pass
 
     agent = Agent.from_spec(
@@ -1809,12 +1809,12 @@ def test_to_file_roundtrip_json(tmp_path: str):
 
 
 @dataclass
-class ToolsetFuncCapability(AbstractCapability[None]):
+class ToolsetFuncCapability(AbstractCapability[object]):
     """A capability that returns a ToolsetFunc instead of an AbstractToolset."""
 
-    def get_toolset(self) -> ToolsetFunc[None]:
-        def make_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
-            toolset = FunctionToolset[None]()
+    def get_toolset(self) -> ToolsetFunc[object]:
+        def make_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+            toolset = FunctionToolset[object]()
 
             @toolset.tool_plain
             def greet(name: str) -> str:
@@ -1903,7 +1903,7 @@ def test_abstract_capability_get_model_settings_default():
     """AbstractCapability.get_model_settings() returns None by default."""
 
     @dataclass
-    class PlainCap(AbstractCapability[None]):
+    class PlainCap(AbstractCapability[object]):
         pass
 
     cap = PlainCap()
@@ -1914,12 +1914,12 @@ def test_combined_capability_get_model_settings_merge():
     """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
 
     @dataclass
-    class MaxTokensCap(AbstractCapability[None]):
+    class MaxTokensCap(AbstractCapability[object]):
         def get_model_settings(self) -> _ModelSettings | None:
             return _ModelSettings(max_tokens=100)
 
     @dataclass
-    class TemperatureCap(AbstractCapability[None]):
+    class TemperatureCap(AbstractCapability[object]):
         def get_model_settings(self) -> _ModelSettings | None:
             return _ModelSettings(temperature=0.5)
 
@@ -1940,7 +1940,7 @@ def test_combined_capability_get_model_settings_none():
     """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
 
     @dataclass
-    class PlainCap(AbstractCapability[None]):
+    class PlainCap(AbstractCapability[object]):
         pass
 
     caps = CombinedCapability(capabilities=[PlainCap()])
@@ -1949,14 +1949,14 @@ def test_combined_capability_get_model_settings_none():
 
 def test_toolset_capability_get_toolset():
     """Toolset capability returns its toolset."""
-    ts = FunctionToolset[None]()
+    ts = FunctionToolset[object]()
     cap = Toolset(toolset=ts)
     assert cap.get_toolset() is ts
 
 
 async def test_toolset_capability_in_agent():
     """A Toolset capability's tools are available to the agent."""
-    ts = FunctionToolset[None]()
+    ts = FunctionToolset[object]()
 
     @ts.tool_plain
     def greet(name: str) -> str:
@@ -2027,7 +2027,7 @@ async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
 
     @dataclass
-    class SimpleCap(AbstractCapability[None]):
+    class SimpleCap(AbstractCapability[object]):
         pass
 
     cap = SimpleCap()
@@ -2039,7 +2039,7 @@ async def test_combined_capability_for_run_propagates():
     """CombinedCapability propagates for_run to children."""
 
     @dataclass
-    class SimpleCap(AbstractCapability[None]):
+    class SimpleCap(AbstractCapability[object]):
         label: str = ''
 
     cap1 = SimpleCap(label='a')
@@ -2055,15 +2055,15 @@ async def test_combined_capability_for_run_propagates():
 async def test_combined_capability_for_run_returns_new_when_child_changes():
     """CombinedCapability returns new instance when a child's for_run returns different."""
 
-    class PerRunCap(AbstractCapability[None]):
+    class PerRunCap(AbstractCapability[object]):
         def __init__(self, run_id: int = 0):
             self.run_id = run_id
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             return PerRunCap(run_id=self.run_id + 1)
 
     @dataclass
-    class StaticCap(AbstractCapability[None]):
+    class StaticCap(AbstractCapability[object]):
         pass
 
     static_cap = StaticCap()
@@ -2085,13 +2085,13 @@ async def test_combined_capability_for_run_cancels_siblings_on_failure():
     sibling_completed = False
 
     @dataclass
-    class FailingCap(AbstractCapability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+    class FailingCap(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             raise RuntimeError('boom')
 
     @dataclass
-    class SlowCap(AbstractCapability[None]):
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+    class SlowCap(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             nonlocal sibling_completed
             await anyio.sleep(0.1)
             sibling_completed = True  # pragma: no cover
@@ -2111,11 +2111,11 @@ def test_apply_single_capability():
     """AbstractCapability.apply() visits just the capability itself."""
 
     @dataclass
-    class MyCap(AbstractCapability[None]):
+    class MyCap(AbstractCapability[object]):
         pass
 
     cap = MyCap()
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     cap.apply(visited.append)
     assert visited == [cap]
 
@@ -2124,18 +2124,18 @@ def test_apply_combined_capability():
     """CombinedCapability.apply() recursively visits all leaf capabilities."""
 
     @dataclass
-    class CapA(AbstractCapability[None]):
+    class CapA(AbstractCapability[object]):
         pass
 
     @dataclass
-    class CapB(AbstractCapability[None]):
+    class CapB(AbstractCapability[object]):
         pass
 
     cap_a = CapA()
     cap_b = CapB()
     combined = CombinedCapability([cap_a, cap_b])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     combined.apply(visited.append)
     assert visited == [cap_a, cap_b]
 
@@ -2144,15 +2144,15 @@ def test_apply_nested_combined_capability():
     """CombinedCapability.apply() flattens nested CombinedCapabilities."""
 
     @dataclass
-    class CapA(AbstractCapability[None]):
+    class CapA(AbstractCapability[object]):
         pass
 
     @dataclass
-    class CapB(AbstractCapability[None]):
+    class CapB(AbstractCapability[object]):
         pass
 
     @dataclass
-    class CapC(AbstractCapability[None]):
+    class CapC(AbstractCapability[object]):
         pass
 
     cap_a = CapA()
@@ -2161,7 +2161,7 @@ def test_apply_nested_combined_capability():
     inner = CombinedCapability([cap_a, cap_b])
     outer = CombinedCapability([inner, cap_c])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     outer.apply(visited.append)
     assert visited == [cap_a, cap_b, cap_c]
 
@@ -2171,7 +2171,7 @@ def test_apply_wrapper_capability():
     inner = Thinking()
     wrapper = WrapperCapability(wrapped=inner)
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     wrapper.apply(visited.append)
     assert visited == [inner]
 
@@ -2181,7 +2181,7 @@ def test_apply_prefix_tools():
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     prefixed.apply(visited.append)
     assert visited == [thinking]
 
@@ -2192,7 +2192,7 @@ def test_apply_finds_capability_by_type():
     web_search = WebSearch()
     combined = CombinedCapability([thinking, web_search])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     combined.apply(visited.append)
 
     assert any(isinstance(c, Thinking) for c in visited)
@@ -2206,7 +2206,7 @@ def test_apply_finds_wrapped_capability_by_type():
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
     combined = CombinedCapability([prefixed, WebSearch()])
 
-    visited: list[AbstractCapability[None]] = []
+    visited: list[AbstractCapability[object]] = []
     combined.apply(visited.append)
 
     assert any(isinstance(c, Thinking) for c in visited)
@@ -2216,8 +2216,8 @@ def test_apply_finds_wrapped_capability_by_type():
 
 def test_apply_empty_combined():
     """CombinedCapability with no children visits nothing."""
-    combined = CombinedCapability[None]([])
-    visited: list[AbstractCapability[None]] = []
+    combined = CombinedCapability[object]([])
+    visited: list[AbstractCapability[object]] = []
     combined.apply(visited.append)
     assert visited == []
 
@@ -2236,14 +2236,14 @@ async def test_for_run_with_different_toolset():
     def tool_b() -> str:
         return 'b'  # pragma: no cover
 
-    class SwitchingCap(AbstractCapability[None]):
+    class SwitchingCap(AbstractCapability[object]):
         def __init__(self, use_b: bool = False):
             self.use_b = use_b
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             return SwitchingCap(use_b=True)
 
-        def get_toolset(self) -> AbstractToolset[None]:
+        def get_toolset(self) -> AbstractToolset[object]:
             return toolset_b if self.use_b else toolset_a
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2261,11 +2261,11 @@ async def test_for_run_with_different_toolset():
 async def test_for_run_with_different_instructions():
     """When for_run returns a capability with different get_instructions(), per-run instructions are used."""
 
-    class DynamicInstructionsCap(AbstractCapability[None]):
+    class DynamicInstructionsCap(AbstractCapability[object]):
         def __init__(self, run_instructions: str = 'init-time'):
             self._run_instructions = run_instructions
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             return DynamicInstructionsCap(run_instructions='per-run')
 
         def get_instructions(self) -> str:
@@ -2292,16 +2292,16 @@ async def test_for_run_with_different_instructions():
 async def test_concurrent_runs_capability_isolation():
     """Multiple concurrent runs don't share state on stateful capabilities."""
 
-    class CountingCap(AbstractCapability[None]):
+    class CountingCap(AbstractCapability[object]):
         def __init__(self) -> None:
             self.request_count = 0
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             return CountingCap()
 
         async def before_model_request(
             self,
-            ctx: RunContext[None],
+            ctx: RunContext[object],
             request_context: ModelRequestContext,
         ) -> ModelRequestContext:
             self.request_count += 1
@@ -4646,7 +4646,7 @@ class TestImageGenerationCapability:
 
         inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
 
-        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+        async def model_factory(ctx: RunContext[object]) -> FunctionModel:
             return inner_model
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4707,7 +4707,7 @@ class TestImageGenerationCapability:
     async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
         """Callable fallback_model returning an image-only model name is caught at call time."""
 
-        def model_factory(ctx: RunContext[None]) -> str:
+        def model_factory(ctx: RunContext[object]) -> str:
             return 'openai-responses:gpt-image-1'
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5050,7 +5050,7 @@ class TestPrepareToolsCapability:
         from pydantic_ai.capabilities import PrepareTools
 
         async def hide_secret_tools(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+            ctx: RunContext[object], tool_defs: list[ToolDefinition]
         ) -> list[ToolDefinition] | None:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
@@ -5075,7 +5075,7 @@ class TestPrepareToolsCapability:
         """PrepareTools treats None return as 'disable all tools', consistent with ToolsPrepareFunc docs."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def disable_all(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5097,7 +5097,7 @@ class TestPrepareToolsCapability:
 
         from pydantic_ai.capabilities import PrepareTools
 
-        async def set_strict(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def set_strict(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [dc_replace(td, strict=True) for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5126,7 +5126,7 @@ class TestPrepareToolsCapability:
         from pydantic_ai.capabilities import PrepareTools
         from pydantic_ai.exceptions import UserError
 
-        async def rename(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def rename(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [dc_replace(td, name='renamed') for td in tool_defs]
 
         agent = Agent('test', capabilities=[PrepareTools(rename)])
@@ -5147,7 +5147,7 @@ class TestPrepareToolsCapability:
 
         executed: list[str] = []
 
-        async def hide_secret(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def hide_secret(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         call_count = 0
@@ -5225,7 +5225,7 @@ class TestPrepareOutputToolsCapability:
         class Out(BaseModel):
             value: str
 
-        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def disable_all(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5246,7 +5246,7 @@ class TestPrepareOutputToolsCapability:
 
         seen_kinds: list[str] = []
 
-        async def capture(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        async def capture(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             seen_kinds.extend(td.kind for td in tool_defs)
             return tool_defs
 
@@ -5280,7 +5280,7 @@ class TestAgentPrepareArgInjection:
         from pydantic_ai.capabilities import PrepareTools
 
         async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+            ctx: RunContext[object], tool_defs: list[ToolDefinition]
         ) -> list[ToolDefinition]:  # pragma: no cover
             return tool_defs
 
@@ -5293,7 +5293,7 @@ class TestAgentPrepareArgInjection:
         from pydantic_ai.capabilities import PrepareOutputTools
 
         async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+            ctx: RunContext[object], tool_defs: list[ToolDefinition]
         ) -> list[ToolDefinition]:  # pragma: no cover
             return tool_defs
 
@@ -6007,7 +6007,7 @@ class TestRunWithSpecAdditional:
 
         agent = Agent(FunctionModel(model_fn))
 
-        def dynamic_metadata(ctx: RunContext[None]) -> dict[str, Any]:
+        def dynamic_metadata(ctx: RunContext[object]) -> dict[str, Any]:
             return {'dynamic': 'value'}
 
         result = await agent.run(
@@ -6029,7 +6029,7 @@ class TestRunWithSpecAdditional:
 
         agent = Agent(FunctionModel(model_fn))
 
-        def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
+        def dynamic_settings(ctx: RunContext[object]) -> _ModelSettings:
             return {'temperature': 0.9}
 
         result = await agent.run(
@@ -7730,7 +7730,7 @@ async def test_prefix_tools_with_callable_toolset():
     def dynamic_tool() -> str:
         return 'dynamic'  # pragma: no cover
 
-    def toolset_func(ctx: RunContext[None]) -> FunctionToolset[None]:
+    def toolset_func(ctx: RunContext[object]) -> FunctionToolset[object]:
         return toolset
 
     cap = PrefixTools(wrapped=Toolset(toolset_func), prefix='dyn')
@@ -7769,11 +7769,11 @@ async def test_wrapper_capability_delegates_hooks():
     hook_calls: list[str] = []
 
     @dataclass
-    class HookCap(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class HookCap(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
             hook_calls.append('before_run')
 
-        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        async def after_run(self, ctx: RunContext[object], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
             hook_calls.append('after_run')
             return result
 
@@ -7804,13 +7804,13 @@ async def test_wrapper_capability_for_run_replaces():
         return 'b'  # pragma: no cover
 
     @dataclass
-    class SwitchCap(AbstractCapability[None]):
+    class SwitchCap(AbstractCapability[object]):
         use_b: bool = False
 
-        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             return SwitchCap(use_b=True)
 
-        def get_toolset(self) -> AbstractToolset[None]:
+        def get_toolset(self) -> AbstractToolset[object]:
             return toolset_b if self.use_b else toolset_a
 
     wrapper = WrapperCapability(wrapped=SwitchCap())
@@ -7831,8 +7831,8 @@ async def test_wrapper_capability_has_wrap_node_run():
     assert WrapperCapability(wrapped=plain).has_wrap_node_run is False
 
     @dataclass
-    class NodeRunCap(AbstractCapability[None]):
-        async def wrap_node_run(self, ctx: RunContext[None], *, node: Any, handler: Any) -> Any:
+    class NodeRunCap(AbstractCapability[object]):
+        async def wrap_node_run(self, ctx: RunContext[object], *, node: Any, handler: Any) -> Any:
             return await handler(node)  # pragma: no cover
 
     assert WrapperCapability(wrapped=NodeRunCap()).has_wrap_node_run is True
@@ -7843,15 +7843,15 @@ async def test_wrapper_capability_delegates_model_request_hooks():
     hook_calls: list[str] = []
 
     @dataclass
-    class ModelRequestHookCap(AbstractCapability[None]):
+    class ModelRequestHookCap(AbstractCapability[object]):
         async def before_model_request(
-            self, ctx: RunContext[None], request_context: ModelRequestContext
+            self, ctx: RunContext[object], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             hook_calls.append('before_model_request')
             return request_context
 
         async def after_model_request(
-            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+            self, ctx: RunContext[object], *, request_context: ModelRequestContext, response: ModelResponse
         ) -> ModelResponse:
             hook_calls.append('after_model_request')
             return response
@@ -14292,7 +14292,7 @@ async def test_deferred_tool_handler_approve():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done!')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -14301,7 +14301,7 @@ async def test_deferred_tool_handler_approve():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext[object], x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 10
@@ -14357,7 +14357,7 @@ async def test_deferred_tool_handler_deny():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Understood, denied.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolDenied('Not allowed.') for call in requests.approvals}
         )
@@ -14368,7 +14368,7 @@ async def test_deferred_tool_handler_deny():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext[object], x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 10  # pragma: no cover
@@ -14391,7 +14391,7 @@ async def test_deferred_tool_handler_no_output_type_needed():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 3}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Result received.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     # Note: output_type is just str, no DeferredToolRequests
@@ -14402,7 +14402,7 @@ async def test_deferred_tool_handler_no_output_type_needed():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext[object], x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 100
@@ -14436,7 +14436,7 @@ async def test_deferred_tool_handler_partial_resolution():
             ]
         )
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         # Only approve tool_a, leave tool_b unresolved
         results = DeferredToolResults()
         for call in requests.approvals:
@@ -14451,13 +14451,13 @@ async def test_deferred_tool_handler_partial_resolution():
     )
 
     @agent.tool
-    def tool_a(ctx: RunContext[None]) -> str:
+    def tool_a(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'a done'
 
     @agent.tool
-    def tool_b(ctx: RunContext[None]) -> str:
+    def tool_b(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'b done'  # pragma: no cover
@@ -14476,7 +14476,7 @@ async def test_deferred_tool_handler_sync_handler():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('OK')])
 
-    def handle_deferred_sync(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    def handle_deferred_sync(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -14485,7 +14485,7 @@ async def test_deferred_tool_handler_sync_handler():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'
@@ -14507,14 +14507,14 @@ async def test_deferred_tool_handler_accumulation():
             )
         return ModelResponse(parts=[TextPart('Both done.')])
 
-    def handler_a(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    def handler_a(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         results = DeferredToolResults()
         for call in requests.approvals:
             if call.tool_name == 'tool_a':
                 results.approvals[call.tool_call_id] = True
         return results
 
-    def handler_b(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    def handler_b(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         # handler_a resolved tool_a, so we only see tool_b
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
@@ -14527,13 +14527,13 @@ async def test_deferred_tool_handler_accumulation():
     )
 
     @agent.tool
-    def tool_a(ctx: RunContext[None]) -> str:
+    def tool_a(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'a result'
 
     @agent.tool
-    def tool_b(ctx: RunContext[None]) -> str:
+    def tool_b(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'b result'
@@ -14549,7 +14549,7 @@ async def test_deferred_tool_handler_unresolved_no_output_type_error():
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
     # Handler returns None → does not resolve
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults()  # Empty results → nothing resolved
 
     agent = Agent(
@@ -14559,7 +14559,7 @@ async def test_deferred_tool_handler_unresolved_no_output_type_error():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -14579,7 +14579,7 @@ async def test_deferred_tool_handler_external_call():
     from pydantic_ai.exceptions import CallDeferred
     from pydantic_ai.messages import ToolReturn
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         # Simulate external execution: return a ToolReturn with metadata
         return DeferredToolResults(
             calls={
@@ -14604,7 +14604,7 @@ async def test_deferred_tool_handler_external_call():
 async def test_deferred_tool_handler_via_handle_call():
     """handle_call(resolve_deferred=True) resolves deferred tools inline via ToolManager."""
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -14618,7 +14618,7 @@ async def test_deferred_tool_handler_via_handle_call():
     )
 
     @agent.tool
-    async def outer_tool(ctx: RunContext[None]) -> str:
+    async def outer_tool(ctx: RunContext[object]) -> str:
         """A tool that internally calls another tool via ToolManager.handle_call."""
         assert ctx.tool_manager is not None
         inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
@@ -14626,7 +14626,7 @@ async def test_deferred_tool_handler_via_handle_call():
         return f'inner returned: {result}'
 
     @agent.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'approved inner result'
@@ -14644,7 +14644,7 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
     as-is, not wrapped as `ToolRetryError`.
     """
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -14658,7 +14658,7 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
     )
 
     @agent.tool
-    async def outer_tool(ctx: RunContext[None]) -> str:
+    async def outer_tool(ctx: RunContext[object]) -> str:
         assert ctx.tool_manager is not None
         inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
         try:
@@ -14668,7 +14668,7 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
         return 'no error'  # pragma: no cover
 
     @agent.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         raise ModelRetry('post-approval retry')
@@ -14698,7 +14698,7 @@ async def test_deferred_tool_handler_via_handle_call_no_handler():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'approved inner result'  # pragma: no cover
@@ -14711,7 +14711,7 @@ async def test_deferred_tool_handler_via_handle_call_no_handler():
     agent = Agent(FunctionModel(llm), toolsets=[inner_toolset])
 
     @agent.tool
-    async def outer_tool(ctx: RunContext[None]) -> str:
+    async def outer_tool(ctx: RunContext[object]) -> str:
         """A tool that internally calls another tool via ToolManager.handle_call."""
         assert ctx.tool_manager is not None
         inner_call = ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner1')
@@ -14733,7 +14733,7 @@ async def test_deferred_tool_handler_build_results_helper():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return requests.build_results(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -14742,7 +14742,7 @@ async def test_deferred_tool_handler_build_results_helper():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'
@@ -14800,7 +14800,7 @@ async def test_deferred_tool_handler_wrapper_capability():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     # PrefixTools wraps HandleDeferredToolCalls — tests WrapperCapability delegation
@@ -14811,7 +14811,7 @@ async def test_deferred_tool_handler_wrapper_capability():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'
@@ -14830,7 +14830,7 @@ async def test_deferred_tool_handler_external_call_plain_value():
 
     from pydantic_ai.exceptions import CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: 'plain string result' for call in requests.calls})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
@@ -14851,7 +14851,7 @@ async def test_deferred_tool_handler_re_deferred_with_metadata():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -14861,7 +14861,7 @@ async def test_deferred_tool_handler_re_deferred_with_metadata():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         nonlocal call_count
         call_count += 1
         # Always requires approval — even when approved, raises again with metadata
@@ -14882,7 +14882,7 @@ async def test_deferred_tool_handler_denied_via_batch():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Understood.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolDenied('Policy denied.') for call in requests.approvals}
         )
@@ -14890,7 +14890,7 @@ async def test_deferred_tool_handler_denied_via_batch():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -14916,7 +14916,7 @@ async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
             )
         return ModelResponse(parts=[TextPart('ok')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={
                 'bool_false': False,
@@ -14927,7 +14927,7 @@ async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def needs_approval(ctx: RunContext[None], x: int) -> int:
+    def needs_approval(ctx: RunContext[object], x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x  # pragma: no cover
@@ -14950,13 +14950,13 @@ async def test_deferred_tool_handler_batch_approve_via_tool_approved_default():
             return ModelResponse(parts=[ToolCallPart('needs_approval', {'x': 7}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('done')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def needs_approval(ctx: RunContext[None], x: int) -> int:
+    def needs_approval(ctx: RunContext[object], x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 2
@@ -14978,7 +14978,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
             return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('done')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
                 call.tool_call_id: _ToolReturn(
@@ -14991,7 +14991,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def external_tool(ctx: RunContext[None]) -> str:
+    def external_tool(ctx: RunContext[object]) -> str:
         raise CallDeferred
 
     result = await agent.run('go')
@@ -15019,13 +15019,13 @@ async def test_deferred_tool_handler_batch_external_model_retry():
             return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('retried')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: ModelRetry('try again') for call in requests.calls})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def external_tool(ctx: RunContext[None]) -> str:
+    def external_tool(ctx: RunContext[object]) -> str:
         raise CallDeferred
 
     result = await agent.run('go')
@@ -15050,7 +15050,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
             return ModelResponse(parts=[ToolCallPart('external_tool', {}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('retried')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
                 call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
@@ -15061,7 +15061,7 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def external_tool(ctx: RunContext[None]) -> str:
+    def external_tool(ctx: RunContext[object]) -> str:
         raise CallDeferred
 
     result = await agent.run('go')
@@ -15085,7 +15085,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={call.tool_call_id: _ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
         )
@@ -15104,7 +15104,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         captured_result = await ctx.tool_manager.handle_call(
@@ -15134,12 +15134,12 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'approved result'
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15154,7 +15154,7 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
     )
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         assert ctx.tool_manager is not None
         # Call inner_tool via handle_call — exercises _resolve_single_deferred
         result = await ctx.tool_manager.handle_call(
@@ -15186,13 +15186,13 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]):
+    def my_tool(ctx: RunContext[object]):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return _ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
@@ -15223,13 +15223,13 @@ async def test_deferred_tool_handler_approved_tool_raises_model_retry():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Retried and done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         raise ModelRetry('try again')
@@ -15254,7 +15254,7 @@ async def test_deferred_tool_handler_approved_tool_override_args():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done.')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         # Override the args: replace x=5 with x=42
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolApproved(override_args={'x': 42}) for call in requests.approvals}
@@ -15263,7 +15263,7 @@ async def test_deferred_tool_handler_approved_tool_override_args():
     agent = Agent(FunctionModel(llm), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext[object], x: int) -> int:
         nonlocal received_x
         if not ctx.tool_call_approved:
             raise ApprovalRequired
@@ -15284,14 +15284,14 @@ async def test_deferred_tool_handler_via_handle_call_retry():
     retry_count = 0
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         nonlocal retry_count
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         retry_count += 1
         raise ModelRetry('try again')
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15306,7 +15306,7 @@ async def test_deferred_tool_handler_via_handle_call_retry():
     )
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         assert ctx.tool_manager is not None
         try:
             await ctx.tool_manager.handle_call(
@@ -15328,7 +15328,7 @@ async def test_deferred_tool_handler_re_deferred_without_metadata():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -15338,7 +15338,7 @@ async def test_deferred_tool_handler_re_deferred_without_metadata():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         nonlocal call_count
         call_count += 1
         # No metadata
@@ -15362,7 +15362,7 @@ async def test_deferred_tool_handler_mixed_unresolved_and_re_deferred():
             ]
         )
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         # Only approve the re-raising one; leave unhandled_tool unresolved
         return DeferredToolResults(
             approvals={call.tool_call_id: True for call in requests.approvals if call.tool_name == 're_raising_tool'}
@@ -15375,12 +15375,12 @@ async def test_deferred_tool_handler_mixed_unresolved_and_re_deferred():
     )
 
     @agent.tool
-    def re_raising_tool(ctx: RunContext[None]) -> str:
+    def re_raising_tool(ctx: RunContext[object]) -> str:
         # Always raises — even after approval
         raise ApprovalRequired
 
     @agent.tool
-    def unhandled_tool(ctx: RunContext[None]) -> str:
+    def unhandled_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -15402,7 +15402,7 @@ async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(
@@ -15412,7 +15412,7 @@ async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -15441,12 +15441,12 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]):
+    def inner_tool(ctx: RunContext[object]):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return _ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15463,7 +15463,7 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         result = await ctx.tool_manager.handle_call(
@@ -15487,12 +15487,12 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'never'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15509,7 +15509,7 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
     captured: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured
         assert ctx.tool_manager is not None
         captured = await ctx.tool_manager.handle_call(
@@ -15530,12 +15530,12 @@ async def test_deferred_tool_handler_via_handle_call_override_args():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None], x: int) -> str:
+    def inner_tool(ctx: RunContext[object], x: int) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return f'x={x}'
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolApproved(override_args={'x': 42}) for call in requests.approvals}
         )
@@ -15554,7 +15554,7 @@ async def test_deferred_tool_handler_via_handle_call_override_args():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         captured_result = await ctx.tool_manager.handle_call(
@@ -15577,7 +15577,7 @@ async def test_deferred_tool_handler_via_handle_call_external_plain_value():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: 'external value' for call in requests.calls})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15594,7 +15594,7 @@ async def test_deferred_tool_handler_via_handle_call_external_plain_value():
     captured_result: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured_result
         assert ctx.tool_manager is not None
         captured_result = await ctx.tool_manager.handle_call(
@@ -15617,7 +15617,7 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: ModelRetry('retry please') for call in requests.calls})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15634,7 +15634,7 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
     caught: ToolRetryError | None = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal caught
         assert ctx.tool_manager is not None
         try:
@@ -15664,7 +15664,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
     def inner_tool() -> str:
         raise CallDeferred
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
                 call.tool_call_id: RetryPromptPart(content='retry via part', tool_name='', tool_call_id='')
@@ -15686,7 +15686,7 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
     caught: ToolRetryError | None = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal caught
         assert ctx.tool_manager is not None
         try:
@@ -15713,12 +15713,12 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'never'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             approvals={call.tool_call_id: ToolDenied(message='not today') for call in requests.approvals}
         )
@@ -15737,7 +15737,7 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
     captured: Any = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal captured
         assert ctx.tool_manager is not None
         captured = await ctx.tool_manager.handle_call(
@@ -15759,7 +15759,7 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
     call_count = 0
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -15767,7 +15767,7 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
         # After approval, raise a *different* deferral type with new metadata
         raise CallDeferred(metadata={'reason': 'external-after-approval'})
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15785,7 +15785,7 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
     caught_metadata: dict[str, Any] | None = None
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         nonlocal caught_exc_type, caught_metadata
         assert ctx.tool_manager is not None
         try:
@@ -15812,12 +15812,12 @@ async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id()
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
-    def inner_tool(ctx: RunContext[None]) -> str:
+    def inner_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
 
-    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handle_deferred(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         # Resolve a non-existent ID — our tool's ID stays in remaining
         return DeferredToolResults(approvals={'wrong_id': True})
 
@@ -15833,7 +15833,7 @@ async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id()
     )
 
     @agent.tool
-    async def caller_tool(ctx: RunContext[None]) -> str:
+    async def caller_tool(ctx: RunContext[object]) -> str:
         assert ctx.tool_manager is not None
         try:
             await ctx.tool_manager.handle_call(
@@ -15855,16 +15855,16 @@ async def test_deferred_tool_handler_via_hooks_decorator():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 5}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Done!')])
 
-    hooks = Hooks[None]()
+    hooks = Hooks[object]()
 
     @hooks.on.deferred_tool_calls
-    async def handler(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults:
+    async def handler(ctx: RunContext[object], *, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     agent = Agent(FunctionModel(llm), capabilities=[hooks])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext[object], x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 10
@@ -15887,23 +15887,23 @@ async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulatio
             )
         return ModelResponse(parts=[TextPart('All done.')])
 
-    def handle_a(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    def handle_a(ctx: RunContext[object], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         results = DeferredToolResults()
         for call in requests.approvals:
             if call.tool_name == 'tool_a':
                 results.approvals[call.tool_call_id] = True
         return results
 
-    hooks = Hooks[None](deferred_tool_calls=handle_a)
+    hooks = Hooks[object](deferred_tool_calls=handle_a)
 
     @hooks.on.deferred_tool_calls
-    async def handle_rest(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    async def handle_rest(ctx: RunContext[object], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         # tool_a was already resolved by handle_a; this handler sees only tool_b and tool_c
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
 
     @hooks.on.deferred_tool_calls
     async def never_called(  # pragma: no cover
-        ctx: RunContext[None], *, requests: DeferredToolRequests
+        ctx: RunContext[object], *, requests: DeferredToolRequests
     ) -> DeferredToolResults | None:
         # All calls should already be resolved by the previous handler — this is the early-break path
         raise AssertionError('Should not be called: all requests already resolved')
@@ -15911,19 +15911,19 @@ async def test_deferred_tool_handler_via_hooks_constructor_kwarg_and_accumulatio
     agent = Agent(FunctionModel(llm), capabilities=[hooks])
 
     @agent.tool
-    def tool_a(ctx: RunContext[None]) -> str:
+    def tool_a(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'a'
 
     @agent.tool
-    def tool_b(ctx: RunContext[None]) -> str:
+    def tool_b(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'b'
 
     @agent.tool
-    def tool_c(ctx: RunContext[None]) -> str:
+    def tool_c(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'c'
@@ -15938,14 +15938,14 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
 
-    hooks = Hooks[None]()
+    hooks = Hooks[object]()
 
     @hooks.on.deferred_tool_calls
-    async def declines(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    async def declines(ctx: RunContext[object], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         return None
 
     @hooks.on.deferred_tool_calls
-    async def empty(ctx: RunContext[None], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
+    async def empty(ctx: RunContext[object], *, requests: DeferredToolRequests) -> DeferredToolResults | None:
         # Empty results count as "didn't handle"
         return DeferredToolResults()
 
@@ -15956,7 +15956,7 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     )
 
     @agent.tool
-    def my_tool(ctx: RunContext[None]) -> str:
+    def my_tool(ctx: RunContext[object]) -> str:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return 'done'  # pragma: no cover
@@ -16008,7 +16008,7 @@ async def test_dynamic_capability_async_factory() -> None:
     """Async factories are awaited."""
     calls = 0
 
-    async def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    async def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         nonlocal calls
         calls += 1
         return _RecordingCapability(label='async')
@@ -16021,7 +16021,7 @@ async def test_dynamic_capability_async_factory() -> None:
 async def test_dynamic_capability_returning_none_contributes_nothing() -> None:
     """A factory returning None is a no-op for the run."""
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any] | None:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any] | None:
         return None
 
     agent = Agent(TestModel(), capabilities=[factory])
@@ -16051,14 +16051,14 @@ async def test_dynamic_capability_contributes_instructions_per_run() -> None:
 
 async def test_dynamic_capability_contributes_toolset() -> None:
     """Resolved capability's toolset is exposed to the model and its tools execute."""
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset[object]()
 
     @toolset.tool_plain
     def special() -> str:
         return 'used'
 
     @dataclass
-    class ToolCap(AbstractCapability[None]):
+    class ToolCap(AbstractCapability[object]):
         def get_toolset(self):
             return toolset
 
@@ -16098,7 +16098,7 @@ async def test_dynamic_capability_hooks_fire() -> None:
     """Hooks contributed by the resolved capability fire during the run."""
     cap = _RecordingCapability(label='dyn')
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         return cap
 
     agent = Agent(TestModel(), capabilities=[factory])
@@ -16111,7 +16111,7 @@ async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> 
     """The factory is called once at for_run, not on every model request."""
     calls = 0
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         nonlocal calls
         calls += 1
         return _RecordingCapability(label='once')
@@ -16122,7 +16122,7 @@ async def test_dynamic_capability_factory_called_once_per_run_not_per_step() -> 
             return ModelResponse(parts=[ToolCallPart('echo', {'text': 'hi'})])
         return ModelResponse(parts=[TextPart('done')])
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset[object]()
 
     @toolset.tool_plain
     def echo(text: str) -> str:
@@ -16138,16 +16138,16 @@ async def test_dynamic_capability_returning_combined() -> None:
     fired: list[str] = []
 
     @dataclass
-    class A(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class A(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
             fired.append('A')
 
     @dataclass
-    class B(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class B(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
             fired.append('B')
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         return CombinedCapability([A(), B()])
 
     agent = Agent(TestModel(), capabilities=[factory])
@@ -16159,7 +16159,7 @@ async def test_dynamic_capability_in_run_call() -> None:
     """`agent.run(capabilities=[factory])` accepts callables as well."""
     calls = 0
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         nonlocal calls
         calls += 1
         return _RecordingCapability(label='run-time')
@@ -16176,16 +16176,16 @@ async def test_dynamic_capability_composes_with_static() -> None:
     fired: list[str] = []
 
     @dataclass
-    class Static(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class Static(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
             fired.append('static')
 
     @dataclass
-    class Dynamic(AbstractCapability[None]):
-        async def before_run(self, ctx: RunContext[None]) -> None:
+    class Dynamic(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
             fired.append('dynamic')
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         return Dynamic()
 
     agent = Agent(TestModel(), capabilities=[Static(), factory])
@@ -16213,7 +16213,7 @@ async def test_dynamic_capability_per_run_isolation() -> None:
 async def test_dynamic_capability_wraps_func_in_constructor() -> None:
     """Constructor wraps a bare function into a `DynamicCapability`, and the factory runs at run time."""
 
-    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+    def factory(ctx: RunContext[object]) -> AbstractCapability[Any]:
         return _RecordingCapability(label='x')
 
     agent = Agent(TestModel(), capabilities=[factory])

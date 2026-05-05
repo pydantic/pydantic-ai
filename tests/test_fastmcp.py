@@ -143,7 +143,7 @@ async def fastmcp_client(fastmcp_server: FastMCP) -> Client[FastMCPTransport]:
 
 
 @pytest.fixture
-def run_context() -> RunContext[None]:
+def run_context() -> RunContext[object]:
     """Create a run context for testing."""
     return RunContext(
         deps=None,
@@ -194,7 +194,7 @@ class TestFastMCPToolsetContextManagement:
     """Test FastMCP Toolset context management."""
 
     async def test_context_manager_single_enter_exit(
-        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
+        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[object]
     ):
         """Test single enter/exit cycle."""
         toolset = FastMCPToolset(fastmcp_client)
@@ -208,7 +208,7 @@ class TestFastMCPToolsetContextManagement:
         # After exit, the toolset should still be usable but the client connection is closed
 
     async def test_context_manager_no_enter(
-        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
+        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[object]
     ):
         """Test no enter/exit cycle."""
         toolset = FastMCPToolset(fastmcp_client)
@@ -219,7 +219,7 @@ class TestFastMCPToolsetContextManagement:
         assert 'test_tool' in tools
 
     async def test_context_manager_nested_enter_exit(
-        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
+        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[object]
     ):
         """Test nested enter/exit cycles."""
         toolset = FastMCPToolset(fastmcp_client)
@@ -240,14 +240,14 @@ class TestFastMCPToolsetInstructions:
     async def test_get_instructions_disabled_returns_none(
         self,
         fastmcp_client: Client[FastMCPTransport],
-        run_context: RunContext[None],
+        run_context: RunContext[object],
     ):
         """When include_instructions is disabled, get_instructions returns None."""
         toolset = FastMCPToolset(fastmcp_client, include_instructions=False)
 
         assert await toolset.get_instructions(run_context) is None
 
-    async def test_get_instructions_enabled_tracks_context_lifecycle(self, run_context: RunContext[None]):
+    async def test_get_instructions_enabled_tracks_context_lifecycle(self, run_context: RunContext[object]):
         """When include_instructions is enabled, expose server instructions while entered only."""
         instruction_server = FastMCP('instruction_server', instructions='Be a helpful assistant.')
         instruction_client = Client(transport=instruction_server)
@@ -265,7 +265,7 @@ class TestFastMCPToolsetInstructions:
         # After exiting, cached instructions are reset.
         assert await toolset.get_instructions(run_context) is None
 
-    async def test_get_instructions_enabled_no_server_instructions(self, run_context: RunContext[None]):
+    async def test_get_instructions_enabled_no_server_instructions(self, run_context: RunContext[object]):
         """When include_instructions is enabled but server provides no instructions, returns None."""
         no_instruction_server = FastMCP('no_instructions_server')
         no_instruction_client = Client(transport=no_instruction_server)
@@ -282,7 +282,7 @@ class TestFastMCPToolsetToolDiscovery:
     async def test_get_tools(
         self,
         fastmcp_client: Client[FastMCPTransport],
-        run_context: RunContext[None],
+        run_context: RunContext[object],
     ):
         """Test getting tools from the FastMCP client."""
         toolset = FastMCPToolset(fastmcp_client)
@@ -333,7 +333,7 @@ class TestFastMCPToolsetToolDiscovery:
         toolset_explicit = FastMCPToolset(fastmcp_client, max_retries=5)
         assert toolset_explicit.tool_for_tool_def(tool_def).max_retries == 5
 
-    async def test_get_tools_with_empty_server(self, run_context: RunContext[None]):
+    async def test_get_tools_with_empty_server(self, run_context: RunContext[object]):
         """Test getting tools from an empty FastMCP server."""
         empty_server = FastMCP('empty_server')
         empty_client = Client(transport=empty_server)
@@ -348,14 +348,14 @@ class TestFastMCPToolsetToolCalling:
     """Test FastMCP Toolset tool calling functionality."""
 
     @pytest.fixture
-    async def fastmcp_toolset(self, fastmcp_client: Client[FastMCPTransport]) -> FastMCPToolset[None]:
+    async def fastmcp_toolset(self, fastmcp_client: Client[FastMCPTransport]) -> FastMCPToolset[object]:
         """Create a FastMCP Toolset."""
         return FastMCPToolset(fastmcp_client)
 
     async def test_call_tool_success(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test successful tool call."""
         async with fastmcp_toolset:
@@ -370,8 +370,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_structured_content(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call with structured content."""
         async with fastmcp_toolset:
@@ -386,8 +386,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_binary_content(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns binary content."""
         async with fastmcp_toolset:
@@ -404,8 +404,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_audio_content(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns audio content."""
         async with fastmcp_toolset:
@@ -420,8 +420,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_text_content(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns text content."""
         async with fastmcp_toolset:
@@ -444,8 +444,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_unknown_text_content(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns text content."""
         async with fastmcp_toolset:
@@ -463,8 +463,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_json_content(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns JSON content."""
         async with fastmcp_toolset:
@@ -479,8 +479,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_resource_link(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns resource link content."""
         async with fastmcp_toolset:
@@ -500,8 +500,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_embedded_resource(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns resource content."""
         async with fastmcp_toolset:
@@ -516,8 +516,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_call_tool_with_resource_tool_blob(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test tool call that returns resource blob content."""
         async with fastmcp_toolset:
@@ -536,7 +536,7 @@ class TestFastMCPToolsetToolCalling:
     async def test_call_tool_with_error_behavior_raise(
         self,
         fastmcp_client: Client[FastMCPTransport],
-        run_context: RunContext[None],
+        run_context: RunContext[object],
     ):
         """Test tool call with error behavior set to raise."""
         toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='error')
@@ -551,7 +551,7 @@ class TestFastMCPToolsetToolCalling:
     async def test_call_tool_with_error_behavior_model_retry(
         self,
         fastmcp_client: Client[FastMCPTransport],
-        run_context: RunContext[None],
+        run_context: RunContext[object],
     ):
         """Test tool call with error behavior set to model retry."""
         toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='model_retry')
@@ -566,13 +566,13 @@ class TestFastMCPToolsetToolCalling:
     async def test_process_tool_call_invoked(
         self,
         fastmcp_client: Client[FastMCPTransport],
-        run_context: RunContext[None],
+        run_context: RunContext[object],
     ):
         """Test that process_tool_call hook is invoked when set."""
         called = False
 
         async def process_tool_call(
-            ctx: RunContext[None],
+            ctx: RunContext[object],
             call_tool: CallToolFunc,
             name: str,
             tool_args: dict[str, Any],
@@ -591,8 +591,8 @@ class TestFastMCPToolsetToolCalling:
 
     async def test_process_tool_call_none_calls_direct(
         self,
-        fastmcp_toolset: FastMCPToolset[None],
-        run_context: RunContext[None],
+        fastmcp_toolset: FastMCPToolset[object],
+        run_context: RunContext[object],
     ):
         """Test that when process_tool_call is None, direct_call_tool is used."""
         assert fastmcp_toolset.process_tool_call is None
@@ -608,7 +608,7 @@ class TestFastMCPToolsetToolCalling:
 class TestFastMCPToolsetFactoryMethods:
     """Test FastMCP Toolset factory methods."""
 
-    async def test_python_stdio(self, run_context: RunContext[None]):
+    async def test_python_stdio(self, run_context: RunContext[object]):
         """Test creating toolset from FastMCP server."""
         server_script = """
 from fastmcp import FastMCP
@@ -676,7 +676,7 @@ server.run()"""
         with pytest.raises(ValueError, match='No MCP servers defined in the config'):
             FastMCPToolset({'bad_transport': 'bad_value'})
 
-    async def test_in_memory_transport(self, run_context: RunContext[None]):
+    async def test_in_memory_transport(self, run_context: RunContext[object]):
         """Test creating toolset from stdio transport."""
         fastmcp_server = FastMCP('test_server')
 

@@ -149,9 +149,9 @@ def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
     return args_list
 
 
-def _build_agent(model_name: str) -> Agent[None, str]:
+def _build_agent(model_name: str) -> Agent[object, str]:
     """Build an agent with a visible tool and several deferred tools for testing."""
-    agent: Agent[None, str] = Agent(model=model_name)
+    agent: Agent[object, str] = Agent(model=model_name)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -364,8 +364,8 @@ def _build_run_context(deps: T, run_step: int = 0, messages: list[ModelMessage] 
     )
 
 
-def _create_function_toolset() -> FunctionToolset[None]:
-    toolset: FunctionToolset[None] = FunctionToolset()
+def _create_function_toolset() -> FunctionToolset[object]:
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -488,7 +488,7 @@ async def test_tool_search_toolset_search_matches_description():
 
 
 async def test_tool_search_toolset_prefers_specific_term_matches():
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def github_get_me() -> str:  # pragma: no cover
@@ -519,7 +519,7 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
 
 
 async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def stock_price() -> str:  # pragma: no cover
@@ -550,7 +550,7 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
 
 
 async def test_tool_search_toolset_does_not_match_substrings_inside_words():
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def github_get_me() -> str:  # pragma: no cover
@@ -621,7 +621,7 @@ async def test_tool_search_toolset_search_non_tokenizable_query(keywords: str):
 
 async def test_tool_search_toolset_max_results():
     """Test that results are capped at `_MAX_SEARCH_RESULTS` (10)."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     for i in range(15):
 
@@ -695,7 +695,7 @@ async def test_tool_search_toolset_omits_search_tool_once_all_deferred_tools_are
 
 async def test_tool_search_toolset_reserved_name_collision():
     """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain
     def search_tools(query: str) -> str:  # pragma: no cover
@@ -716,7 +716,7 @@ async def test_tool_search_toolset_reserved_name_collision():
 
 async def test_tool_search_toolset_no_deferred_tools_returns_all():
     """Test that when there are no deferred tools, all tools are returned without search_tools."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -793,7 +793,7 @@ async def test_tool_manager_with_tool_search_toolset():
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
 
-    tool_manager = ToolManager[None](searchable)
+    tool_manager = ToolManager[object](searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
 
     tool_names = [t.name for t in run_step_toolset.tool_defs]
@@ -807,7 +807,7 @@ async def test_tool_manager_with_tool_search_toolset():
 
 async def test_tool_search_toolset_tool_with_none_description():
     """Test that tools with None description are handled correctly in search."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def no_desc_tool() -> str:  # pragma: no cover
@@ -864,7 +864,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
 
 async def test_function_toolset_all_deferred():
     """Test FunctionToolset with all tools having defer_loading=True."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def deferred_tool1() -> str:  # pragma: no cover
@@ -938,7 +938,7 @@ async def test_tool_search_toolset_ignores_non_metadata_history():
 
 async def test_deferred_loading_toolset_marks_all_tools():
     """Test that DeferredLoadingToolset marks all tools for deferred loading when tool_names is None."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain
     def tool_a() -> str:  # pragma: no cover
@@ -962,7 +962,7 @@ async def test_deferred_loading_toolset_marks_all_tools():
 
 async def test_deferred_loading_toolset_marks_specific_tools():
     """Test that DeferredLoadingToolset marks only named tools for deferred loading."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset[object] = FunctionToolset()
 
     @toolset.tool_plain
     def tool_a() -> str:  # pragma: no cover

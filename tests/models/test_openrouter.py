@@ -727,7 +727,7 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
         space_count: int
 
     model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
-    agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
+    agent: Agent[object, InsertedLevel] = Agent(model, output_type=InsertedLevel)
 
     @agent.tool_plain
     def insert_level_with_spaces(level: InsertLevelArg | None, spaces: list[SpaceArg]) -> str:
