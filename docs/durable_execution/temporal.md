@@ -149,6 +149,70 @@ Because Temporal workflows need to be defined at the top level of the file and t
 
 For more information on how to use Temporal in Python applications, see their [Python SDK guide](https://docs.temporal.io/develop/python).
 
+### Durability as a Capability
+
+As an alternative to wrapping the agent with [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent], you can attach durable execution as a [capability][pydantic_ai.capabilities.AbstractCapability] on a regular [`Agent`][pydantic_ai.agent.Agent]. The agent stays a normal `Agent` everywhere — outside a workflow it behaves transparently, and inside a workflow the [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability routes model requests, tool calls, and MCP communication through Temporal activities.
+
+This approach composes with other [capabilities](../capabilities.md) (instrumentation, [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata], [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream], etc.) without each needing a Temporal-specific wrapper variant, and avoids the frozen-at-wrap-time snapshot of [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
+
+```python {title="temporal_durability_capability.py" test="skip"}
+import uuid
+
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import (
+    PydanticAIPlugin,
+    PydanticAIWorkflow,
+    TemporalDurability,
+)
+
+agent = Agent(
+    'openai:gpt-5.2',
+    instructions="You're an expert in geography.",
+    name='geography',
+    capabilities=[TemporalDurability()],  # (1)!
+)
+
+
+@workflow.defn
+class GeographyWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]  # (2)!
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await agent.run(prompt)  # (3)!
+        return result.output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+
+    async with Worker(
+        client,
+        task_queue='geography',
+        workflows=[GeographyWorkflow],
+    ):
+        output = await client.execute_workflow(
+            GeographyWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=f'geography-{uuid.uuid4()}',
+            task_queue='geography',
+        )
+        print(output)
+        #> Mexico City (Ciudad de México, CDMX)
+```
+
+1. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent.
+2. [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] discovers agents listed in `__pydantic_ai_agents__` and registers the activities contributed by their [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. As an alternative to listing agents on the workflow, you can use [`DurabilityPlugin`][pydantic_ai.durable_exec.temporal.DurabilityPlugin] to register an agent's activities directly on the worker.
+3. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP communication are routed through Temporal activities.
+
+The same agent can be used outside a workflow without changes — the capability is transparent when [`workflow.in_workflow()`](https://python.temporal.io/temporalio.workflow.html#in_workflow) returns `False`.
+
+The integration considerations below (agent name and toolset IDs, run context, streaming, model selection) apply to both the wrapper-agent and capability paths.
+
 ## Temporal Integration Considerations
 
 There are a few considerations specific to agents and toolsets when using Temporal for durable execution. These are important to understand to ensure that your agents and toolsets work correctly with Temporal's workflow and activity model.
@@ -265,15 +329,60 @@ class MultiModelWorkflow:
 
 ## Activity Configuration
 
-Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow.ActivityConfig.html) objects to the `TemporalAgent` constructor:
+Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow.ActivityConfig.html) objects to the `TemporalAgent` (or `TemporalDurability`) constructor:
 
 - `activity_config`: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
 - `model_activity_config`: The Temporal activity config to use for model request activities. This is merged with the base activity config.
 - `toolset_activity_config`: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
-- `tool_activity_config`: The Temporal activity config to use for specific tool call activities identified by toolset ID and tool name.
+- `tool_activity_config` (`TemporalAgent` only): The Temporal activity config to use for specific tool call activities identified by toolset ID and tool name.
     This is merged with the base and toolset-specific activity configs.
 
     If a tool does not use I/O, you can specify `False` to disable using an activity. Note that the tool is required to be defined as an `async` function as non-async tools are run in threads which are non-deterministic and thus not supported outside of activities.
+
+### Per-tool activity config on the capability path
+
+When using [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], per-tool activity config moves out of the constructor and onto the tool itself via the [`metadata`][pydantic_ai.toolsets.FunctionToolset.tool] field — the capability looks for a `'temporal'` key. You can set the metadata directly on the tool definition, or apply it across a selection of tools via the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability:
+
+```python {title="temporal_per_tool_config.py" test="skip"}
+from datetime import timedelta
+
+from temporalio.workflow import ActivityConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+toolset = FunctionToolset(id='research')
+
+
+@toolset.tool(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
+async def fetch_paper(arxiv_id: str) -> str:
+    ...
+
+
+@toolset.tool(metadata={'temporal': False})  # (2)!
+async def now() -> str:
+    ...
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    name='research',
+    toolsets=[toolset],
+    capabilities=[
+        SetToolMetadata(  # (3)!
+            tools=['fetch_paper', 'fetch_dataset'],
+            temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=5)),
+        ),
+        TemporalDurability(),
+    ],
+)
+```
+
+1. Inline: declare the activity config alongside the tool definition. Per-tool config merges on top of the toolset and base configs.
+2. Set `'temporal': False` to skip activity wrapping entirely (only valid for `async` tools — sync tools always need an activity since threads aren't deterministic).
+3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable). Useful when the config doesn't belong on the tool definition (e.g. tools defined in third-party packages) or when a group of tools shares the same timeout profile.
 
 ## Activity Retries
 

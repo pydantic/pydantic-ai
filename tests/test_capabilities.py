@@ -83,8 +83,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.toolsets._dynamic import ToolsetFunc
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
@@ -10205,6 +10204,115 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# --- resolve_model_id hook tests ---
+
+
+def _resolve_dummy_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content='ok')])
+
+
+@dataclass
+class _StringResolver(AbstractCapability[Any]):
+    """Test capability that maps known strings to a fixed FunctionModel."""
+
+    target: FunctionModel
+
+    def resolve_model_id(self, model_id: Any, *, agent: Any) -> Any:
+        if model_id == 'magic-model':
+            return self.target
+        return None
+
+
+@dataclass
+class _PassThroughResolver(AbstractCapability[Any]):
+    """Test capability that always defers."""
+
+    seen: list[Any] = field(default_factory=list[Any])
+
+    def resolve_model_id(self, model_id: Any, *, agent: Any) -> Any:
+        self.seen.append(model_id)
+        return None
+
+
+async def test_resolve_model_id_maps_string_to_model() -> None:
+    """A capability's resolve_model_id maps a runtime string to a Model instance."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    agent = Agent(name='resolve_test', capabilities=[_StringResolver(target=target)])
+
+    result = await agent.run('hi', model='magic-model')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_returns_none_falls_back_to_infer_model() -> None:
+    """When all capabilities defer, _get_model uses the default infer_model path."""
+    cap = _PassThroughResolver()
+    agent = Agent(name='resolve_pass', capabilities=[cap], defer_model_check=True)
+
+    # 'test' is the special string that infer_model maps to TestModel.
+    result = await agent.run('hi', model='test')
+    assert result.output is not None
+    assert cap.seen == ['test']
+
+
+def test_resolve_model_id_first_non_none_wins() -> None:
+    """When two capabilities declare resolve_model_id, the first one in the list wins.
+
+    Composition is first-non-None-wins (not each-layer-wraps): only one capability
+    can claim a given string. Per-request *wrapping* of a resolved Model lives in
+    `before_model_request`, not here.
+    """
+    first_target = FunctionModel(_resolve_dummy_model_fn, model_name='first')
+    second_target = FunctionModel(_resolve_dummy_model_fn, model_name='second')
+
+    first = _StringResolver(target=first_target)
+    second = _StringResolver(target=second_target)
+    combined = CombinedCapability([first, second])
+
+    agent = Agent(name='resolve_layered', capabilities=[first, second], defer_model_check=True)
+    result = combined.resolve_model_id('magic-model', agent=agent)
+    assert result is first_target
+
+
+def test_resolve_model_id_skipped_for_model_instance() -> None:
+    """The hook is never called when the user passes a Model instance directly."""
+    cap = _PassThroughResolver()
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='direct')
+    agent = Agent(target, name='resolve_skip_instance', capabilities=[cap])
+
+    # No string ever flows through; cap.seen should stay empty.
+    assert agent.model is target
+    assert cap.seen == []
+
+
+async def test_resolve_model_id_invoked_on_override() -> None:
+    """`agent.override(model=string)` routes the string through resolve_model_id."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='override-resolved')
+    cap = _StringResolver(target=target)
+
+    initial_model = FunctionModel(_resolve_dummy_model_fn, model_name='initial')
+    agent = Agent(initial_model, name='resolve_override', capabilities=[cap])
+
+    with agent.override(model='magic-model'):
+        result = await agent.run('hi')
+    assert result.output == 'ok'
+
+
+def test_resolve_model_id_invoked_on_agent_default_string() -> None:
+    """`Agent(model='string', capabilities=[cap])` routes the default through resolve_model_id at init.
+
+    Capabilities with `resolve_model_id` need a shot at the default model string just
+    like they do for runtime overrides — otherwise things like `provider_factory` for
+    durability capabilities can't customize how the agent's primary model is built.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='default-resolved')
+    cap = _StringResolver(target=target)
+
+    agent = Agent('magic-model', name='resolve_default_string', capabilities=[cap])
+
+    # Capability's resolve_model_id ran at construction and the resolved Model is the default.
+    assert agent.model is target
 
 
 # --- Output hook tests ---

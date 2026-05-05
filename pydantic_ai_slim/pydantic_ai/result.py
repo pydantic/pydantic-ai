@@ -66,6 +66,16 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
+    @property
+    def _capabilities_already_applied(self) -> bool:
+        """Whether a durable execution capability already fired `wrap_run_event_stream`.
+
+        Set when the underlying stream has been drained against the capability chain
+        (e.g. inside a Temporal activity), so the outer agent loop should skip
+        re-wrapping the replay. Internal coordination flag — not user API.
+        """
+        return self._raw_stream_response._capabilities_already_applied  # pyright: ignore[reportPrivateUsage]
+
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
         if self._cached_output is not None:

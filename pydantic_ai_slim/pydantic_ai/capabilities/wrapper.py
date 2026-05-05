@@ -36,7 +36,7 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
@@ -69,6 +69,18 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream
             or self.wrapped.has_wrap_run_event_stream
         )
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return (
+            type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
+        )
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        new_wrapped = self.wrapped.for_agent(agent)
+        if new_wrapped is self.wrapped:  # pragma: no branch
+            return self
+        return replace(self, wrapped=new_wrapped)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = await self.wrapped.for_run(ctx)

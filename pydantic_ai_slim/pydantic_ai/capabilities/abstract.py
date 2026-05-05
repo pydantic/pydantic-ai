@@ -22,9 +22,9 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -174,6 +174,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
 
+    @property
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability (or any sub-capability) overrides resolve_model_id."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -201,6 +206,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         these to topologically sort its children at construction time.
         """
         return None
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use with this agent.
+
+        Called once at agent construction time, after the agent is fully
+        initialized (model, name, toolsets are all available). Override to
+        discover agent configuration and return a bound instance.
+
+        This runs before ``get_*()`` methods are called, so the returned
+        instance's ``get_toolset()``, ``get_instructions()``, etc. will be
+        used for the agent's initial configuration.
+
+        Default: return ``self`` (no agent-specific setup needed).
+        """
+        return self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -259,6 +279,47 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    def resolve_model_id(
+        self,
+        model_id: KnownModelName | str,
+        *,
+        agent: AbstractAgent[AgentDepsT, Any],
+    ) -> Model | None:
+        """Resolve a model-name string to a `Model` instance, or return `None` to defer.
+
+        Called whenever the user supplies a model-name string for the agent's model:
+        at construction (`Agent('openai:gpt-5.2', capabilities=[...])`), per-run via
+        `agent.run(model=...)`, or via `agent.override(model=...)`. Pre-built `Model`
+        instances and `None` skip this hook entirely.
+
+        Use this to:
+
+        - Map known names to pre-configured `Model` instances (e.g. a shared client
+          registry).
+        - Build a `Model` via a custom [`Provider`][pydantic_ai.providers.Provider]
+          factory (forwarding to [`infer_model`][pydantic_ai.models.infer_model]
+          with `provider_factory=...`).
+        - Defer (`return None`) so the next capability — or the default
+          [`infer_model`][pydantic_ai.models.infer_model] flow — handles it.
+
+        Per-request *swapping* of an already-resolved `Model` is a separate concern
+        and lives in [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
+        which receives a [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]
+        whose `.model` field can be reassigned.
+
+        Composition follows first-non-None-wins in user-supplied order, so the
+        first capability in the `capabilities=[...]` list gets first crack at a
+        string and any later capability only fires if every capability before it
+        returned `None`. [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
+        handles the chaining.
+
+        The hook is synchronous (matching `get_toolset` / `get_wrapper_toolset`) and
+        runs outside of any agent run, so it doesn't receive a `RunContext`.
+        Per-run capabilities can't influence model resolution because resolution
+        happens before [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run].
         """
         return None
 

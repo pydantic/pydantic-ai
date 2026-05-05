@@ -1270,6 +1270,7 @@ def test_response_tuple():
                 },
                 outer_typed_dict_key='response',
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1344,6 +1345,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1421,6 +1423,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             ),
             ToolDefinition(
                 name='final_result_Bar',
@@ -1432,6 +1435,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             ),
         ]
     )
@@ -1482,6 +1486,7 @@ def test_output_type_with_two_descriptions():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1528,6 +1533,7 @@ def test_output_type_tool_output_union():
                 outer_typed_dict_key='response',
                 strict=False,
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1567,6 +1573,7 @@ def test_output_type_function():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1607,6 +1614,7 @@ def test_output_type_function_with_run_context():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1648,6 +1656,7 @@ def test_output_type_bound_instance_method():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1690,6 +1699,7 @@ def test_output_type_bound_instance_method_with_run_context():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1910,6 +1920,7 @@ def test_output_type_async_function():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1949,6 +1960,7 @@ def test_output_type_function_with_custom_tool_name():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )
@@ -1988,6 +2000,7 @@ def test_output_type_function_or_model():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             ),
             ToolDefinition(
                 name='final_result_Weather',
@@ -1999,6 +2012,7 @@ def test_output_type_function_or_model():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             ),
         ]
     )
@@ -2197,6 +2211,7 @@ def test_output_type_multiple_custom_tools():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             ),
             ToolDefinition(
                 name='return_weather',
@@ -2208,6 +2223,7 @@ def test_output_type_multiple_custom_tools():
                     'type': 'object',
                 },
                 kind='output',
+                toolset_id='<output>',
             ),
         ]
     )
@@ -2270,6 +2286,7 @@ def test_output_type_structured_dict():
                 },
                 description='A person',
                 kind='output',
+                toolset_id='<output>',
             ),
             ToolDefinition(
                 name='final_result_Animal',
@@ -2281,6 +2298,7 @@ def test_output_type_structured_dict():
                 },
                 description='An animal',
                 kind='output',
+                toolset_id='<output>',
             ),
         ]
     )
@@ -2421,6 +2439,7 @@ def test_default_structured_output_mode():
                 },
                 description='The final response which ends this conversation',
                 kind='output',
+                toolset_id='<output>',
             )
         ]
     )

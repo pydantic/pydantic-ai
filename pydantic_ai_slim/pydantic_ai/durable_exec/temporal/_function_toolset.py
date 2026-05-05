@@ -9,7 +9,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets.function import FunctionToolsetTool
+from pydantic_ai.toolsets import FunctionToolsetTool
 
 from ._run_context import TemporalRunContext, deserialize_run_context
 
@@ -19,6 +19,7 @@ from ._toolset import (
     CallToolParams,
     CallToolResult,
     TemporalWrapperToolset,
+    resolve_tool_activity_config,
 )
 
 
@@ -72,7 +73,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.tool_activity_config.get(name, {})
+        tool_activity_config = resolve_tool_activity_config(tool, name, self.tool_activity_config)
         if tool_activity_config is False:
             assert isinstance(tool, FunctionToolsetTool)
             if not tool.is_async:

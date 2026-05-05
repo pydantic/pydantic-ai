@@ -103,6 +103,35 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 For more information on how to use Prefect in Python applications, see their [Python documentation](https://docs.prefect.io/v3/how-to-guides/workflows/write-and-run).
 
+### Durability as a Capability
+
+As an alternative to wrapping the agent with [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent], you can attach durable execution as a [capability][pydantic_ai.capabilities.AbstractCapability] on a regular [`Agent`][pydantic_ai.agent.Agent]. The agent stays a normal `Agent` everywhere — outside a Prefect flow it behaves transparently, and inside a flow the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] capability routes model requests, tool calls, and MCP communication through Prefect tasks.
+
+This approach composes with other [capabilities](../capabilities.md) without each needing a Prefect-specific wrapper variant. The capability automatically wraps `agent.run` and `agent.run_sync` as Prefect flows, just like [`PrefectAgent`][pydantic_ai.durable_exec.prefect.PrefectAgent].
+
+```python {title="prefect_durability_capability.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.prefect import PrefectDurability
+
+agent = Agent(
+    'openai:gpt-5.2',
+    instructions="You're an expert in geography.",
+    name='geography',
+    capabilities=[PrefectDurability()],  # (1)!
+)
+
+
+async def main():
+    result = await agent.run('What is the capital of Mexico?')  # (2)!
+    print(result.output)
+    #> Mexico City (Ciudad de México, CDMX)
+```
+
+1. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent, and rebinds `agent.run` / `agent.run_sync` to run inside a Prefect flow.
+2. `agent.run()` enters a Prefect flow automatically; model requests, tool calls, and MCP communication run as Prefect tasks.
+
+The integration considerations below (agent requirements, tool wrapping, streaming, task configuration) apply to both the wrapper-agent and capability paths.
+
 ## Prefect Integration Considerations
 
 When using Prefect with Pydantic AI agents, there are a few important considerations to ensure workflows behave correctly.

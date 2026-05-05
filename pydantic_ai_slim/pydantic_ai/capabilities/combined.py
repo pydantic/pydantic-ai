@@ -20,15 +20,15 @@ from pydantic_ai.tools import (
     RunContext,
     ToolDefinition,
 )
-from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset, DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.agent.abstract import AbstractAgent
+    from pydantic_ai.models import KnownModelName, Model, ModelRequestContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -56,6 +56,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        return any(c.has_resolve_model_id for c in self.capabilities)
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
+        new_caps = [c.for_agent(agent) for c in self.capabilities]
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):  # pragma: no branch
+            return self
+        return replace(self, capabilities=list(new_caps))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
@@ -128,6 +138,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
+
+    def resolve_model_id(
+        self,
+        model_id: KnownModelName | str,
+        *,
+        agent: AbstractAgent[AgentDepsT, Any],
+    ) -> Model | None:
+        # First-non-None wins, in user-supplied order: the first capability in the
+        # `capabilities=[...]` list gets first crack at a string and any later
+        # capability only fires if every capability before it returned None.
+        # Per-request *wrapping* of a resolved Model is a separate concern handled
+        # by `before_model_request`, so each-layer-wraps semantics aren't needed.
+        for capability in self.capabilities:
+            result = capability.resolve_model_id(model_id, agent=agent)
+            if result is not None:
+                return result
+        return None
 
     # --- Tool preparation hooks ---
 

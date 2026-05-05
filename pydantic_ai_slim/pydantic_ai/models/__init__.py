@@ -566,6 +566,32 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
+    _capabilities_already_applied: bool = field(default=False, init=False)
+    """Internal coordination flag set by `pydantic_ai.durable_exec.process_event_stream`
+    when a durable-execution capability has already run the capability chain's
+    `wrap_run_event_stream` hooks against the live model stream inside an
+    activity/step/task. Read by the outer agent loop (`_stream_and_advance`) to skip
+    re-wrapping the replayed stream (which would double-emit hook side effects).
+    Not user API — set via the helper, not directly.
+    """
+
+    _buffered_stream_events: list[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    """Internal buffer of events captured during chain consumption inside an
+    activity/step/task. The outer agent loop replays these through any per-run
+    `event_stream_handler` so it sees real (granular) events even though the live
+    stream was consumed at the durable-execution boundary. `None` when no buffer is
+    available (chain didn't run, or events weren't captured). Not user API.
+    """
+
+    _streaming_requested: bool = field(default=False, init=False)
+    """Set by the agent loop when it expects to iterate the model response as a
+    stream (i.e. an `event_stream_handler` was passed or the capability chain
+    overrides `wrap_run_event_stream`). Durable-execution capabilities read this
+    to decide whether to route through the streaming activity/step/task (which
+    fires the chain inside the boundary and buffers events for replay) or the
+    non-streaming one. Not user API.
+    """
+
 
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
@@ -989,6 +1015,11 @@ class StreamedResponse(ABC):
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
+
+    _capabilities_already_applied: bool = field(default=False, init=False)
+    """When `True`, the capability chain's `wrap_run_event_stream` hooks already ran
+    against the live stream (e.g. inside a durable execution activity) and the outer
+    agent loop should not re-wrap this replayed stream."""
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)

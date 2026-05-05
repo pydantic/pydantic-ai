@@ -80,11 +80,11 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
-from ..toolsets._dynamic import (
+from ..toolsets.combined import CombinedToolset
+from ..toolsets.dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from .abstract import (
@@ -401,11 +401,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
-        if model is None or defer_model_check:
-            self._model = model
-        else:
-            self._model = models.infer_model(model)
-
         self._name = name
         self._description = description
         self.end_strategy = end_strategy
@@ -426,6 +421,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
+        # Resolve the agent's default model up front so capabilities like
+        # `TemporalDurability` see a concrete `Model` when their `for_agent`
+        # binds (a few lines below). For string defaults, give capabilities
+        # the same shot at mapping the string to a `Model` they get for
+        # runtime values via `_get_model`.
+        if model is None or defer_model_check:
+            self._model = model
+        elif isinstance(model, str) and self._root_capability.has_resolve_model_id:
+            resolved = self._root_capability.resolve_model_id(model, agent=self)
+            self._model = resolved if resolved is not None else models.infer_model(model)
+        else:
+            self._model = models.infer_model(model)
+
         self.model_settings = model_settings
 
         self._output_type = output_type
@@ -445,7 +453,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -456,10 +463,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._tool_timeout = tool_timeout
 
         self._validation_context = validation_context
-
-        self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
-
-        self._cap_model_settings = self._root_capability.get_model_settings()
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset and self._output_toolset.max_retries is None:
@@ -481,17 +484,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ]
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
-        # Capability-contributed toolsets (stored separately for per-run re-extraction)
-        cap_toolset = self._root_capability.get_toolset()
-        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = [cap_toolset] if cap_toolset is not None else []
-
         self._event_stream_handler = event_stream_handler
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
-        self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
+        self._override_model: ContextVar[_utils.Option[models.Model | models.KnownModelName | str]] = ContextVar(
+            '_override_model', default=None
+        )
         self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
             '_override_toolsets', default=None
         )
@@ -515,6 +516,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         self._entered_count = 0
         self._exit_stack = None
+
+        # Initialize capability-contributed fields before for_agent (which may access agent.toolsets)
+        self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
+        self._cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
+        self._cap_builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
+        self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
+
+        # Let capabilities bind to this agent (discover model, name, toolsets, etc.)
+        self._root_capability = self._root_capability.for_agent(self)
+
+        # Extract capability-contributed configuration (after for_agent so caps can provide toolsets etc.)
+        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
+        self._cap_model_settings = self._root_capability.get_model_settings()
+        cap_toolset = self._root_capability.get_toolset()
+        if cap_toolset is not None:
+            self._cap_toolsets = [cap_toolset]
 
     @overload
     @classmethod
@@ -1739,7 +1757,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_token = None
 
         if _utils.is_set(model):
-            model_token = self._override_model.set(_utils.Some(models.infer_model(model)))
+            # Defer eager `infer_model` for string overrides when a capability
+            # declares `resolve_model_id`, so the override goes through the same
+            # resolution pipeline as `agent.run(model=...)`. Otherwise preserve
+            # fail-fast (eagerly call `infer_model`).
+            if isinstance(model, str) and self._root_capability.has_resolve_model_id:
+                override_value: models.Model | models.KnownModelName | str = model
+            else:
+                override_value = models.infer_model(model)
+            model_token = self._override_model.set(_utils.Some(override_value))
         else:
             model_token = None
 
@@ -2368,7 +2394,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The model used
         """
-        model_: models.Model
+        # Pick the raw value with the same precedence as before: override > per-run > agent default.
+        raw: models.Model | models.KnownModelName | str | None
         if some_model := self._override_model.get():
             # we don't want `override()` to cover up errors from the model not being defined, hence this check
             if model is None and self.model is None:
@@ -2376,14 +2403,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`model` must either be set on the agent or included when calling it. '
                     '(Even when `override(model=...)` is customizing the model that will actually be called)'
                 )
-            model_ = some_model.value
+            raw = some_model.value
         elif model is not None:
-            model_ = models.infer_model(model)
+            raw = model
         elif self.model is not None:
-            # noinspection PyTypeChecker
-            model_ = self.model = models.infer_model(self.model)
+            raw = self.model
         else:
             raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
+
+        # Give capabilities a chance to map a model-name string to a concrete `Model`
+        # via `resolve_model_id` before the default `infer_model` flow runs. The hook
+        # only fires for strings — pre-built `Model` instances pass through unchanged
+        # (per-request swaps live in `before_model_request`).
+        model_: models.Model
+        if isinstance(raw, str) and self._root_capability.has_resolve_model_id:
+            resolved = self._root_capability.resolve_model_id(raw, agent=self)
+            model_ = resolved if resolved is not None else models.infer_model(raw)
+        else:
+            model_ = raw if isinstance(raw, models.Model) else models.infer_model(raw)
+
+        # Memoize on `self.model` only when we used the agent's default and no
+        # capability owns string resolution — otherwise keep the raw string so per-call
+        # resolution can still fire under different overrides.
+        if model is None and not some_model and not self._root_capability.has_resolve_model_id:
+            self.model = model_
 
         instrument = self.instrument
         if instrument is None:

@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import Tool, ToolDefinition
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot

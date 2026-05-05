@@ -321,7 +321,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Bypassed when a durable-execution capability (e.g. `TemporalDurability`) consumes the stream inside an activity/step/task — only handlers attached at agent or capability construction time fire across that boundary, since per-run callables can't be serialized through it. Set the handler on the `Agent` or capability instead if you need it inside a workflow.
             builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
@@ -375,13 +375,32 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
                         async with n.stream(agent_run.ctx) as stream:
-                            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-                            wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
-                            if _handler is not None:
-                                await _handler(run_ctx, wrapped)
+                            # A durable execution capability (e.g. TemporalDurability) may
+                            # have already run the capability chain and handler against the
+                            # live stream inside an activity/step/task. When that flag is set,
+                            # don't re-fire the chain (would double-emit hook side effects),
+                            # but still drain through any per-run handler so it sees the
+                            # buffered events that were captured inside the activity.
+                            if isinstance(stream, AgentStream) and stream._capabilities_already_applied:  # pyright: ignore[reportPrivateUsage]
+                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                                if _handler is not None and _handler is not self.event_stream_handler:
+                                    # Per-run handler — chain already fired inside the activity
+                                    # for the construction-time handler. Feed the buffered events
+                                    # to the per-run handler so it isn't silently dropped.
+                                    await _handler(run_ctx, stream)
+                                else:
+                                    async for _ in stream:
+                                        pass
                             else:
-                                async for _ in wrapped:
-                                    pass
+                                run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                                wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(
+                                    run_ctx, stream=stream
+                                )
+                                if _handler is not None:
+                                    await _handler(run_ctx, wrapped)
+                                else:
+                                    async for _ in wrapped:
+                                        pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance
@@ -504,7 +523,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Bypassed when a durable-execution capability (e.g. `TemporalDurability`) consumes the stream inside an activity/step/task — only handlers attached at agent or capability construction time fire across that boundary, since per-run callables can't be serialized through it. Set the handler on the `Agent` or capability instead if you need it inside a workflow.
             builtin_tools: Optional additional builtin tools for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
@@ -653,7 +672,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Bypassed when a durable-execution capability (e.g. `TemporalDurability`) consumes the stream inside an activity/step/task — only handlers attached at agent or capability construction time fire across that boundary, since per-run callables can't be serialized through it. Set the handler on the `Agent` or capability instead if you need it inside a workflow.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
@@ -943,7 +962,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Bypassed when a durable-execution capability (e.g. `TemporalDurability`) consumes the stream inside an activity/step/task — only handlers attached at agent or capability construction time fire across that boundary, since per-run callables can't be serialized through it. Set the handler on the `Agent` or capability instead if you need it inside a workflow.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
