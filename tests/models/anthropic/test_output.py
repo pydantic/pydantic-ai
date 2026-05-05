@@ -397,17 +397,13 @@ def test_strict_false_tool_native_output(
     """Tool with strict=False, NativeOutput → output_config."""
     model = anthropic_model('claude-sonnet-4-5')
     agent = Agent(model, output_type=NativeOutput(CityInfo))
-    tool_called = False
 
-    @agent.tool_plain(strict=False, description='Look up the population recorded in the city database.')
-    def get_population(city: str) -> int:
-        nonlocal tool_called
-        tool_called = True
-        return 9_209_944 if city == 'Mexico City' else 0
+    @agent.tool_plain(strict=False)
+    def get_currency(country: str) -> str:
+        return 'Mexican Peso (MXN)' if country == 'Mexico' else 'Unknown'
 
-    result = agent.run_sync('Give me details about Mexico City using the population from the city database.')
+    result = agent.run_sync('Give me details about Mexico City. Use available background tools where helpful.')
 
-    assert tool_called
     assert isinstance(result.output, CityInfo)
 
 

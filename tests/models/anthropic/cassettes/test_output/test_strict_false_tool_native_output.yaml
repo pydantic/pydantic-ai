@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '769'
+      - '722'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Give me details about Mexico City using the population from the city database.
+        - text: Give me details about Mexico City. Use available background tools where helpful.
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -43,23 +43,23 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: Look up the population recorded in the city database.
+      - description: ''
         input_schema:
           additionalProperties: false
           properties:
-            city:
+            country:
               type: string
           required:
-          - city
+          - country
           type: object
-        name: get_population
+        name: get_currency
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '617'
+      - '613'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -67,7 +67,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5830e74893c8b9fc7a3ccba6718da4ae-e751af3834052e59-01
+      - 00-f30bcd32d0ef8281b0044dd9bf4838dd-f9666b1b19055ba2-01
       transfer-encoding:
       - chunked
       vary:
@@ -76,12 +76,12 @@ interactions:
       content:
       - caller:
           type: direct
-        id: toolu_01K2FKNz8r2a66krmfnMCRTk
+        id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
         input:
-          city: Mexico City
-        name: get_population
+          country: Mexico
+        name: get_currency
         type: tool_use
-      id: msg_01NEXnhZKopWda34uTTSXQYY
+      id: msg_012D84nr17fsA3jUdAePwnUP
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -95,8 +95,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 767
-        output_tokens: 54
+        input_tokens: 753
+        output_tokens: 53
         service_tier: standard
     status:
       code: 200
@@ -110,7 +110,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1101'
+      - '1061'
       content-type:
       - application/json
       host:
@@ -120,22 +120,22 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Give me details about Mexico City using the population from the city database.
+        - text: Give me details about Mexico City. Use available background tools where helpful.
           type: text
         role: user
       - content:
-        - id: toolu_01K2FKNz8r2a66krmfnMCRTk
+        - id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
           input:
-            city: Mexico City
-          name: get_population
+            country: Mexico
+          name: get_currency
           type: tool_use
         role: assistant
       - content:
         - content:
-          - text: '9209944'
+          - text: Mexican Peso (MXN)
             type: text
           is_error: false
-          tool_use_id: toolu_01K2FKNz8r2a66krmfnMCRTk
+          tool_use_id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -160,16 +160,16 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: Look up the population recorded in the city database.
+      - description: ''
         input_schema:
           additionalProperties: false
           properties:
-            city:
+            country:
               type: string
           required:
-          - city
+          - country
           type: object
-        name: get_population
+        name: get_currency
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
@@ -184,7 +184,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-58af51f5b6756a2033f75a41c76d8996-47cc06fbb8a20771-01
+      - 00-1ecab8b5f893153f802fc6e81da5b6f5-ce352ffb3a16102d-01
       transfer-encoding:
       - chunked
       vary:
@@ -193,7 +193,7 @@ interactions:
       content:
       - text: '{"city": "Mexico City", "country": "Mexico", "population": 9209944}'
         type: text
-      id: msg_019q84us6sFriTS2mds3ZkDu
+      id: msg_018dLcpRUm5LLnhx9ZrN31vD
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -207,7 +207,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 837
+        input_tokens: 826
         output_tokens: 24
         service_tier: standard
     status:
