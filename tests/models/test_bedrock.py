@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -1713,6 +1714,105 @@ Based on your location in Mexico, the largest city is Mexico City (Ciudad de Mé
 Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.\
 """
     )
+
+
+async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
+
+    Uses the legacy `bedrock_additional_model_requests_fields` form. See
+    `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
+    Fixes https://github.com/pydantic/pydantic-ai/issues/3092.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+        ),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_output_tool_with_unified_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sibling of `test_bedrock_output_tool_with_thinking_raises` for the unified `thinking` field.
+
+    `Model.prepare_request` strips unified `thinking` into `ModelRequestParameters.thinking`, so
+    `_is_thinking_enabled` must inspect both pre-strip (settings) and post-strip (params) state to
+    catch the conflict regardless of which form the user picked.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_tool_choice_required_with_thinking(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Agent.run() blocks tool_choice='required' since it prevents final response.
+
+    When explicitly setting tool_choice='required', agent.run() raises UserError
+    before it reaches Bedrock's thinking mode validation.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            tool_choice='required',
+        ),
+    )
+
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match='prevents the agent from producing a final response',
+    ):
+        await agent.run('What is the weather in Paris?')
+
+
+async def test_bedrock_unified_thinking_with_tool_forcing_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Unified `thinking=True` (not the legacy `bedrock_additional_model_requests_fields` form) must
+    still trigger Bedrock's `tool_choice` + thinking incompatibility guard.
+
+    Goes via `model.request` so the agent baseline validator is bypassed and `_support_tool_forcing`
+    is the only thing that can catch the conflict. Before the A3 fix this silently passed because
+    `_is_thinking_enabled` only inspected the legacy field, but `Model.prepare_request` strips unified
+    `thinking` from `model_settings` into `model_request_parameters.thinking` before this check runs.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
+
+    with pytest.raises(UserError, match='Bedrock does not support forcing specific tools with thinking mode'):
+        await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):

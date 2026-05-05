@@ -45,6 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
@@ -4930,6 +4931,68 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_requests: None):
+    """OpenAI's `_support_tool_forcing` raises when the model profile disables tool forcing.
+
+    Goes via `direct.model_request` so the agent-level baseline validator is bypassed and
+    we actually exercise the OpenAI-specific error path.
+    """
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: ModelSettings = {'tool_choice': 'required'}
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice='required' is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
+
+
+async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model_requests: None):
+    """tuple-resolved forcing (e.g. `tool_choice=['x']` with extra tools) must also be checked against `_support_tool_forcing`.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
+    branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
+    profile, which would push an unsupported parameter to the API for models that have
+    `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
+    `('required', {chosen})` rather than collapsing to scalar `'required'`.
+    """
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tools = [
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ToolDefinition(name='get_time', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ]
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True)
+
+    settings: ModelSettings = {'tool_choice': ['get_weather']}
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice=['get_weather'] is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
 
 
 def test_transformer_adds_properties_to_object_schemas():

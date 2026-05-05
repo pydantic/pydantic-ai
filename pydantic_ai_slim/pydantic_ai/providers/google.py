@@ -154,7 +154,7 @@ class GoogleProvider(Provider[Client]):
                     http_options=http_options,
                 )
         else:
-            self._client = client  # pragma: no cover
+            self._client = client
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]

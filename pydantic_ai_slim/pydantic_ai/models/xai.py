@@ -56,9 +56,10 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
-from ..tools import AgentDepsT, Tool
+from ..tools import AgentDepsT, Tool, ToolDefinition
 from ..toolsets import AbstractToolset
 from ..usage import RequestUsage
+from ._tool_choice import resolve_tool_choice
 
 XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
     True: 'high',
@@ -74,7 +75,7 @@ try:
     import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk import AsyncClient
-    from xai_sdk.chat import assistant, file, image, system, tool, tool_result, user
+    from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
     from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
     from xai_sdk.types.model import ChatModel
@@ -668,6 +669,50 @@ class XaiModel(Model[AsyncClient]):
 
         return None
 
+    def _get_tool_choice(
+        self,
+        model_settings: XaiModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[dict[str, ToolDefinition], Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tool_defs, tool_choice).
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        profile = GrokModelProfile.from_profile(self.profile)
+
+        tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
+            tool_choice = 'required' if profile.grok_supports_tool_choice_required else 'auto'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if profile.grok_supports_tool_choice_required:
+                    tool_choice = required_tool(next(iter(tool_names)))
+                else:
+                    # Forcing not supported: filter so the model can only see the requested tool.
+                    # Breaks caching, but xAI doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = 'auto'
+            else:
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                if tool_choice_mode == 'required' and profile.grok_supports_tool_choice_required:
+                    tool_choice = 'required'
+                else:
+                    tool_choice = 'auto'
+        else:
+            assert_never(resolved_tool_choice)
+
+        if not tool_defs:
+            return tool_defs, None
+
+        return tool_defs, tool_choice
+
     async def _create_chat(
         self,
         messages: list[ModelMessage],
@@ -682,31 +727,37 @@ class XaiModel(Model[AsyncClient]):
         # Convert messages to xAI format
         xai_messages = await self._map_messages(messages, model_request_parameters)
 
+        # Resolve tool_choice and filter function tools
+        filtered_tool_defs, resolved_tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
+
         # Convert tools: combine built-in (server-side) tools and custom (client-side) tools
         tools: list[chat_types.chat_pb2.Tool] = []
         if model_request_parameters.builtin_tools:
             tools.extend(_get_builtin_tools(model_request_parameters))
-        if model_request_parameters.tool_defs:
-            tools.extend(_map_tools(model_request_parameters))
+        if filtered_tool_defs:
+            tools.extend(_map_tools(filtered_tool_defs))
         tools_param = tools if tools else None
 
-        # Set tool_choice based on whether tools are available and text output is allowed
-        profile = GrokModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.grok_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
+        # Determine final tool_choice
+        tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice | None
+        if resolved_tool_choice is not None:
+            tool_choice = resolved_tool_choice
+        elif tools_param:
             tool_choice = 'auto'
+        else:
+            tool_choice = None
 
         # Set response_format based on the output_mode
+        profile = GrokModelProfile.from_profile(self.profile)
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_format = _map_json_schema(output_object)
         elif (
-            model_request_parameters.output_mode == 'prompted' and not tools and profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted'
+            and not tools_param
+            and profile.supports_json_object_output
         ):  # pragma: no branch
             response_format = _map_json_object()
 
@@ -1150,7 +1201,7 @@ def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
     }
 
 
-def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_types.chat_pb2.Tool]:
+def _map_tools(tool_defs: dict[str, ToolDefinition]) -> list[chat_types.chat_pb2.Tool]:
     """Convert pydantic_ai tool definitions to xAI SDK tools."""
     return [
         tool(
@@ -1158,7 +1209,7 @@ def _map_tools(model_request_parameters: ModelRequestParameters) -> list[chat_ty
             description=tool_def.description or '',
             parameters=tool_def.parameters_json_schema,
         )
-        for tool_def in model_request_parameters.tool_defs.values()
+        for tool_def in tool_defs.values()
     ]
 
 
