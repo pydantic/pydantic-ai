@@ -196,8 +196,46 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 )
 
 
+def _kill_leaked_temporal_server(port: int) -> None:
+    """Kill any `temporal-sdk-python-*` dev server still bound to ``port``.
+
+    A previous test run that crashed mid-fixture leaves the embedded Temporal
+    dev server listening on `port`, which makes the next run fail to bind. The
+    leak persists across pytest invocations, so detect-and-kill at fixture entry
+    keeps local iterations smooth without requiring a manual `kill` between runs.
+    Best-effort: failures here don't propagate, the fixture's own bind attempt
+    will surface a real port conflict downstream.
+    """
+    import signal
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ['ss', '-tlnpH', f'sport = :{port}'],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return
+
+    for line in result.stdout.splitlines():
+        if 'temporal-sdk-py' not in line:
+            continue
+        match = re.search(r'pid=(\d+)', line)
+        if not match:
+            continue
+        pid = int(match.group(1))
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (PermissionError, ProcessLookupError):
+            pass
+
+
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    _kill_leaked_temporal_server(TEMPORAL_PORT)
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
