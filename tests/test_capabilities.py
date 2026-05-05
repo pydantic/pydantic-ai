@@ -1318,7 +1318,7 @@ Supported by:
                             'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Moderation',
                         },
-                        'model': {
+                        'image_model': {
                             'anyOf': [
                                 {
                                     'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
@@ -1327,7 +1327,7 @@ Supported by:
                                 {'type': 'string'},
                                 {'type': 'null'},
                             ],
-                            'title': 'Model',
+                            'title': 'Image Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -4563,6 +4563,8 @@ class TestImageGenerationCapability:
         builtin_fields = {
             f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
         }
+        builtin_fields.remove('model')
+        builtin_fields.add('image_model')
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
             'builtin',
@@ -4610,7 +4612,7 @@ class TestImageGenerationCapability:
             background='opaque',
             input_fidelity='high',
             moderation='low',
-            model='gpt-image-2',
+            image_model='gpt-image-2',
             output_compression=80,
             output_format='jpeg',
             quality='high',

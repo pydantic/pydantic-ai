@@ -72,7 +72,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     Supported by: OpenAI Responses.
     """
 
-    model: ImageGenerationModelName | None
+    image_model: ImageGenerationModelName | None
     """The image generation model to use.
 
     Supported by: OpenAI Responses.
@@ -125,7 +125,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
         moderation: Literal['auto', 'low'] | None = None,
-        model: ImageGenerationModelName | None = None,
+        image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
@@ -144,7 +144,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self.background = background
         self.input_fidelity = input_fidelity
         self.moderation = moderation
-        self.model = model
+        self.image_model = image_model
         self.output_compression = output_compression
         self.output_format = output_format
         self.quality = quality
@@ -163,8 +163,8 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['input_fidelity'] = self.input_fidelity
         if self.moderation is not None:
             kwargs['moderation'] = self.moderation
-        if self.model is not None:
-            kwargs['model'] = self.model
+        if self.image_model is not None:
+            kwargs['model'] = self.image_model
         if self.output_compression is not None:
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:
