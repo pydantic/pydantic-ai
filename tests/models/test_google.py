@@ -5358,11 +5358,12 @@ def test_google_missing_tool_call_thought_signature():
     )
 
 
-_TOOL_COMBINATION_FLAGS = _GoogleRequestFlags(
-    supports_tool_combination=True,
-    supports_server_side_tool_invocations=True,
-    has_server_side_tools=False,
-)
+if imports_successful():
+    _TOOL_COMBINATION_FLAGS = _GoogleRequestFlags(
+        supports_tool_combination=True,
+        supports_server_side_tool_invocations=True,
+        has_server_side_tools=False,
+    )
 
 
 def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
