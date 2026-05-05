@@ -280,6 +280,47 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     assert reasoning_encrypted['format'] == 'openai-responses-v1'
 
 
+async def test_openrouter_thinking_only_response_mapping() -> None:
+    """A `ModelResponse` containing only OpenRouter `ThinkingPart`s still produces an assistant
+    message carrying `reasoning_details`, even though the base class would skip emitting any
+    message for an otherwise-empty response.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='thinking summary text',
+                    provider_name='openrouter',
+                    provider_details={
+                        'type': 'reasoning.summary',
+                        'format': 'openai-responses-v1',
+                    },
+                )
+            ],
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow up?')]),
+    ]
+
+    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assistant_message = mapped[1]
+    assert assistant_message['role'] == 'assistant'
+    assert assistant_message.get('content') is None
+    assert assistant_message['reasoning_details'] == [  # type: ignore[reportGeneralTypeIssues]
+        {
+            'type': 'reasoning.summary',
+            'id': None,
+            'format': 'openai-responses-v1',
+            'index': None,
+            'summary': 'thinking summary text',
+        }
+    ]
+
+
 async def test_openrouter_video_url_mapping() -> None:
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
