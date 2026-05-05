@@ -3849,6 +3849,13 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_details={'status': 'success'},
                 )
             ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+                args_valid=True,
+                validated_args={'result': 7006652.0},
+            ),
         ]
     )
 

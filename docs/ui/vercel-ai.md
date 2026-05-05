@@ -153,6 +153,12 @@ On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sd
 
 Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
 
+## Tool input validation
+
+`tool-input-available` is emitted **after** the agent has validated the call against the tool's schema and any custom [`args_validator`](../tools-advanced.md#args-validator). The chunk's `input` field carries the post-coercion arguments — what the tool function will actually receive — rather than the raw text the model emitted.
+
+When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the original raw arguments) plus an `error_text` field rendered from the retry prompt that will be sent back to the model. The agent will retry the call (subject to the tool's `retries` setting) and emit a new `tool-input-(available|error)` for each attempt.
+
 ## System prompts and instructions
 
 Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.

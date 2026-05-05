@@ -126,6 +126,26 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
         assert getattr(restored, attr) == expected
 
 
+def test_tool_retry_error_equality_and_hash():
+    """`ToolRetryError` compares structurally on `tool_retry`, hashes consistently."""
+    part = RetryPromptPart(content='retry this', tool_name='my_tool')
+    e1 = ToolRetryError(part)
+    e2 = ToolRetryError(part)
+    other_part = RetryPromptPart(
+        content='different', tool_name='my_tool', tool_call_id=part.tool_call_id, timestamp=part.timestamp
+    )
+    e3 = ToolRetryError(other_part)
+
+    # Same `tool_retry` -> equal and hash-equal.
+    assert e1 == e2
+    assert hash(e1) == hash(e2)
+    # Different `tool_retry` -> not equal.
+    assert e1 != e3
+    # Comparison with a non-`ToolRetryError` returns False (does not raise).
+    assert e1 != 'not an error'
+    assert e1 != RuntimeError('different exception type')
+
+
 def test_tool_retry_error_pickle_round_trip():
     """Test that ToolRetryError survives pickle round-trip with tool_retry preserved."""
     part = RetryPromptPart(content='retry this', tool_name='my_tool')

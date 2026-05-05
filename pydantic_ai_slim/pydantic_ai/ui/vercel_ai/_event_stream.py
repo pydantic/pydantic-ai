@@ -14,6 +14,7 @@ from ...messages import (
     BuiltinToolReturnPart,
     FilePart,
     FinishReason as PydanticFinishReason,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -50,6 +51,7 @@ from .response_types import (
     ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
+    ToolInputErrorChunk,
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
     ToolOutputDeniedChunk,
@@ -235,15 +237,37 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             input_text_delta=delta.args_delta if isinstance(delta.args_delta, str) else _json_dumps(delta.args_delta),
         )
 
-    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseChunk]:
-        yield ToolInputAvailableChunk(
-            tool_call_id=part.tool_call_id,
-            tool_name=part.tool_name,
-            input=part.args_as_dict(),
-            provider_metadata=dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
-            ),
+    async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseChunk]:
+        # Skip when validation didn't run (or raised an unrecoverable error). Two cases:
+        #  * args_valid is None and no error: resume of a non-`ToolApproved` deferred result, or an
+        #    output tool skipped by end strategy — re-announcing "input available" would be misleading.
+        #  * args_valid is False with no `validation_error`: validation raised `UnexpectedModelBehavior`
+        #    (e.g. max-retries exceeded). The agent is about to error out; the on-error path closes
+        #    the pending tool call with a `tool-output-error` chunk.
+        if event.validation_error is None and event.args_valid is not True:
+            return
+
+        part = event.part
+        provider_metadata = dump_provider_metadata(
+            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
         )
+
+        if event.args_valid is False:
+            assert event.validation_error is not None
+            yield ToolInputErrorChunk(
+                tool_call_id=part.tool_call_id,
+                tool_name=part.tool_name,
+                input=part.args_as_dict(),
+                provider_metadata=provider_metadata,
+                error_text=event.validation_error.tool_retry.model_response(),
+            )
+        else:
+            yield ToolInputAvailableChunk(
+                tool_call_id=part.tool_call_id,
+                tool_name=part.tool_name,
+                input=event.validated_args if event.validated_args is not None else part.args_as_dict(),
+                provider_metadata=provider_metadata,
+            )
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(

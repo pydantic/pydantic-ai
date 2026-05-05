@@ -170,11 +170,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         and (tool_call_id := self._final_result_event.tool_call_id)
                         and (tool_name := self._final_result_event.tool_name)
                     ):
-                        async for e in self._turn_to('request'):
-                            yield e
-
                         self._final_result_event = None
-                        # Ensure the stream does not end on a dangling tool call without a result.
+                        # The output-tool happy path emits a `FunctionToolCallEvent`
+                        # (which transitions to 'request' and registers the call as
+                        # pending) but never a `FunctionToolResultEvent`. Synthesize
+                        # the latter here and pop the pending entry.
+                        self._pending_tool_calls.pop(tool_call_id, None)
                         output_tool_result_event = FunctionToolResultEvent(
                             result=ToolReturnPart(
                                 tool_call_id=tool_call_id,
@@ -561,7 +562,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The tool call part.
         """
-        return  # pragma: no cover
+        return
         yield  # Make this an async generator
 
     async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:

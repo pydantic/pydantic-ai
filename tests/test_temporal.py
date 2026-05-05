@@ -483,7 +483,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "validated_args": {}, "validation_error": null, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -497,7 +497,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "validated_args": {}, "validation_error": null, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -593,7 +593,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "validated_args": {"args": {"city": "Mexico City"}}, "validation_error": null, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -771,6 +771,20 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "validated_args": {"answers": [{"label": "Capital of the country", "answer": "Mexico City"}, {"label": "Weather in the capital", "answer": "Sunny"}, {"label": "Product Name", "answer": "Pydantic AI"}]}, "validation_error": null, "event_kind": "function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
@@ -901,12 +915,14 @@ async def test_complex_agent_run(allow_model_requests: None):
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
                 args_valid=True,
+                validated_args={},
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
                 ),
                 args_valid=True,
+                validated_args={},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -957,6 +973,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
                 ),
                 args_valid=True,
+                validated_args={'args': WeatherArgs(city='Mexico City')},
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -1136,6 +1153,21 @@ async def test_complex_agent_run(allow_model_requests: None):
                     tool_name='final_result',
                     args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+                args_valid=True,
+                validated_args=Response(  # pyright: ignore[reportArgumentType]
+                    answers=[
+                        Answer(label='Capital', answer='The capital of Mexico is Mexico City.'),
+                        Answer(label='Weather', answer='The weather in Mexico City is currently sunny.'),
+                        Answer(label='Product Name', answer='The product name is Pydantic AI.'),
+                    ]
                 ),
             ),
         ]
