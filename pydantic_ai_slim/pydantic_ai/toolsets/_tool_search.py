@@ -199,6 +199,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
             if score == 0 or (entry.capability_id is not None and entry.capability_id not in ctx.loaded_capability_ids):
+                # This way you cannot discover tools that are part of a deferred cap
+                # I am not quite sure yet how this would work with #5143
                 continue
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
