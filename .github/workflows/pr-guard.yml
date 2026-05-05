@@ -197,13 +197,8 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - name: Remove `safe-for-ci` label and notify
-        run: |
-          set -euo pipefail
-          gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label safe-for-ci
-          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
-            "New commits detected — removing the \`safe-for-ci\` label so the harness-compat workflow doesn't run unreviewed code. A maintainer should re-review the diff and re-add the label to retrigger." \
-            || true
+      - name: Remove `safe-for-ci` label
+        run: gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label safe-for-ci
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
