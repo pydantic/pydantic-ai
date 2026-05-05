@@ -272,6 +272,11 @@ async def test_image_output_json_schema():
                     'default': None,
                     'title': 'Vendor Metadata',
                 },
+                'metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Metadata',
+                },
                 'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                 'identifier': {
                     'description': """\
@@ -345,6 +350,11 @@ distinguish multiple files.\
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Metadata',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
@@ -487,6 +497,11 @@ async def test_deferred_output_json_schema():
                             'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Vendor Metadata',
+                        },
+                        'metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Metadata',
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {

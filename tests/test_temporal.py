@@ -4022,10 +4022,10 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='{"get_multimodal_content":["test",{"data":"iVBORw==","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"4effda"},{"url":"https://example.com/doc/12345","force_download":false,"vendor_metadata":null,"kind":"document-url","media_type":"application/pdf","identifier":"eb8998"}]}'
+                            content='{"get_multimodal_content":["test",{"data":"iVBORw==","media_type":"image/png","vendor_metadata":null,"metadata":null,"kind":"binary","identifier":"4effda"},{"url":"https://example.com/doc/12345","force_download":false,"vendor_metadata":null,"metadata":null,"kind":"document-url","media_type":"application/pdf","identifier":"eb8998"}]}'
                         )
                     ],
-                    usage=RequestUsage(input_tokens=62, output_tokens=34),
+                    usage=RequestUsage(input_tokens=62, output_tokens=38),
                     model_name='test',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
