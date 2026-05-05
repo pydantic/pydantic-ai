@@ -106,7 +106,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
-    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=dict)
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """The capabilities that are available for the current run."""
 
     @property
