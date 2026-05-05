@@ -551,6 +551,11 @@ Available strategy values:
 
 A custom callable also benefits from provider-native tool search on models that support a client-executed mode (Anthropic, OpenAI Responses), where deferred tools still ship with `defer_loading` on the wire so the provider can keep them out of the prompt until the search picks them. On other providers, the callable runs as the local `search_tools` function tool with no behavioural change.
 
+!!! note "Prompt cache and the local fallback"
+    On the local fallback path (and custom callables on providers without a client-executed tool-search mode), discovered tools are appended to the request's tool definitions for subsequent turns. Anthropic and OpenAI prompt caching matches by request prefix, so each new discovery invalidates the cache from the tool-definition block onward — noticeable as added latency and cost on long sessions with many discovery rounds across a large tool corpus.
+
+    Native paths (Anthropic and OpenAI client-executed tool search) sidestep this: deferred tools ship with `defer_loading` on the wire and the provider keeps the visible tool list stable across discoveries.
+
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
 
