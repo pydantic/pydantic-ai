@@ -175,6 +175,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     root_capability: AbstractCapability[DepsT]
 
+    capabilities: dict[str, AbstractCapability[DepsT]]
+
     builtin_tools: list[AgentBuiltinTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
@@ -459,9 +461,14 @@ async def _prepare_request_parameters(
     # capability hooks — they're dispatched at `get_tools()` time via `PreparedToolset`
     # wrappers in `Agent._get_toolset`, so the filtered/modified defs are baked into
     # `ToolManager.tools` (and execution lookups) as well as the model's request parameters.
+    all_tool_defs = [
+        replace(tool_def, defer_loading=False) if tool_def.defer_loading is None else tool_def
+        for tool_def in ctx.deps.tool_manager.tool_defs
+    ]
+
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
-    for tool_def in ctx.deps.tool_manager.tool_defs:
+    for tool_def in all_tool_defs:
         if tool_def.kind == 'output':
             output_tools.append(tool_def)
         else:
@@ -1344,6 +1351,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         conversation_id=ctx.state.conversation_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        capabilities=ctx.deps.capabilities,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

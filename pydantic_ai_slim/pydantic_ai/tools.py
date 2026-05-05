@@ -452,7 +452,7 @@ class Tool(Generic[ToolAgentDepsT]):
     requires_approval: bool
     metadata: dict[str, Any] | None
     timeout: float | None
-    defer_loading: bool
+    defer_loading: bool | None
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
     """
@@ -479,7 +479,7 @@ class Tool(Generic[ToolAgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        defer_loading: bool = False,
+        defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -545,7 +545,8 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's discovered via tool search.
+                If `None`, the default value is determined by the toolset or capability.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -741,9 +742,10 @@ class ToolDefinition:
     Defaults to None (no timeout).
     """
 
-    defer_loading: bool = False
+    defer_loading: bool | None = None
     """Whether this tool should be hidden from the model until discovered via tool search.
 
+    If `None`, the value is inherited from the toolset or capability that provided it.
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
@@ -771,6 +773,9 @@ class ToolDefinition:
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
+
+    capability_id: str | None = None
+    """The id of the capability that this tool belongs to."""
 
     @cached_property
     def function_signature(self) -> FunctionSignature:

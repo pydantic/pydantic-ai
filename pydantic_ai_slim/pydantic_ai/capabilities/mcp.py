@@ -32,9 +32,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
     url: str
     """The URL of the MCP server."""
 
-    id: str | None
-    """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
-
     authorization_token: str | None
     """Authorization header value for MCP server requests. Passed to both builtin and local."""
 
@@ -43,9 +40,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
 
     allowed_tools: list[str] | None
     """Filter to only these tools. Applied to both builtin and local."""
-
-    description: str | None
-    """Description of the MCP server. Builtin-only; ignored by local tools."""
 
     def __init__(
         self,

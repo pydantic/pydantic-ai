@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
 from pydantic_ai import _system_prompt
+from pydantic_ai._deferred import prepare_capability_tool_definitions
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import gather
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -22,6 +23,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
@@ -66,7 +68,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
+            if capability.defer_loading is True:
+                continue
             instructions.extend(normalize_instructions(capability.get_instructions()))
+
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
@@ -75,6 +80,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         settings_chain: list[ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]] = []
         for capability in self.capabilities:
             cap_settings = capability.get_model_settings()
+            if capability.defer_loading is True and cap_settings is not None:
+                raise UserError(
+                    f'Deferred capability {capability.id!r} provides model settings, but lazy-loading model '
+                    'settings is not supported yet. Remove the model settings from this capability or set '
+                    '`defer_loading=False`.'
+                )
             if cap_settings is not None:
                 settings_chain.append(cap_settings)
         if not settings_chain:
@@ -105,18 +116,38 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             toolset = capability.get_toolset()
             if toolset is None:
-                pass
+                continue
             elif isinstance(toolset, AbstractToolset):
                 # Pyright can't narrow Callable type aliases out of unions after isinstance check
-                toolsets.append(toolset)  # pyright: ignore[reportUnknownArgumentType]
+                cap_toolset = cast(AbstractToolset[AgentDepsT], toolset)
             else:
-                toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
+                cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
+
+            toolsets.append(
+                PreparedToolset(
+                    cap_toolset,
+                    prepare_capability_tool_definitions(
+                        capability_id=capability.id,
+                        capability_defer_loading=capability.defer_loading,
+                    ),
+                )
+            )
+        # TODO: Decide how toolset-level instructions should interact with deferred
+        # capabilities. They are owned by toolsets rather than individual tools, so
+        # they remain available even when capability tools start hidden.
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
         for capability in self.capabilities:
-            builtin_tools.extend(capability.get_builtin_tools() or [])
+            cap_builtin_tools = capability.get_builtin_tools() or []
+            if capability.defer_loading is True and cap_builtin_tools:
+                raise UserError(
+                    f'Deferred capability {capability.id!r} provides builtin tools, but lazy-loading builtin '
+                    'tools is not supported yet. Remove the builtin tools from this capability or set '
+                    '`defer_loading=False`.'
+                )
+            builtin_tools.extend(cap_builtin_tools)
         return builtin_tools
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

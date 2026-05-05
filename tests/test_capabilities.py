@@ -15,6 +15,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
@@ -31,6 +32,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    Capability,
     CapabilityOrdering,
     HandleDeferredToolCalls,
     ImageGeneration,
@@ -1177,21 +1179,6 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
-                'short_spec_IncludeToolReturnSchemas': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'IncludeToolReturnSchemas': {
-                            'anyOf': [
-                                {'const': 'all', 'type': 'string'},
-                                {'items': {'type': 'string'}, 'type': 'array'},
-                                {'additionalProperties': True, 'type': 'object'},
-                            ],
-                            'title': 'Includetoolreturnschemas',
-                        }
-                    },
-                    'title': 'short_spec_IncludeToolReturnSchemas',
-                    'type': 'object',
-                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -1199,10 +1186,13 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
-                'short_spec_ReinjectSystemPrompt': {
+                'spec_IncludeToolReturnSchemas': {
                     'additionalProperties': False,
-                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
-                    'title': 'short_spec_ReinjectSystemPrompt',
+                    'properties': {
+                        'IncludeToolReturnSchemas': {'$ref': '#/$defs/spec_params_IncludeToolReturnSchemas'}
+                    },
+                    'required': ['IncludeToolReturnSchemas'],
+                    'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -1220,18 +1210,18 @@ Supported by:
                     'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
-                'short_spec_Thinking': {
+                'spec_ReinjectSystemPrompt': {
                     'additionalProperties': False,
-                    'properties': {
-                        'Thinking': {
-                            'anyOf': [
-                                {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
-                            ],
-                            'title': 'Thinking',
-                        }
-                    },
-                    'title': 'short_spec_Thinking',
+                    'properties': {'ReinjectSystemPrompt': {'$ref': '#/$defs/spec_params_ReinjectSystemPrompt'}},
+                    'required': ['ReinjectSystemPrompt'],
+                    'title': 'spec_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
+                    'required': ['Thinking'],
+                    'title': 'spec_Thinking',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -1255,6 +1245,24 @@ Supported by:
                     'title': 'spec_PrefixTools',
                     'type': 'object',
                 },
+                'spec_params_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Tools',
+                        },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'title': 'spec_params_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
                 'spec_WebFetch': {
                     'additionalProperties': False,
                     'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
@@ -1267,6 +1275,34 @@ Supported by:
                     'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
                     'required': ['WebSearch'],
                     'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'title': 'spec_params_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_params_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'effort': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Effort',
+                        },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'title': 'spec_params_Thinking',
                     'type': 'object',
                 },
                 'spec_params_ImageGeneration': {
@@ -1371,16 +1407,16 @@ Supported by:
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                                {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
+                                {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'$ref': '#/$defs/spec_Thinking'},
                                 {'const': 'WebFetch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
@@ -1515,16 +1551,16 @@ Supported by:
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                            {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
+                            {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'$ref': '#/$defs/spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
@@ -1976,6 +2012,367 @@ async def test_toolset_capability_in_agent():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+def test_deferred_capability_catalog_entries_require_id_and_description() -> None:
+    """Deferred capabilities must be discoverable before the model can load them."""
+    with pytest.raises(ValueError) as missing_id:
+        Capability[None](description='Needs a stable id.', defer_loading=True)
+
+    with pytest.raises(ValueError) as missing_description:
+        Capability[None](id='billing', defer_loading=True)
+
+    assert [str(missing_id.value), str(missing_description.value)] == snapshot(
+        [
+            'Capabilities with defer_loading=True must have an id.',
+            'Capabilities with defer_loading=True must have a description.',
+        ]
+    )
+
+
+def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
+    """Deferred loading currently supports instructions and function tools only."""
+
+    @dataclass
+    class SettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(temperature=0.5)
+
+    with pytest.raises(UserError) as model_settings_exc:
+        CombinedCapability(
+            [
+                SettingsCap(
+                    id='settings',
+                    description='Changes model settings.',
+                    defer_loading=True,
+                )
+            ]
+        ).get_model_settings()
+
+    builtin_cap = BuiltinTool[None](
+        tool=WebSearchTool(),
+        id='web-search',
+        description='Search the web.',
+        defer_loading=True,
+    )
+
+    with pytest.raises(UserError) as builtin_tools_exc:
+        CombinedCapability([builtin_cap]).get_builtin_tools()
+
+    assert [str(model_settings_exc.value), str(builtin_tools_exc.value)] == snapshot(
+        [
+            "Deferred capability 'settings' provides model settings, but lazy-loading model settings is not supported yet. "
+            'Remove the model settings from this capability or set `defer_loading=False`.',
+            "Deferred capability 'web-search' provides builtin tools, but lazy-loading builtin tools is not supported yet. "
+            'Remove the builtin tools from this capability or set `defer_loading=False`.',
+        ]
+    )
+
+
+async def test_load_capability_tool_name_conflict_raises() -> None:
+    """The framework loader must not be shadowed by a user tool with the same name."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def load_capability() -> str:
+        return 'user-defined loader'  # pragma: no cover
+
+    hidden = Capability[None](
+        id='hidden',
+        description='Hidden instructions.',
+        instructions='Hidden instructions.',
+        defer_loading=True,
+    )
+    agent = Agent(TestModel(), toolsets=[toolset], capabilities=[hidden])
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi')
+
+    assert str(exc_info.value) == snapshot(
+        "Tool name 'load_capability' is reserved for deferred capability loading. Rename your tool to avoid conflicts."
+    )
+
+
+async def test_duplicate_capability_ids_raise() -> None:
+    """Capability ids are used as a run registry, so duplicates must fail loudly."""
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            Capability[None](id='dup', description='First capability.', instructions='First.'),
+            Capability[None](id='dup', description='Second capability.', instructions='Second.'),
+        ],
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi')
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
+    )
+
+
+async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
+    """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    def add_account_context(ctx: RunContext[None]) -> str:
+        return f'Load-time account context for run step {ctx.run_step}.'
+
+    def empty_instruction(ctx: RunContext[None]) -> None:
+        return None
+
+    always_on = Capability[None](
+        id='always-on',
+        description='Visible billing guidance.',
+        instructions='Visible billing instructions.',
+    )
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        instructions=[
+            'Use the refund policy before answering refund questions.',
+            add_account_context,
+            empty_instruction,
+        ],
+        toolset=toolset,
+        defer_loading=True,
+    )
+
+    seen_tool_names: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_names.append([t.name for t in info.function_tools])
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'final: {refund_result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, refunds])
+
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == snapshot('final: order-123: refund allowed for 30 days')
+    assert seen_tool_names == snapshot(
+        [
+            ['search_tools', 'load_capability'],
+            ['lookup_refund_policy'],
+            ['lookup_refund_policy'],
+        ]
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='load_capability',
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=55, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='load_capability',
+                        content={
+                            'capability_id': 'refunds',
+                            'instructions': 'Use the refund policy before answering refund questions.\n\n'
+                            'Load-time account context for run step 1.',
+                        },
+                        tool_call_id='load-refunds',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=75, output_tokens=10),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup_refund_policy',
+                        content='order-123: refund allowed for 30 days',
+                        tool_call_id='lookup-refund',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
+                usage=RequestUsage(input_tokens=81, output_tokens=17),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'hidden'  # pragma: no cover
+
+    hidden = Capability[None](
+        id='hidden',
+        description='Hidden tool access.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+    seen_tool_names: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_names.append([t.name for t in info.function_tools])
+        if not any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'missing'},
+                        tool_call_id='load-missing',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hidden])
+    result = await agent.run('load missing')
+
+    assert result.output == snapshot('done')
+    assert seen_tool_names == snapshot(
+        [
+            ['search_tools', 'load_capability'],
+            ['search_tools', 'load_capability'],
+        ]
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='load missing', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: hidden: Hidden tool access.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='load_capability',
+                        args={'id': 'missing'},
+                        tool_call_id='load-missing',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='load_capability',
+                        content="No capability found with id 'missing'.",
+                        tool_call_id='load-missing',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: hidden: Hidden tool access.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_infer_fmt_explicit():

@@ -23,6 +23,7 @@ from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_ai._spec import load_from_registry
+from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 
 from .. import (
     _agent_graph,
@@ -51,7 +52,7 @@ from .._template import TemplateStr, validate_from_spec_args
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
@@ -1196,8 +1197,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             effective_capability = base_capability
 
-        # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
+        if any(cap.defer_loading is True for cap in collect_leaves(run_capability)):
+            run_capability = CombinedCapability([run_capability, DeferredLoadingCapability()])
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1281,6 +1283,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             return parts or None
 
+        def collect_capabilities() -> dict[str, AbstractCapability[AgentDepsT]]:
+            capabilities: dict[str, AbstractCapability[AgentDepsT]] = {}
+
+            def collect(cap: AbstractCapability[AgentDepsT]) -> None:
+                if cap.id is not None:
+                    if cap.id in capabilities:
+                        raise exceptions.UserError(
+                            f'Capability id {cap.id!r} is used by multiple capabilities. '
+                            'Capability ids must be unique within a run.'
+                        )
+                    capabilities[cap.id] = cap
+
+            run_capability.apply(collect)
+            return capabilities
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1296,6 +1313,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
+            capabilities=collect_capabilities(),
             builtin_tools=[*cap_builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
@@ -2411,15 +2429,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
         Toolset instructions are collected separately during run execution.
-
-        Args:
-            additional_instructions: Additional instructions to include for this run.
-            cap_instructions: Instructions from capabilities, resolved at run time.
-
-        Returns:
-            A tuple of (literal_instructions, instruction_functions) where:
-            - literal_instructions: Combined literal string instructions or None
-            - instruction_functions: List of instruction functions that need to be evaluated at runtime
         """
         override_instructions = self._override_instructions.get()
         if override_instructions:

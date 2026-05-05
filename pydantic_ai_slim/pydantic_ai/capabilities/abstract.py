@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
@@ -153,6 +153,38 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    id: str | None = field(default=None, kw_only=True)
+    """Stable identifier for this capability instance.
+
+    Required when `defer_loading=True` so the model can reference the capability
+    by id when calling `load_capability`.
+    """
+
+    defer_loading: bool | None = field(default=None, kw_only=True)
+    """If True, the capability's contributions (instructions, tools, settings) are hidden
+    from the model until it explicitly loads them via `load_capability(id)`.
+
+    Requires both [`id`][pydantic_ai.capabilities.AbstractCapability.id] and
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
+    to be set so the capability can be discovered in the load catalog.
+    """
+
+    description: str | None = field(default=None, kw_only=True)
+    """Human-readable description of this capability.
+
+    Required when `defer_loading=True` so the model can decide whether to load it
+    from the `load_capability` catalog. Override
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
+    instead to compute it dynamically.
+    """
+
+    def __post_init__(self) -> None:
+        if self.defer_loading:
+            if not self.id:
+                raise ValueError('Capabilities with defer_loading=True must have an id.')
+            if not self.get_description(None):
+                raise ValueError('Capabilities with defer_loading=True must have a description.')
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -220,6 +252,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
         """
         return None
+
+    def get_description(self, ctx: RunContext[AgentDepsT] | None) -> str | None:
+        """Return a human-readable description of this capability, or None.
+
+        Surfaced to the model in the `load_capability` catalog when
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
+        Override to compute the description dynamically.
+        """
+        return self.description
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.

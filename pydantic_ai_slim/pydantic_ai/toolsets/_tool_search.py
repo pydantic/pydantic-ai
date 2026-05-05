@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
@@ -46,6 +46,7 @@ class _SearchIndexEntry:
     name: str
     description: str | None
     search_terms: set[str]
+    capability_id: str | None
 
 
 @dataclass(kw_only=True)
@@ -66,17 +67,19 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
+        loaded_capability_ids = ctx.loaded_capability_ids
 
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            if tool.tool_def.defer_loading:
+            tool = self._resolve_tool(tool, loaded_capability_ids)
+            if tool.tool_def.defer_loading is True:
                 deferred[name] = tool
             else:
                 visible[name] = tool
 
         if not deferred:
-            return all_tools
+            return visible
 
         if _SEARCH_TOOLS_NAME in all_tools:
             raise UserError(
@@ -86,13 +89,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         discovered = self._parse_discovered_tools(ctx)
 
         if discovered.issuperset(deferred):
-            return all_tools
+            return visible | {name: self._make_visible(tool) for name, tool in deferred.items()}
 
         search_index = [
             _SearchIndexEntry(
                 name=name,
                 description=tool.tool_def.description,
                 search_terms=self._search_terms(name, tool.tool_def.description),
+                capability_id=tool.tool_def.capability_id,
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -121,10 +125,27 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
         result.update(visible)
         for name, tool in deferred.items():
-            if name in discovered:
-                result[name] = tool
+            if name in discovered and (
+                (cap_id := tool.tool_def.capability_id) is None or cap_id in loaded_capability_ids
+            ):
+                result[name] = self._make_visible(tool)
 
         return result
+
+    @staticmethod
+    def _resolve_tool(tool: ToolsetTool[AgentDepsT], loaded_capability_ids: set[str]) -> ToolsetTool[AgentDepsT]:
+        tool_def = tool.tool_def
+        if tool_def.defer_loading is not True:
+            return replace(tool, tool_def=replace(tool_def, defer_loading=False))
+        if tool_def.defer_loading is True and tool_def.capability_id in loaded_capability_ids:
+            return replace(tool, tool_def=replace(tool_def, defer_loading=False))
+        return tool
+
+    @staticmethod
+    def _make_visible(tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+        if tool.tool_def.defer_loading is False:
+            return tool
+        return replace(tool, tool_def=replace(tool.tool_def, defer_loading=False))
 
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
         """Parse message history to find tools discovered via search_tools."""
@@ -145,7 +166,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if name == _SEARCH_TOOLS_NAME and isinstance(tool, _SearchTool):
-            return await self._search_tools(tool_args, tool)
+            return await self._search_tools(ctx, tool_args, tool)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     @staticmethod
@@ -155,7 +176,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             search_terms.update(_SEARCH_TOKEN_RE.findall(description.lower()))
         return search_terms
 
-    async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+    async def _search_tools(
+        self, ctx: RunContext[AgentDepsT], tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]
+    ) -> ToolReturn:
         """Search for tools ordered by token overlap with the query.
 
         Tokenizes both the query and each tool's name/description on alphanumeric runs,
@@ -175,7 +198,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         scored_matches: list[tuple[int, dict[str, str | None]]] = []
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
-            if score == 0:
+            if score == 0 or (entry.capability_id is not None and entry.capability_id not in ctx.loaded_capability_ids):
+                # This way you cannot discover tools that are part of a deferred cap
+                # I am not quite sure yet how this would work with #5143
                 continue
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
