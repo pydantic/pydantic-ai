@@ -2566,7 +2566,7 @@ async def test_agent_to_mcp_unknown_tool():
 
     result = await _call_tool(server, 'unknown_tool', {'prompt': 'hello'})
     assert result.isError is True
-    assert _error_text(result) == 'Unknown tool: unknown_tool'
+    assert _error_text(result) == "Unknown tool: 'unknown_tool'"
 
 
 async def test_agent_to_mcp_missing_prompt():
@@ -2655,6 +2655,24 @@ async def test_agent_to_mcp_call_tool_structured_output():
     result = await _call_tool(server, 'structured_agent', {'prompt': 'hello'})
     assert result.isError is False
     assert result.structuredContent == snapshot({'result': {'value': 0, 'label': 'a'}})
+
+
+async def test_agent_to_mcp_with_tool_output():
+    """`OutputSpec` wrappers like `ToolOutput` should be handled correctly."""
+    from pydantic import BaseModel
+
+    from pydantic_ai.output import ToolOutput
+
+    class MyOutput(BaseModel):
+        value: int
+
+    agent = Agent(TestModel(), output_type=ToolOutput(MyOutput), name='Tool Output Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'tool_output_agent', {'prompt': 'hello'})
+    assert result.isError is False
+    assert result.structuredContent == snapshot({'result': {'value': 0}})
 
 
 async def test_agent_to_mcp_default_name():

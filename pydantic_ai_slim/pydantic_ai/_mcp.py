@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 import logfire
 from pydantic import TypeAdapter
@@ -10,6 +10,7 @@ from pydantic.alias_generators import to_snake
 from typing_extensions import TypedDict, assert_never
 
 from . import exceptions, messages
+from ._output import types_from_output_spec
 from ._run_context import AgentDepsT
 from .output import OutputDataT
 
@@ -162,7 +163,12 @@ def agent_to_mcp(
     default_name = to_snake((agent.name or 'PydanticAI Agent').replace(' ', '_'))
     server_name = server_name or default_name
     tool_name = tool_name or default_name
-    output_adapter: TypeAdapter[Any] = TypeAdapter(agent.output_type)
+
+    return_types = types_from_output_spec(agent.output_type)
+    if len(return_types) == 1:
+        output_adapter: TypeAdapter[Any] = TypeAdapter(return_types[0])
+    else:
+        output_adapter = TypeAdapter(Union[tuple(return_types)])  # noqa: UP007
 
     app: Server[Any, Any] = Server(name=server_name)
 
@@ -186,7 +192,7 @@ def agent_to_mcp(
 
     async def call_tool(name: str, args: _AgentToolArgs) -> StructuredContent:
         if name != tool_name:
-            raise ValueError(f'Unknown tool: {name}')
+            raise ValueError(f'Unknown tool: {name!r}')
 
         logfire.info('Calling tool {name}', name=name, args=args)
 
