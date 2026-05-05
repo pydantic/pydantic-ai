@@ -3,7 +3,7 @@ name: PR Guard
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed to close duplicate PRs and manage issues; no fork code is checked out
   pull_request_target:
-    types: [opened, ready_for_review, edited]
+    types: [opened, ready_for_review, edited, synchronize]
 
 permissions: {}
 
@@ -13,6 +13,10 @@ concurrency:
 jobs:
   guard:
     name: Guard
+    # The duplicate / linking / assignment checks only need to run when the PR is
+    # opened, marked ready, or its body changes. `synchronize` (a push to the PR
+    # branch) is handled by `reset-safe-for-ci` below.
+    if: github.event.action != 'synchronize'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -177,3 +181,25 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
           GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           GITHUB_EVENT_PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}
+
+  # On every push to a fork PR, drop the `safe-for-ci` label so a maintainer has
+  # to re-review and re-add it before the harness-compat workflow runs against
+  # the new commits. Same-org PRs are exempt (they don't need the label to run
+  # cross-repo CI in the first place).
+  reset-safe-for-ci:
+    name: Reset `safe-for-ci` on push to fork PRs
+    if: |
+      github.event.action == 'synchronize' &&
+      github.event.pull_request.head.repo.fork &&
+      contains(github.event.pull_request.labels.*.name, 'safe-for-ci')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove `safe-for-ci` label
+        run: gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label safe-for-ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
