@@ -43,7 +43,6 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
-from .._deferred import build_deferred_loading_registry
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
@@ -52,7 +51,6 @@ from ..capabilities import AbstractCapability, CombinedCapability
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
-from ..capabilities.deferred import DeferredLoadingCapability
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec, StructuredDict
@@ -1230,10 +1228,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             additional_instructions=instructions,
             cap_instructions=cap_instructions,
         )
-
-        deferred_registry = build_deferred_loading_registry(run_capability)
-        if deferred_registry is not None:
-            run_capability = CombinedCapability([DeferredLoadingCapability(registry=deferred_registry), run_capability])
 
         instructions_literal, instructions_functions = self._get_prompt_instructions(collected_instructions)
 

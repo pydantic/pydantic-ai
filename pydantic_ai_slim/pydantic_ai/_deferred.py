@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Generic, cast
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import TypedDict
 
-from pydantic_ai import _system_prompt
-from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
-    from pydantic_ai.capabilities.abstract import AbstractCapability
     from pydantic_ai.messages import ModelMessage
 
 
@@ -73,49 +70,3 @@ def prepare_capability_tool_definitions(
         ]
 
     return prepare
-
-
-@dataclass
-class DeferredCapabilityCatalogEntry:
-    """Catalog metadata for a capability that can be loaded on demand."""
-
-    capability_id: str
-    description: str
-
-
-@dataclass
-class DeferredLoadingRegistry(Generic[AgentDepsT]):
-    """Run-local catalog and instruction bodies used by ``load_capability``."""
-
-    catalog: dict[str, DeferredCapabilityCatalogEntry]
-    instructions: dict[str, list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
-
-
-def build_deferred_loading_registry(
-    capability: AbstractCapability[AgentDepsT],
-) -> DeferredLoadingRegistry[AgentDepsT] | None:
-    catalog: dict[str, DeferredCapabilityCatalogEntry] = {}
-    deferred_instructions: dict[str, list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]] = {}
-
-    def collect_deferred_capability(cap: AbstractCapability[AgentDepsT]) -> None:
-        if cap.defer_loading is not True:
-            return
-
-        capability_id = cap.id
-        description = cap.get_description()
-        if capability_id is None:
-            raise ValueError('Capabilities with defer_loading=True must have an id.')
-        if description is None:
-            raise ValueError('Capabilities with defer_loading=True must have a description.')
-
-        catalog[capability_id] = DeferredCapabilityCatalogEntry(
-            capability_id=capability_id,
-            description=description,
-        )
-        deferred_instructions[capability_id] = normalize_instructions(cap.get_instructions())
-
-    capability.apply(collect_deferred_capability)
-    if not catalog:
-        return None
-
-    return DeferredLoadingRegistry(catalog=catalog, instructions=deferred_instructions)

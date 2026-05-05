@@ -68,6 +68,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
             if capability.defer_loading is True:
+                # So now deferred capabilities instructions are not included
                 continue
             instructions.extend(normalize_instructions(capability.get_instructions()))
         return instructions or None

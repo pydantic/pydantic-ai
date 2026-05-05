@@ -8,6 +8,7 @@ from dataclasses import field
 from typing import TYPE_CHECKING, Any, Generic
 
 from opentelemetry.trace import NoOpTracer, Tracer
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from typing_extensions import TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
@@ -103,6 +104,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.
     """
+
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(
+        default_factory=dict[str, AbstractCapability[RunContextAgentDepsT]]
+    )
 
     @property
     def last_attempt(self) -> bool:

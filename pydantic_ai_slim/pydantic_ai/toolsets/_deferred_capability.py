@@ -8,10 +8,10 @@ from typing_extensions import TypedDict
 
 from pydantic_ai._deferred import (
     LOAD_CAPABILITY_TOOL_NAME,
-    DeferredLoadingRegistry,
     LoadCapabilityReturn,
     parse_loaded_capabilities,
 )
+from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.messages import ToolReturn
@@ -45,17 +45,15 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     are loaded, the ``load_capability`` tool is removed.
     """
 
-    registry: DeferredLoadingRegistry[AgentDepsT]
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
         loaded_ids = parse_loaded_capabilities(ctx.messages)
-        unloaded = [entry for entry in self.registry.catalog.values() if entry.capability_id not in loaded_ids]
+        unloaded = [entry for entry in ctx.capabilities.values() if entry.id not in loaded_ids]
         if not unloaded:
             return all_tools
 
-        catalog = '\n'.join(f'- {entry.capability_id}: {entry.description}' for entry in unloaded)
+        catalog = '\n'.join(f'- {entry.id}: {entry.get_description()}' for entry in unloaded)
 
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,
@@ -85,10 +83,10 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
 
     async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn | str:
         capability_id = tool_args['id']
-        if capability_id not in self.registry.catalog:
+        if capability_id not in ctx.capabilities:
             return f'No capability found with id {capability_id!r}.'
 
-        instructions = self.registry.instructions.get(capability_id, [])
+        instructions = normalize_instructions(ctx.capabilities[capability_id].get_instructions())
 
         parts: list[str] = []
 
