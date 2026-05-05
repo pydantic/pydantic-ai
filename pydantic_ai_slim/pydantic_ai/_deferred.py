@@ -55,16 +55,12 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
 def prepare_capability_tool_definitions(
     *,
     capability_id: str | None,
-    capability_defer_loading: bool | None,
 ) -> ToolsPrepareFunc[AgentDepsT]:
     def prepare(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return [
             replace(
                 tool_def,
                 capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
-                defer_loading=(
-                    tool_def.defer_loading if tool_def.defer_loading is not None else capability_defer_loading
-                ),
             )
             for tool_def in tool_defs
         ]

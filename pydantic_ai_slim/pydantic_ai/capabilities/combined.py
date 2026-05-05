@@ -128,7 +128,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     cap_toolset,
                     prepare_capability_tool_definitions(
                         capability_id=capability.id,
-                        capability_defer_loading=capability.defer_loading,
                     ),
                 )
             )

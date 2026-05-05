@@ -46,7 +46,6 @@ class _SearchIndexEntry:
     name: str
     description: str | None
     search_terms: set[str]
-    capability_id: str | None
 
 
 @dataclass(kw_only=True)
@@ -69,16 +68,26 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         all_tools = await self.wrapped.get_tools(ctx)
         loaded_capability_ids = ctx.loaded_capability_ids
 
+        has_blocked_by_capability = False
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            tool = self._resolve_tool(tool, loaded_capability_ids)
-            if tool.tool_def.defer_loading is True:
+            tool_def = tool.tool_def
+            capability_id = tool_def.capability_id
+            if (
+                tool_def.defer_loading is not False
+                and capability_id is not None
+                and capability_id not in loaded_capability_ids
+                and (capability := ctx.capabilities.get(capability_id)) is not None
+                and capability.defer_loading is True
+            ):
+                has_blocked_by_capability = True
+            elif tool_def.defer_loading is True:
                 deferred[name] = tool
             else:
-                visible[name] = tool
+                visible[name] = self._make_visible(tool)
 
-        if not deferred:
+        if not deferred and not has_blocked_by_capability:
             return visible
 
         if _SEARCH_TOOLS_NAME in all_tools:
@@ -88,7 +97,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
         discovered = self._parse_discovered_tools(ctx)
 
-        if discovered.issuperset(deferred):
+        if discovered.issuperset(deferred) and not has_blocked_by_capability:
             return visible | {name: self._make_visible(tool) for name, tool in deferred.items()}
 
         search_index = [
@@ -96,7 +105,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 name=name,
                 description=tool.tool_def.description,
                 search_terms=self._search_terms(name, tool.tool_def.description),
-                capability_id=tool.tool_def.capability_id,
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -125,21 +133,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
         result.update(visible)
         for name, tool in deferred.items():
-            if name in discovered and (
-                (cap_id := tool.tool_def.capability_id) is None or cap_id in loaded_capability_ids
-            ):
+            if name in discovered:
                 result[name] = self._make_visible(tool)
 
         return result
-
-    @staticmethod
-    def _resolve_tool(tool: ToolsetTool[AgentDepsT], loaded_capability_ids: set[str]) -> ToolsetTool[AgentDepsT]:
-        tool_def = tool.tool_def
-        if tool_def.defer_loading is not True:
-            return replace(tool, tool_def=replace(tool_def, defer_loading=False))
-        if tool_def.defer_loading is True and tool_def.capability_id in loaded_capability_ids:
-            return replace(tool, tool_def=replace(tool_def, defer_loading=False))
-        return tool
 
     @staticmethod
     def _make_visible(tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
@@ -198,9 +195,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         scored_matches: list[tuple[int, dict[str, str | None]]] = []
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
-            if score == 0 or (entry.capability_id is not None and entry.capability_id not in ctx.loaded_capability_ids):
-                # This way you cannot discover tools that are part of a deferred cap
-                # I am not quite sure yet how this would work with #5143
+            if score == 0:
                 continue
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 

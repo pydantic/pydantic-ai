@@ -23,6 +23,7 @@ from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -357,7 +358,12 @@ async def test_tool_search_eval(allow_model_requests: None, case: ModelCase) -> 
 T = TypeVar('T')
 
 
-def _build_run_context(deps: T, run_step: int = 0, messages: list[ModelMessage] | None = None) -> RunContext[T]:
+def _build_run_context(
+    deps: T,
+    run_step: int = 0,
+    messages: list[ModelMessage] | None = None,
+    capabilities: dict[str, AbstractCapability[T]] | None = None,
+) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -365,6 +371,7 @@ def _build_run_context(deps: T, run_step: int = 0, messages: list[ModelMessage] 
         prompt=None,
         messages=messages or [],
         run_step=run_step,
+        capabilities=capabilities or {},
     )
 
 
@@ -741,6 +748,59 @@ async def test_tool_search_toolset_no_deferred_tools_returns_all():
     assert tool_names == snapshot(['get_weather', 'get_time'])
 
 
+async def test_tool_search_handles_search_gated_tools_from_eager_capability():
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def capability_search_tool() -> str:  # pragma: no cover
+        """Search-gated tool owned by an eager capability."""
+        return 'search-gated'
+
+    capability = Capability[None](
+        id='example',
+        description='Example capability.',
+        toolset=toolset,
+    )
+    cap_toolset = CombinedCapability([capability]).get_toolset()
+    assert isinstance(cap_toolset, AbstractToolset)
+    cap_toolset = cast(AbstractToolset[None], cap_toolset)
+
+    searchable: ToolSearchToolset[None] = ToolSearchToolset(wrapped=cap_toolset)
+    ctx = _build_run_context(None, capabilities={'example': capability})
+
+    tools = await searchable.get_tools(ctx)
+
+    assert list(tools) == snapshot(['search_tools'])
+
+    search_result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'eager'}, ctx, tools[_SEARCH_TOOLS_NAME])
+
+    assert isinstance(search_result, ToolReturn)
+    assert search_result.return_value == snapshot(
+        [{'name': 'capability_search_tool', 'description': 'Search-gated tool owned by an eager capability.'}]
+    )
+
+    discovered_ctx = _build_run_context(
+        None,
+        messages=[
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name=_SEARCH_TOOLS_NAME,
+                        content=search_result.return_value,
+                        metadata=search_result.metadata,
+                    )
+                ]
+            )
+        ],
+        capabilities={'example': capability},
+    )
+
+    discovered_tools = await searchable.get_tools(discovered_ctx)
+
+    assert list(discovered_tools) == snapshot(['capability_search_tool'])
+    assert discovered_tools['capability_search_tool'].tool_def.defer_loading is False
+
+
 async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     toolset: FunctionToolset[None] = FunctionToolset()
 
@@ -748,6 +808,11 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     def inherited_tool() -> str:  # pragma: no cover
         """Inherited deferred tool."""
         return 'inherited'
+
+    @toolset.tool_plain(defer_loading=True)
+    def search_gated_tool() -> str:  # pragma: no cover
+        """Special tool that still requires search after loading."""
+        return 'search-gated'
 
     @toolset.tool_plain(defer_loading=False)
     def eager_tool() -> str:  # pragma: no cover
@@ -765,7 +830,7 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     cap_toolset = cast(AbstractToolset[None], cap_toolset)
 
     searchable: ToolSearchToolset[None] = ToolSearchToolset(wrapped=cap_toolset)
-    ctx = _build_run_context(None)
+    ctx = _build_run_context(None, capabilities={'example': capability})
 
     initial_tools = await searchable.get_tools(ctx)
 
@@ -774,6 +839,12 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     assert initial_tools['eager_tool'].tool_def.defer_loading is False
     visible_eager_tool = ToolSearchToolset._make_visible(initial_tools['eager_tool'])  # pyright: ignore[reportPrivateUsage]
     assert visible_eager_tool is initial_tools['eager_tool']
+
+    initial_search_result = await searchable.call_tool(
+        _SEARCH_TOOLS_NAME, {'keywords': 'special'}, ctx, initial_tools[_SEARCH_TOOLS_NAME]
+    )
+    assert isinstance(initial_search_result, ToolReturn)
+    assert initial_search_result.return_value == snapshot('No matching tools found. The tools you need may not be available.')
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -785,12 +856,46 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
             ]
         )
     ]
-    loaded_ctx = _build_run_context(None, messages=messages)
+    loaded_ctx = _build_run_context(None, messages=messages, capabilities={'example': capability})
 
     loaded_tools = await searchable.get_tools(loaded_ctx)
 
-    assert list(loaded_tools) == snapshot(['inherited_tool', 'eager_tool'])
+    assert list(loaded_tools) == snapshot(['search_tools', 'inherited_tool', 'eager_tool'])
     assert loaded_tools['inherited_tool'].tool_def.defer_loading is False
+    assert 'search_gated_tool' not in loaded_tools
+
+    loaded_search_result = await searchable.call_tool(
+        _SEARCH_TOOLS_NAME, {'keywords': 'special'}, loaded_ctx, loaded_tools[_SEARCH_TOOLS_NAME]
+    )
+    assert isinstance(loaded_search_result, ToolReturn)
+    assert loaded_search_result.return_value == snapshot(
+        [{'name': 'search_gated_tool', 'description': 'Special tool that still requires search after loading.'}]
+    )
+
+    discovered_ctx = _build_run_context(
+        None,
+        messages=[
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        content={'capability_id': 'example', 'instructions': None},
+                    ),
+                    ToolReturnPart(
+                        tool_name=_SEARCH_TOOLS_NAME,
+                        content=loaded_search_result.return_value,
+                        metadata=loaded_search_result.metadata,
+                    ),
+                ]
+            )
+        ],
+        capabilities={'example': capability},
+    )
+
+    discovered_tools = await searchable.get_tools(discovered_ctx)
+
+    assert list(discovered_tools) == snapshot(['inherited_tool', 'eager_tool', 'search_gated_tool'])
+    assert discovered_tools['search_gated_tool'].tool_def.defer_loading is False
 
 
 async def test_tool_search_ignores_malformed_loaded_capability_history():
@@ -825,7 +930,7 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
         messages: list[ModelMessage] = [
             ModelRequest(parts=[ToolReturnPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, content=content)])
         ]
-        ctx = _build_run_context(None, messages=messages)
+        ctx = _build_run_context(None, messages=messages, capabilities={'reports': capability})
         tools = await searchable.get_tools(ctx)
         visible_tools[case_name] = list(tools)
 

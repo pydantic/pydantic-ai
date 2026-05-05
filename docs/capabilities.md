@@ -521,7 +521,7 @@ The description is visible before loading. Dynamic instructions run when `load_c
 
 Deferred capabilities currently support instructions and function tools. Model settings and [builtin tools](builtin-tools.md) must stay in always-on capabilities.
 
-Tools provided by a deferred capability inherit the capability's `defer_loading=True` unless the tool explicitly sets its own `defer_loading` value.
+Tools in a deferred capability are hidden until the capability is loaded. Set a tool's `defer_loading=True` to keep it behind `search_tools` after loading, or `False` to expose it before loading.
 
 Loaded capability state comes from the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) removes the `load_capability` tool return, the model may need to load the capability again.
 
