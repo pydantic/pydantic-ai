@@ -79,7 +79,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Choosing a model
 
-The best embedding model depends on your constraints. Here's a starting-point cheat sheet; consult each provider's docs and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) before committing to a model for a large index.
+The best embedding model depends on your language, domain, latency, deployment, and evaluation constraints. Use this table as a starting point, then check the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard), the model card on the [Hugging Face Hub](https://huggingface.co/models?library=sentence-transformers), and your own retrieval evaluation before committing to a model for a large index.
 
 | If you want…                         | For example                                                                                                                                                                                                                                      |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -92,6 +92,42 @@ The best embedding model depends on your constraints. Here's a starting-point ch
 
 !!! tip "Switching models later"
     Swapping a model changes the output dimension and the similarity distribution, so you'll need to re-embed (and re-index) your documents. Pick a model you're happy to stick with, or one that supports [dimension control](#settings) so you can tune the index size without changing models.
+
+## Using embeddings for RAG
+
+For Retrieval-Augmented Generation (RAG), embeddings are one part of a larger retrieval pipeline. Pydantic AI provides [`Embedder`][pydantic_ai.embeddings.Embedder] for query and document embeddings, and [tools](tools.md) for giving retrieved context to an agent. Chunking, vector storage, retrieval tuning, and evaluation stay application-specific so you can choose the right libraries and infrastructure for your data.
+
+A typical RAG pipeline looks like this:
+
+1. Split source documents into chunks.
+2. Embed the chunks with [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents].
+3. Store each vector with metadata such as source URL, title, heading, page number, and permissions.
+4. Embed the user's search text with [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query].
+5. Search a vector index for similar chunks.
+6. Optionally [rerank](#two-stage-retrieval-with-rerankers) the shortlist.
+7. Pass the retrieved text to the agent through a tool, as shown in the [RAG example](examples/rag.md).
+
+### Chunking
+
+There is no universal chunk size. Start with the natural structure of your documents: headings, sections, paragraphs, pages, or records. Chunks should usually be large enough to answer a focused question, but small enough that unrelated ideas do not dilute the embedding. Keep source metadata with every chunk so the agent can cite or inspect the original document.
+
+For deeper guidance, see Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation), which explains chunking tradeoffs and why retrieval changes should be evaluated, and the [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag), which walks through chunking, vector search, distances, reranking, and evaluation knobs.
+
+### Vector storage
+
+Pydantic AI does not prescribe a vector database. Use the storage layer that fits the rest of your application:
+
+- SQLite, LanceDB, or FAISS for local prototypes and small indexes.
+- PostgreSQL with `pgvector` when Postgres is already your operational database.
+- Managed vector or search services when you need hosted scaling, access control, or operational support.
+
+Whichever store you choose, use the same embedding model and similarity assumptions for indexing and querying. Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag) gives a good introduction to vector databases, nearest-neighbor search, and similarity choices such as cosine similarity, dot product, and Euclidean distance.
+
+### Model selection and evaluation
+
+Public benchmarks are useful for narrowing the search, not for proving which model is best for your application. Use the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) to compare embedding models by task, language, model size, and score, then validate the shortlist on queries and documents that look like your production data.
+
+Hugging Face's [RAG evaluation cookbook](https://huggingface.co/learn/cookbook/rag_evaluation) shows how to evaluate a RAG system and compare changes to chunk size, embedding model, reranking, and generation settings. For open-source embedding deployment, see Hugging Face [Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference), including its [supported models and hardware](https://huggingface.co/docs/text-embeddings-inference/supported_models).
 
 ## Providers
 
@@ -611,7 +647,7 @@ embedder = Embedder(model)
 
 ### Sentence Transformers (Local)
 
-[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [sentence-transformers](https://www.sbert.net/) library, giving you access to the thousands of [embedding models on Hugging Face](https://huggingface.co/models?library=sentence-transformers) without any API calls. This is ideal for:
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [Sentence Transformers](https://huggingface.co/docs/hub/sentence-transformers) library, giving you access to the thousands of [embedding models on Hugging Face](https://huggingface.co/models?library=sentence-transformers) without any API calls. This is ideal for:
 
 - **Privacy** — Data never leaves your infrastructure
 - **Cost** — No API charges for high-volume workloads
@@ -643,7 +679,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-[`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
+[`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See [Using Sentence Transformers at Hugging Face](https://huggingface.co/docs/hub/sentence-transformers), the [Hugging Face Sentence Transformers models](https://huggingface.co/models?library=sentence-transformers), and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
 
 #### Device Selection
 
@@ -818,6 +854,8 @@ Call `rerank()` on the candidates returned by your vector search (for example, i
 
 !!! tip "Managed reranker alternatives"
     If you'd rather not run a reranker locally, several providers offer hosted rerankers, including [Cohere Rerank](https://docs.cohere.com/docs/rerank-overview), [VoyageAI Rerank](https://docs.voyageai.com/docs/reranker), and [Jina Rerank](https://jina.ai/reranker). Call their HTTP clients or SDKs from a helper function with the same shape as `rerank()` above.
+
+For more background on retrieve-and-rerank pipelines, see Hugging Face's [advanced RAG cookbook](https://huggingface.co/learn/cookbook/advanced_rag). To serve open-source embedding and reranker models yourself, see Hugging Face [Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference) and its [supported rerankers](https://huggingface.co/docs/text-embeddings-inference/supported_models#supported-re-rankers-and-sequence-classification-models).
 
 ## Building Custom Embedding Models
 
