@@ -8,7 +8,7 @@ from typing import Literal
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.join import ReduceFirstValue, ReducerContext, reduce_sum
 
 from ..._inline_snapshot import snapshot
@@ -338,7 +338,7 @@ async def test_literal_branch_matching():
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose C'  # pragma: no cover
 
-    from pydantic_graph.beta import TypeExpression
+    from pydantic_graph import TypeExpression
 
     g.add(
         g.edge_from(g.start_node).to(choose_option),

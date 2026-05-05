@@ -17,8 +17,8 @@ Create a join using `GraphBuilder.join` with a reducer function and initial valu
 ```python {title="basic_join.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_list_append
 
 
 @dataclass
@@ -67,8 +67,8 @@ Pydantic Graph provides several common reducer types out of the box:
 ```python {title="list_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_list_append
 
 
 @dataclass
@@ -111,8 +111,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="list_extend_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_extend
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_list_extend
 
 
 @dataclass
@@ -156,8 +156,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="dict_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_dict_update
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_dict_update
 
 
 @dataclass
@@ -201,8 +201,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="null_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_null
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_null
 
 
 @dataclass
@@ -253,8 +253,8 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 ```python {title="sum_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_sum
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_sum
 
 
 @dataclass
@@ -298,7 +298,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.join import ReduceFirstValue
 
 
@@ -350,7 +350,7 @@ Create custom reducers by defining a [`ReducerFunction`][pydantic_graph.beta.joi
 
 ```python {title="custom_reducer.py"}
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 def reduce_sum(current: int, inputs: int) -> int:
@@ -393,7 +393,7 @@ Reducers can access and modify the graph state:
 ```python {title="stateful_reducer.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.join import ReducerContext
 
 
@@ -477,7 +477,7 @@ Reducers with access to [`ReducerContext`][pydantic_graph.beta.join.ReducerConte
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.join import ReducerContext
 
 
@@ -544,8 +544,8 @@ A graph can have multiple independent joins:
 ```python {title="multiple_joins.py"}
 from dataclasses import dataclass, field
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_list_append
 
 
 @dataclass
@@ -618,7 +618,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 Like steps, joins can have custom IDs:
 
 ```python {title="join_custom_id.py" requires="basic_join.py"}
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import reduce_list_append
 
 from basic_join import g
 

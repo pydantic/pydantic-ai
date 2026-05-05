@@ -20,7 +20,7 @@ Use [`g.decision()`][pydantic_graph.beta.graph_builder.GraphBuilder.decision] to
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -73,7 +73,7 @@ Match by type using regular Python types:
 ```python {title="type_matching.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -121,7 +121,7 @@ For more complex type expressions like unions, you need to use [`TypeExpression`
 ```python {title="union_type_matching.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -177,7 +177,7 @@ Provide custom matching logic with the `matches` parameter:
 ```python {title="custom_matcher.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -225,7 +225,7 @@ Branches are evaluated in the order they're added. The first matching branch is 
 ```python {title="branch_priority.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -275,7 +275,7 @@ Use `object` or `Any` to create a catch-all branch:
 ```python {title="catch_all.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -315,7 +315,7 @@ Decisions can be nested for complex conditional logic:
 ```python {title="nested_decisions.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass
@@ -377,7 +377,7 @@ Add labels to branches for documentation and diagram generation:
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_graph.beta import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext, TypeExpression
 
 
 @dataclass

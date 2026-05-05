@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.graph_builder import GraphBuildingError
 from pydantic_graph.beta.join import reduce_list_append, reduce_sum
 from pydantic_graph.beta.node import Fork
