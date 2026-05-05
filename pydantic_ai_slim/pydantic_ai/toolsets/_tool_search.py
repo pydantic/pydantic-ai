@@ -123,7 +123,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
         result.update(visible)
         for name, tool in deferred.items():
-            if name in discovered:
+            if name in discovered and (
+                (cap_id := tool.tool_def.capability_id) is None or cap_id in loaded_capability_ids
+            ):
                 result[name] = self._make_visible(tool)
 
         return result
