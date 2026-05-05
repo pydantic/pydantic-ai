@@ -321,9 +321,12 @@ class XaiModel(Model[AsyncClient]):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+
+    @property
+    def client(self) -> 'AsyncClient':
+        return self._provider.client
 
     @property
     def model_name(self) -> str:
@@ -987,6 +990,8 @@ class XaiStreamedResponse(StreamedResponse):
                 provider_name=self.system,
                 provider_details={'function_name': tool_call.function.name},
             )
+            if builtin_tool_name == CodeExecutionTool.kind:
+                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
             return
 
@@ -1445,16 +1450,16 @@ def _create_tool_call_part(
                 args = _build_mcp_tool_call_args(tool_call)
             else:
                 args = _parse_tool_args(tool_call.function.arguments)
-            return (
-                tool_call.id,
-                BuiltinToolCallPart(
-                    tool_name=builtin_tool_name,
-                    args=args,
-                    tool_call_id=tool_call.id,
-                    provider_name=provider_name,
-                    provider_details={'function_name': tool_call.function.name},
-                ),
+            call_part = BuiltinToolCallPart(
+                tool_name=builtin_tool_name,
+                args=args,
+                tool_call_id=tool_call.id,
+                provider_name=provider_name,
+                provider_details={'function_name': tool_call.function.name},
             )
+            if builtin_tool_name == CodeExecutionTool.kind:
+                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+            return (tool_call.id, call_part)
     else:
         # Client-side tool call
         return (

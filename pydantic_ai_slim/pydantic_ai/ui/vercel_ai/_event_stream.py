@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
-from uuid import uuid4
 
 from pydantic_core import to_json
 
@@ -130,7 +129,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
             for tool_call in output.approvals:
                 yield ToolApprovalRequestChunk(
-                    approval_id=str(uuid4()),
+                    approval_id=tool_call.tool_call_id,
                     tool_call_id=tool_call.tool_call_id,
                 )
             return

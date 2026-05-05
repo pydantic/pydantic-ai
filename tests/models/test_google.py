@@ -74,7 +74,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -85,6 +85,8 @@ with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
         BlockedReason,
+        Candidate,
+        Content,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
@@ -92,11 +94,13 @@ with try_import() as imports_successful:
         HarmBlockThreshold,
         HarmCategory,
         HarmProbability,
+        HttpResponse,
         LogprobsResult,
         LogprobsResultCandidate,
         LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        Part,
         SafetyRating,
         ToolType,
     )
@@ -106,7 +110,7 @@ with try_import() as imports_successful:
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
-        GoogleServiceTier,
+        GoogleVertexServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _GoogleRequestFlags,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
@@ -139,6 +143,11 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
     return GoogleProvider(api_key=gemini_api_key)
 
 
+def test_google_client_property_delegates_to_provider(google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    assert model.client is google_provider.client
+
+
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     assert model.base_url == 'https://generativelanguage.googleapis.com/'
@@ -167,6 +176,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 instructions='You are a chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello! How can I help you today?')],
@@ -181,6 +191,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -231,6 +242,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -251,6 +263,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -261,6 +274,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -283,6 +297,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -295,6 +310,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -355,6 +371,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -377,6 +394,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -389,6 +407,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -411,6 +430,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -423,6 +443,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -443,6 +464,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -539,10 +561,20 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
-            IsInstance(FunctionToolCallEvent),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='get_capital',
+                    args={'country': 'France'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
-                    tool_name='get_capital', content='Paris', tool_call_id=IsStr(), timestamp=IsDatetime()
+                    tool_name='get_capital',
+                    content='Paris',
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
                 )
             ),
             PartStartEvent(
@@ -551,9 +583,20 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             ),
             PartEndEvent(
                 index=0,
-                part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
+                part=ToolCallPart(
+                    tool_name='get_temperature',
+                    args={'city': 'Paris'},
+                    tool_call_id=IsStr(),
+                ),
             ),
-            IsInstance(FunctionToolCallEvent),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='get_temperature',
+                    args={'city': 'Paris'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
@@ -743,6 +786,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
@@ -757,6 +801,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -870,6 +915,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'provider_response_id': IsStr(),
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
+                'conversation_id': IsStr(),
                 'metadata': None,
             }
         ]
@@ -893,6 +939,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -957,6 +1004,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -975,6 +1023,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1037,6 +1086,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1068,6 +1118,7 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1103,6 +1154,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1216,6 +1268,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1283,6 +1336,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1323,6 +1377,7 @@ async def test_google_model_web_fetch_tool(
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1366,6 +1421,7 @@ async def test_google_model_web_fetch_tool(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1404,6 +1460,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1445,6 +1502,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1698,6 +1756,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1719,6 +1778,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1739,6 +1799,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1760,6 +1821,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1790,6 +1852,7 @@ async def test_google_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1837,6 +1900,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1862,6 +1926,7 @@ async def test_google_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1883,6 +1948,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1918,6 +1984,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1939,6 +2006,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2122,6 +2190,7 @@ async def test_google_url_input(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -2134,6 +2203,7 @@ async def test_google_url_input(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2166,6 +2236,7 @@ async def test_google_url_input_force_download(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -2178,6 +2249,7 @@ async def test_google_url_input_force_download(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2218,6 +2290,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
@@ -2232,6 +2305,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2244,6 +2318,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr())],
@@ -2258,6 +2333,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2270,6 +2346,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2311,6 +2388,115 @@ async def test_google_extra_headers_in_config(allow_model_requests: None):
     assert headers['Content-Type'] == 'application/json'
 
 
+async def test_google_unified_service_tier(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='flex')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'flex'
+    headers = config_dict['http_options']['headers']
+    vertex_headers = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
+    for h in vertex_headers:
+        assert h not in headers
+
+
+async def test_google_service_tier_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='priority')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'priority'
+
+
+async def test_google_service_tier_auto_omits_field(allow_model_requests: None):
+    """Top-level `service_tier='auto'` is omitted from the GLA request body."""
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='auto')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict.get('service_tier') is None
+
+
+async def test_google_service_tier_default_maps_to_standard(allow_model_requests: None):
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(service_tier='default')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['service_tier'] == 'standard'
+
+
+async def test_google_service_tier_not_in_config_when_unset(allow_model_requests: None):
+    """Test that `service_tier` is completely omitted from the config when not configured."""
+    # This field has an explicit not-set test as it serves two different APIs
+    # with two different mechanisms, making it a tad more complex than others.
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings={},
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert 'service_tier' not in config_dict
+
+
+@pytest.mark.parametrize(
+    'tier,expected_header',
+    [
+        pytest.param('flex', 'flex', id='flex'),
+        pytest.param('priority', 'priority', id='priority'),
+    ],
+)
+async def test_google_unified_service_tier_maps_to_vertex_spillover(
+    allow_model_requests: None, tier: ServiceTier, expected_header: str
+):
+    """Top-level `service_tier='flex'`/`'priority'` maps to `Shared-Request-Type` on Vertex.
+
+    Both set only the single spillover header so Provisioned Throughput quota is still
+    used first when available; users who want to bypass PT entirely need
+    `google_vertex_service_tier='flex_only'`/`'priority_only'` explicitly.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project', location='us-central1'))
+    model_settings = GoogleModelSettings(service_tier=tier)
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert 'service_tier' not in config_dict, 'GLA config field must stay off on Vertex'
+    headers = config_dict['http_options']['headers']
+    assert headers['X-Vertex-AI-LLM-Shared-Request-Type'] == expected_header
+    assert 'X-Vertex-AI-LLM-Request-Type' not in headers, 'Single-header form preserves PT-first behavior'
+
+
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
@@ -2338,6 +2524,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2352,6 +2539,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2364,6 +2552,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2384,6 +2573,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2396,6 +2586,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2429,6 +2620,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2443,6 +2635,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2455,6 +2648,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
@@ -2469,6 +2663,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2499,6 +2694,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2522,6 +2718,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2554,6 +2751,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2582,6 +2780,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2610,6 +2809,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2624,6 +2824,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2658,6 +2859,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
@@ -2672,6 +2874,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2684,6 +2887,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -2698,6 +2902,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2730,6 +2935,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2750,6 +2956,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2870,6 +3077,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2892,6 +3100,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2909,6 +3118,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2936,6 +3146,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2969,6 +3180,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2988,6 +3200,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3030,6 +3243,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3060,6 +3274,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3129,6 +3344,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3151,6 +3367,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3162,6 +3379,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3189,6 +3407,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3239,6 +3458,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3290,6 +3510,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4008,6 +4229,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4021,7 +4243,8 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -4050,6 +4273,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4067,6 +4291,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4080,10 +4305,12 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 },
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
                                 },
                             ],
                             tool_call_id=IsStr(),
@@ -4120,6 +4347,7 @@ Here are some key facts about the Eiffel Tower:
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4179,6 +4407,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4195,7 +4424,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             tool_name='file_search',
                             content=[
                                 {
-                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'
+                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                    'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
                                 }
                             ],
                             tool_call_id=IsStr(),
@@ -4221,6 +4451,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -4272,7 +4503,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     part=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                            }
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -4292,7 +4526,10 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     result=BuiltinToolReturnPart(
                         tool_name='file_search',
                         content=[
-                            {'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.'}
+                            {
+                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                            }
                         ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -4604,6 +4841,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4629,6 +4867,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4641,6 +4880,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4664,6 +4904,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4695,6 +4936,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4707,6 +4949,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4915,6 +5158,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                 parts=[],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4935,6 +5179,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5301,6 +5546,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5323,6 +5569,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5335,6 +5582,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of Mexico is Mexico City.')],
@@ -5347,6 +5595,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5466,6 +5715,7 @@ async def test_google_stream_safety_filter(
         usage_metadata=None,
         create_time=datetime.datetime.now(),
         response_id='resp_123',
+        sdk_http_response=None,
     )
     chunk.model_dump_json.return_value = '{"mock": "json"}'
 
@@ -5787,6 +6037,7 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
                         ]
                     },
                 ],
+                'log_probability_sum': None,
             },
             'avg_logprobs': -1.0858495576041085,
         }
@@ -5820,6 +6071,7 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
                     {'log_probability': -4.529893e-06, 'token': '4', 'token_id': 236812},
                 ],
                 'top_candidates': None,
+                'log_probability_sum': None,
             },
             'avg_logprobs': -0.7161864553179059,
         }
@@ -5856,6 +6108,7 @@ async def test_google_vertex_logprobs_structure(
                         ]
                     }
                 ],
+                'log_probability_sum': None,
             },
             'avg_logprobs': -11.512689590454102,
         }
@@ -6006,6 +6259,120 @@ async def test_google_prompt_feedback_streaming(
         assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
 
 
+async def test_google_service_tier_response_extraction(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that service_tier is extracted from the response."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='Hello')]),
+                finish_reason=GoogleFinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=1,
+            total_token_count=2,
+        ),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+    )
+    response.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'PRIORITY'})
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+    result = await agent.run('Hello')
+
+    assert result.response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'service_tier': 'priority',
+        }
+    )
+
+
+async def test_google_service_tier_streamed_response_extraction(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Test that service_tier is extracted from streamed response chunks."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    chunk = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(parts=[Part(text='Hello')]),
+                finish_reason=GoogleFinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=1,
+            total_token_count=2,
+        ),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+    )
+    chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
+
+    async def stream_iterator():
+        yield chunk
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+    async with agent.run_stream('Hello') as result:
+        await result.get_output()
+        assert result.response.provider_details == snapshot(
+            {
+                'finish_reason': 'STOP',
+                'timestamp': IsDatetime(),
+                'service_tier': 'flex',
+            }
+        )
+
+
+async def test_google_vertex_service_tier_new_field(allow_model_requests: None):
+    """Test that the new `google_vertex_service_tier` field works."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    model_settings = GoogleModelSettings(google_vertex_service_tier='pt_only')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    assert headers['X-Vertex-AI-LLM-Request-Type'] == 'dedicated'
+
+
+async def test_google_vertex_service_tier_auto_maps_to_default(allow_model_requests: None):
+    """Test that unified `service_tier='auto'` works with Vertex (sets no headers)."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    model_settings = GoogleModelSettings(service_tier='auto')
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    routing_header_names = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
+    assert not any(k in headers for k in routing_header_names)
+
+
 @pytest.mark.parametrize(
     'service_tier,expected_headers',
     [
@@ -6030,6 +6397,11 @@ async def test_google_prompt_feedback_streaming(
             id='pt_then_flex',
         ),
         pytest.param(
+            'pt_then_priority',
+            {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'},
+            id='pt_then_priority',
+        ),
+        pytest.param(
             'flex_only',
             {
                 'X-Vertex-AI-LLM-Request-Type': 'shared',
@@ -6037,16 +6409,24 @@ async def test_google_prompt_feedback_streaming(
             },
             id='flex_only',
         ),
+        pytest.param(
+            'priority_only',
+            {
+                'X-Vertex-AI-LLM-Request-Type': 'shared',
+                'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
+            },
+            id='priority_only',
+        ),
     ],
 )
 async def test_google_service_tier_vertex_headers(
     allow_model_requests: None,
-    service_tier: GoogleServiceTier,
+    service_tier: GoogleVertexServiceTier,
     expected_headers: dict[str, str],
 ):
-    """Test that Vertex `google_service_tier` values set the expected HTTP headers."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
-    model_settings = GoogleModelSettings(google_service_tier=service_tier)
+    """Test that Vertex `google_vertex_service_tier` values set the expected HTTP headers."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    model_settings = GoogleModelSettings(google_vertex_service_tier=service_tier)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -6056,6 +6436,9 @@ async def test_google_service_tier_vertex_headers(
 
     config_dict = cast(dict[str, Any], config)
     headers = config_dict['http_options']['headers']
+
+    # For Vertex-specific tiers, the `service_tier` config parameter should be omitted.
+    assert 'service_tier' not in config_dict
 
     routing_header_names = {'X-Vertex-AI-LLM-Request-Type', 'X-Vertex-AI-LLM-Shared-Request-Type'}
     actual_routing_headers = {k: v for k, v in headers.items() if k in routing_header_names}
@@ -6076,8 +6459,25 @@ async def test_google_service_tier_not_set_no_headers(allow_model_requests: None
     config_dict = cast(dict[str, Any], config)
     headers = config_dict['http_options']['headers']
 
+    assert 'service_tier' not in config_dict
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers
     assert 'X-Vertex-AI-LLM-Shared-Request-Type' not in headers
+
+
+async def test_google_service_tier_deprecation_warning(allow_model_requests: None):
+    """Reading the deprecated `google_service_tier` field emits a `DeprecationWarning`."""
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(project='test-project'))
+    model_settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+
+    with pytest.warns(DeprecationWarning, match=r'`google_service_tier` is deprecated'):
+        _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+            messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+            model_settings=model_settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    headers = cast(dict[str, Any], config)['http_options']['headers']
+    assert headers.get('X-Vertex-AI-LLM-Shared-Request-Type') == 'flex'
 
 
 @pytest.mark.vcr()
@@ -6087,7 +6487,7 @@ async def test_google_vertex_service_tier_flex(
     model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model)
 
-    settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+    settings = GoogleModelSettings(google_vertex_service_tier='pt_then_flex')
     result = await agent.run('Reply with exactly: OK', model_settings=settings)
 
     assert result.output == snapshot('OK')
@@ -6097,6 +6497,7 @@ async def test_google_vertex_service_tier_flex(
                 parts=[UserPromptPart(content='Reply with exactly: OK', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6119,6 +6520,7 @@ async def test_google_vertex_service_tier_flex(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6131,7 +6533,7 @@ async def test_google_vertex_service_tier_flex_stream(
     model = GoogleModel('gemini-3-flash-preview', provider=vertex_provider)
     agent = Agent(model=model)
 
-    settings = GoogleModelSettings(google_service_tier='pt_then_flex')
+    settings = GoogleModelSettings(google_vertex_service_tier='pt_then_flex')
     async with agent.run_stream('Reply with exactly: OK', model_settings=settings) as result:
         output = await result.get_output()
         assert output == snapshot('OK')
@@ -6142,6 +6544,7 @@ async def test_google_vertex_service_tier_flex_stream(
                 parts=[UserPromptPart(content='Reply with exactly: OK', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6164,6 +6567,7 @@ async def test_google_vertex_service_tier_flex_stream(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
