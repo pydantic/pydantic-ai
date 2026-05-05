@@ -124,6 +124,27 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
+## Message metadata
+
+By default, the adapter keeps the historical behavior of ignoring Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata). If your application needs message-level metadata to survive the Pydantic AI ↔ Vercel AI round-trip, pass `preserve_message_metadata=True`.
+
+When enabled, [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into `UIMessage.metadata`, and it stores Pydantic AI fields needed for lossless reloads, such as timestamps and response provider details, under the `pydantic_ai` metadata key. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those fields when called with the same option.
+
+```py {test="skip" lint="skip"}
+ui_messages = VercelAIAdapter.dump_messages(messages, preserve_message_metadata=True)
+messages = VercelAIAdapter.load_messages(ui_messages, preserve_message_metadata=True)
+```
+
+For streaming endpoints, pass the option to the adapter. The response metadata is emitted as a Vercel AI `message-metadata` chunk, so frontends using AI SDK UI can persist it with the assistant message.
+
+```py {test="skip" lint="skip"}
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(
+        request, agent=agent, preserve_message_metadata=True
+    )
+```
+
 ## Trust model
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.
