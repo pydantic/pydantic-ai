@@ -2595,15 +2595,16 @@ async def test_agent_to_mcp_custom_names():
     agent = Agent(TestModel(), name='My Agent')
     with pytest.warns(UserWarning, match='experimental'):
         server = agent.to_mcp(
-            server_name='custom_server',
-            tool_name='custom_tool',
+            server_name='CustomServer',
+            tool_name='CustomTool',
             tool_description='A custom description',
         )
 
-    assert server.name == 'custom_server'
+    # User-provided names are preserved as-is, not snake-cased
+    assert server.name == 'CustomServer'
     tools_result = await _list_tools(server)
     tool = tools_result.tools[0]
-    assert tool.name == 'custom_tool'
+    assert tool.name == 'CustomTool'
     assert tool.description == 'A custom description'
 
 
@@ -2637,6 +2638,23 @@ async def test_agent_to_mcp_structured_output_schema():
             'required': ['result'],
         }
     )
+
+
+async def test_agent_to_mcp_call_tool_structured_output():
+    """A `BaseModel` agent output should round-trip through `call_tool` as JSON-serialized data."""
+    from pydantic import BaseModel
+
+    class MyOutput(BaseModel):
+        value: int
+        label: str
+
+    agent = Agent(TestModel(), output_type=MyOutput, name='Structured Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'structured_agent', {'prompt': 'hello'})
+    assert result.isError is False
+    assert result.structuredContent == snapshot({'result': {'value': 0, 'label': 'a'}})
 
 
 async def test_agent_to_mcp_default_name():
