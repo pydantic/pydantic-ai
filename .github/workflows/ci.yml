@@ -284,6 +284,26 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
+  # Enforces the `safe-for-ci` label on fork PRs so the `harness compat` workflow
+  # (in `harness-compat.yml`) actually runs before merge. That workflow lives in a
+  # separate file so it can use a `pull_request` path filter and `labeled` event
+  # type without affecting the rest of CI; cross-workflow `needs:` doesn't exist
+  # in GitHub Actions, so this gate job is how we surface the label requirement to
+  # the `check` aggregate. Fork PR without label → gate fails → `check` fails →
+  # branch protection blocks merge until a maintainer labels and re-runs.
+  harness-compat-gate:
+    name: harness compat gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require `safe-for-ci` label on fork PRs
+        if: |
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository &&
+          !contains(github.event.pull_request.labels.*.name, 'safe-for-ci')
+        run: |
+          echo "::error::Fork PRs need the 'safe-for-ci' label so the harness-compat workflow can run. A maintainer must add the label after reviewing the diff; CI will re-trigger automatically."
+          exit 1
+
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -295,6 +315,7 @@ jobs:
       - test-lowest-versions
       - test-examples
       - coverage
+      - harness-compat-gate
     runs-on: ubuntu-latest
 
     steps:

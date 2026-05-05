@@ -18,14 +18,16 @@ name: Harness Compat
 # unreviewed code on CI infrastructure, not a privilege escalation barrier.
 #
 # Fork PRs without the label produce a `skipped` job result. Branch protection
-# should require this check to merge, so unlabeled fork PRs can't be merged
-# until a maintainer labels and re-runs.
+# should require this check to merge; the `harness-compat-gate` job in `ci.yml`
+# enforces the label requirement via the `check` gate (skipped == success here
+# is bypassed by `check` failing on fork-PR-without-label).
 
 on:
   pull_request:
     types: [labeled, opened, synchronize, reopened]
     paths:
       - 'pydantic_ai_slim/**'
+      - '.github/workflows/harness-compat.yml'
   push:
     branches: [main]
     tags: ['v*']
