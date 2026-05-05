@@ -141,13 +141,43 @@ Execution hooks fire when the tool function runs. `args` is always the validated
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
 
+### Output validation hooks
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `before_output_validate` | `before_output_validate=` | `before_output_validate` |
+| `after_output_validate` | `after_output_validate=` | `after_output_validate` |
+| `output_validate` | `output_validate=` | `wrap_output_validate` |
+| `output_validate_error` | `output_validate_error=` | `on_output_validate_error` |
+
+Output validation hooks fire when structured output is parsed against the output schema. They do **not** fire for plain text or image output. All output hooks receive an `output_context` ([`OutputContext`][pydantic_ai.capabilities.OutputContext]) parameter.
+
+!!! note
+    During streaming, output **validation** hooks fire on every partial validation attempt as well as the final result. Output **processing** hooks fire only when partial validation succeeds, and on the final result. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
+
+### Output processing hooks
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `before_output_process` | `before_output_process=` | `before_output_process` |
+| `after_output_process` | `after_output_process=` | `after_output_process` |
+| `output_process` | `output_process=` | `wrap_output_process` |
+| `output_process_error` | `output_process_error=` | `on_output_process_error` |
+
+Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators.
+
+See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
+
 ### Tool preparation
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
 | `prepare_tools` | `prepare_tools=` | `prepare_tools` |
+| `prepare_output_tools` | `prepare_output_tools=` | `prepare_output_tools` |
 
-Filters or modifies tool definitions the model sees on each step. Controls visibility, not execution.
+Filters or modifies tool definitions the model sees on each step.
+
+`prepare_tools` handles **function** tools; `prepare_output_tools` handles [output tools][pydantic_ai.output.ToolOutput] separately, with `ctx.max_retries` reflecting the **output** retry budget. Both run as `PreparedToolset` wrappers — the result flows into the model's request *and* `ToolManager.tools`, so filtering also blocks tool execution.
 
 ### Deferred tool call hook
 
@@ -346,7 +376,13 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 - Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
-`ModelRetry` from `wrap_model_request` and `wrap_tool_execute` is treated as control flow — it bypasses `on_model_request_error` and `on_tool_execute_error` respectively.
+**Output hooks** (`before/after_output_validate`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
+
+- Converted to retry prompts, same as when an output function raises `ModelRetry`
+- For tool output, retries count against the tool's `max_retries` limit
+- For text output, retries count against the agent's `max_result_retries` limit
+
+`ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
 
 ```python {title="hooks_model_retry.py"}
 from pydantic_ai import Agent, RunContext

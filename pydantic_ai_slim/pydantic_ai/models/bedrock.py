@@ -361,7 +361,11 @@ class BedrockModelSettings(ModelSettings, total=False):
     """
 
     bedrock_service_tier: ServiceTierTypeDef
-    """Setting for optimizing performance and cost
+    """Setting for optimizing performance and cost.
+
+    Accepts `{'type': 'default' | 'flex' | 'priority' | 'reserved'}`. Takes precedence over the
+    top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier], and is the only
+    way to request `'reserved'` (which requires a pre-purchased capacity reservation).
 
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
     """
@@ -538,14 +542,14 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
-                            items.append(
-                                BuiltinToolCallPart(
-                                    provider_name=self.system,
-                                    tool_name=CodeExecutionTool.kind,
-                                    args=tool_use['input'],
-                                    tool_call_id=tool_use['toolUseId'],
-                                )
+                            call_part = BuiltinToolCallPart(
+                                provider_name=self.system,
+                                tool_name=CodeExecutionTool.kind,
+                                args=tool_use['input'],
+                                tool_call_id=tool_use['toolUseId'],
                             )
+                            call_part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
+                            items.append(call_part)
                     else:
                         items.append(
                             ToolCallPart(
@@ -688,8 +692,10 @@ class BedrockConverseModel(Model[BaseClient]):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
-            if service_tier := model_settings.get('bedrock_service_tier', None):
+            if service_tier := model_settings.get('bedrock_service_tier'):
                 params['serviceTier'] = service_tier
+            elif (unified_tier := model_settings.get('service_tier')) and unified_tier != 'auto':
+                params['serviceTier'] = {'type': unified_tier}
 
         if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
             params['additionalModelRequestFields'] = additional_model_requests_fields
@@ -1251,6 +1257,7 @@ class BedrockStreamedResponse(StreamedResponse):
                                         tool_call_id=tool_id,
                                         provider_name=self.provider_name,
                                     )
+                                    part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
                                     yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
                             elif maybe_event := self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=index,

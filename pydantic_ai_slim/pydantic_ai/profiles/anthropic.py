@@ -13,6 +13,12 @@ class AnthropicModelProfile(ModelProfile):
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
+    anthropic_supports_fast_speed: bool = False
+    """Whether the model supports fast inference speed (`anthropic_speed='fast'`).
+
+    Currently only Claude Opus 4.6 supports fast mode. See the Anthropic docs for the latest list.
+    """
+
     anthropic_supports_adaptive_thinking: bool = False
     """Whether the model supports adaptive thinking (Sonnet 4.6+, Opus 4.6+).
 
@@ -80,6 +86,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
+    anthropic_supports_fast_speed = model_name.startswith('claude-opus-4-6')
 
     # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
     supports_adaptive = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7'))
@@ -96,6 +103,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
+        anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
