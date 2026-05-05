@@ -48,7 +48,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     """
 
     tools: dict[str, Tool[Any]]
-    max_retries: int
+    max_retries: int | None
     timeout: float | None
     _id: str | None
     docstring_format: DocstringFormat
@@ -61,7 +61,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         timeout: float | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -80,6 +80,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+                If `None`, inherits the agent's default retry count at runtime.
                 Applies to all tools, unless overridden when adding a tool.
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
@@ -383,7 +384,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             name: The name of the tool, defaults to the function name.
             description: The description of the tool, defaults to the function docstring.
             retries: The number of retries to allow for this tool, defaults to the toolset's default retries,
-                which defaults to 1.
+                which defaults to the agent's default.
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
@@ -591,7 +592,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None:
+        if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
         if tool.defer_loading is None:
             tool.defer_loading = self._defer_loading
@@ -617,6 +618,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
+            if max_retries is None:
+                max_retries = ctx.max_retries
             run_context = replace(
                 ctx,
                 tool_name=original_name,

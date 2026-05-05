@@ -1471,6 +1471,13 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
@@ -1703,6 +1710,13 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    def __post_init__(self) -> None:
+        # Per-instance attribute populated by the instrumentation layer from
+        # `ToolDefinition.metadata` to drive OTel rendering hints (e.g. syntax highlighting).
+        # Declared here rather than as a dataclass field so it stays out of `__init__`,
+        # equality, repr, Pydantic JSON schema, and serialization.
+        self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
+
     def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -1827,6 +1841,13 @@ class ModelResponse:
 
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
+
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
@@ -1992,6 +2013,11 @@ class ModelResponse:
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
+                if part.otel_metadata:
+                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
+                        call_part['code_arg_name'] = code_arg_name
+                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
+                        call_part['code_arg_language'] = code_arg_language
                 if settings.include_content and part.args is not None:
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args

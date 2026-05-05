@@ -67,6 +67,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'presence_penalty',
             'parallel_tool_calls',
             'service_tier',
+            'openai_service_tier',
         )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         return OpenAIModelProfile(
