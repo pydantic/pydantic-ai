@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
@@ -275,6 +276,8 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     When enabled, supported downstream providers (Anthropic, Gemini) can cache stable
     system instructions and reduce costs. If dynamic instructions are present, the cache
     point is placed before them, matching Anthropic's static-prefix caching behavior.
+    For Gemini models, this setting is ignored when dynamic instructions are present because
+    OpenRouter normalizes system/developer messages into a single immutable `systemInstruction`.
     Ignored for other downstream providers.
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
@@ -688,7 +691,7 @@ class OpenRouterModel(OpenAIChatModel):
         """
         super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
-    @property
+    @cached_property
     def _cache_profile(self) -> OpenRouterModelProfile:
         """Get the OpenRouter-specific model profile with cache capability flags."""
         return OpenRouterModelProfile.from_profile(self.profile)
@@ -800,7 +803,7 @@ class OpenRouterModel(OpenAIChatModel):
             ]
         elif isinstance(content, list) and content:
             last_part = cast(dict[str, Any], content[-1])
-            last_part['cache_control'] = self._build_cache_control(ttl)
+            last_part.setdefault('cache_control', self._build_cache_control(ttl))
 
     def _add_cache_control_to_instructions(
         self,
@@ -821,13 +824,18 @@ class OpenRouterModel(OpenAIChatModel):
         if instruction_role not in ('system', 'developer'):
             return
 
+        has_dynamic_instructions = any(part.dynamic for part in instruction_parts)
+        if has_dynamic_instructions and not self._cache_profile.openrouter_supports_dynamic_instruction_cache:
+            return
+
         instruction_prefix_count = next(
             (index for index, msg in enumerate(openai_messages) if msg.get('role') != instruction_role),
             len(openai_messages),
         )
+        # Instruction parts are mapped as the tail of the system/developer prefix.
         first_instruction_index = instruction_prefix_count - len(instruction_parts)
 
-        if any(part.dynamic for part in instruction_parts):
+        if has_dynamic_instructions:
             static_instruction_count = sum(1 for part in instruction_parts if not part.dynamic)
             if static_instruction_count:
                 cache_message_index = first_instruction_index + static_instruction_count - 1
@@ -1024,6 +1032,7 @@ class OpenRouterModel(OpenAIChatModel):
         if isinstance(part.content, str):
             return chat.ChatCompletionUserMessageParam(role='user', content=part.content)
 
+        # ``super()`` would drop CachePoint before we can use its TTL or position.
         content: list[ChatCompletionContentPartParam] = []
         for item in part.content:
             if isinstance(item, CachePoint):

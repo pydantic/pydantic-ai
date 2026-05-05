@@ -46,6 +46,8 @@ class OpenRouterModelProfile(OpenAIModelProfile):
     """Whether the downstream provider supports TTL in ``cache_control``."""
     openrouter_supports_tool_cache: bool = False
     """Whether the downstream provider supports ``cache_control`` on tool definitions."""
+    openrouter_supports_dynamic_instruction_cache: bool = False
+    """Whether instruction cache boundaries can exclude later dynamic instruction blocks."""
     openrouter_max_cache_points: int | None = None
     """Maximum number of ``cache_control`` breakpoints the downstream provider allows per request.
 
@@ -166,6 +168,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             openrouter_supports_cache_control=supports_cache_control,
             openrouter_supports_cache_ttl=supports_anthropic_cache,
             openrouter_supports_tool_cache=supports_anthropic_cache,
+            openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
             openrouter_max_cache_points=4 if supports_anthropic_cache else None,
         ).update(profile)
 

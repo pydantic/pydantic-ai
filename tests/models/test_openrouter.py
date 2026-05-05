@@ -1174,6 +1174,25 @@ async def test_openrouter_cache_messages_no_duplicate_with_explicit_cache_point(
     )
 
 
+async def test_openrouter_cache_messages_preserves_final_explicit_cache_point() -> None:
+    """Test that cache_messages does not overwrite an explicit CachePoint on the final block."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(openrouter_cache_messages=True)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Final context to cache', CachePoint(ttl='1h')])])
+    ]
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), model_settings=settings
+    )
+    content = mapped[-1].get('content')
+    assert isinstance(content, list)
+    assert content == snapshot(
+        [{'type': 'text', 'text': 'Final context to cache', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
+    )
+
+
 # ===== openrouter_cache_instructions =====
 
 
@@ -1232,6 +1251,30 @@ async def test_openrouter_cache_instructions_gemini_omits_ttl() -> None:
     content = system_msg.get('content')
     assert isinstance(content, list)
     assert cast(dict[str, Any], content[0])['cache_control'] == snapshot({'type': 'ephemeral'})
+
+
+async def test_openrouter_cache_instructions_gemini_skips_dynamic_instructions() -> None:
+    """Test Gemini instruction caching is skipped when dynamic instructions are present."""
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test-key'))
+    settings = OpenRouterModelSettings(openrouter_cache_instructions=True)
+    params = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(content='Dynamic instructions.', dynamic=True),
+        ]
+    )
+
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content='Hello')])], params, model_settings=settings
+    )
+
+    system_messages = [dict(m) for m in mapped if m.get('role') == 'system']
+    assert system_messages == snapshot(
+        [
+            {'role': 'system', 'content': 'Static instructions.'},
+            {'role': 'system', 'content': 'Dynamic instructions.'},
+        ]
+    )
 
 
 async def test_openrouter_cache_instructions_unsupported_provider_ignored() -> None:

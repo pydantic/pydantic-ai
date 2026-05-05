@@ -86,7 +86,7 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
 !!! note "Provider Differences"
     - **Anthropic** models support prefix-based caching for both system instructions and message content. TTL values (`'5m'`, `'1h'`) are passed through to the provider.
     - **Gemini** models support caching for system instructions and normal message content, but [OpenRouter uses only the last breakpoint across normal message content for Gemini caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching#how-gemini-prompt-caching-works-on-openrouter).
-      Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` for stable system context. TTL values are ignored by Gemini.
+      Use `openrouter_cache_messages` or [`CachePoint`][pydantic_ai.messages.CachePoint] when that final message boundary is intentional; use `openrouter_cache_instructions` only for fully static system context. TTL values are ignored by Gemini.
       Cached Gemini `systemInstruction` content is immutable, so put dynamic prompt segments in a later user message instead of after cached system instructions.
     - **Minimum token thresholds** apply; see OpenRouter's [minimum token requirements](https://openrouter.ai/docs/guides/best-practices/prompt-caching#minimum-token-requirements) for current provider-specific values.
 
@@ -119,6 +119,8 @@ def search_docs(ctx: RunContext, query: str) -> str:
 
 Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` sends Anthropic's default `'5m'` TTL for Anthropic models; Gemini ignores TTL values and manages cache lifetime itself. Check `result.usage().cache_write_tokens` on initial writes and `result.usage().cache_read_tokens` on reuse, including subsequent calls with `message_history=result.all_messages()`.
 
+OpenRouter uses [provider sticky routing](https://openrouter.ai/docs/guides/best-practices/prompt-caching#provider-sticky-routing) after prompt-cached requests to improve cache locality. For cache-sensitive workflows that need stricter provider control or disabled fallbacks, also set [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider], for example with `{'order': ['anthropic'], 'allow_fallbacks': False}`.
+
 ### Fine-Grained Control with CachePoint
 
 Use [`CachePoint`][pydantic_ai.messages.CachePoint] markers to control exactly where cache boundaries are placed:
@@ -139,28 +141,6 @@ prompt = [
 ```
 
 Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
-
-### Provider Routing for Cache Locality
-
-OpenRouter uses [provider sticky routing](https://openrouter.ai/docs/guides/best-practices/prompt-caching#provider-sticky-routing) after prompt-cached requests to improve cache locality. If you need stricter provider control, or want to disable fallbacks for a cache-sensitive workflow, use [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider]:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
-
-model = OpenRouterModel('anthropic/claude-sonnet-4.6')
-agent = Agent(
-    model,
-    model_settings=OpenRouterModelSettings(
-        openrouter_cache_instructions=True,
-        openrouter_provider={
-            'order': ['anthropic'],
-            'allow_fallbacks': False,
-        },
-    ),
-)
-...
-```
 
 ## Web Search
 
