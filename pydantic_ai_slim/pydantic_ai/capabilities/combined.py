@@ -66,18 +66,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
-        deferred_catalog: list[str] = []
+        deferred_catalog: list[tuple[str, str]] = []
         for capability in self.capabilities:
             if capability.defer_loading is True:
-                # Is this in any way clean?
-                # Lol no but this gets us closer to the ideal shape
-                deferred_catalog.append(capability.get_description() or '')
+                if capability.id is None:
+                    continue
+                deferred_catalog.append((capability.id, capability.get_description() or ''))
                 continue
             instructions.extend(normalize_instructions(capability.get_instructions()))
 
         if deferred_catalog:
             instructions.append(
-                f'The following capabilities are deferred and can be loaded via load_capability: {", ".join(deferred_catalog)}'
+                f'The following capabilities are deferred and can be loaded via load_capability: {", ".join(f"{id}: {description}" for id, description in deferred_catalog)}'
             )
         return instructions or None
 

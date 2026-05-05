@@ -11,12 +11,12 @@ from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai.capabilities.abstract import AbstractCapability
 
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .agent.abstract import AbstractAgent
+    from .capabilities.abstract import AbstractCapability
     from .models import Model
     from .result import RunUsage
     from .settings import ModelSettings
@@ -105,12 +105,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
-    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(
-        default_factory=dict[str, AbstractCapability[RunContextAgentDepsT]]
-    )
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=dict)
     """The capabilities that are available for the current run."""
 
-    loaded_capability_ids: set[str] = field(default_factory=set[str])
+    loaded_capability_ids: set[str] = field(default_factory=set)
     """The capabilities that have been loaded so far."""
 
     @property
