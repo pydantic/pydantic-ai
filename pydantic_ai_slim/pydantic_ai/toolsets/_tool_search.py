@@ -71,6 +71,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
+            # I am not sure if this is problematic for next turns
+            # If a tool is deferred and then a capability is loaded then it reveals that tool but this might break the cache ?
             tool = self._resolve_tool(tool, loaded_capability_ids)
             if tool.tool_def.defer_loading is True:
                 deferred[name] = tool
@@ -136,8 +138,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if tool_def.defer_loading is not True:
             return replace(tool, tool_def=replace(tool_def, defer_loading=False))
         if tool_def.defer_loading is True and tool_def.capability_id in loaded_capability_ids:
-            # I need to revisit this
-            # This will make tools visible as soon as the capability is loaded
             return replace(tool, tool_def=replace(tool_def, defer_loading=False))
         return tool
 

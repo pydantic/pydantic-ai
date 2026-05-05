@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic_ai import RunContext
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -21,7 +22,20 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
     """
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return None
+        def create_catalog(ctx: RunContext[AgentDepsT]) -> str:
+            catalog: list[tuple[str, str]] = []
+            for cap in ctx.capabilities.values():
+                if not cap.defer_loading:
+                    continue
+
+                if cap.id is None:
+                    continue
+
+                catalog.append((cap.id, cap.get_description(ctx) or ''))
+
+            return f'The following capabilities are deferred and can be loaded via load_capability: {", ".join(f"{id}: {description}" for id, description in catalog)}'
+
+        return create_catalog
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return CapabilityOrdering(position='outermost')

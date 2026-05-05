@@ -243,7 +243,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_description(self) -> str | None:
+    def get_description(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """Return a human-readable description of this capability, or None.
 
         Surfaced to the model in the `load_capability` catalog when

@@ -17,11 +17,11 @@ from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_ai._spec import load_from_registry
+from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 
 from .. import (
     _agent_graph,
