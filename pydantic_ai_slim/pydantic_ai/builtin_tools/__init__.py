@@ -18,6 +18,7 @@ __all__ = (
     'CodeExecutionTool',
     'WebFetchTool',
     'UrlContextTool',
+    'ImageGenerationModelName',
     'ImageGenerationTool',
     'MemoryTool',
     'MCPServerTool',
@@ -35,6 +36,9 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
+
+ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
+"""Known OpenAI image generation model names, or another OpenAI image model ID."""
 
 
 @dataclass(kw_only=True)
@@ -370,6 +374,14 @@ class ImageGenerationTool(AbstractBuiltinTool):
     * Google
     """
 
+    action: Literal['generate', 'edit', 'auto'] = 'auto'
+    """Whether to generate a new image or edit an existing image.
+
+    Supported by:
+
+    * OpenAI Responses. Default: 'auto'.
+    """
+
     background: Literal['transparent', 'opaque', 'auto'] = 'auto'
     """Background type for the generated image.
 
@@ -394,6 +406,19 @@ class ImageGenerationTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    """
+
+    model: ImageGenerationModelName | None = None
+    """The image generation model to use.
+
+    Supported by:
+
+    * OpenAI Responses. Defaults to the provider's image generation model selection.
+      Known image generation models include `gpt-image-2`, `gpt-image-1.5`,
+      `gpt-image-1`, and `gpt-image-1-mini`.
+
+    This selects the underlying image generation model used by the tool; it does
+    not change the agent's conversational model.
     """
 
     output_compression: int | None = None

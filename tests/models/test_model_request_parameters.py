@@ -100,9 +100,11 @@ def test_model_request_parameters_are_serializable():
                 },
                 {
                     'kind': 'image_generation',
+                    'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
                     'moderation': 'auto',
+                    'model': None,
                     'output_compression': None,
                     'output_format': None,
                     'partial_images': 0,

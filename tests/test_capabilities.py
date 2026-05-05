@@ -471,6 +471,12 @@ def test_model_json_schema_with_capabilities():
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'action': {
+                            'default': 'auto',
+                            'enum': ['generate', 'edit', 'auto'],
+                            'title': 'Action',
+                            'type': 'string',
+                        },
                         'background': {
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
@@ -487,6 +493,18 @@ def test_model_json_schema_with_capabilities():
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
+                        },
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -1284,6 +1302,10 @@ Supported by:
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
                         },
+                        'action': {
+                            'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Action',
+                        },
                         'background': {
                             'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Background',
@@ -1295,6 +1317,17 @@ Supported by:
                         'moderation': {
                             'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Moderation',
+                        },
+                        'image_model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Image Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -4530,6 +4563,8 @@ class TestImageGenerationCapability:
         builtin_fields = {
             f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
         }
+        builtin_fields.remove('model')
+        builtin_fields.add('image_model')
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
             'builtin',
@@ -4573,9 +4608,11 @@ class TestImageGenerationCapability:
     def test_image_generation_forwards_config_to_builtin(self):
         """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
         cap = ImageGeneration(
+            action='generate',
             background='opaque',
             input_fidelity='high',
             moderation='low',
+            image_model='gpt-image-2',
             output_compression=80,
             output_format='jpeg',
             quality='high',
@@ -4586,9 +4623,11 @@ class TestImageGenerationCapability:
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
+        assert tool.action == 'generate'
         assert tool.background == 'opaque'
         assert tool.input_fidelity == 'high'
         assert tool.moderation == 'low'
+        assert tool.model == 'gpt-image-2'
         assert tool.output_compression == 80
         assert tool.output_format == 'jpeg'
         assert tool.quality == 'high'
@@ -4786,10 +4825,11 @@ class TestImageGenerationCapability:
             ]
         )
 
-    def test_image_generation_rejects_image_only_model(self):
-        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
-        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
+    def test_image_generation_rejects_image_only_model(self, model_name: str):
+        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
+        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
+            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
