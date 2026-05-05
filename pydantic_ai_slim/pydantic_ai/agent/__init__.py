@@ -49,7 +49,7 @@ from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
 from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.process_history import ProcessHistory
@@ -1175,14 +1175,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             effective_capability = base_capability
 
-        # Per-run capability: re-extract get_*() if for_run returns a different instance
-
-        for cap in effective_capability.capabilities:
-            if cap.defer_loading is True:
-                effective_capability = CombinedCapability([effective_capability, DeferredLoadingCapability()])
-                break
-
         run_capability = await effective_capability.for_run(initial_ctx)
+        if any(cap.defer_loading is True for cap in collect_leaves(run_capability)):
+            run_capability = CombinedCapability([run_capability, DeferredLoadingCapability()])
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:

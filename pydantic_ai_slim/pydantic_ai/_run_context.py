@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Generic
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
-from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
@@ -119,6 +118,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     @property
     def loaded_capability_ids(self) -> set[str]:
         """The capabilities that have been loaded so far."""
+        from pydantic_ai._deferred import parse_loaded_capabilities
+
         return parse_loaded_capabilities(self.messages)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
