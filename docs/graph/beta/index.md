@@ -37,7 +37,7 @@ Here's a simple example to get you started:
 ```python {title="simple_counter.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -123,8 +123,8 @@ Here's an example showcasing parallel execution with a map operation:
 ```python {title="parallel_processing.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_list_append
 
 
 @dataclass
@@ -196,7 +196,7 @@ Use [`graph.iter()`][pydantic_graph.beta.graph.Graph.iter] to execute the graph 
 ```python {title="step_by_step.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -259,7 +259,7 @@ Generate Mermaid diagrams of your graph structure using [`graph.render()`][pydan
 ```python {title="visualize_graph.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass

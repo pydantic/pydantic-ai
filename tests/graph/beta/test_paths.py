@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.id_types import ForkID, NodeID
 from pydantic_graph.beta.paths import (
     BroadcastMarker,

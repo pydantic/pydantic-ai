@@ -9,7 +9,7 @@ Steps are created using the [`@g.step`][pydantic_graph.beta.graph_builder.GraphB
 ```python {title="basic_step.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -54,7 +54,7 @@ State is shared across all steps in a graph and can be freely mutated:
 ```python {title="state_access.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -100,7 +100,7 @@ Steps can receive and transform input data:
 ```python {title="step_inputs.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -146,7 +146,7 @@ Steps can access injected dependencies through `ctx.deps`:
 ```python {title="dependencies.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -195,7 +195,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `import
 By default, step node IDs are inferred from the function name. You can override this:
 
 ```python {title="custom_id.py" requires="basic_step.py"}
-from pydantic_graph.beta import StepContext
+from pydantic_graph import StepContext
 
 from basic_step import MyState, g
 
@@ -212,7 +212,7 @@ async def my_step(ctx: StepContext[MyState, None, None]) -> int:
 Labels provide documentation for diagram generation:
 
 ```python {title="labels.py" requires="basic_step.py"}
-from pydantic_graph.beta import StepContext
+from pydantic_graph import StepContext
 
 from basic_step import MyState, g
 
@@ -234,7 +234,7 @@ Multiple steps can be chained sequentially:
 ```python {title="sequential.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -293,8 +293,8 @@ In addition to regular steps that return a single value, you can create streamin
 ```python {title="streaming_step.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import reduce_list_append
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph import reduce_list_append
 
 
 @dataclass
@@ -346,7 +346,7 @@ Streaming steps return an `AsyncIterable` that yields values over time. When you
 Like regular steps, streaming steps can also have custom node IDs and labels:
 
 ```python {title="labeled_stream.py" requires="streaming_step.py"}
-from pydantic_graph.beta import StepContext
+from pydantic_graph import StepContext
 
 from streaming_step import SimpleState, g
 
@@ -366,7 +366,7 @@ The builder provides helper methods for common edge patterns:
 ```python {title="add_edge_example.py"}
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -409,7 +409,7 @@ The beta graph API provides strong type checking through generics. Type paramete
 ```python
 from dataclasses import dataclass
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass

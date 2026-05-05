@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from pydantic_graph.beta import GraphBuilder, StepContext
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.beta.join import reduce_list_append
 
 pytestmark = pytest.mark.anyio
@@ -124,7 +124,7 @@ async def test_label_on_decision_branch():
     """Test labels on decision branches."""
     from typing import Literal
 
-    from pydantic_graph.beta import TypeExpression
+    from pydantic_graph import TypeExpression
 
     g = GraphBuilder(state_type=LabelState, output_type=str)
 
