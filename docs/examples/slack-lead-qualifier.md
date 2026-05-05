@@ -41,7 +41,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
     - `#new-slack-leads`
     - `#daily-slack-leads-summary`
 
-    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_examples/slack_lead_qualifier/functions.py`.
+    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_ai_examples/slack_lead_qualifier/functions.py`.
 
 ### Logfire Write Token
 
