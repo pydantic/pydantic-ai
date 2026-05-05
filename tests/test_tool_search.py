@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -2906,6 +2907,185 @@ def test_synthesize_messages_request_with_unrelated_tool_return_passthrough() ->
     result = synthesize_local_tool_search_messages([request])
     assert len(result) == 1
     assert result[0] is request
+
+
+def test_synthesize_messages_response_with_search_then_downstream_tool_call_splits_4_messages() -> None:
+    """Native turn with `[Text, BuiltinSearchCall, BuiltinSearchReturn, ToolCall(weather)]`
+    must split into a coherent local-shape sequence: response[Text, ToolSearchCall],
+    request[ToolSearchReturn], response[ToolCall(weather)], (passthrough) request[ToolReturn(weather)].
+
+    Currently we keep the downstream `ToolCall(weather)` on the same response as the
+    `ToolSearchCall`, which is incoherent (model "called weather before seeing search
+    results") and produces consecutive `ModelRequest`s after the lifted return —
+    Devin's observation. Splitting at every `BuiltinToolSearchReturn` boundary fixes
+    both: the timeline reads correctly and the lifted return doesn't collide with the
+    next request.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look up something then call it.')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Searching first.'),
+                BuiltinToolSearchCallPart(
+                    args={'queries': ['weather']},
+                    tool_call_id='search1',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    tool_call_id='search1',
+                    provider_name='anthropic',
+                ),
+                ToolCallPart(tool_name='get_weather', args={'city': 'NYC'}, tool_call_id='wx1'),
+            ],
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='wx1')]),
+    ]
+
+    result = synthesize_local_tool_search_messages(history)
+
+    # 5 messages: user request, response[Text, ToolSearchCall], request[ToolSearchReturn],
+    # response[ToolCall(weather)], request[ToolReturn(weather)] (the original).
+    assert len(result) == 5
+
+    assert isinstance(result[0], ModelRequest)
+    assert result[0] is history[0]
+
+    # First synthetic response: text + search call only — NOT the downstream weather call.
+    first_resp = result[1]
+    assert isinstance(first_resp, ModelResponse)
+    assert len(first_resp.parts) == 2
+    assert isinstance(first_resp.parts[0], TextPart)
+    assert isinstance(first_resp.parts[1], ToolSearchCallPart)
+    # No `ToolCallPart(weather)` snuck onto this response.
+    assert not any(isinstance(p, ToolCallPart) and not isinstance(p, ToolSearchCallPart) for p in first_resp.parts)
+
+    # Lifted search return as a fresh request.
+    search_return_req = result[2]
+    assert isinstance(search_return_req, ModelRequest)
+    assert len(search_return_req.parts) == 1
+    assert isinstance(search_return_req.parts[0], ToolSearchReturnPart)
+
+    # Second synthetic response: weather call only.
+    second_resp = result[3]
+    assert isinstance(second_resp, ModelResponse)
+    assert len(second_resp.parts) == 1
+    weather_call = second_resp.parts[0]
+    assert isinstance(weather_call, ToolCallPart)
+    assert weather_call.tool_name == 'get_weather'
+
+    # Original weather-return request flows naturally — no consecutive `ModelRequest`s.
+    assert isinstance(result[4], ModelRequest)
+    assert result[4] is history[2]
+
+
+def test_synthesize_messages_devins_consecutive_request_repro() -> None:
+    """Regression: synthesis must not produce two consecutive `ModelRequest`s.
+
+    Reproduces Devin's bug report exactly: native search exchange immediately followed
+    by a regular tool call within the same `ModelResponse`, then a `ModelRequest` for
+    the regular tool's return. The proper splitter inserts a synthetic `ModelResponse`
+    between the lifted search return and the original tool-return request, so message
+    roles alternate correctly for adapters with strict user/assistant alternation.
+    """
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
+                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
+                ToolCallPart(tool_name='get_weather', args={}, tool_call_id='w1'),
+            ],
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='ok', tool_call_id='w1')]),
+    ]
+
+    result = synthesize_local_tool_search_messages(history)
+
+    # Walk and verify no two consecutive entries are both `ModelRequest`.
+    for i in range(len(result) - 1):
+        if isinstance(result[i], ModelRequest):
+            assert not isinstance(result[i + 1], ModelRequest), f'Consecutive ModelRequests at index {i}: {result}'
+
+
+def test_synthesize_messages_multiple_search_rounds_in_one_response() -> None:
+    """Two server-side search rounds inside a single native `ModelResponse` split into
+    two response/request pairs, preserving order and not bundling them onto one response.
+    """
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(args={'queries': ['a']}, tool_call_id='s1'),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'tool_a', 'description': None}]},
+                    tool_call_id='s1',
+                ),
+                BuiltinToolSearchCallPart(args={'queries': ['b']}, tool_call_id='s2'),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'tool_b', 'description': None}]},
+                    tool_call_id='s2',
+                ),
+            ],
+        ),
+    ]
+
+    result = synthesize_local_tool_search_messages(history)
+
+    # 4 messages: response[call_a], request[return_a], response[call_b], request[return_b].
+    assert len(result) == 4
+    assert isinstance(result[0], ModelResponse)
+    assert isinstance(result[0].parts[0], ToolSearchCallPart)
+    assert result[0].parts[0].tool_call_id == 's1'
+
+    assert isinstance(result[1], ModelRequest)
+    assert isinstance(result[1].parts[0], ToolSearchReturnPart)
+    assert result[1].parts[0].tool_call_id == 's1'
+
+    assert isinstance(result[2], ModelResponse)
+    assert isinstance(result[2].parts[0], ToolSearchCallPart)
+    assert result[2].parts[0].tool_call_id == 's2'
+
+    assert isinstance(result[3], ModelRequest)
+    assert isinstance(result[3].parts[0], ToolSearchReturnPart)
+    assert result[3].parts[0].tool_call_id == 's2'
+
+
+def test_synthesize_messages_metadata_kept_on_first_split_only() -> None:
+    """Splitting one native `ModelResponse` into multiple responses must not duplicate
+    its identity-level metadata (`provider_response_id`, usage). The first split keeps
+    the original identity; subsequent splits get fresh/blank fields so downstream
+    consumers don't double-count usage or find two responses for the same API call.
+    """
+    from pydantic_ai.usage import RequestUsage
+
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
+                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
+                ToolCallPart(tool_name='get_weather', args={}, tool_call_id='w1'),
+            ],
+            usage=RequestUsage(input_tokens=100, output_tokens=50),
+            provider_response_id='msg_real_anthropic_id',
+            provider_name='anthropic',
+            model_name='claude-sonnet-4-5',
+        ),
+    ]
+
+    result = synthesize_local_tool_search_messages(history)
+
+    # Two responses out (split around the search return).
+    responses = [m for m in result if isinstance(m, ModelResponse)]
+    assert len(responses) == 2
+
+    # First split keeps full metadata.
+    assert responses[0].provider_response_id == 'msg_real_anthropic_id'
+    assert responses[0].usage.input_tokens == 100
+    assert responses[0].usage.output_tokens == 50
+
+    # Second split gets cleared identity to avoid double-counting / duplicate lookup.
+    assert responses[1].provider_response_id is None
+    assert responses[1].usage.input_tokens == 0
+    assert responses[1].usage.output_tokens == 0
 
 
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:

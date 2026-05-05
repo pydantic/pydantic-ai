@@ -43,6 +43,26 @@ from .messages import (
     ToolSearchReturnContent,
     ToolSearchReturnPart,
 )
+from .usage import RequestUsage
+
+
+def _split_response(original: ModelResponse, parts: list[ModelResponsePart], *, first: bool) -> ModelResponse:
+    """Build a split-off `ModelResponse` carrying a subset of `original`'s parts.
+
+    `first=True` keeps the original's identity-level metadata (provider response id,
+    usage, etc.). `first=False` blanks `provider_response_id` and zeroes `usage` so
+    downstream consumers don't double-count usage or find two responses for one API
+    call. Other contextual fields (model name, provider name, timestamp) carry over
+    unchanged — they're informational on a synthetic split.
+    """
+    if first:
+        return replace(original, parts=parts)
+    return replace(
+        original,
+        parts=parts,
+        provider_response_id=None,
+        usage=RequestUsage(),
+    )
 
 
 def synthesize_local_from_builtin_call(part: BuiltinToolSearchCallPart) -> ToolSearchCallPart:
@@ -98,36 +118,52 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
     A native server-side tool-search exchange is a single `ModelResponse` carrying both
     `BuiltinToolSearchCallPart` (the call) and `BuiltinToolSearchReturnPart` (the inline
     server-side result). Local function-tool execution shapes the same exchange as a pair
-    of messages instead — `ModelResponse(parts=[ToolSearchCallPart(...)])` followed by
+    of messages — `ModelResponse(parts=[ToolSearchCallPart(...)])` followed by
     `ModelRequest(parts=[ToolSearchReturnPart(...)])` — because the model produces the
-    call and the framework produces the return in a separate request turn. The translation
-    here splits the original response accordingly: builtin call parts stay on the response
-    (as local `ToolSearchCallPart`), builtin return parts are lifted onto a fresh trailing
-    `ModelRequest` immediately after the response.
+    call and the framework produces the return in a separate request turn.
+
+    Each `BuiltinToolSearchReturnPart` acts as a flush boundary when splitting: parts
+    before it (text, the search call itself) become a `ModelResponse`, the return becomes
+    a `ModelRequest`, and any parts after it (downstream tool calls, more text) become a
+    fresh `ModelResponse`. This preserves the natural turn order — e.g. a native turn
+    `[Text, SearchCall, SearchReturn, ToolCall(weather)]` translates to four messages
+    where the weather call sits on its own response after the search return, matching
+    what the model would have emitted across two turns on a non-native provider.
+
+    Identity-level metadata (`provider_response_id`, `usage`) is kept on the first split
+    response only; subsequent splits get blank/zero values so downstream consumers don't
+    double-count usage or treat one API call as two distinct responses.
     """
     out: list[ModelMessage] = []
 
     for msg in messages:
         if isinstance(msg, ModelResponse):
-            new_parts: list[ModelResponsePart] = []
-            lifted_returns: list[ToolSearchReturnPart] = []
+            buffer: list[ModelResponsePart] = []
+            split_emitted = False  # Tracks whether we've emitted a response from this msg already.
             changed = False
             for part in msg.parts:
                 if isinstance(part, BuiltinToolSearchCallPart):
-                    new_parts.append(synthesize_local_from_builtin_call(part))
+                    buffer.append(synthesize_local_from_builtin_call(part))
                     changed = True
                 elif isinstance(part, BuiltinToolSearchReturnPart):
-                    # Lift the return out of the response into a fresh trailing request.
-                    lifted_returns.append(synthesize_local_from_builtin_return(part))
+                    # Flush the buffered parts as a `ModelResponse` (skip if empty), then
+                    # emit the search return as its own `ModelRequest`. Subsequent parts
+                    # start a fresh buffer that becomes the next `ModelResponse`.
+                    if buffer:
+                        out.append(_split_response(msg, buffer, first=not split_emitted))
+                        split_emitted = True
+                    out.append(
+                        ModelRequest(
+                            parts=cast('list[ModelRequestPart]', [synthesize_local_from_builtin_return(part)]),
+                        ),
+                    )
+                    buffer = []
                     changed = True
                 else:
-                    new_parts.append(part)
+                    buffer.append(part)
             if changed:
-                # Only emit a response if there's anything left after lifting returns.
-                if new_parts:
-                    out.append(replace(msg, parts=new_parts))
-                if lifted_returns:
-                    out.append(ModelRequest(parts=cast('list[ModelRequestPart]', list(lifted_returns))))
+                if buffer:
+                    out.append(_split_response(msg, buffer, first=not split_emitted))
             else:
                 out.append(msg)
         elif isinstance(msg, ModelRequest):
