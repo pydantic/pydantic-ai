@@ -134,7 +134,7 @@ class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
 
     capability: CombinedCapability[Any] | None
-    instructions: list[_instructions.Instruction[Any]]
+    instructions: list[str | _system_prompt.SystemPromptFunc[Any]]
     model: str | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
@@ -196,7 +196,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: list[_instructions.Instruction[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -488,9 +488,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-        self._override_instructions: ContextVar[_utils.Option[list[_instructions.Instruction[AgentDepsT]]]] = (
-            ContextVar('_override_instructions', default=None)
-        )
+        self._override_instructions: ContextVar[
+            _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
+        ] = ContextVar('_override_instructions', default=None)
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
         )
@@ -1231,7 +1231,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions=cap_instructions,
         )
 
-        deferred_registry = build_deferred_loading_registry(run_capability, collected_instructions)
+        deferred_registry = build_deferred_loading_registry(run_capability)
         if deferred_registry is not None:
             run_capability = CombinedCapability([DeferredLoadingCapability(registry=deferred_registry), run_capability])
 
@@ -1839,12 +1839,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDepsT],
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
-                self._instructions.append(_instructions.Instruction(content=func_))
+                self._instructions.append(func_)
                 return func_
 
             return decorator
         else:
-            self._instructions.append(_instructions.Instruction(content=func))
+            self._instructions.append(func)
             return func
 
     async def system_prompt_parts(
@@ -2377,8 +2377,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _collect_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[_instructions.Instruction[AgentDepsT]] | None = None,
-    ) -> list[_instructions.Instruction[AgentDepsT]]:
+        cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
+    ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
         override_instructions = self._override_instructions.get()
         if override_instructions:
             # Override replaces all instructions, including capability contributions.
@@ -2393,7 +2393,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[_instructions.Instruction[AgentDepsT]] | None = None,
+        cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
@@ -2407,22 +2407,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     def _get_prompt_instructions(
         self,
-        instructions: Sequence[_instructions.Instruction[AgentDepsT]],
+        instructions: Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]],
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
         for instruction in instructions:
-            if instruction.defer_loading is True:
-                continue
-            content = instruction.content
-            if isinstance(content, str):
-                literal_parts.append(content)
+            if isinstance(instruction, str):
+                literal_parts.append(instruction)
             else:
                 # TemplateStr instances land here too: they are callable with a
                 # RunContext parameter, so SystemPromptRunner handles them like
                 # any other system prompt function.
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](content))
+                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions

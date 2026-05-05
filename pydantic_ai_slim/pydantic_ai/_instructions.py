@@ -1,41 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Generic
 
 from pydantic_ai._template import TemplateStr
 from pydantic_ai.tools import AgentDepsT
 
 from . import _system_prompt
 
-InstructionContent = TemplateStr[AgentDepsT] | str | _system_prompt.SystemPromptFunc[AgentDepsT]
-
-
-@dataclass
-class Instruction(Generic[AgentDepsT]):
-    content: InstructionContent[AgentDepsT]
-    defer_loading: bool | None = None
-    capability_id: str | None = None
-
-
-InstructionInput = InstructionContent[AgentDepsT] | Instruction[AgentDepsT]
-AgentInstructions = InstructionInput[AgentDepsT] | Sequence[InstructionInput[AgentDepsT]] | None
+AgentInstructions = (
+    TemplateStr[AgentDepsT]
+    | str
+    | _system_prompt.SystemPromptFunc[AgentDepsT]
+    | Sequence[TemplateStr[AgentDepsT] | str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+    | None
+)
 
 
 def normalize_instructions(
     instructions: AgentInstructions[AgentDepsT],
-) -> list[Instruction[AgentDepsT]]:
+) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
     if instructions is None:
         return []
-
-    if isinstance(instructions, Instruction):
-        return [instructions]
-
+    # Note: TemplateStr is callable (__call__) so it's handled by the callable branch
     if isinstance(instructions, str) or callable(instructions):
-        return [Instruction(content=instructions)]
-
-    return [
-        instruction if isinstance(instruction, Instruction) else Instruction(content=instruction)
-        for instruction in instructions
-    ]
+        return [instructions]
+    return list(instructions)

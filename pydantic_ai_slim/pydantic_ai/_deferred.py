@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Any, Generic, cast
 
 from typing_extensions import TypedDict
 
-from pydantic_ai._instructions import Instruction
+from pydantic_ai import _system_prompt
+from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition, ToolsPrepareFunc
 
@@ -87,14 +88,14 @@ class DeferredLoadingRegistry(Generic[AgentDepsT]):
     """Run-local catalog and instruction bodies used by ``load_capability``."""
 
     catalog: dict[str, DeferredCapabilityCatalogEntry]
-    instructions: dict[str, list[Instruction[AgentDepsT]]]
+    instructions: dict[str, list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
 
 
 def build_deferred_loading_registry(
     capability: AbstractCapability[AgentDepsT],
-    instructions: Sequence[Instruction[AgentDepsT]],
 ) -> DeferredLoadingRegistry[AgentDepsT] | None:
     catalog: dict[str, DeferredCapabilityCatalogEntry] = {}
+    deferred_instructions: dict[str, list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]] = {}
 
     def collect_deferred_capability(cap: AbstractCapability[AgentDepsT]) -> None:
         if cap.defer_loading is not True:
@@ -111,17 +112,10 @@ def build_deferred_loading_registry(
             capability_id=capability_id,
             description=description,
         )
+        deferred_instructions[capability_id] = normalize_instructions(cap.get_instructions())
 
     capability.apply(collect_deferred_capability)
     if not catalog:
         return None
-
-    deferred_instructions: dict[str, list[Instruction[AgentDepsT]]] = {capability_id: [] for capability_id in catalog}
-    for instruction in instructions:
-        if instruction.defer_loading is not True:
-            continue
-        capability_id = instruction.capability_id
-        if capability_id in deferred_instructions:
-            deferred_instructions[capability_id].append(instruction)
 
     return DeferredLoadingRegistry(catalog=catalog, instructions=deferred_instructions)

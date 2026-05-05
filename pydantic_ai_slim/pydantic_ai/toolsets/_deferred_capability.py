@@ -93,11 +93,10 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         parts: list[str] = []
 
         for instruction in instructions:
-            content = instruction.content
-            if isinstance(content, str):
-                parts.append(content)
+            if isinstance(instruction, str):
+                parts.append(instruction)
             else:
-                resolved = await SystemPromptRunner[AgentDepsT](content).run(ctx)
+                resolved = await SystemPromptRunner[AgentDepsT](instruction).run(ctx)
                 if resolved is not None:
                     parts.append(resolved)
 
