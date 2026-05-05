@@ -1054,6 +1054,36 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match=r'call denied: nope'):
             await wrapper.call_tool('run_code', {'code': 'await needs_approval()'}, ctx, tools['run_code'])
 
+    async def test_approved_tool_re_raising_approval_required_surfaces_as_model_retry(self) -> None:
+        """If the approved tool body re-raises `ApprovalRequired`, pydantic-ai propagates it
+        without re-invoking the handler; the harness then converts it to a `ModelRetry`.
+
+        This guards the contract documented on `_resolve_single_deferred.Raises`: a re-raised
+        deferral after approval is *not* re-resolved — it bubbles up to the caller.
+        """
+        try:
+            from pydantic_ai.capabilities import HandleDeferredToolCalls
+        except ImportError:  # pragma: no cover — only fires on floor-slim CI, which doesn't gate on coverage
+            pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
+
+        from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
+        from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved
+
+        def always_needs_approval(ctx: RunContext[None]) -> str:
+            """Raises `ApprovalRequired` every time, even after being approved."""
+            raise _ApprovalRequired()
+
+        async def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
+
+        wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(always_needs_approval))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper, root_capability=HandleDeferredToolCalls(handler=handler))
+        tools = await wrapper.get_tools(ctx)
+
+        with pytest.raises(ModelRetry, match='no `HandleDeferredToolCalls` capability resolved it'):
+            await wrapper.call_tool('run_code', {'code': 'await always_needs_approval()'}, ctx, tools['run_code'])
+
     async def test_model_retry_from_wrapped_tool_surfaces_as_model_retry(self) -> None:
         """A wrapped tool that raises ModelRetry gets double-wrapped through Monty but still retries.
 

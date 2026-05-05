@@ -28,7 +28,7 @@ classifiers = [
     'Typing :: Typed',
 ]
 dependencies = [
-    'pydantic-ai-slim>=1.80.0',
+    'pydantic-ai-slim>=1.89.1',
 ]
 
 [project.optional-dependencies]
@@ -54,19 +54,20 @@ Issues = 'https://github.com/pydantic/pydantic-ai-harness/issues'
 [dependency-groups]
 dev = [
     'pydantic-ai-harness[code-mode]',
-    'pytest',
-    'anyio[trio]',
+    # Floors selected to keep the `test-floor` job (using `--resolution lowest-direct`)
+    # working: `anyio>=4.11.0` is when the pytest plugin started registering the
+    # `anyio_mode` ini option. `pytest-anyio` has only version 0.0.0 on PyPI, so no
+    # floor. The rest match pydantic-ai's discipline.
+    'pytest>=9.0.0',
+    'anyio[trio]>=4.11.0',
     'pytest-anyio',
-    'coverage',
+    'coverage>=7.10.7',
     'logfire[httpx]>=4.31.0',
 ]
 lint = [
     'ruff>=0.14',
     'pyright>=1.1.408',
 ]
-
-[tool.uv.sources]
-pydantic-ai-slim = { git = 'https://github.com/pydantic/pydantic-ai.git', branch = 'main', subdirectory = 'pydantic_ai_slim' }
 
 [tool.hatch.version]
 source = 'uv-dynamic-versioning'
