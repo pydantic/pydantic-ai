@@ -2657,6 +2657,25 @@ async def test_agent_to_mcp_call_tool_structured_output():
     assert result.structuredContent == snapshot({'result': {'value': 0, 'label': 'a'}})
 
 
+async def test_agent_to_mcp_with_union_output():
+    """Multi-type `OutputSpec` should be wrapped in a `Union` `TypeAdapter`."""
+    from pydantic import BaseModel
+
+    class Foo(BaseModel):
+        foo: int
+
+    class Bar(BaseModel):
+        bar: str
+
+    agent = Agent(TestModel(), output_type=[Foo, Bar], name='Union Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'union_agent', {'prompt': 'hello'})
+    assert result.isError is False
+    assert result.structuredContent == snapshot({'result': {'foo': 0}})
+
+
 async def test_agent_to_mcp_with_tool_output():
     """`OutputSpec` wrappers like `ToolOutput` should be handled correctly."""
     from pydantic import BaseModel
