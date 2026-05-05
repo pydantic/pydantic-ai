@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
+from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
@@ -105,16 +106,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
-    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=dict)
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(
+        default_factory=dict[str, AbstractCapability[RunContextAgentDepsT]]
+    )
     """The capabilities that are available for the current run."""
-
-    loaded_capability_ids: set[str] = field(default_factory=set)
-    """The capabilities that have been loaded so far."""
 
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def loaded_capability_ids(self) -> set[str]:
+        """The capabilities that have been loaded so far."""
+        return parse_loaded_capabilities(self.messages)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

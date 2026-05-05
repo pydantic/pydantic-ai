@@ -1264,10 +1264,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         capabilities=ctx.deps.capabilities,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
-    run_context = replace(
-        run_context, validation_context=validation_context, loaded_capability_ids=loaded_capability_ids
-    )
+    run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
 
