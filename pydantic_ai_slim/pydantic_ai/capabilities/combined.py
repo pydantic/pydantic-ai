@@ -132,10 +132,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     ),
                 )
             )
-        # TODO:
-        # There is one concern, I am not removing the toolset instructions right now
-        # Those should be deferred too but there can be multiple toolsets and I am not sure if they would be relevant without the toolset being loaded?
-        # I am confused about the mechanism they should use to load the instructions.
+        # TODO: Decide how toolset-level instructions should interact with deferred
+        # capabilities. They are owned by toolsets rather than individual tools, so
+        # they remain available even when capability tools start hidden.
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:

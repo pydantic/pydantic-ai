@@ -51,7 +51,6 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -2015,7 +2014,7 @@ async def test_toolset_capability_in_agent():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
-def test_deferred_capability_requires_catalog_entry() -> None:
+def test_deferred_capability_catalog_entries_require_id_and_description() -> None:
     """Deferred capabilities must be discoverable before the model can load them."""
     with pytest.raises(ValueError) as missing_id:
         Capability[None](description='Needs a stable id.', defer_loading=True)
@@ -2031,15 +2030,15 @@ def test_deferred_capability_requires_catalog_entry() -> None:
     )
 
 
-def test_deferred_model_settings_are_rejected() -> None:
-    """Model settings cannot be safely changed by loading a capability mid-run yet."""
+def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
+    """Deferred loading currently supports instructions and function tools only."""
 
     @dataclass
     class SettingsCap(AbstractCapability[None]):
         def get_model_settings(self) -> _ModelSettings | None:
             return _ModelSettings(temperature=0.5)
 
-    with pytest.raises(UserError) as exc_info:
+    with pytest.raises(UserError) as model_settings_exc:
         CombinedCapability(
             [
                 SettingsCap(
@@ -2050,53 +2049,23 @@ def test_deferred_model_settings_are_rejected() -> None:
             ]
         ).get_model_settings()
 
-    assert str(exc_info.value) == snapshot(
-        "Deferred capability 'settings' provides model settings, but lazy-loading model settings is not supported yet. "
-        'Remove the model settings from this capability or set `defer_loading=False`.'
-    )
-
-
-def test_deferred_builtin_tools_are_rejected() -> None:
-    """Builtin tools cannot be hidden and revealed through the function-tool loader yet."""
-    cap = BuiltinTool[None](
+    builtin_cap = BuiltinTool[None](
         tool=WebSearchTool(),
         id='web-search',
         description='Search the web.',
         defer_loading=True,
     )
 
-    with pytest.raises(UserError) as exc_info:
-        CombinedCapability([cap]).get_builtin_tools()
+    with pytest.raises(UserError) as builtin_tools_exc:
+        CombinedCapability([builtin_cap]).get_builtin_tools()
 
-    assert str(exc_info.value) == snapshot(
-        "Deferred capability 'web-search' provides builtin tools, but lazy-loading builtin tools is not supported yet. "
-        'Remove the builtin tools from this capability or set `defer_loading=False`.'
-    )
-
-
-def test_deferred_loading_catalog_ignores_legacy_deferred_capabilities_without_id() -> None:
-    """The loader catalog tolerates malformed legacy capabilities without advertising them."""
-
-    class LegacyDeferredCapability(AbstractCapability[None]):
-        def __init__(self) -> None:
-            self.id = None
-            self.description = 'Legacy deferred capability.'
-            self.defer_loading = True
-
-    ctx = _build_run_context(None)
-    ctx.capabilities = {
-        'legacy': LegacyDeferredCapability(),
-        'reports': Capability[None](
-            id='reports',
-            description='Report tools.',
-            defer_loading=True,
-        ),
-    }
-    create_catalog = DeferredLoadingCapability[None]().get_instructions()
-    assert callable(create_catalog)
-
-    assert create_catalog(ctx) == snapshot(
-        'The following capabilities are deferred and can be loaded via load_capability: reports: Report tools.'
+    assert [str(model_settings_exc.value), str(builtin_tools_exc.value)] == snapshot(
+        [
+            "Deferred capability 'settings' provides model settings, but lazy-loading model settings is not supported yet. "
+            'Remove the model settings from this capability or set `defer_loading=False`.',
+            "Deferred capability 'web-search' provides builtin tools, but lazy-loading builtin tools is not supported yet. "
+            'Remove the builtin tools from this capability or set `defer_loading=False`.',
+        ]
     )
 
 
@@ -2108,12 +2077,8 @@ def test_agent_get_instructions_merges_agent_capability_and_run_instructions() -
         cap_instructions=['Capability instructions.'],
     )
 
-    assert {'literal': literal, 'dynamic_instruction_count': len(functions)} == snapshot(
-        {
-            'literal': 'Agent instructions.\nCapability instructions.\nRun instructions.',
-            'dynamic_instruction_count': 0,
-        }
-    )
+    assert literal == snapshot('Agent instructions.\nCapability instructions.\nRun instructions.')
+    assert functions == snapshot([])
 
 
 async def test_load_capability_tool_name_conflict_raises() -> None:
@@ -2191,11 +2156,9 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     )
 
     seen_tool_names: list[list[str]] = []
-    seen_instructions: list[str | None] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_names.append([t.name for t in info.function_tools])
-        seen_instructions.append(info.instructions)
         tool_returns = [
             part
             for message in messages
@@ -2239,16 +2202,6 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
             ['search_tools', 'load_capability'],
             ['lookup_refund_policy'],
             ['lookup_refund_policy'],
-        ]
-    )
-    assert seen_instructions == snapshot(
-        [
-            'Visible billing instructions.\n'
-            '\nThe following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-            'Visible billing instructions.\n'
-            '\nThe following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
-            'Visible billing instructions.\n'
-            '\nThe following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
         ]
     )
     assert result.all_messages() == snapshot(

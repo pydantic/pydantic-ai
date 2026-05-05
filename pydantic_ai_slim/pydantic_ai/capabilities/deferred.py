@@ -24,14 +24,11 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def create_catalog(ctx: RunContext[AgentDepsT]) -> str:
             catalog: list[tuple[str, str]] = []
-            for cap in ctx.capabilities.values():
+            for cap_id, cap in ctx.capabilities.items():
                 if not cap.defer_loading:
                     continue
 
-                if cap.id is None:
-                    continue
-
-                catalog.append((cap.id, cap.get_description(ctx) or ''))
+                catalog.append((cap_id, cap.get_description(ctx) or ''))
 
             return f'The following capabilities are deferred and can be loaded via load_capability: {", ".join(f"{id}: {description}" for id, description in catalog)}'
 
