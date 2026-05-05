@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RetryPromptPart
+from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -144,27 +144,27 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                     ToolCallPart(
                         tool_name='get_user_country',
                         args={},
-                        tool_call_id='433twugp',
+                        tool_call_id='w71i0cbt',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=76, details={'thoughts_tokens': 64, 'text_prompt_tokens': 29}
+                    input_tokens=29, output_tokens=114, details={'thoughts_tokens': 102, 'text_prompt_tokens': 29}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='1MnFaZLAD6Ky1MkP8Nrx4QQ',
+                provider_response_id='wlP6af6uB-rBz7IP3s-7kAc',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_user_country', content='Mexico', tool_call_id='433twugp', timestamp=IsDatetime()
+                        tool_name='get_user_country', content='Mexico', tool_call_id='w71i0cbt', timestamp=IsDatetime()
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -184,14 +184,14 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=52, details={'thoughts_tokens': 31, 'text_prompt_tokens': 123}
+                    input_tokens=161, output_tokens=72, details={'thoughts_tokens': 51, 'text_prompt_tokens': 161}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='1cnFaY76C47TjMcPkM6k0Qg',
+                provider_response_id='w1P6aZ3uJ9rTz7IPx-674Aw',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -223,27 +223,27 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                     ToolCallPart(
                         tool_name='get_user_country',
                         args={},
-                        tool_call_id='zeq8pw5c',
+                        tool_call_id='96c1su3s',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=127, details={'thoughts_tokens': 115, 'text_prompt_tokens': 29}
+                    input_tokens=29, output_tokens=81, details={'thoughts_tokens': 69, 'text_prompt_tokens': 29}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='1snFaaeXKbjD-sAPtam9qQY',
+                provider_response_id='g1P6aZnMMZq5qtsPj9fyuQ8',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_user_country', content='Mexico', tool_call_id='zeq8pw5c', timestamp=IsDatetime()
+                        tool_name='get_user_country', content='Mexico', tool_call_id='96c1su3s', timestamp=IsDatetime()
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -263,14 +263,14 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=174, output_tokens=57, details={'thoughts_tokens': 36, 'text_prompt_tokens': 174}
+                    input_tokens=128, output_tokens=51, details={'thoughts_tokens': 30, 'text_prompt_tokens': 128}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='18nFaaz2H5aQjrEP2ruPIQ',
+                provider_response_id='hVP6afiZEuitz7IPypuAsQY',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -298,7 +298,7 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
-                        tool_call_id='fxu90zw1',
+                        tool_call_id='d6vd9r5q',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -427,31 +427,36 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
     <div class="gradient-container"><div class="gradient"></div></div>
   </div>
   <div class="carousel">
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG2p8CnTMneYx3H5_qpOjNs_2yzsEzG9uAuEoGE4axZrzihin2N8r8bp8V2GbIhfc6xsSiwfxSzloBwUR3poJeegDETRZs5m8f4Y9rtwqSm1FC8brQjZhAXtVkULpwTrMKfvTpwASCdRMC_JfN6CrVJMHoIB9X_-Fv7frZX23dvnbtXonFT-ZYQOPgbeDf0QV0OdCXqE7AvgDU=">largest city in Mexico</a>
+    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHMusF8AQbDsvf7rTVbQkb1ZXZUAus8dw665qZiLQp-azCzp7n4diNrhhIz5Qq87RzqBrJamhcY0l4mkkBNAGTGXS50jzzE-z0cBiUdnDYh2yEyOtRBCVfoY4OeIRDBWnb2dio9Lv6-mIQTmnF9YV9feQYVFbu6QOZ_9JU0aDLG4avW8MFjgt_OG-0cTrkAj7bkPT_06-VjfQ==">largest city in Mexico</a>
   </div>
 </div>
 """
                         },
-                        tool_call_id='fxu90zw1',
+                        tool_call_id='d6vd9r5q',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                     TextPart(
-                        content='{"city": "Mexico City", "country": "Mexico"} ',
+                        content="""\
+{
+  "city": "Mexico City",
+  "country": "Mexico"
+} \
+""",
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=146, output_tokens=43, details={'thoughts_tokens': 29, 'text_prompt_tokens': 146}
+                    input_tokens=87, output_tokens=78, details={'thoughts_tokens': 78, 'text_prompt_tokens': 87}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='0ZvNaav1B9TRjMcPtuLhiQw',
+                provider_response_id='hlP6ae3uJuqGz7IP-6e9iA0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -482,10 +487,17 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
             ),
             ModelResponse(
                 parts=[
+                    ToolCallPart(
+                        tool_name='calculator',
+                        args={'expression': '2+2'},
+                        tool_call_id='oqeiriep',
+                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['current weather in Tokyo']},
-                        tool_call_id='xds2qnru',
+                        tool_call_id='93z4z1x3',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -614,37 +626,78 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
     <div class="gradient-container"><div class="gradient"></div></div>
   </div>
   <div class="carousel">
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEGXBokq8opls5ju3iEjlGcCIOFHG5zxuYkoGO_eOsPN1P0Fkz6w057ajxM-7H87VXsCM7XHKG7HPIkPIOfGdj4icvnJ4njtOwoEqi1kNu5RClx4dbd91Q2VRhQ2G4LvjFCoJdFX-94vzivfuv4ihpUveB3hcgZZJzAzt-NuFsUK5ro3ydIzoQimGiBkPNb-9_4chhMY4c1pAgS8w==">current weather in Tokyo</a>
+    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGF2SINL_ZQb5jTss_bBjZfyFNuEoYkYVytXoO1ujLEsxr5DUZkvmTdETjvO8TN_n-0fc4nD7Kn6C1fXZjgxeCmA9JmY8mevhdxIdnp_qqE49LnEZ4Ru3MI4c5H8rQwa5el4crQDtqznYSB8HPBoUjNk_CJCrHNMDwjYqpBbfyMAdVjbk8R4KALRG6ql-3yO0zRjupnGIY_KZI9pQ==">current weather in Tokyo</a>
   </div>
 </div>
 """
                         },
-                        tool_call_id='xds2qnru',
+                        tool_call_id='93z4z1x3',
                         timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                        provider_details={'thought_signature': IsStr()},
-                    ),
-                    TextPart(
-                        content="""\
-First, **2 + 2 = 4**.
-
-As for the weather in Tokyo, as of Friday, March 27, 2026, it is currently **sunny** with a temperature of **56°F (13°C)**. \n\
-
-The humidity is around 79%, and the forecast for the rest of the day includes periodic rain with a high of 64°F (18°C) and a 60% chance of precipitation.\
-""",
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=152, output_tokens=200, details={'thoughts_tokens': 97, 'text_prompt_tokens': 152}
+                    input_tokens=47, output_tokens=86, details={'thoughts_tokens': 55, 'text_prompt_tokens': 47}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='28nFaaOaJZKJ1MkPzvDemA0',
+                provider_response_id='iVP6aaqUGp-fz7IPrb-LgA0',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='calculator', content='4', tool_call_id='oqeiriep', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['', 'current weather in Tokyo']},
+                        tool_call_id=(web_search_id := IsStr()),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'google.com',
+                                'uri': 'https://www.google.com/search?q=weather+in+Tokyo,+JP',
+                            }
+                        ],
+                        tool_call_id=web_search_id,
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(
+                        content="""\
+2 + 2 is **4**.
+
+As for the weather in Tokyo, it is currently **cloudy** with a temperature of approximately **58°F (14°C)**. The humidity is around 71%, and there is a 30% chance of precipitation throughout the day.\
+""",
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': 'ErwDCrkDAQw51seeQfRmL5VQKB0za3r0rcYB5VnGk/wP9IY25C1mUSd3YKB8PH3IC/C3tdufhZycWv4aJudl2LSVy0ZQXC8T74IPMVk87/VxBr+Pm+BMCFvBRcJQGNvZMgrQIKGbylDY9ZAXkMdFwEXdtIesDpRRhjUx9SfHsdkALn6fvhZb5Ea9VUMnPGCW82QJgfWU7x1WItV9TROPug+XE7eSq4/sGgnf4Gqg+cUWWxspAChvBUi3+hu1rnPGW5+cr+kufGWuaQLI+WMneegbNFSaWoT9AdJluX4hwNMHaLAXj2kyOjNKlUlo6hvoT/0ck+/pHf8+pr/CNCj6m7EbHZ1aKfMS9TlXfOP30XkUDlQ9GSE/XfAiZkuMzHUC1v5gQ4Fkp2fZV1SsQarNXPwU+G5vUBw2wZ4lyGgUAe76IcQfEyaFjVsjA0oHvgzcXeSKSHephYSUzw44E/FoIq60Sr0oaOXRv5wIrBmiKcZyxSaVSd7B92nE6pZsnHw6FwqVS5dShZhaCNJeQbxzAVbFuLK7QbOFg0CcKn3Pi8PaZLHi4Ej23HMXlduStmtS9jXwltMhGg19xOnzHGmM'
+                        },
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=132, output_tokens=183, details={'thoughts_tokens': 121, 'text_prompt_tokens': 132}
+                ),
+                model_name='gemini-3-flash-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com/',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='i1P6af7qHca0qtsPqaSfuAI',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -682,27 +735,27 @@ async def test_native_output_with_function_and_builtin_tools(
                     ToolCallPart(
                         tool_name='get_user_country',
                         args={},
-                        tool_call_id='6ebuleqr',
+                        tool_call_id='x8i00o1q',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=35, output_tokens=72, details={'thoughts_tokens': 60, 'text_prompt_tokens': 35}
+                    input_tokens=35, output_tokens=71, details={'thoughts_tokens': 59, 'text_prompt_tokens': 35}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='3MnFad3tOqqqsOIPw7W6oQI',
+                provider_response_id='jVP6aY3XK8ucz7IPnO2_sQY',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_user_country', content='Mexico', tool_call_id='6ebuleqr', timestamp=IsDatetime()
+                        tool_name='get_user_country', content='Mexico', tool_call_id='x8i00o1q', timestamp=IsDatetime()
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -712,13 +765,8 @@ async def test_native_output_with_function_and_builtin_tools(
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='web_search',
-                        args={
-                            'queries': [
-                                'largest city in Mexico by population 2026',
-                                'population of Mexico City vs other cities in Mexico 2026',
-                            ]
-                        },
-                        tool_call_id='bt412336',
+                        args={'queries': ['largest city in Mexico by population']},
+                        tool_call_id='ccnih13d',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -847,13 +895,12 @@ async def test_native_output_with_function_and_builtin_tools(
     <div class="gradient-container"><div class="gradient"></div></div>
   </div>
   <div class="carousel">
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQ8x_ifgAPgTfrkLZOY7iUTHTgLtB_P_givTQoiXGQiJ7bShRetqhXZfARNh4wuQG3PdW6N6F3gLm9ukLtTFZNJmaHDEHSGI45c5JXmODv-64bF1GQbrQQgeiE3mo5kDLG4Jjrd9a8mM4MMG-FvNOiE8tUj_jg3azSbvxzOZpuRvm9Un37rTmmtooSEpPE7nQQOR0KFNDj13ZspqoAFU6fbl-NITPhpG04s1aXzyO9SbDy4Zn-qb_QkyMVyQ==">population of Mexico City vs other cities in Mexico 2026</a>
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHKTEqM-TMBMiSlTurakVPL4zsLA_Obf7PgCZtz9ip3gN3GPrkZVOpCbqXa1-op1Wrcl7uzkBLz8uw0u7c2m92S32pJUJjFt0s--nqKtJUqGayAjJjmBsByYY1Mszyx0z4bsPp-PuQte8NCWBxEDb63b3vuDY31o44Stk0yOqEYuyp_JT_Urll0jS_FSXDUPVX33QexUyZPvZMKvK35cC3Pg4hxFMg-q4pH7JpR">largest city in Mexico by population 2026</a>
+    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE_9qPFHdrs0dPGLuxohtPknhIV7gaej1BqMHep7aS51OGhFNlsDTs-oAcu0WPWrhEfdGNZhNweHoSpaNnKiNIsFyr5I-w1H56_99m3H8jW9wEsTQ3Dml-VIRiXmBuBZtiDI6YS5KZjDdP8hSI7nINULtUkw72Oe_VL4jF5LHgVYB6nGuLAokPC-OrAy-mM-jp0uzo1XOsKWaeyRVmrAYdeMoPxmCVw">largest city in Mexico by population</a>
   </div>
 </div>
 """
                         },
-                        tool_call_id='bt412336',
+                        tool_call_id='ccnih13d',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
@@ -870,16 +917,16 @@ async def test_native_output_with_function_and_builtin_tools(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=125,
-                    output_tokens=284,
-                    details={'thoughts_tokens': 175, 'tool_use_prompt_tokens': 88, 'text_prompt_tokens': 125},
+                    input_tokens=440,
+                    output_tokens=113,
+                    details={'thoughts_tokens': 27, 'tool_use_prompt_tokens': 86, 'text_prompt_tokens': 341},
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='4snFaeOuCf6b1MkPmf-vyQY',
+                provider_response_id='jlP6abq1OuqGz7IP-6e9iA0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -906,7 +953,7 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico']},
-                        tool_call_id='q57vznsj',
+                        tool_call_id='0yzlft9k',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -1035,12 +1082,12 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
     <div class="gradient-container"><div class="gradient"></div></div>
   </div>
   <div class="carousel">
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHY7KFTHAt2cJVXw_mJeW5D4LQP8EBpE46LAJkWZ7cmaXN2MjilanVPxak9QbQOmT4WfTAwwyGI5-HIctXME_rZAzaq0td_bjz6p0KGcvROYM3aoLY1OryphBo6XcDQg1PgI_-g1bYTQM-9UHBnjqxvvOAccEHmdiG8QTXLk8R6jHAx1JH7rRmazNQ665OZPeGgTAGlZF9r-A==">largest city in Mexico</a>
+    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEI4TzFM1PTw1Ly3WtX2lhnG5pHIpeLPcF0eQjj8nGYSo-9ZqVb14ziQvu35w3zTjuebxjspAuGG7uhzNXLTnKplsjvQUCMRh_7neN40nRFKxIAvKZeUw19djNiCzO76TTUpT5cNEcBpgdsSWDHOAzeeV5ttR_MZ3SjftO5mtHcwP-I_ITmpW6tkBecONqX0MlJR7JOT1SGXQg=">largest city in Mexico</a>
   </div>
 </div>
 """
                         },
-                        tool_call_id='q57vznsj',
+                        tool_call_id='0yzlft9k',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
@@ -1050,21 +1097,21 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
 {
   "city": "Mexico City",
   "country": "Mexico"
-}\
+} \
 """,
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=106, output_tokens=59, details={'thoughts_tokens': 39, 'text_prompt_tokens': 106}
+                    input_tokens=417, output_tokens=71, details={'thoughts_tokens': 71, 'text_prompt_tokens': 351}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='5cnFaeD-F-XG-8YPycjEkAs',
+                provider_response_id='klP6aYiLELOLqtsP8sPnwAs',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1091,7 +1138,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico by population']},
-                        tool_call_id='wozjlu8c',
+                        tool_call_id='jtmvhz2z',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -1220,12 +1267,12 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
     <div class="gradient-container"><div class="gradient"></div></div>
   </div>
   <div class="carousel">
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFOHZ57Ithg_-fDPkAYB2qW7ghSiWy1s2epO9WlV6TGvrCbn9JogGQq57Ea36ZxfYPtJW2s4AbW3k9nuLfJJEPs339TMX0XberwteQkgSZKO7NKJuAwNGLerivi1YjIj9lRJ4UVbp15qOI1u2cQW_lbEKaKZtbeg1Ogrf53rgx2QIutDJogEYFM9E7zszDbDNDLXdpjtT_jiU5TadbCW2L8VtpoXgWNYQ==">largest city in Mexico by population</a>
+    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFGqfZaj10rDL4XAVJuZRk9ERJH_eOYhcEufzj6C9rdx1Hk8lQjt6CvtO0uPqzYo0xU44bvwV-KffvxWNtN0h2lk_GJDqVbh1-J67sfAEXjw79973TQrOVHcliNYfnBblTC6ESGBvVTJfXpjC-Na5lKafNfSukw9lHx7nYz8jmir9hUwA48VZwquc2299PibaQZbk2WAaSqPgzUNsPQHag6n90tc7Zr">largest city in Mexico by population</a>
   </div>
 </div>
 """
                         },
-                        tool_call_id='wozjlu8c',
+                        tool_call_id='jtmvhz2z',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
@@ -1233,20 +1280,20 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='lxh4aeg2',
+                        tool_call_id='yylqxldm',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=98, output_tokens=88, details={'thoughts_tokens': 65, 'text_prompt_tokens': 98}
+                    input_tokens=279, output_tokens=31, details={'thoughts_tokens': 31, 'text_prompt_tokens': 176}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='6MnFaajXBvuu-8YPwf6ciQs',
+                provider_response_id='lFP6aZiqNKbXz7IPz-j6gAc',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1255,7 +1302,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='lxh4aeg2',
+                        tool_call_id='yylqxldm',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1289,27 +1336,27 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     ToolCallPart(
                         tool_name='get_user_country',
                         args={},
-                        tool_call_id='7choxrkt',
+                        tool_call_id='zi06h2mp',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=85, output_tokens=84, details={'thoughts_tokens': 72, 'text_prompt_tokens': 85}
+                    input_tokens=85, output_tokens=72, details={'thoughts_tokens': 60, 'text_prompt_tokens': 85}
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='6cnFab3WIfuj1MkP-svwmQI',
+                provider_response_id='l1P6af_FOMXVz7IPi8y54Aw',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_user_country', content='Mexico', tool_call_id='7choxrkt', timestamp=IsDatetime()
+                        tool_name='get_user_country', content='Mexico', tool_call_id='zi06h2mp', timestamp=IsDatetime()
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1320,7 +1367,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['largest city in Mexico by population']},
-                        tool_call_id='p59fjsgt',
+                        tool_call_id='4f244mfi',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
@@ -1449,12 +1496,12 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
     <div class="gradient-container"><div class="gradient"></div></div>
   </div>
   <div class="carousel">
-    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQELEDCmkw9Vk5zkoWAZwYslEAGSOuJNO2kC-6RCF4Xn--832qhrdWhsMZirnGDHoxUY3EZlICCbKgwHY6fHBiU_IEmtlgwmQdGhq3WU5ZBkkJ6MxfKnNrjXn8qZJEsrFND13Sl-AKMYWDjufv6x0GGd8EZk7MLOC4KyVxAMfUuYCnJ2d9fTEUZ6nKN0cTJDKUsnSW-z4V80N7YLAFkxRTe3X_o1QlqcJw==">largest city in Mexico by population</a>
+    <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEpeOwELXm731pU1AzV4YS-PvY4c2SNjo6P0sUsRYrq6iMUvQgTbkxC_flkq8xZJMhwBEo7xEsNzQpRyZcvtTFTE4z0A10fOp6huk3ogLAqFRJA9S9A4_D-N0WxlrMkkii7lape9pr_o-2oHXezFqsXHeLzQg4r45VMaWjAqOKT5teTTuhpAKY_la0MYIp-RbMqenOm9eUfbFMOra4OMuK6-L-K2oWi">largest city in Mexico by population</a>
   </div>
 </div>
 """
                         },
-                        tool_call_id='p59fjsgt',
+                        tool_call_id='4f244mfi',
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
@@ -1462,22 +1509,22 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='dsxlh118',
+                        tool_call_id='4jh89wlf',
                         provider_name='google-gla',
                         provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=187,
-                    output_tokens=186,
-                    details={'thoughts_tokens': 73, 'tool_use_prompt_tokens': 90, 'text_prompt_tokens': 187},
+                    input_tokens=432,
+                    output_tokens=96,
+                    details={'thoughts_tokens': 18, 'tool_use_prompt_tokens': 78, 'text_prompt_tokens': 301},
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='68nFacGdN9mY-8YP5rHl0As',
+                provider_response_id='mVP6adOKCunUz7IP5vXVqQ0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -1486,7 +1533,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='dsxlh118',
+                        tool_call_id='4jh89wlf',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1528,39 +1575,21 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=[
-                            {
-                                'domain': None,
-                                'title': 'worldatlas.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFcmUyD8LOoNCqLNQuJqgfGvtHrm6l7b22vtb34pEjFqZz8q90TwnMkbww2VdcQew1AlK418PRkXw4huJzfVPCwBmCRokw0u1CBBtqswUY6cZFeGe4EFO8n3JZNMvQaCnHFo1d55blCPs_5ip_yROtLPO07V-eaNCI-JOSi3eeBhQ==',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'wikipedia.org',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFBOYbyNW1OBKjMTRBE3fqwz-yPY-fj0Mvm7YIqOYWOHt1AIjHU1sS0Iw2pLDvYG7Vok6X_IC8OxcHWKq9vJkCt89PS4Eg_Zcv3qostSbPlMG1H7IqqLyaSPX_PS-JJM9u8vtKi',
-                            },
-                            {
-                                'domain': None,
-                                'title': 'chicagosistercities.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGVC74i6cYzjyWdMhx9_Y3n1URFOVrkF23v5u8Rm7Wl7gD-ezkejMKBUUJ5h42skaar0Wsq8oVw8exnficP8YHgtUj5PDRGj-K6WWCBfcEaPcnjJ4hyr_JgE7-dWuKC-AVFVPKz4DSAFzXW8QpfOh2E6jfaDKshXF1-WssqOCBs',
-                            },
-                        ],
+                        content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    TextPart(
-                        content='Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in 2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most important cultural and financial centers globally.'
-                    ),
+                    TextPart(content='{"city": "Mexico City", "country": "Mexico"}'),
                 ],
                 usage=RequestUsage(
                     input_tokens=85,
-                    output_tokens=357,
+                    output_tokens=214,
                     details={
-                        'thoughts_tokens': 109,
-                        'tool_use_prompt_tokens': 138,
+                        'thoughts_tokens': 54,
+                        'tool_use_prompt_tokens': 132,
                         'text_prompt_tokens': 85,
-                        'text_tool_use_prompt_tokens': 138,
+                        'text_tool_use_prompt_tokens': 132,
                     },
                 ),
                 model_name='gemini-2.5-flash',
@@ -1568,40 +1597,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 provider_name='google-gla',
                 provider_url='https://generativelanguage.googleapis.com/',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id='acDnab-ZJfCGz7IP-bKCoQg',
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content=[
-                            {
-                                'type': 'json_invalid',
-                                'loc': (),
-                                'msg': 'Invalid JSON: expected value at line 1 column 1',
-                                'input': 'Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in 2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most important cultural and financial centers globally.',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
-                            }
-                        ],
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(
-                    input_tokens=345, output_tokens=77, details={'thoughts_tokens': 64, 'text_prompt_tokens': 345}
-                ),
-                model_name='gemini-2.5-flash',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-                provider_url='https://generativelanguage.googleapis.com/',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id='bcDnaaSJCM2Fz7IPo7zPkAc',
+                provider_response_id='nFP6aZ_4HPuU6dkP-uetwA0',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),

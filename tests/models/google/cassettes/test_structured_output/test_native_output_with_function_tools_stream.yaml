@@ -46,13 +46,13 @@ interactions:
   response:
     body:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_user_country\",\"args\":
-        {},\"id\": \"zeq8pw5c\"},\"thoughtSignature\": \"EswECskEAb4+9vszSOSJFcX7HcWj42UcDRpqzTKd69hrO2bufTCQdKZs6Shy65Z1ZKRZyOuhOmbRhEkOq23rpA2p0sw2mKwvcUcLEIvHBr4Bta7awDi1kvohNCC/2L7vcN+ikJmChE/SwT7nved+3HZ2ekMHBSN7mlZexdS2OheIip8NjeCaypgl+guvGG9gfgyR3Sau6DUC+UhJKvZ+b5bhuNNTIjIwsECdYQVMjlyyRep6bP89FdCSR/C0q3y7Zyeo/4oS1i0GZLJu3EvasByNYzbcgoOZUon4GQdiUkyTfuTb0/N6q/S0bMZAN5CMByGhuYgZu4DQpLlcInBOLAZ0w0a72A0LuLgftzK4gkjA0AhzmYxw3uBSlgvclH3iFbb1+hmLg85gQ7M4be4eeFGA/KAtLru4UOhMpAKTRK1LMUiM18nGSI68D7AtQki8p3OMdI8dOewzgitVAFTxDvkeC7RJdMJBdZmQuRP3fimjZu+vr8vCe+szncc/vRtOLYmIqKsz8eH1T2/UFLX3srDfbbQqwTIQvFgZ0xGD8AbNz/iZswzha0cgl4XypyDpCl2q51NdOHTVuSU/QS4tDdnPj37/q03q/s5TNoLKrRUHjcZra1CIZGwVFi0fwU1uee80K1Oyss1chvB0k9JNi2UQagAZ13n3YpD3aNIzD/cT10MY2/PmwWQnOK+yMc0R4uG9JlhRKwHlAbfFI7K5hJV6IvUA6f4pBeuzLOfbkSs8+9cfMY9e3tdGUTsP3uB9TxHkNMSMCxpVFF9QNhtv\"}],\"role\":
+        {},\"id\": \"96c1su3s\"},\"thoughtSignature\": \"EpIDCo8DAQw51scL+dHffCC+bznOIyXjDPleN5yQL1zqs+4M/VtZCHcJrN8gh786ZjK9OZKuD6RdZHgfpv79cXyMPcENDzPM2VrQF0ZLkLBwpq98X6zkYNVkwocL/mdRCLNt7H+Stxu1kojfyFhLSEYUx2w5Ep0gOuF2lOdXs9nG0j5qO0osghTXqDz2AUUbinuJ4bX/34maQqECBO4g58rN+8/bKW1CW2CWWtJfSsfVNLutBS/NpJ/REk3cm3RT3viJU9YdruAMAC9K95vW5gGPkFbZ4weFTplNS9FBUjue7usTmrYTH0P+59L3xdXkn0X0QMHt1ACkOOl84cIscvYukdz9AC+a56q2kZPNEHxfHudLT5kbuYzL9ujEmJ79YWOG2cFfS2yjBXinkM6mjxraEXzt4sc1kOI2c37TGqlsFZH9UIRoNUm60rl5ligkxyDyGgrFXoVdEAPuM42SUr6KkhdOnR4Kjxf9vsqMaXUX2Br5ZyyRT1/PZBCnPSxe1bq7eTqAtvGUQJoG9L0tnpbDR9Eg\"}],\"role\":
         \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 29,\"candidatesTokenCount\": 12,\"totalTokenCount\":
-        156,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 29}],\"thoughtsTokenCount\": 115},\"modelVersion\":
-        \"gemini-3-flash-preview\",\"responseId\": \"1snFaaeXKbjD-sAPtam9qQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        110,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 29}],\"thoughtsTokenCount\": 69},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"g1P6aZnMMZq5qtsPj9fyuQ8\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
         {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
-        29,\"candidatesTokenCount\": 12,\"totalTokenCount\": 156,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        29}],\"thoughtsTokenCount\": 115},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"1snFaaeXKbjD-sAPtam9qQY\"}\r\n\r\n"
+        29,\"candidatesTokenCount\": 12,\"totalTokenCount\": 110,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        29}],\"thoughtsTokenCount\": 69},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"g1P6aZnMMZq5qtsPj9fyuQ8\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -61,7 +61,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=1366
+      - gfet4t7; dur=1204
       transfer-encoding:
       - chunked
       vary:
@@ -80,7 +80,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1613'
+      - '1365'
       content-type:
       - application/json
       host:
@@ -94,13 +94,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: zeq8pw5c
+            id: 96c1su3s
             name: get_user_country
-          thoughtSignature: EswECskEAb4-9vszSOSJFcX7HcWj42UcDRpqzTKd69hrO2bufTCQdKZs6Shy65Z1ZKRZyOuhOmbRhEkOq23rpA2p0sw2mKwvcUcLEIvHBr4Bta7awDi1kvohNCC_2L7vcN-ikJmChE_SwT7nved-3HZ2ekMHBSN7mlZexdS2OheIip8NjeCaypgl-guvGG9gfgyR3Sau6DUC-UhJKvZ-b5bhuNNTIjIwsECdYQVMjlyyRep6bP89FdCSR_C0q3y7Zyeo_4oS1i0GZLJu3EvasByNYzbcgoOZUon4GQdiUkyTfuTb0_N6q_S0bMZAN5CMByGhuYgZu4DQpLlcInBOLAZ0w0a72A0LuLgftzK4gkjA0AhzmYxw3uBSlgvclH3iFbb1-hmLg85gQ7M4be4eeFGA_KAtLru4UOhMpAKTRK1LMUiM18nGSI68D7AtQki8p3OMdI8dOewzgitVAFTxDvkeC7RJdMJBdZmQuRP3fimjZu-vr8vCe-szncc_vRtOLYmIqKsz8eH1T2_UFLX3srDfbbQqwTIQvFgZ0xGD8AbNz_iZswzha0cgl4XypyDpCl2q51NdOHTVuSU_QS4tDdnPj37_q03q_s5TNoLKrRUHjcZra1CIZGwVFi0fwU1uee80K1Oyss1chvB0k9JNi2UQagAZ13n3YpD3aNIzD_cT10MY2_PmwWQnOK-yMc0R4uG9JlhRKwHlAbfFI7K5hJV6IvUA6f4pBeuzLOfbkSs8-9cfMY9e3tdGUTsP3uB9TxHkNMSMCxpVFF9QNhtv
+          thoughtSignature: EpIDCo8DAQw51scL-dHffCC-bznOIyXjDPleN5yQL1zqs-4M_VtZCHcJrN8gh786ZjK9OZKuD6RdZHgfpv79cXyMPcENDzPM2VrQF0ZLkLBwpq98X6zkYNVkwocL_mdRCLNt7H-Stxu1kojfyFhLSEYUx2w5Ep0gOuF2lOdXs9nG0j5qO0osghTXqDz2AUUbinuJ4bX_34maQqECBO4g58rN-8_bKW1CW2CWWtJfSsfVNLutBS_NpJ_REk3cm3RT3viJU9YdruAMAC9K95vW5gGPkFbZ4weFTplNS9FBUjue7usTmrYTH0P-59L3xdXkn0X0QMHt1ACkOOl84cIscvYukdz9AC-a56q2kZPNEHxfHudLT5kbuYzL9ujEmJ79YWOG2cFfS2yjBXinkM6mjxraEXzt4sc1kOI2c37TGqlsFZH9UIRoNUm60rl5ligkxyDyGgrFXoVdEAPuM42SUr6KkhdOnR4Kjxf9vsqMaXUX2Br5ZyyRT1_PZBCnPSxe1bq7eTqAtvGUQJoG9L0tnpbDR9Eg
         role: model
       - parts:
         - functionResponse:
-            id: zeq8pw5c
+            id: 96c1su3s
             name: get_user_country
             response:
               return_value: Mexico
@@ -131,18 +131,18 @@ interactions:
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"{\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
-        {\"promptTokenCount\": 59,\"candidatesTokenCount\": 1,\"totalTokenCount\": 96,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 59}],\"thoughtsTokenCount\": 36},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
-        \"18nFaaz2H5aQjrEP2ruPIQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\n  \\\"city\\\":
-        \\\"Mexico City\\\",\\n  \\\"country\\\": \\\"Mexico\\\"\\n} \"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
-        {\"promptTokenCount\": 59,\"candidatesTokenCount\": 21,\"totalTokenCount\": 116,\"promptTokensDetails\": [{\"modality\":
-        \"TEXT\",\"tokenCount\": 59}],\"thoughtsTokenCount\": 36},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
-        \"18nFaaz2H5aQjrEP2ruPIQ\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\":
-        \"EvEBCu4BAb4+9vt67+Q3/ZKMpkDKnkKOg62DlUafHYxAlkUgZDQ4A/u2KuIpPDSzYi2L9ivbWqblWNHjXjrGBdrxevAwMwWFRHOXABgJDYU9KOd5rkPFJKQyVYCXGZQLAK/8c8K+fBsOjl9uzHnPE3HVUU7WWi04ZJlqXC9eUa2ZfxwASIBQANd8ILQZHE8KRsgPdhEagtnpIabyLkdy2U/H6wMPpCeZw68NbxCEp6+vOI+AMC3ISjUtTiGwLovA5ssBjyJknQY3jQ45+DVk/1kZh3f3hEoF9l/fOGP3pZRHBrEAxyNOmztgo5sdggowGjtC3A==\"}],\"role\":
-        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 174,\"candidatesTokenCount\":
-        21,\"totalTokenCount\": 231,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 174}],\"thoughtsTokenCount\":
-        36},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"18nFaaz2H5aQjrEP2ruPIQ\"}\r\n\r\n"
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"{\\n  \\\"city\\\": \\\"Mexico\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 59,\"candidatesTokenCount\": 8,\"totalTokenCount\":
+        97,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 59}],\"thoughtsTokenCount\": 30},\"modelVersion\":
+        \"gemini-3-flash-preview\",\"responseId\": \"hVP6afiZEuitz7IPypuAsQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \" City\\\",\\n  \\\"country\\\": \\\"Mexico\\\"\\n} \"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 59,\"candidatesTokenCount\": 21,\"totalTokenCount\": 110,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 59}],\"thoughtsTokenCount\": 30},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\":
+        \"hVP6afiZEuitz7IPypuAsQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\":
+        \"Es4BCssBAQw51sdVawpvkeotE8CSmU13qH8NFDcKY+siBnDFeW/Lp2jPEOJ7b3RqqwAk3/8vPSDDEScuvKw+bnGnCVh5/0uLsWPrh3CF9PvsILIzn9LLGojOM51WRAM3GS7YEwoWzxN8gXPUaApOX1P7ea8GYNEYdZPDpPdsROY6kWIuuSepO4ZBv0ZlfS94uqsYkorU5iQ7nXJcISV1rLnbBCQy2pDyAWD3I1P59Ri1rSKq5cwzOKmMnrexYdA8wu1wWjcwTttXk5KqL240/9w=\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 128,\"candidatesTokenCount\":
+        21,\"totalTokenCount\": 179,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 128}],\"thoughtsTokenCount\":
+        30},\"modelVersion\": \"gemini-3-flash-preview\",\"responseId\": \"hVP6afiZEuitz7IPypuAsQY\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -151,7 +151,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=833
+      - gfet4t7; dur=817
       transfer-encoding:
       - chunked
       vary:

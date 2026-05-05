@@ -195,16 +195,39 @@ def test_model_profile_gemini_2():
 
 
 def test_model_profile_gemini_3():
-    """Gemini 3.x models should support tool combination."""
+    """Gemini 3.x models support tool combination AND server-side tool invocations.
+
+    The two flags happen to flip on together for Gemini 3+ but are separately named so future
+    models that gain one capability without the other don't force a model-name proxy flag.
+    """
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
     assert isinstance(profile, GoogleModelProfile)
     assert profile.google_supports_tool_combination is True
+    assert profile.google_supports_server_side_tool_invocations is True
+
+
+def test_model_profile_gemini_2_disables_tool_combination_capabilities():
+    profile = google_model_profile('gemini-2.5-flash')
+    assert profile is not None
+    assert isinstance(profile, GoogleModelProfile)
+    assert profile.google_supports_tool_combination is False
+    assert profile.google_supports_server_side_tool_invocations is False
 
 
 def test_deprecated_native_output_with_builtin_tools_alias():
     with pytest.warns(DeprecationWarning, match='google_supports_tool_combination'):
         profile = GoogleModelProfile(google_supports_native_output_with_builtin_tools=True)
+    assert profile.google_supports_tool_combination is True
+
+
+def test_deprecated_alias_does_not_overwrite_explicit_new_flag():
+    """If the user sets both, the new flag wins — silently dropping an explicit `True` would surprise users."""
+    with pytest.warns(DeprecationWarning):
+        profile = GoogleModelProfile(
+            google_supports_tool_combination=True,
+            google_supports_native_output_with_builtin_tools=False,
+        )
     assert profile.google_supports_tool_combination is True
 
 

@@ -102,11 +102,13 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.google import (
+        _DEFAULT_FLAGS,  # pyright: ignore[reportPrivateUsage]
         GeminiStreamedResponse,
         GoogleModel,
         GoogleModelSettings,
         GoogleServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
+        _GoogleRequestFlags,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -3308,7 +3310,7 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'aspect_ratio': '16:9'}
 
@@ -3318,7 +3320,7 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'image_size': '2K'}
 
@@ -3328,7 +3330,7 @@ async def test_google_image_generation_resolution_with_aspect_ratio(google_provi
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
 
@@ -3339,7 +3341,7 @@ async def test_google_image_generation_unsupported_size_raises_error(google_prov
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
@@ -3348,7 +3350,7 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_tool_output_format(
@@ -3359,7 +3361,7 @@ async def test_google_image_generation_tool_output_format(
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'output_mime_type': 'image/png'}
 
@@ -3374,7 +3376,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
 
     with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_tool_output_compression(
@@ -3386,13 +3388,13 @@ async def test_google_image_generation_tool_output_compression(
 
     # Test explicit value
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
 
@@ -3405,22 +3407,28 @@ async def test_google_image_generation_tool_compression_validation(
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]), _DEFAULT_FLAGS
+        )
 
     # Invalid range: < 0
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]), _DEFAULT_FLAGS
+        )
 
     # Non-JPEG format (PNG)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
         model._get_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)]),
+            _DEFAULT_FLAGS,
         )
 
     # Non-JPEG format (WebP)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
         model._get_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
+            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)]),
+            _DEFAULT_FLAGS,
         )
 
 
@@ -3430,17 +3438,17 @@ async def test_google_image_generation_silently_ignored_by_gemini_api(google_pro
 
     # Test output_format ignored
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test output_compression ignored
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=90)])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test both ignored when None
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
 
@@ -3467,7 +3475,7 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
         builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_tools(params, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {
         'aspect_ratio': '16:9',
@@ -5105,6 +5113,13 @@ def test_google_missing_tool_call_thought_signature():
     )
 
 
+_TOOL_COMBINATION_FLAGS = _GoogleRequestFlags(
+    supports_tool_combination=True,
+    supports_server_side_tool_invocations=True,
+    has_server_side_tools=False,
+)
+
+
 def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
     response = ModelResponse(
         parts=[
@@ -5137,10 +5152,8 @@ def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
         provider_name='google-gla',
     )
 
-    assert _content_model_response(response, 'google-gla', supports_tool_combination=False) == snapshot(
-        {'role': 'model', 'parts': [{'text': 'hello'}]}
-    )
-    assert _content_model_response(response, 'google-gla', supports_tool_combination=True) == snapshot(
+    assert _content_model_response(response, 'google-gla') == snapshot({'role': 'model', 'parts': [{'text': 'hello'}]})
+    assert _content_model_response(response, 'google-gla', request_flags=_TOOL_COMBINATION_FLAGS) == snapshot(
         {
             'role': 'model',
             'parts': [
@@ -5194,7 +5207,36 @@ def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(builtin_only, 'google-gla', supports_tool_combination=False) is None
+    assert _content_model_response(builtin_only, 'google-gla') is None
+
+
+def test_content_model_response_drops_pyd_ai_synthesized_builtin_tool_ids():
+    """`pyd_ai_`-prefixed `tool_call_id`s come from `grounding_metadata` reconstruction in older versions
+    of pydantic-ai (or from streaming chunks before native `tool_call`/`tool_response` parts landed).
+    The Gemini API rejects unknown ids, so message histories built that way must drop those parts even
+    on Gemini 3+, regardless of the model profile.
+    """
+    response = ModelResponse(
+        parts=[
+            BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='pyd_ai_legacy_synthesized',
+                args={'queries': ['foo']},
+            ),
+            BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='pyd_ai_legacy_synthesized',
+                content=[{'web': {'uri': 'http://example.com'}}],
+            ),
+            TextPart(content='hello'),
+        ],
+        provider_name='google-gla',
+    )
+    assert _content_model_response(response, 'google-gla', request_flags=_TOOL_COMBINATION_FLAGS) == snapshot(
+        {'role': 'model', 'parts': [{'text': 'hello'}]}
+    )
 
 
 @pytest.mark.parametrize('supports_tool_combination', [False, True])
@@ -5217,9 +5259,8 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
         provider_name='google-gla',
     )
 
-    assert _content_model_response(
-        response, 'google-gla', supports_tool_combination=supports_tool_combination
-    ) == snapshot(
+    request_flags = _TOOL_COMBINATION_FLAGS if supports_tool_combination else _DEFAULT_FLAGS
+    assert _content_model_response(response, 'google-gla', request_flags=request_flags) == snapshot(
         {
             'role': 'model',
             'parts': [
@@ -5380,7 +5421,7 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
         instruction_parts=[InstructionPart(content='Instructions content')],
     )
 
-    system_instruction, contents = await m._map_messages(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    system_instruction, contents = await m._map_messages(messages, model_request_parameters, _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
     # Verify system parts are in order: system1, system2, instructions
     assert system_instruction == snapshot(
@@ -5495,7 +5536,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(messages, ModelRequestParameters(), _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
     assert contents == snapshot(
         [
@@ -5534,7 +5575,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(messages, ModelRequestParameters(), _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
     assert contents == snapshot(
         [
@@ -5580,7 +5621,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(messages, ModelRequestParameters(), _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
     assert contents == snapshot(
         [
@@ -5624,7 +5665,7 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
         ),
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(messages, ModelRequestParameters(), _DEFAULT_FLAGS)  # pyright: ignore[reportPrivateUsage]
 
     assert contents == snapshot(
         [

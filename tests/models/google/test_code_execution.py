@@ -35,6 +35,11 @@ from ...parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as anthropic_available:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -99,7 +104,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                             'language': 'PYTHON',
-                            'id': 'gzl5c0n7',
+                            'id': '8xju7mua',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -107,22 +112,27 @@ print(result)\
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': 'gzl5c0n7'},
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
                     TextPart(
-                        content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.'
+                        content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.',
+                        provider_name='google-gla',
+                        provider_details={
+                            'thought_signature': 'EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ='
+                        },
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=213,
-                    output_tokens=483,
+                    input_tokens=147,
+                    output_tokens=636,
                     details={
-                        'tool_use_prompt_tokens': 426,
-                        'text_prompt_tokens': 213,
-                        'text_tool_use_prompt_tokens': 426,
+                        'thoughts_tokens': 168,
+                        'tool_use_prompt_tokens': 360,
+                        'text_prompt_tokens': 147,
+                        'text_tool_use_prompt_tokens': 360,
                     },
                 ),
                 model_name='gemini-3-flash-preview',
@@ -148,7 +158,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
-                        'id': 'gzl5c0n7',
+                        'id': '8xju7mua',
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -165,7 +175,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
-                        'id': 'gzl5c0n7',
+                        'id': '8xju7mua',
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -177,7 +187,7 @@ print(result)\
                 index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': 'gzl5c0n7'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -186,17 +196,30 @@ print(result)\
             ),
             PartStartEvent(
                 index=2,
-                part=TextPart(content='The result of'),
+                part=TextPart(content='The result of $65465 - 6544 \\times 6546'),
                 previous_part_kind='builtin-tool-return',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' $65465 - 6544 \\times 654')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='64 - 6 + 1.02255$ is **-428,33')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='0,955.97745**.')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='4 - 6 + 1.02255$ is **-428,330')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=',955.97745**.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta='',
+                    provider_name='google-gla',
+                    provider_details={
+                        'thought_signature': 'EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ='
+                    },
+                ),
+            ),
             PartEndEvent(
                 index=2,
                 part=TextPart(
-                    content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.'
+                    content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.',
+                    provider_name='google-gla',
+                    provider_details={
+                        'thought_signature': 'EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ='
+                    },
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -208,7 +231,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
-                        'id': 'gzl5c0n7',
+                        'id': '8xju7mua',
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -218,7 +241,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': 'gzl5c0n7'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -250,17 +273,16 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
 from datetime import datetime
 import pytz
 
-# Get the timezone for Utrecht
-utrecht_tz = pytz.timezone('Europe/Amsterdam')
-
-# Get the current time in Utrecht
-utrecht_now = datetime.now(utrecht_tz)
+# Get the current time in Utrecht, Netherlands (Europe/Amsterdam timezone)
+utrecht_timezone = pytz.timezone('Europe/Amsterdam')
+utrecht_time = datetime.now(utrecht_timezone)
 
 # Format the date
-print(utrecht_now.strftime('%A, %B %d, %Y'))
+today_date = utrecht_time.strftime("%A, %B %d, %Y")
+print(f"Current day in Utrecht: {today_date}")
 """,
                             'language': 'PYTHON',
-                            'id': '2biwo6yl',
+                            'id': 'h0mwtrhs',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -268,7 +290,11 @@ print(utrecht_now.strftime('%A, %B %d, %Y'))
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': 'Friday, April 17, 2026\n', 'id': '2biwo6yl'},
+                        content={
+                            'outcome': 'OUTCOME_OK',
+                            'output': 'Current day in Utrecht: Tuesday, May 05, 2026\n',
+                            'id': 'h0mwtrhs',
+                        },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -281,7 +307,7 @@ import datetime
 print(datetime.datetime.now())
 """,
                             'language': 'PYTHON',
-                            'id': 'yskzpivu',
+                            'id': '7lr99y60',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -289,7 +315,7 @@ print(datetime.datetime.now())
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '2026-04-17 19:38:50.433087\n', 'id': 'yskzpivu'},
+                        content={'outcome': 'OUTCOME_OK', 'output': '2026-05-05 20:40:33.367937\n', 'id': '7lr99y60'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -301,13 +327,13 @@ print(datetime.datetime.now())
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=94,
-                    output_tokens=3559,
+                    input_tokens=257,
+                    output_tokens=2675,
                     details={
-                        'thoughts_tokens': 1761,
-                        'tool_use_prompt_tokens': 1760,
-                        'text_prompt_tokens': 94,
-                        'text_tool_use_prompt_tokens': 1760,
+                        'thoughts_tokens': 773,
+                        'tool_use_prompt_tokens': 1732,
+                        'text_prompt_tokens': 196,
+                        'text_tool_use_prompt_tokens': 1732,
                     },
                 ),
                 model_name='gemini-3-flash-preview',
@@ -337,18 +363,11 @@ print(datetime.datetime.now())
                         tool_name='code_execution',
                         args={
                             'code': """\
-from datetime import datetime, timedelta
-import pytz
-
-utrecht_tz = pytz.timezone('Europe/Amsterdam')
-utrecht_now = datetime.now(utrecht_tz)
-tomorrow = utrecht_now + timedelta(days=1)
-
-print(f"Today: {utrecht_now.strftime('%A, %B %d, %Y')}")
-print(f"Tomorrow: {tomorrow.strftime('%A, %B %d, %Y')}")
+import datetime
+print(datetime.datetime.now())
 """,
                             'language': 'PYTHON',
-                            'id': 'x9aranmq',
+                            'id': 'l5m4dm9r',
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -359,26 +378,57 @@ print(f"Tomorrow: {tomorrow.strftime('%A, %B %d, %Y')}")
                         content={
                             'outcome': 'OUTCOME_OK',
                             'output': IsStr(),
-                            'id': 'x9aranmq',
+                            'id': 'l5m4dm9r',
+                        },
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+import pytz
+# Utrecht is Europe/Amsterdam
+tz = pytz.timezone('Europe/Amsterdam')
+now = datetime.datetime.now(tz)
+print(f"Time in Utrecht: {now}")
+""",
+                            'language': 'PYTHON',
+                            'id': 'tu0hnkbw',
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google-gla',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'outcome': 'OUTCOME_OK',
+                            'output': 'Time in Utrecht: 2026-05-05 22:40:41.913103+02:00\n',
+                            'id': 'tu0hnkbw',
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
                     TextPart(
-                        content=IsStr(),
+                        content='Tomorrow in Utrecht will be **Friday, May 24, 2024**.',
                         provider_name='google-gla',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'thought_signature': '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'
+                        },
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=728,
-                    output_tokens=2178,
+                    input_tokens=893,
+                    output_tokens=4474,
                     details={
-                        'thoughts_tokens': 986,
-                        'tool_use_prompt_tokens': 1173,
-                        'text_prompt_tokens': 728,
-                        'text_tool_use_prompt_tokens': 1173,
+                        'thoughts_tokens': 1312,
+                        'tool_use_prompt_tokens': 3056,
+                        'text_prompt_tokens': 786,
+                        'text_tool_use_prompt_tokens': 3056,
                     },
                 ),
                 model_name='gemini-3-flash-preview',
@@ -394,15 +444,10 @@ print(f"Tomorrow: {tomorrow.strftime('%A, %B %d, %Y')}")
     )
 
 
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_receive_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
-    pytest.importorskip('anthropic', reason='anthropic not installed')
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-    from pydantic_ai.providers.google import GoogleProvider
-
     anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     google_model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(builtin_tools=[CodeExecutionTool()])
@@ -418,6 +463,6 @@ async def test_receive_history_from_another_provider(
             [UserPromptPart],
             [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [BuiltinToolCallPart, BuiltinToolReturnPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )

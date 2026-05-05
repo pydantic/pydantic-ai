@@ -48,11 +48,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '956'
+      - '1141'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1975
+      - gfet4t7; dur=1295
       transfer-encoding:
       - chunked
       vary:
@@ -65,23 +65,23 @@ interactions:
           parts:
           - functionCall:
               args: {}
-              id: 433twugp
+              id: w71i0cbt
               name: get_user_country
-            thoughtSignature: EsICCr8CAb4+9vu3iLbkgBv3NM8MTZ8AY0qigLMvQw2c4zaPLTBVOjJIoxDi+HxhqumFkQACTbeY79Gdx577m9h8SHhP5ixCoHGc0Um8Dnhv2W4abbuVP/OSYelZzRXDWEX4O9JvHzC1V1gxx/OQYhwY5zipl3DLHFI/2yYlRxMsia2aeaqsc/3nafJ9LmItk54EyX2XYPhF0BDSE96auSJV9DCnDvHdXNZeXuSM96dNLi4hUFQfPAAainjD96vZcWtv9nNJBxnNR2u754x9Z5jh120fBm53l9Zu7PT9Jzwe9szpUUn9PTyzs2iqrgpC5DrkxBZkWQu/10LBIpK6iYGVTMtkiUfkRe9GDAACObOL+qI+THW2HsAhgIVs7+PjI2IkaTJf6MYSnbBl+Ya/6D4NttH3GUGN724uF9LwjPhnUOf+Mw==
+            thoughtSignature: Es0DCsoDAQw51sf4ceGEX2Y8/rpMeG6cdLuYkNMby8I4y/ZkN+Vblkw8fRaWFN9Jf682+NRuWI5DKFLlNOsiNIapxOgUCMsYEtMQ/Tpm2bBuwt+XOhGqdgtUM5+DS0VGVVrMGoFVH+sz7CGgD5eRI+nBl+H3QWSF5mPnv04C7cTUeTnX48lLa0k4GyUKmkTrVM4SqMH/QWDzofWNDdqUowCxOUC3ZeDI3oRPDAug7hty20a6LJurfPQ1KAO8F9GqfRlGHHJv9iS8TwOlJ/LZMzeQpsV65b28Jr39WeEICcF+Vgn6C1KfYGsuqHMHmsY/+nquhxmESdQc3gNT2I+XwMtLHAyc/TYBPOkAr6E7LH67HnC9pFwUA9NwIt63qIQO3jlpllvdsF7Pn3xSa3OA4LRY5mP3rGb49tSLpSGiZwN0oT55wI2oBa4d2j+5L3NcLIEe+GpBpfKKXghA2j+nGwhkvltXI9jQEABZ70co8EQPGOGIhHzpKVDErNztUdw27Jh1JrgFDawnbt9O6OF8vRorLLyMvDjs3ioFPVu31aiS0uop2srOUl0y4huaxXJ+6B0Sx1FOaF7DwTNsParp79IQwdZkVNfzA6HJB9AzYnQ=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: 1MnFaZLAD6Ky1MkP8Nrx4QQ
+      responseId: wlP6af6uB-rBz7IP3s-7kAc
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 29
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 29
-        thoughtsTokenCount: 64
-        totalTokenCount: 105
+        thoughtsTokenCount: 102
+        totalTokenCount: 143
     status:
       code: 200
       message: OK
@@ -94,7 +94,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1261'
+      - '1445'
       content-type:
       - application/json
       host:
@@ -108,13 +108,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: 433twugp
+            id: w71i0cbt
             name: get_user_country
-          thoughtSignature: EsICCr8CAb4-9vu3iLbkgBv3NM8MTZ8AY0qigLMvQw2c4zaPLTBVOjJIoxDi-HxhqumFkQACTbeY79Gdx577m9h8SHhP5ixCoHGc0Um8Dnhv2W4abbuVP_OSYelZzRXDWEX4O9JvHzC1V1gxx_OQYhwY5zipl3DLHFI_2yYlRxMsia2aeaqsc_3nafJ9LmItk54EyX2XYPhF0BDSE96auSJV9DCnDvHdXNZeXuSM96dNLi4hUFQfPAAainjD96vZcWtv9nNJBxnNR2u754x9Z5jh120fBm53l9Zu7PT9Jzwe9szpUUn9PTyzs2iqrgpC5DrkxBZkWQu_10LBIpK6iYGVTMtkiUfkRe9GDAACObOL-qI-THW2HsAhgIVs7-PjI2IkaTJf6MYSnbBl-Ya_6D4NttH3GUGN724uF9LwjPhnUOf-Mw==
+          thoughtSignature: Es0DCsoDAQw51sf4ceGEX2Y8_rpMeG6cdLuYkNMby8I4y_ZkN-Vblkw8fRaWFN9Jf682-NRuWI5DKFLlNOsiNIapxOgUCMsYEtMQ_Tpm2bBuwt-XOhGqdgtUM5-DS0VGVVrMGoFVH-sz7CGgD5eRI-nBl-H3QWSF5mPnv04C7cTUeTnX48lLa0k4GyUKmkTrVM4SqMH_QWDzofWNDdqUowCxOUC3ZeDI3oRPDAug7hty20a6LJurfPQ1KAO8F9GqfRlGHHJv9iS8TwOlJ_LZMzeQpsV65b28Jr39WeEICcF-Vgn6C1KfYGsuqHMHmsY_-nquhxmESdQc3gNT2I-XwMtLHAyc_TYBPOkAr6E7LH67HnC9pFwUA9NwIt63qIQO3jlpllvdsF7Pn3xSa3OA4LRY5mP3rGb49tSLpSGiZwN0oT55wI2oBa4d2j-5L3NcLIEe-GpBpfKKXghA2j-nGwhkvltXI9jQEABZ70co8EQPGOGIhHzpKVDErNztUdw27Jh1JrgFDawnbt9O6OF8vRorLLyMvDjs3ioFPVu31aiS0uop2srOUl0y4huaxXJ-6B0Sx1FOaF7DwTNsParp79IQwdZkVNfzA6HJB9AzYnQ=
         role: model
       - parts:
         - functionResponse:
-            id: 433twugp
+            id: w71i0cbt
             name: get_user_country
             response:
               return_value: Mexico
@@ -148,11 +148,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '734'
+      - '802'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=912
+      - gfet4t7; dur=952
       transfer-encoding:
       - chunked
       vary:
@@ -164,20 +164,20 @@ interactions:
       - content:
           parts:
           - text: "{\n  \"city\": \"Mexico City\",\n  \"country\": \"Mexico\"\n} "
-            thoughtSignature: EsQBCsEBAb4+9vv+qq+pJIPjFrHh/p/G6JuOaDnnTsQnBqtCTMrral46e73Jd8X1nJfxxtexSiy9Jvz+hF5n51mXGWnyUrNfo4LEsH6opvfJjVMzcWg/qhdkNhkW1fc0U+EYNtbMPbFf1VrS/Tc57vOk6J8X3HoxuOq1H1v8SisuAYN+w69cIboxwvcETfGjhNdT+OKQ06Viy01GPPUUKLIZY6fwL4Idrvei8iq4GVnRh/4LlJvEka+GBcDIoDVIzamBqFjOfA==
+            thoughtSignature: EvcBCvQBAQw51sdeweWa3pgLf6yndMrdQuiZcs742r+ud8rZ62xsv0ykR5Pk57WQW/M5cN/GV6+34nBMyidBQ1ijJcfYIp8C/ByNxHfPcuDHsWm5txAhoSB5jzeLGWOXNxaxQ7fOXm6QY4T+ZabrqFnkycQ+aJwGwQrL6ByFHwxKXvDHzJl4YiYgLaPvQIShQrIjHyEGBLdFEaj6vgb3OZLWJTDI281X0ZJqEZ03Ax61NRA514xjYRkKuqYiD37dKYGXTFxzzmnA3EyWpTZS3hOAqTuXbNdu4toomoyL7O182o3dx2JQ+1D4rD8H2Sj6HQdImpOAcM0r1A==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: 1cnFaY76C47TjMcPkM6k0Qg
+      responseId: w1P6aZ3uJ9rTz7IPx-674Aw
       usageMetadata:
         candidatesTokenCount: 21
-        promptTokenCount: 123
+        promptTokenCount: 161
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 123
-        thoughtsTokenCount: 31
-        totalTokenCount: 175
+          tokenCount: 161
+        thoughtsTokenCount: 51
+        totalTokenCount: 233
     status:
       code: 200
       message: OK

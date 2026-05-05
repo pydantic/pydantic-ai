@@ -40,11 +40,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '7326'
+      - '5505'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3304
+      - gfet4t7; dur=2497
       transfer-encoding:
       - chunked
       vary:
@@ -55,46 +55,10 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city
-              in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in
-              2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most
-              important cultural and financial centers globally.
+          - text: '{"city": "Mexico City", "country": "Mexico"}'
           role: model
         finishReason: STOP
         groundingMetadata:
-          groundingChunks:
-          - web:
-              title: worldatlas.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFcmUyD8LOoNCqLNQuJqgfGvtHrm6l7b22vtb34pEjFqZz8q90TwnMkbww2VdcQew1AlK418PRkXw4huJzfVPCwBmCRokw0u1CBBtqswUY6cZFeGe4EFO8n3JZNMvQaCnHFo1d55blCPs_5ip_yROtLPO07V-eaNCI-JOSi3eeBhQ==
-          - web:
-              title: wikipedia.org
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFBOYbyNW1OBKjMTRBE3fqwz-yPY-fj0Mvm7YIqOYWOHt1AIjHU1sS0Iw2pLDvYG7Vok6X_IC8OxcHWKq9vJkCt89PS4Eg_Zcv3qostSbPlMG1H7IqqLyaSPX_PS-JJM9u8vtKi
-          - web:
-              title: chicagosistercities.com
-              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGVC74i6cYzjyWdMhx9_Y3n1URFOVrkF23v5u8Rm7Wl7gD-ezkejMKBUUJ5h42skaar0Wsq8oVw8exnficP8YHgtUj5PDRGj-K6WWCBfcEaPcnjJ4hyr_JgE7-dWuKC-AVFVPKz4DSAFzXW8QpfOh2E6jfaDKshXF1-WssqOCBs
-          groundingSupports:
-          - groundingChunkIndices:
-            - 0
-            - 1
-            - 2
-            segment:
-              endIndex: 172
-              startIndex: 43
-              text: It is the capital of Mexico and by far the most populated city in the country, as well as the most populous
-                city in North America
-          - groundingChunkIndices:
-            - 1
-            segment:
-              endIndex: 280
-              startIndex: 174
-              text: The city had a population of 9,209,944 in 2020, with Greater Mexico City having a population of 21,804,515
-          - groundingChunkIndices:
-            - 1
-            - 2
-            segment:
-              endIndex: 373
-              startIndex: 282
-              text: Mexico City is considered one of the most important cultural and financial centers globally
           searchEntryPoint:
             renderedContent: |
               <style>
@@ -218,122 +182,26 @@ interactions:
                   <div class="gradient-container"><div class="gradient"></div></div>
                 </div>
                 <div class="carousel">
-                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFRBYTqStYH9ilUntZaGB1b8Hl0EGELiLYPmCgFURQ3ZnNJALCJp_iTbTJ077Zzr97MhVpJH4AOsvwNlN8CBIpvhl8FvmPWIopMfvBylAukKP26sKiX-qyMMyuSHKxQNPnf4Lib4hN8OGMOVLEGWy3yCO_adMxr1zJObpsUZQQ2uwp2DHGu3noIAFZ0WFd0oRk-G2cPxVqVkK4=">largest city in Mexico</a>
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEi1lSQ38rO8tTgVnCF40Tft-CI_zGDpgJ1SguI-4eN1VJUO3C0nphUvEzZTIWmUwnwkXzGTy6mslDQvndRC01gZLBQLdA8CCNU5bfVvqF0mXlydePU4hLzcx_BEqQ9SaNFsexnb0g92U6_h9WQZyetg9aYGwkLdsciBjSct8Zj18PeNU5nJzZsDaQNcQG6aTMLk2SYsJBt4M8=">largest city in Mexico</a>
                 </div>
               </div>
           webSearchQueries:
           - largest city in Mexico
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: acDnab-ZJfCGz7IP-bKCoQg
+      responseId: nFP6aZ_4HPuU6dkP-uetwA0
       usageMetadata:
-        candidatesTokenCount: 110
+        candidatesTokenCount: 28
         promptTokenCount: 85
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 85
-        thoughtsTokenCount: 109
-        toolUsePromptTokenCount: 138
+        thoughtsTokenCount: 54
+        toolUsePromptTokenCount: 132
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 138
-        totalTokenCount: 442
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1618'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: What is the largest city in Mexico?
-        role: user
-      - parts:
-        - text: Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city
-            in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in
-            2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most important
-            cultural and financial centers globally.
-        role: model
-      - parts:
-        - text: |-
-            1 validation error:
-            ```json
-            [
-              {
-                "type": "json_invalid",
-                "loc": [],
-                "msg": "Invalid JSON: expected value at line 1 column 1",
-                "input": "Mexico City is the largest city in Mexico. It is the capital of Mexico and by far the most populated city in the country, as well as the most populous city in North America. The city had a population of 9,209,944 in 2020, with Greater Mexico City having a population of 21,804,515. Mexico City is considered one of the most important cultural and financial centers globally."
-              }
-            ]
-            ```
-
-            Fix the errors and try again.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: |2
-
-            Always respond with a JSON object that's compatible with this schema:
-
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
-
-            Don't include any text or Markdown fencing before or after.
-        role: user
-      tools:
-      - googleSearch: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '451'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=1106
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - text: '{"city": "Mexico City", "country": "Mexico"}'
-          role: model
-        finishReason: STOP
-        groundingMetadata: {}
-        index: 0
-      modelVersion: gemini-2.5-flash
-      responseId: bcDnaaSJCM2Fz7IPo7zPkAc
-      usageMetadata:
-        candidatesTokenCount: 13
-        promptTokenCount: 345
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 345
-        thoughtsTokenCount: 64
-        totalTokenCount: 422
+          tokenCount: 132
+        totalTokenCount: 299
     status:
       code: 200
       message: OK
