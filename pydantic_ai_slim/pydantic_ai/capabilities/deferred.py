@@ -16,9 +16,9 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
     """Framework capability that provides the ``load_capability`` tool for deferred capabilities.
 
     Added by the agent for a run when any capability has loadable deferred outputs.
-    Provides a :class:`~pydantic_ai.toolsets._deferred_capability.DeferredCapabilityToolset`
-    that exposes a single ``load_capability(id)`` tool. The tool description includes a
-    catalog of all unloaded capabilities so the model knows what's available.
+    Its instructions include a stable catalog of deferred capabilities, while
+    :class:`~pydantic_ai.toolsets._deferred_capability.DeferredCapabilityToolset`
+    exposes the ``load_capability(id)`` tool that loads a selected capability.
     """
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:

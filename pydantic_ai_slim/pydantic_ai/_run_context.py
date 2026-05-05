@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .settings import ModelSettings
     from .tool_manager import ToolManager
 
+
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
@@ -105,9 +106,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
-    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(
-        default_factory=dict[str, AbstractCapability[RunContextAgentDepsT]]
-    )
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=dict)
     """The capabilities that are available for the current run."""
 
     @property

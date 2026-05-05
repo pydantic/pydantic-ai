@@ -1168,21 +1168,6 @@ Supported by:
                     'title': 'short_spec_BuiltinTool',
                     'type': 'object',
                 },
-                'short_spec_IncludeToolReturnSchemas': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'IncludeToolReturnSchemas': {
-                            'anyOf': [
-                                {'const': 'all', 'type': 'string'},
-                                {'items': {'type': 'string'}, 'type': 'array'},
-                                {'additionalProperties': True, 'type': 'object'},
-                            ],
-                            'title': 'Includetoolreturnschemas',
-                        }
-                    },
-                    'title': 'short_spec_IncludeToolReturnSchemas',
-                    'type': 'object',
-                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -1190,10 +1175,13 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
-                'short_spec_ReinjectSystemPrompt': {
+                'spec_IncludeToolReturnSchemas': {
                     'additionalProperties': False,
-                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
-                    'title': 'short_spec_ReinjectSystemPrompt',
+                    'properties': {
+                        'IncludeToolReturnSchemas': {'$ref': '#/$defs/spec_params_IncludeToolReturnSchemas'}
+                    },
+                    'required': ['IncludeToolReturnSchemas'],
+                    'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -1211,18 +1199,18 @@ Supported by:
                     'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
-                'short_spec_Thinking': {
+                'spec_ReinjectSystemPrompt': {
                     'additionalProperties': False,
-                    'properties': {
-                        'Thinking': {
-                            'anyOf': [
-                                {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
-                            ],
-                            'title': 'Thinking',
-                        }
-                    },
-                    'title': 'short_spec_Thinking',
+                    'properties': {'ReinjectSystemPrompt': {'$ref': '#/$defs/spec_params_ReinjectSystemPrompt'}},
+                    'required': ['ReinjectSystemPrompt'],
+                    'title': 'spec_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
+                    'required': ['Thinking'],
+                    'title': 'spec_Thinking',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -1230,15 +1218,6 @@ Supported by:
                     'properties': {'ImageGeneration': {'$ref': '#/$defs/spec_params_ImageGeneration'}},
                     'required': ['ImageGeneration'],
                     'title': 'spec_ImageGeneration',
-                    'type': 'object',
-                },
-                'spec_IncludeToolReturnSchemas': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'IncludeToolReturnSchemas': {'$ref': '#/$defs/spec_params_IncludeToolReturnSchemas'}
-                    },
-                    'required': ['IncludeToolReturnSchemas'],
-                    'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
                 'spec_MCP': {
@@ -1255,18 +1234,22 @@ Supported by:
                     'title': 'spec_PrefixTools',
                     'type': 'object',
                 },
-                'spec_ReinjectSystemPrompt': {
+                'spec_params_IncludeToolReturnSchemas': {
                     'additionalProperties': False,
-                    'properties': {'ReinjectSystemPrompt': {'$ref': '#/$defs/spec_params_ReinjectSystemPrompt'}},
-                    'required': ['ReinjectSystemPrompt'],
-                    'title': 'spec_ReinjectSystemPrompt',
-                    'type': 'object',
-                },
-                'spec_Thinking': {
-                    'additionalProperties': False,
-                    'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
-                    'required': ['Thinking'],
-                    'title': 'spec_Thinking',
+                    'properties': {
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Tools',
+                        },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'title': 'spec_params_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
                 'spec_WebFetch': {
@@ -1281,6 +1264,34 @@ Supported by:
                     'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
                     'required': ['WebSearch'],
                     'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'title': 'spec_params_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_params_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'effort': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Effort',
+                        },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Defer Loading'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    },
+                    'title': 'spec_params_Thinking',
                     'type': 'object',
                 },
                 'spec_params_ImageGeneration': {
@@ -1346,24 +1357,6 @@ Supported by:
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
                 },
-                'spec_params_IncludeToolReturnSchemas': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'tools': {
-                            'anyOf': [
-                                {'const': 'all', 'type': 'string'},
-                                {'items': {'type': 'string'}, 'type': 'array'},
-                                {'additionalProperties': True, 'type': 'object'},
-                            ],
-                            'title': 'Tools',
-                        },
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
-                    },
-                    'title': 'spec_params_IncludeToolReturnSchemas',
-                    'type': 'object',
-                },
                 'spec_params_MCP': {
                     'additionalProperties': False,
                     'properties': {
@@ -1403,18 +1396,15 @@ Supported by:
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_Thinking'},
                                 {'$ref': '#/$defs/spec_Thinking'},
                                 {'const': 'WebFetch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebFetch'},
@@ -1425,34 +1415,6 @@ Supported by:
                     },
                     'required': ['prefix', 'capability'],
                     'title': 'spec_params_PrefixTools',
-                    'type': 'object',
-                },
-                'spec_params_ReinjectSystemPrompt': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
-                    },
-                    'title': 'spec_params_ReinjectSystemPrompt',
-                    'type': 'object',
-                },
-                'spec_params_Thinking': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'effort': {
-                            'anyOf': [
-                                {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
-                            ],
-                            'title': 'Effort',
-                        },
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
-                    },
-                    'title': 'spec_params_Thinking',
                     'type': 'object',
                 },
                 'spec_params_WebFetch': {
@@ -1578,18 +1540,15 @@ Supported by:
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_Thinking'},
                             {'$ref': '#/$defs/spec_Thinking'},
                             {'const': 'WebFetch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebFetch'},

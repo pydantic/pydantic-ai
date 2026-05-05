@@ -37,11 +37,12 @@ _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
     """Toolset that wraps an agent's tools and injects a ``load_capability`` discovery tool.
 
-    When unloaded capabilities exist, ``get_tools`` adds a ``load_capability`` tool whose
-    description lists the available capabilities as a catalog. When the model calls
-    ``load_capability(id)``, the matching :class:`~pydantic_ai.capabilities.deferred.DeferredCapability`
-    is loaded and its instructions are returned as the tool result. Once all capabilities
-    are loaded, the ``load_capability`` tool is removed.
+    When unloaded capabilities exist, ``get_tools`` adds a ``load_capability`` tool.
+    The catalog of loadable capabilities is provided by
+    :class:`~pydantic_ai.capabilities.deferred.DeferredLoadingCapability` instructions.
+    When the model calls ``load_capability(id)``, the matching capability's
+    instructions are returned as the tool result. Once all capabilities are loaded,
+    the ``load_capability`` tool is removed.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
