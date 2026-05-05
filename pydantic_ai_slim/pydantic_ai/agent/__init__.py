@@ -1177,7 +1177,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
 
-        effective_capability = CombinedCapability([effective_capability, DeferredLoadingCapability()])
+        for cap in extra_capabilities:
+            if cap.defer_loading is True:
+                effective_capability = CombinedCapability([effective_capability, DeferredLoadingCapability()])
+                break
 
         run_capability = await effective_capability.for_run(initial_ctx)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
