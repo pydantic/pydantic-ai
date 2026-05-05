@@ -781,7 +781,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context)
-            content = yaml.dump(dumped_data, sort_keys=False)
+            content = yaml.dump(dumped_data, sort_keys=False, allow_unicode=True)
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
