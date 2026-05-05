@@ -17,6 +17,7 @@ from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
+from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
@@ -1175,6 +1176,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_capability = base_capability
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
+
+        effective_capability = CombinedCapability([effective_capability, DeferredLoadingCapability()])
 
         run_capability = await effective_capability.for_run(initial_ctx)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
