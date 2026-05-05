@@ -93,6 +93,7 @@ async def test_code_execution_stream(
                 instructions='Be concise and always use Python to do calculations no matter how small.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -143,6 +144,7 @@ print(result)\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -263,6 +265,7 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -344,6 +347,7 @@ print(datetime.datetime.now())
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -356,6 +360,7 @@ print(datetime.datetime.now())
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -439,6 +444,7 @@ print(f"Time in Utrecht: {now}")
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

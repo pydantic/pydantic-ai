@@ -138,6 +138,7 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                 parts=[UserPromptPart(content='What is the largest city in the user country?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -160,6 +161,7 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                 provider_response_id='wlP6af6uB-rBz7IP3s-7kAc',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -169,6 +171,7 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -194,6 +197,7 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                 provider_response_id='w1P6aZ3uJ9rTz7IPx-674Aw',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -217,6 +221,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                 parts=[UserPromptPart(content='What is the largest city in the user country?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -239,6 +244,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                 provider_response_id='g1P6aZnMMZq5qtsPj9fyuQ8',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -248,6 +254,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -273,6 +280,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                 provider_response_id='hVP6afiZEuitz7IPypuAsQY',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -292,6 +300,7 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                 parts=[UserPromptPart(content='What is the largest city in Mexico?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -459,6 +468,7 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                 provider_response_id='hlP6ae3uJuqGz7IP-6e9iA0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -484,6 +494,7 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -648,6 +659,7 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                 provider_response_id='iVP6aaqUGp-fz7IPrb-LgA0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -655,6 +667,7 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -700,6 +713,7 @@ As for the weather in Tokyo, it is currently **cloudy** with a temperature of ap
                 provider_response_id='i1P6af7qHca0qtsPqaSfuAI',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -729,6 +743,7 @@ async def test_native_output_with_function_and_builtin_tools(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -751,6 +766,7 @@ async def test_native_output_with_function_and_builtin_tools(
                 provider_response_id='jVP6aY3XK8ucz7IPnO2_sQY',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -760,6 +776,7 @@ async def test_native_output_with_function_and_builtin_tools(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -929,6 +946,7 @@ async def test_native_output_with_function_and_builtin_tools(
                 provider_response_id='jlP6abq1OuqGz7IP-6e9iA0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -947,6 +965,7 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                 parts=[UserPromptPart(content='What is the largest city in Mexico?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1114,6 +1133,7 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                 provider_response_id='klP6aYiLELOLqtsP8sPnwAs',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1132,6 +1152,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                 parts=[UserPromptPart(content='What is the largest city in Mexico?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1296,6 +1317,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                 provider_response_id='lFP6aZiqNKbXz7IPz-j6gAc',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1308,6 +1330,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1330,6 +1353,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 parts=[UserPromptPart(content='What is the largest city in the user country?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1352,6 +1376,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 provider_response_id='l1P6af_FOMXVz7IPi8y54Aw',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1361,6 +1386,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1527,6 +1553,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 provider_response_id='mVP6adOKCunUz7IP5vXVqQ0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1539,6 +1566,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1564,6 +1592,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 parts=[UserPromptPart(content='What is the largest city in Mexico?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1600,6 +1629,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 provider_response_id='nFP6aZ_4HPuU6dkP-uetwA0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
