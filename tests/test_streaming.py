@@ -325,7 +325,7 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_responses(debounce_by=None):
+        async for structured_response, last in result.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
             response_data = await result.validate_response_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
@@ -396,7 +396,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(  # pyright: ignore[reportDeprecated]
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
@@ -519,7 +519,7 @@ def test_streamed_text_stream_sync():
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(  # pyright: ignore[reportDeprecated]
         [
             ModelResponse(
                 parts=[TextPart(content='The ')],
@@ -2964,7 +2964,7 @@ async def test_iter_stream_responses():
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
-                    async for chunk in stream.stream_responses(debounce_by=None):
+                    async for chunk in stream.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
                         messages.append(chunk)
 
     assert messages == [
@@ -3301,7 +3301,7 @@ async def test_tool_raises_call_deferred():
         assert await result.get_output() == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pyright: ignore[reportDeprecated]
         assert responses == snapshot(
             [
                 ModelResponse(
@@ -3845,7 +3845,7 @@ def test_structured_response_sync_validation():
 
     chunks: list[list[int]] = []
     result = agent.run_stream_sync('')
-    for structured_response, last in result.stream_responses(debounce_by=None):
+    for structured_response, last in result.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
         response_data = result.validate_response_output(structured_response, allow_partial=not last)
         chunks.append(response_data)
 

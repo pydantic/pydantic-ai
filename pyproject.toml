@@ -241,6 +241,10 @@ testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
+    # v2 prep (card 32): `stream_responses()` is renamed to `stream_response()` (singular). The plural
+    # remains as a 1.x-deprecated alias on AgentStream / StreamedRunResult / StreamedRunResultSync.
+    # Existing tests still call the plural; the new dedicated test opts in via `pytest.warns`.
+    "ignore:.*\\.stream_responses\\(\\). is deprecated.*:DeprecationWarning",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
     # boto3

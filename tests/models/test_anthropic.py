@@ -2100,7 +2100,7 @@ async def test_stream_structured(allow_model_requests: None):
             )
         )
         assert tool_called
-        async for response, is_last in result.stream_responses(debounce_by=None):
+        async for response, is_last in result.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
             if is_last:
                 assert response == snapshot(
                     ModelResponse(

@@ -319,7 +319,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
-        async for response, is_last in result.stream_responses(debounce_by=None):
+        async for response, is_last in result.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
             if is_last:
                 assert response == snapshot(
                     ModelResponse(

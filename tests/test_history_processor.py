@@ -472,7 +472,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
             async for node in run:
                 if agent.is_model_request_node(node):
                     async with node.stream(run.ctx) as stream:
-                        async for _ in stream.stream_responses(debounce_by=None):
+                        async for _ in stream.stream_responses(debounce_by=None):  # pyright: ignore[reportDeprecated]
                             ...
 
     result = run.result
