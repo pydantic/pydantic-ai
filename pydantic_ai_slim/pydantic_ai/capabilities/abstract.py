@@ -172,7 +172,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         if self.defer_loading:
             if not self.id:
                 raise ValueError('Capabilities with defer_loading=True must have an id.')
-            if not self.get_description():
+            if not self.get_description(None):
                 raise ValueError('Capabilities with defer_loading=True must have a description.')
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
@@ -243,7 +243,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def get_description(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    def get_description(self, ctx: RunContext[AgentDepsT] | None) -> str | None:
         """Return a human-readable description of this capability, or None.
 
         Surfaced to the model in the `load_capability` catalog when
