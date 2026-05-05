@@ -322,16 +322,18 @@ class TestFastMCPToolsetToolDiscovery:
                 }
             )
 
-    async def test_fastmcp_tool_for_tool_def_uses_toolset_max_retries(self, fastmcp_client: Client[FastMCPTransport]):
-        """`tool_for_tool_def` resolves `self.max_retries`: explicit int when set, fallback to `1`
-        when unset (durable-execution path has no `ctx` to inherit from)."""
+    async def test_fastmcp_tool_for_tool_def_uses_effective_max_retries(
+        self, fastmcp_client: Client[FastMCPTransport], run_context: RunContext[None]
+    ):
         tool_def = ToolDefinition(name='x', description='', parameters_json_schema={})
 
         toolset_default = FastMCPToolset(fastmcp_client)
         assert toolset_default.tool_for_tool_def(tool_def).max_retries == 1
+        assert toolset_default.tool_for_tool_def(tool_def, ctx=run_context).max_retries == run_context.max_retries
 
         toolset_explicit = FastMCPToolset(fastmcp_client, max_retries=5)
         assert toolset_explicit.tool_for_tool_def(tool_def).max_retries == 5
+        assert toolset_explicit.tool_for_tool_def(tool_def, ctx=run_context).max_retries == 5
 
     async def test_get_tools_with_empty_server(self, run_context: RunContext[None]):
         """Test getting tools from an empty FastMCP server."""

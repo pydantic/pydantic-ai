@@ -1590,7 +1590,7 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
 
 
 class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[int] | None = None) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
@@ -1653,3 +1653,17 @@ def test_dbos_mcp_wrapper_visit_and_replace():
     # visit_and_replace should return self for DBOS wrappers
     result = dbos_mcp_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
     assert result is dbos_mcp_toolset
+
+
+def test_dbos_fastmcp_tool_for_tool_def_uses_run_context():
+    """DBOS FastMCP wrappers should preserve run context when recreating tools."""
+    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
+
+    tool_def = ToolDefinition(name='x', description='', parameters_json_schema={})
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage(), max_retries=4)
+    wrapped: FastMCPToolset[int] = FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')
+    toolset: DBOSFastMCPToolset[int] = DBOSFastMCPToolset(
+        wrapped, step_name_prefix='coverage_test_fastmcp', step_config={}
+    )
+
+    assert toolset.tool_for_tool_def(tool_def, ctx=run_context).max_retries == 4
