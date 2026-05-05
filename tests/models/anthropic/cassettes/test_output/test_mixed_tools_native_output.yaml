@@ -131,8 +131,6 @@ interactions:
       - '1454'
       content-type:
       - application/json
-      cookie:
-      - _cfuvid=aL07AddnsrYxgjfp0HH3B3Wxz12gYRoJ4nHZN1.xDUI-1777033426.810519-1.0.1.1-k4G.MuowfxUM_rNNoJmSa0XFXkK.lOl3a8vtLsiZzpw
       host:
       - api.anthropic.com
     method: POST
