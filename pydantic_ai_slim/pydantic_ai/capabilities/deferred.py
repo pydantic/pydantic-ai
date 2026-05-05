@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai._deferred import DeferredLoadingRegistry
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -21,9 +20,6 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
     catalog of all unloaded capabilities so the model knows what's available.
     """
 
-    registry: DeferredLoadingRegistry[AgentDepsT]
-    """Run-local catalog and loadable outputs for deferred capabilities."""
-
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return None
 
@@ -31,4 +27,4 @@ class DeferredLoadingCapability(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(position='outermost')
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        return DeferredCapabilityToolset(wrapped=toolset, registry=self.registry)
+        return DeferredCapabilityToolset(wrapped=toolset)
