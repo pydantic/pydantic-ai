@@ -143,5 +143,5 @@ uv run pyright \
   pydantic_ai_slim/pydantic_ai/_agent_graph.py \
   pydantic_ai_slim/pydantic_ai/ui/_event_stream.py \
   pydantic_ai_slim/pydantic_ai/ui/vercel_ai/_event_stream.py
-# 0 errors, 0 warnings, 0 informations
+# 0 errors, 0 warnings, 0 information
 ```
