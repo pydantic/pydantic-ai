@@ -554,7 +554,7 @@ A custom callable also benefits from provider-native tool search on models that 
 !!! note "Prompt caching and the local fallback"
     On the local fallback, discovered tools are appended to the request's tool definitions for subsequent turns. On providers whose prompt cache matches by request prefix, each new discovery invalidates the cache from the tool-definition block onward — noticeable as added latency and cost on long sessions with many discovery rounds across a large tool corpus.
 
-    The default `strategy=None` policy avoids this on Anthropic and OpenAI by routing to their native tool search (server-executed or, with a custom callable, client-executed); deferred tools ship with `defer_loading` on the wire and the provider keeps the visible tool list stable across discoveries. Forcing the local strategy on those providers (e.g. `strategy='keywords'`) opts out of that protection.
+    Anthropic and OpenAI sidestep this whenever the request can be routed to their native tool search: that includes the default `strategy=None` (server-executed) and custom callables (client-executed). In both modes, deferred tools ship with `defer_loading` on the wire and the provider keeps the visible tool list stable across discoveries. Forcing a local strategy on those providers (e.g. `strategy='keywords'`) opts out of that protection.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
