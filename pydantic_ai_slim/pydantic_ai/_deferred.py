@@ -58,6 +58,14 @@ def prepare_capability_tool_definitions(
     capability_defer_loading: bool | None,
 ) -> ToolsPrepareFunc[AgentDepsT]:
     def prepare(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        def prepare_description(tool_def: ToolDefinition) -> str | None:
+            if tool_def.defer_loading is True:
+                return (
+                    (tool_def.description if tool_def.description is not None else '')
+                    + '\n\nThis tool is part of the capability {capability_id} and the capability must be loaded before it can be used.'
+                )
+            return tool_def.description
+
         return [
             replace(
                 tool_def,
@@ -65,6 +73,7 @@ def prepare_capability_tool_definitions(
                 defer_loading=(
                     tool_def.defer_loading if tool_def.defer_loading is not None else capability_defer_loading
                 ),
+                description=prepare_description(tool_def),
             )
             for tool_def in tool_defs
         ]

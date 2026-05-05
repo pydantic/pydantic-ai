@@ -721,6 +721,7 @@ async def test_fallback_model_structured_output():
                         },
                         description='The final response which ends this conversation',
                         kind='output',
+                        defer_loading=False,
                     )
                 ],
                 allow_text_output=False,
