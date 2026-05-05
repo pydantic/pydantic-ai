@@ -43,6 +43,7 @@ nav:
           - models/ollama.md
           - models/openrouter.md
           - models/outlines.md
+          - models/zai.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -181,6 +182,7 @@ nav:
           - api/models/openrouter.md
           - api/models/outlines.md
           - api/models/test.md
+          - api/models/zai.md
           - api/models/wrapper.md
           - api/output.md
           - api/profiles.md

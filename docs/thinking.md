@@ -269,6 +269,20 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+## Z.AI
+
+To enable thinking, use the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] [model setting](agent.md#model-run-settings). To preserve thinking content across multi-turn conversations, also set [`ZaiModelSettings.zai_clear_thinking`][pydantic_ai.models.zai.ZaiModelSettings.zai_clear_thinking] to `False`.
+
+```python {title="zai_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
+
+model = ZaiModel('glm-5')
+settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Mistral
 
 Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.
