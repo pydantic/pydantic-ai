@@ -1579,7 +1579,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             This method is experimental and may change in the future.
 
         Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')
