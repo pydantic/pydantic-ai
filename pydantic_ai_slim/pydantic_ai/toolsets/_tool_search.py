@@ -46,6 +46,7 @@ class _SearchIndexEntry:
     name: str
     description: str | None
     search_terms: set[str]
+    capability_id: str | None
 
 
 @dataclass(kw_only=True)
@@ -97,6 +98,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 name=name,
                 description=tool.tool_def.description,
                 search_terms=self._search_terms(name, tool.tool_def.description),
+                capability_id=tool.tool_def.capability_id,
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -166,7 +168,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if name == _SEARCH_TOOLS_NAME and isinstance(tool, _SearchTool):
-            return await self._search_tools(tool_args, tool)
+            return await self._search_tools(ctx, tool_args, tool)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     @staticmethod
@@ -176,7 +178,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             search_terms.update(_SEARCH_TOKEN_RE.findall(description.lower()))
         return search_terms
 
-    async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+    async def _search_tools(
+        self, ctx: RunContext[AgentDepsT], tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]
+    ) -> ToolReturn:
         """Search for tools ordered by token overlap with the query.
 
         Tokenizes both the query and each tool's name/description on alphanumeric runs,
@@ -196,7 +200,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         scored_matches: list[tuple[int, dict[str, str | None]]] = []
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
-            if score == 0:
+            if score == 0 or (entry.capability_id is not None and entry.capability_id not in ctx.loaded_capability_ids):
                 continue
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
