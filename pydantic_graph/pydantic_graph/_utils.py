@@ -51,12 +51,23 @@ except ImportError:  # pragma: no cover
 
 
 def get_event_loop():
+    """Return the running event loop, or create and set a new one if none exists.
+
+    Uses ``asyncio.get_running_loop()`` when called from within a coroutine or
+    callback, falling back to ``asyncio.new_event_loop()`` when there is no
+    running loop (e.g. in a synchronous context or a fresh thread).
+
+    Note:
+        ``asyncio.get_event_loop()`` is deprecated since Python 3.12 and emits
+        a ``DeprecationWarning`` when there is no current event loop. This
+        implementation avoids that warning while preserving the same behaviour.
+    """
     try:
-        event_loop = asyncio.get_event_loop()
+        return asyncio.get_running_loop()
     except RuntimeError:
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
-    return event_loop
+        return event_loop
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
