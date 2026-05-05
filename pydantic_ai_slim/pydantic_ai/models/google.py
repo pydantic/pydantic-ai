@@ -138,10 +138,6 @@ _SERVER_SIDE_BUILTIN_TOOL_TYPES = (WebSearchTool, WebFetchTool, FileSearchTool)
 class _GoogleRequestFlags:
     """Snapshot of profile flags + request-derived flags that gate Gemini-specific request shaping.
 
-    Unrelated to [`pydantic_ai.capabilities`][pydantic_ai.capabilities] (the framework-level
-    `Thinking` / `CAPABILITY_TYPES` system) — this is a Google-internal struct that bundles
-    `GoogleModelProfile.google_*` flags with the per-request `has_server_side_tools` derivation.
-
     Built once per request in `_build_content_and_config` via `_GoogleRequestFlags.for_request`
     and threaded into helpers that consume any of these flags, so the profile is read in one
     place and the same snapshot is shared across the request lifecycle.
@@ -1488,8 +1484,8 @@ def _content_model_response(
     # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
     pending_thinking_signature: str | None = None
     # Gemini requires the first `function_call` in a turn to carry a thought_signature; subsequent
-    # ones don't. Tracked here so each `ToolCallPart` arm can decide whether to fall back to the
-    # documented dummy signature.
+    # ones don't. Per https://ai.google.dev/gemini-api/docs/thought-signatures#signatures-in-function-calling-parts.
+    # Tracked here so each `ToolCallPart` arm can decide whether to fall back to the documented dummy signature.
     needs_function_call_signature = True
 
     for item in m.parts:
@@ -1559,9 +1555,8 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
     part: PartDict = {
         'function_call': FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id),
     }
-    if signature is not None:
-        part['thought_signature'] = signature
-    elif needs_signature:
+    part = _attach_signature(part, signature)
+    if signature is None and needs_signature:
         # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs and
         # https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling
         # the documented dummy `skip_thought_signature_validator` works for both GLA and Vertex.
@@ -1820,31 +1815,28 @@ def _map_code_execution_result(
     )
 
 
-def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPart:
-    tool_type = tool_call.tool_type
+def _resolve_builtin_tool_name(tool_type: ToolType | None) -> str:
     if tool_type is None:  # pragma: no cover
-        raise UnexpectedModelBehavior(f'Unexpected tool type in tool_call: {tool_call!r}')
+        raise UnexpectedModelBehavior('Missing tool_type on builtin tool part')
     tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
-        raise UnexpectedModelBehavior(f'Unknown tool type in tool_call: {tool_type!r}')
+        raise UnexpectedModelBehavior(f'Unknown tool type on builtin tool part: {tool_type!r}')
+    return tool_name
+
+
+def _map_tool_call(tool_call: ToolCall, provider_name: str) -> BuiltinToolCallPart:
     return BuiltinToolCallPart(
         provider_name=provider_name,
-        tool_name=tool_name,
+        tool_name=_resolve_builtin_tool_name(tool_call.tool_type),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
 
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> BuiltinToolReturnPart:
-    tool_type = tool_response.tool_type
-    if tool_type is None:  # pragma: no cover
-        raise UnexpectedModelBehavior(f'Unexpected tool type in tool_response: {tool_response!r}')
-    tool_name = _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.get(tool_type)
-    if tool_name is None:  # pragma: no cover
-        raise UnexpectedModelBehavior(f'Unknown tool type in tool_response: {tool_type!r}')
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=tool_name,
+        tool_name=_resolve_builtin_tool_name(tool_response.tool_type),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )

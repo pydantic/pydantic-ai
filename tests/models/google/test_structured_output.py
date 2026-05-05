@@ -480,7 +480,7 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
 
     @agent.tool_plain
     async def calculator(expression: str) -> str:
-        return str(eval(expression))  # pragma: no cover
+        return str(eval(expression))
 
     result = await agent.run('What is 2+2? Also search for the current weather in Tokyo.')
     assert isinstance(result.output, str)
