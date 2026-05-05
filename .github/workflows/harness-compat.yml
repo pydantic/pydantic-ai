@@ -17,10 +17,11 @@ name: Harness Compat
 # `contents: read` only — the label is defense-in-depth against running
 # unreviewed code on CI infrastructure, not a privilege escalation barrier.
 #
-# Fork PRs without the label produce a `skipped` job result. Branch protection
-# should require this check to merge; the `harness-compat-gate` job in `ci.yml`
-# enforces the label requirement via the `check` gate (skipped == success here
-# is bypassed by `check` failing on fork-PR-without-label).
+# Fork PRs without the label produce a `skipped` job result. The
+# `harness-compat-gate` job in `ci.yml` enforces the label requirement via the
+# `check` gate so unlabeled fork PRs can't be merged (`check` fails when the
+# gate fails). Add `harness compat` to required-status-checks in branch
+# protection so the actual cross-repo run is also enforced when it runs.
 
 on:
   pull_request:
