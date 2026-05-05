@@ -323,6 +323,9 @@ If you'd like to change the name of the output tool, pass a custom description t
 
 To dynamically modify or filter the available output tools during an agent run, you can define an agent-wide `prepare_output_tools` function that will be called ahead of each step of a run. This function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step). This is analogous to the [`prepare_tools` function](tools-advanced.md#prepare-tools) for non-output tools.
 
+!!! warning
+    Returning `None` from the callback disables **all** output tools for that step and emits a `UserWarning`; it is **not** a "pass through unchanged" shortcut. Return the `tool_defs` argument to keep every output tool as-is, or `[]` to expose no output tools intentionally. See the [`prepare_tools` warning](tools-advanced.md#prepare-tools) for the full discussion.
+
 ```python {title="tool_output.py"}
 from pydantic import BaseModel
 
