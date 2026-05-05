@@ -168,7 +168,7 @@ async def test_multi_agent_usage_no_incr():
     run_1_usages: list[RunUsage] = []
 
     @controller_agent1.tool
-    async def delegate_to_other_agent1(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent1(ctx: RunContext[object], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence)
         delegate_usage = delegate_result.usage()
         run_1_usages.append(delegate_usage)
@@ -228,7 +228,7 @@ async def test_multi_agent_usage_no_incr():
     controller_agent2 = Agent(TestModel())
 
     @controller_agent2.tool
-    async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent2(ctx: RunContext[object], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage()
         assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
@@ -301,7 +301,7 @@ async def test_multi_agent_usage_sync():
     controller_agent = Agent(TestModel())
 
     @controller_agent.tool
-    def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+    def delegate_to_other_agent(ctx: RunContext[object], sentence: str) -> int:
         new_usage = RunUsage(requests=5, input_tokens=2, output_tokens=3)
         ctx.usage.incr(new_usage)
         return 0

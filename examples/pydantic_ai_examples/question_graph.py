@@ -74,7 +74,7 @@ evaluate_agent = Agent(
 
 
 @dataclass
-class Evaluate(BaseNode[QuestionState, None, str]):
+class Evaluate(BaseNode[QuestionState, object, str]):
     answer: str
 
     async def run(

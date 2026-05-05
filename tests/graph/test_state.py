@@ -34,7 +34,7 @@ async def test_run_graph(mock_snapshot_id: object):
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[MyState, None, str]):
+    class Bar(BaseNode[MyState, object, str]):
         async def run(self, ctx: GraphRunContext[MyState]) -> End[str]:
             ctx.state.y += 'y'
             return End(f'x={ctx.state.x} y={ctx.state.y}')

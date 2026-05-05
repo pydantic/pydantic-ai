@@ -21,11 +21,10 @@ if TYPE_CHECKING:
     from .settings import ModelSettings
     from .tool_manager import ToolManager
 
-# TODO (v2): Change the default for all typevars like this from `None` to `object`
-AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
+AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
 
-RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=None, covariant=True)
+RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 

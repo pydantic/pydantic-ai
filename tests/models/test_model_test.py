@@ -297,7 +297,7 @@ def test_output_tool_retry_error_handled():
     call_count = 0
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: OutputModel) -> OutputModel:
+    def validate_output(ctx: RunContext[object], output: OutputModel) -> OutputModel:
         nonlocal call_count
         call_count += 1
         raise ModelRetry('Fail')

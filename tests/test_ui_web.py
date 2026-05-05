@@ -67,7 +67,7 @@ def test_agent_to_web_with_model_instances():
 async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPatch):
     """Test that model instances are preserved and used in dispatch, not reconstructed from string."""
     model_instance = TestModel(custom_output_text='Custom output')
-    agent: Agent[None, str] = Agent()
+    agent: Agent[object, str] = Agent()
     app = create_web_app(agent, models=[model_instance])
 
     # Mock dispatch_request to capture the model parameter

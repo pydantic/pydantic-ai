@@ -1303,7 +1303,7 @@ mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
 
 
 @mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
-def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+def my_mcp_dynamic_toolset(ctx: RunContext[object]) -> MCPServerStreamableHTTP:
     """Dynamic toolset that returns an MCP toolset.
 
     This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
@@ -1683,7 +1683,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
 
 
 async def simple_event_stream_handler(
-    ctx: RunContext[None],
+    ctx: RunContext[object],
     stream: AsyncIterable[AgentStreamEvent],
 ):
     pass
@@ -2109,12 +2109,12 @@ hitl_agent = Agent(
 
 
 @hitl_agent.tool
-async def create_file(ctx: RunContext[None], path: str) -> None:
+async def create_file(ctx: RunContext[object], path: str) -> None:
     raise CallDeferred
 
 
 @hitl_agent.tool
-async def delete_file(ctx: RunContext[None], path: str) -> bool:
+async def delete_file(ctx: RunContext[object], path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True
@@ -2946,7 +2946,7 @@ _ctx_agent_test_agent = Agent(
 
 
 @_ctx_agent_test_agent.tool
-def get_agent_name(ctx: RunContext[None]) -> str:
+def get_agent_name(ctx: RunContext[object]) -> str:
     return (ctx.agent.name or 'unnamed') if ctx.agent else 'unknown'
 
 
@@ -3914,7 +3914,7 @@ multimodal_content_agent = Agent(TestModel(), name='multimodal_content_agent')
 
 
 @multimodal_content_agent.tool
-def get_multimodal_content(ctx: RunContext[None]) -> list[str | MultiModalContent]:
+def get_multimodal_content(ctx: RunContext[object]) -> list[str | MultiModalContent]:
     """Return a list with text, BinaryContent, and DocumentUrl."""
     return [
         'test',

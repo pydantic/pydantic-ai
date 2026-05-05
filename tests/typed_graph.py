@@ -31,7 +31,7 @@ class X:
 
 
 @dataclass
-class Double(BaseNode[None, None, X]):
+class Double(BaseNode[object, object, X]):
     input_data: int
 
     async def run(self, ctx: GraphRunContext) -> String2Length | End[X]:
@@ -41,7 +41,7 @@ class Double(BaseNode[None, None, X]):
             return End(X(self.input_data * 2))
 
 
-def use_double(node: BaseNode[None, None, X]) -> None:
+def use_double(node: BaseNode[object, object, X]) -> None:
     """Shoe that `Double` is valid as a `BaseNode[None, int, X]`."""
     print(node)
 
@@ -49,18 +49,18 @@ def use_double(node: BaseNode[None, None, X]) -> None:
 use_double(Double(1))
 
 
-g1 = Graph[None, None, X](
+g1 = Graph[object, object, X](
     nodes=(
         Float2String,
         String2Length,
         Double,
     )
 )
-assert_type(g1, Graph[None, None, X])
+assert_type(g1, Graph[object, object, X])
 
 
 g2 = Graph(nodes=(Double,))
-assert_type(g2, Graph[None, None, X])
+assert_type(g2, Graph[object, object, X])
 
 g3 = Graph(
     nodes=(
@@ -70,7 +70,7 @@ g3 = Graph(
     )
 )
 # because String2Length came before Double, the output type is Any
-assert_type(g3, Graph[None, None, X])
+assert_type(g3, Graph[object, object, X])
 
 Graph[None, bytes](nodes=(Float2String, String2Length, Double))  # type: ignore[arg-type]
 Graph[None, str](nodes=[Double])  # type: ignore[list-item]

@@ -151,7 +151,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
     and the output type they return, [`OutputDataT`][pydantic_ai.output.OutputDataT].
 
-    By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
+    By default, if neither generic parameter is customised, agents have type `Agent[object, str]`.
 
     Minimal usage example:
 
@@ -235,7 +235,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
+        deps_type: type[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -267,7 +267,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
+        deps_type: type[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -297,7 +297,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
+        deps_type: type[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -334,7 +334,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
-                or add a type hint `: Agent[None, <return type>]`.
+                or add a type hint `: Agent[object, <return type>]`.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             description: A human-readable description of the agent, attached to the agent run span as
@@ -547,7 +547,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[None, str]: ...
+    ) -> Agent[object, str]: ...
 
     @overload
     @classmethod
@@ -747,7 +747,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[None, str]: ...
+    ) -> Agent[object, str]: ...
 
     @overload
     @classmethod

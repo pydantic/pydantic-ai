@@ -44,7 +44,7 @@ class String2Length(BaseNode):
 
 
 @dataclass
-class Double(BaseNode[None, None, int]):
+class Double(BaseNode[object, object, int]):
     input_data: int
 
     async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
@@ -57,7 +57,7 @@ class Double(BaseNode[None, None, int]):
 async def test_graph():
     my_graph = Graph(nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph.inferred_types == (type(None), int)
+    assert my_graph.inferred_types == (object, int)
     result = await my_graph.run(Float2String(3.14))
     # len('3.14') * 2 == 8
     assert result.output == 8
@@ -65,9 +65,9 @@ async def test_graph():
 
 
 async def test_graph_history(mock_snapshot_id: object):
-    my_graph = Graph[None, None, int](nodes=(Float2String, String2Length, Double))
+    my_graph = Graph[object, object, int](nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph.inferred_types == (type(None), int)
+    assert my_graph.inferred_types == (object, int)
     sp = FullStatePersistence()
     result = await my_graph.run(Float2String(3.14), persistence=sp)
     # len('3.14') * 2 == 8
@@ -168,7 +168,7 @@ def test_one_bad_node():
         async def run(self, ctx: GraphRunContext) -> String2Length:
             raise NotImplementedError()
 
-    class String2Length(BaseNode[None, None, None]):  # pyright: ignore[reportUnusedClass]
+    class String2Length(BaseNode[object, object, None]):  # pyright: ignore[reportUnusedClass]
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
@@ -187,13 +187,13 @@ def test_two_bad_nodes():
         async def run(self, ctx: GraphRunContext) -> Union[Bar, Spam]:  # noqa: UP007
             raise NotImplementedError()
 
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         input_data: str
 
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
-    class Spam(BaseNode[None, None, None]):
+    class Spam(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
@@ -214,17 +214,17 @@ def test_three_bad_nodes_separate():
         async def run(self, ctx: GraphRunContext) -> Eggs:
             raise NotImplementedError()
 
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         input_data: str
 
         async def run(self, ctx: GraphRunContext) -> Eggs:
             raise NotImplementedError()
 
-    class Spam(BaseNode[None, None, None]):
+    class Spam(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> Eggs:
             raise NotImplementedError()
 
-    class Eggs(BaseNode[None, None, None]):
+    class Eggs(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
@@ -241,7 +241,7 @@ def test_duplicate_id():
         async def run(self, ctx: GraphRunContext) -> Bar:
             raise NotImplementedError()
 
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
@@ -263,12 +263,12 @@ async def test_run_node_not_in_graph():
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             return Spam()  # type: ignore
 
     @dataclass
-    class Spam(BaseNode[None, None, None]):
+    class Spam(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             raise NotImplementedError()
 
@@ -286,12 +286,12 @@ async def test_run_return_other(mock_snapshot_id: object):
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             return 42  # type: ignore
 
     g = Graph(nodes=(Foo, Bar))
-    assert g.inferred_types == (type(None), type(None))
+    assert g.inferred_types == (object, type(None))
     with pytest.raises(GraphRuntimeError) as exc_info:
         await g.run(Foo())
 
@@ -301,7 +301,7 @@ async def test_run_return_other(mock_snapshot_id: object):
 async def test_iter():
     my_graph = Graph(nodes=(Float2String, String2Length, Double))
     assert my_graph.name is None
-    assert my_graph.inferred_types == (type(None), int)
+    assert my_graph.inferred_types == (object, int)
     node_reprs: list[str] = []
     async with my_graph.iter(Float2String(3.14)) as graph_iter:
         assert repr(graph_iter) == snapshot('<GraphRun graph=my_graph>')
@@ -382,7 +382,7 @@ async def test_iter_next_error(mock_snapshot_id: object):
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None, None]):
+    class Bar(BaseNode[object, object, None]):
         async def run(self, ctx: GraphRunContext) -> End[None]:
             return End(None)
 
@@ -457,7 +457,7 @@ async def test_custom_span():
             return Bar()
 
     @dataclass
-    class Bar(BaseNode[None, None, int]):
+    class Bar(BaseNode[object, object, int]):
         async def run(self, ctx: GraphRunContext) -> End[int]:
             return End(42)
 

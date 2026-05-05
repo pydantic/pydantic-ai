@@ -36,7 +36,7 @@ class Foo(BaseNode):
 
 
 @dataclass
-class Bar(BaseNode[None, None, None]):
+class Bar(BaseNode[object, object, None]):
     async def run(self, ctx: GraphRunContext) -> End[None]:
         return End(None)
 
@@ -55,7 +55,7 @@ class Spam(BaseNode):
 
 
 @dataclass
-class Eggs(BaseNode[None, None, None]):
+class Eggs(BaseNode[object, object, None]):
     """This is the docstring for Eggs."""
 
     docstring_notes = False

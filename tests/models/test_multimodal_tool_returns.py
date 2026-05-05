@@ -598,7 +598,7 @@ async def test_multimodal_tool_return_matrix(
     else:
         content = URL_FACTORIES[(file_type, content_source)]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[object, str] = Agent(model)
 
     @agent.tool_plain
     def get_file() -> Any:
@@ -648,7 +648,7 @@ async def test_mixed_content_ordering(
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
 
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[object, str] = Agent(model)
 
     @agent.tool_plain
     def get_mixed_content() -> list[Any]:
@@ -703,7 +703,7 @@ async def test_model_sees_multiple_images(
     kiwi_image = image_content
     url_image = URL_FACTORIES[('image', 'url')]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[object, str] = Agent(model)
 
     @agent.tool_plain
     def get_images() -> list[Any]:
@@ -740,7 +740,7 @@ async def test_vendor_metadata_detail(
         vendor_metadata={'detail': 'low'},
     )
 
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[object, str] = Agent(model)
 
     @agent.tool_plain
     def get_images_with_metadata() -> list[Any]:
@@ -768,7 +768,7 @@ async def test_text_plain_document_anthropic(
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[object, str] = Agent(model)
 
     @agent.tool_plain
     def get_text_document() -> BinaryContent:
@@ -789,7 +789,7 @@ async def test_non_pdf_document_url_error(
 ):
     """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
     model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[object, str] = Agent(model)
 
     @agent.tool_plain
     def get_file() -> DocumentUrl:
