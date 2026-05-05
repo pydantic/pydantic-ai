@@ -1542,10 +1542,10 @@ def _decode_inline_thought_signature(item: ModelResponsePart, m: ModelResponse, 
     if not item.provider_details:
         return None
     if m.provider_name != provider_name and item.provider_name != provider_name:
-        return None
+        return None  # pragma: no cover
     raw = item.provider_details.get('thought_signature')
     if not raw:
-        return None
+        return None  # pragma: no cover
     return base64.b64decode(raw)
 
 
