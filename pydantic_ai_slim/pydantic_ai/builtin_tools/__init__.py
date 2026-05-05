@@ -100,6 +100,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Google
     * xAI
     * OpenRouter
+    * Perplexity
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
