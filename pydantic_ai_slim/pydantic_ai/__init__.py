@@ -24,6 +24,7 @@ from .builtin_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
+from .capabilities import Capability
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -171,6 +172,7 @@ __all__ = (
     'EmbeddingSettings',
     'EmbeddingResult',
     # concurrency
+    'Capability',
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',
     'ConcurrencyLimit',

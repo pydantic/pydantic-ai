@@ -1177,7 +1177,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
 
-        for cap in extra_capabilities:
+        for cap in effective_capability.capabilities:
             if cap.defer_loading is True:
                 effective_capability = CombinedCapability([effective_capability, DeferredLoadingCapability()])
                 break

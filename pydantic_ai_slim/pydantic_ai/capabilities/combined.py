@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
@@ -130,6 +131,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
         for capability in self.capabilities:
+            if capability.defer_loading is True:
+                warnings.warn(
+                    f'Deferred capability {capability.id} is being used to provide builtin tools. It will not be deferred.',
+                    stacklevel=2,
+                )
             builtin_tools.extend(capability.get_builtin_tools() or [])
         return builtin_tools
 

@@ -17,6 +17,7 @@ from .abstract import (
 )
 from .builtin_or_local import BuiltinOrLocalTool
 from .builtin_tool import BuiltinTool
+from .capability import Capability
 from .combined import CombinedCapability
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
@@ -79,6 +80,7 @@ __all__ = [
     'WrapToolValidateHandler',
     'BuiltinTool',
     'BuiltinOrLocalTool',
+    'Capability',
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'HistoryProcessor',

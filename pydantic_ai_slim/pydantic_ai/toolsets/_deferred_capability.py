@@ -48,7 +48,9 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         all_tools = await self.wrapped.get_tools(ctx)
 
         loaded_ids = ctx.loaded_capability_ids
-        unloaded = [entry for entry in ctx.capabilities.values() if entry.id not in loaded_ids]
+        unloaded = [
+            entry for entry in ctx.capabilities.values() if entry.id not in loaded_ids and entry.defer_loading is True
+        ]
         if not unloaded:
             return all_tools
 
