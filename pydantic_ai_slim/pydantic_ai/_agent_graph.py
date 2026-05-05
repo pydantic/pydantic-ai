@@ -148,8 +148,10 @@ class GraphAgentState:
         """Record one unit of output-retry budget consumption.
 
         Raises `UnexpectedModelBehavior` when `output_retries_used` would exceed
-        `max_output_retries`. Text-path-only; the tool path enforces per-tool limits
-        via `ToolManager._check_max_retries`.
+        `max_output_retries`. Called for `ModelRetry`s from output validators (text path)
+        and for `ToolRetryError`s from output-tool dispatch / empty-or-non-actionable
+        responses; per-tool retry limits are still enforced separately by
+        `ToolManager._check_max_retries`.
         """
         self.output_retries_used += 1
         if self.output_retries_used > max_output_retries:

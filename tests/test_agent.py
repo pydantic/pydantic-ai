@@ -10702,12 +10702,13 @@ def test_text_path_honors_output_retry_budget():
 
 
 def test_output_retries_run_override_without_validators():
-    """Run-level `output_retries` takes effect even when no output_validator is registered.
+    """Run-level `output_retries` takes effect — and isolates from the shared agent-level toolset —
+    even when no output_validator is registered.
 
-    This exercises the shared-toolset clone branch: when `output_schema == self._output_schema`
-    and no output_validators are registered, `Agent.iter` must still clone the shared
-    `self._output_toolset` before mutating `max_retries` so concurrent runs stay isolated.
-    Triggers via ToolManager's per-tool `_check_max_retries` rather than consume_output_retry.
+    Exercises the shared-toolset clone branch: with `output_schema == self._output_schema` and no
+    output_validators registered, `Agent.iter` must clone the shared `self._output_toolset` before
+    mutating `max_retries` so the agent-level toolset retains its original budget for subsequent runs.
+    Enforcement runs through `ToolManager._check_max_retries` (per-tool), not `consume_output_retry`.
     """
     call_count = 0
 
@@ -10719,12 +10720,17 @@ def test_output_retries_run_override_without_validators():
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
 
     agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=10)
+    shared_toolset = agent._output_toolset  # pyright: ignore[reportPrivateUsage]
+    assert shared_toolset is not None
+    assert shared_toolset.max_retries == 10
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
         agent.run_sync('Hello', output_retries=2)
 
     # 3 attempts: initial + 2 retries, capped by the run override at 2 (not the agent default 10)
     assert call_count == 3
+    # The shared agent-level toolset's `max_retries` was preserved — confirms the run cloned before mutating.
+    assert shared_toolset.max_retries == 10
 
 
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():

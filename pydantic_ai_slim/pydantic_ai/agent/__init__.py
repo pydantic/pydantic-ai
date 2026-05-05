@@ -355,9 +355,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [HTTP Request Retries](../retries.md) documentation.
             tool_retries: The default number of retries to allow for tool calls before raising an error. Defaults to 1.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
-            output_retries: Maximum number of retries for output validation. On the text path this is a global
-                budget across all output-validation retries in a run. On the tool path this is the default per-tool
-                `max_retries` for each output tool, overridable via `ToolOutput(max_retries=...)`. Defaults to `retries`.
+            output_retries: Maximum number of retries for output validation. Defaults to 1.
+                On the text path this is a global budget shared across all output-validation retries
+                in a run; on the tool path this is the default per-tool `max_retries` for each output
+                tool, overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
+                Can also be overridden per run via `agent.run(output_retries=...)` (and friends).
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
@@ -462,6 +464,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
+        # `retries` is deprecated in 1.x and removed in v2. Until then it still cascades to
+        # `_max_output_retries` as a fallback (when `output_retries` isn't explicitly set) so
+        # existing callers keep their original behavior; we only warn so users can migrate.
+        # TODO(v2): drop `retries` entirely; default both `_max_tool_retries` and
+        # `_max_output_retries` to a constant 1 — no cascade.
         if retries is not None:
             warnings.warn(
                 '`retries` is deprecated and will be removed in v2. Use `tool_retries` instead. '
@@ -470,8 +477,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 DeprecationWarning,
                 stacklevel=2,
             )
-        # TODO(v2): drop `retries`. Both `_max_tool_retries` and `_max_output_retries` should default
-        # to a constant 1 when their respective kwargs are unset — no cascade.
         effective_retries = retries if retries is not None else 1
         self._max_tool_retries = tool_retries if tool_retries is not None else effective_retries
         self._max_output_retries = output_retries if output_retries is not None else effective_retries
@@ -1184,9 +1189,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if output_schema != self._output_schema or output_validators:
             output_toolset = output_schema.toolset
             if output_toolset:
-                # Clone when applying a run-level retry override so concurrent runs don't race
-                # on the shared agent-level toolset's max_retries.
-                if effective_output_retries is not None:
+                # Clone before mutating max_retries when the toolset is the shared agent-level
+                # instance (output_schema == self._output_schema, branch hit via output_validators);
+                # when output_schema differs, output_schema.toolset is already a fresh per-run instance.
+                if output_toolset is self._output_toolset and effective_output_retries is not None:
                     output_toolset = copy(output_toolset)
                 if output_toolset.max_retries is None or effective_output_retries is not None:
                     output_toolset.max_retries = effective_output_toolset_max_retries
@@ -2572,14 +2578,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # retry budget (matches `_build_output_run_context`'s contract — see #4745).
                 # `output_toolset.max_retries` is set to `max_output_retries` at agent construction.
                 output_cap = run_capability
-                effective_output_max_retries = (
-                    output_max_retries if output_max_retries is not None else self._max_output_retries
-                )
+                if output_max_retries is None:
+                    output_max_retries = self._max_output_retries
 
                 async def _dispatch_prepare_output_tools(
                     ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
                 ) -> list[ToolDefinition]:
-                    output_ctx = replace(ctx, max_retries=effective_output_max_retries)
+                    output_ctx = replace(ctx, max_retries=output_max_retries)
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)

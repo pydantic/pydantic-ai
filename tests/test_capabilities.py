@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -394,8 +395,6 @@ def test_agent_from_spec_no_retries_does_not_warn():
     user-set value; only an explicit value is forwarded to the deprecated
     `Agent(retries=...)` kwarg.
     """
-    import warnings
-
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
         agent = Agent.from_spec({'model': 'test'})
@@ -4203,7 +4202,6 @@ class TestWrapNodeRunHook:
 
     async def test_bare_async_for_warns_with_wrap_node_run(self):
         """Using bare async for on iter() warns when a capability has wrap_node_run."""
-        import warnings
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
