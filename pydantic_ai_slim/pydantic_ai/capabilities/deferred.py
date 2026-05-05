@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai import RunContext
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability import DeferredCapabilityToolset

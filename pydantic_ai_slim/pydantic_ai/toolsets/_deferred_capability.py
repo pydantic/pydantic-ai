@@ -52,13 +52,9 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         if not unloaded:
             return all_tools
 
-        catalog = '\n'.join(f'- {entry.id}: {entry.get_description()}' for entry in unloaded)
-
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,
-            description=(
-                f'Load a capability to access its full instructions and tools. Available capabilities:\n{catalog}'
-            ),
+            description=('Load a capability to access its full instructions and tools.'),
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
         )
 
