@@ -592,6 +592,7 @@ async def test_a2a_multiple_tasks_same_context():
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     )
                 ]
             )
@@ -632,6 +633,7 @@ async def test_a2a_multiple_tasks_same_context():
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
@@ -643,6 +645,7 @@ async def test_a2a_multiple_tasks_same_context():
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -656,6 +659,7 @@ async def test_a2a_multiple_tasks_same_context():
                         ],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                 ]
             )

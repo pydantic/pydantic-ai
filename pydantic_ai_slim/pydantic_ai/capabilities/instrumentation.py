@@ -97,6 +97,7 @@ class Instrumentation(AbstractCapability[Any]):
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
             'gen_ai.agent.call.id': ctx.run_id or '',
+            'gen_ai.conversation.id': ctx.conversation_id or '',
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
@@ -112,6 +113,7 @@ class Instrumentation(AbstractCapability[Any]):
         ) as span:
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
+            otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
             token = _otel_attach(otel_ctx)
             result: AgentRunResult[Any] | None = None
             try:
@@ -222,7 +224,7 @@ class Instrumentation(AbstractCapability[Any]):
             MODEL_SETTING_ATTRIBUTES,
             CostCalculationFailedWarning,
             InstrumentedModel,
-            build_tool_definitions,
+            _build_tool_definitions,  # pyright: ignore[reportPrivateUsage]
         )
 
         settings = self.settings
@@ -262,7 +264,7 @@ class Instrumentation(AbstractCapability[Any]):
             ),
         }
 
-        tool_definitions = build_tool_definitions(prepared_parameters)
+        tool_definitions = _build_tool_definitions(prepared_parameters)
         if tool_definitions:
             attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
 

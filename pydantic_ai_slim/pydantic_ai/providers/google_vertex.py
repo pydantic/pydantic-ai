@@ -1,11 +1,11 @@
 from __future__ import annotations as _annotations
 
 import functools
-from asyncio import Lock
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Literal, overload
 
+import anyio
 import anyio.to_thread
 import httpx
 from typing_extensions import deprecated
@@ -134,9 +134,14 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
-    _refresh_lock: Lock = Lock()
-
     credentials: BaseCredentials | ServiceAccountCredentials | None
+
+    @functools.cached_property
+    def _refresh_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because `anyio.Lock` binds to the event loop on which
+        # it's first used; deferring creation until first access ensures it binds to the correct
+        # running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()  # pragma: no cover
 
     def __init__(
         self,

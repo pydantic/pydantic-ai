@@ -89,6 +89,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     ],
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             CallToolsNode(
@@ -98,6 +99,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -375,6 +377,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             ],
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     CallToolsNode(
@@ -384,6 +387,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     End(data=FinalResult(output='The capital of France is Paris.')),
@@ -418,6 +422,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._graph_run.state.conversation_id
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
@@ -562,6 +571,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._state.conversation_id
 
 
 @dataclasses.dataclass(repr=False)
