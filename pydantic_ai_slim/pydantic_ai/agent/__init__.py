@@ -1290,6 +1290,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             def collect(cap: AbstractCapability[AgentDepsT]) -> None:
                 if cap.id is not None:
+                    if cap.id in capabilities:
+                        raise exceptions.UserError(
+                            f'Capability id {cap.id!r} is used by multiple capabilities. '
+                            'Capability ids must be unique within a run.'
+                        )
                     capabilities[cap.id] = cap
 
             run_capability.apply(collect)

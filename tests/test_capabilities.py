@@ -15,6 +15,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai._deferred import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
@@ -31,6 +32,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     BuiltinTool,
+    Capability,
     CapabilityOrdering,
     HandleDeferredToolCalls,
     ImageGeneration,
@@ -49,6 +51,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
+from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -2010,6 +2013,425 @@ async def test_toolset_capability_in_agent():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+def test_deferred_capability_requires_catalog_entry() -> None:
+    """Deferred capabilities must be discoverable before the model can load them."""
+    with pytest.raises(ValueError) as missing_id:
+        Capability[None](description='Needs a stable id.', defer_loading=True)
+
+    with pytest.raises(ValueError) as missing_description:
+        Capability[None](id='billing', defer_loading=True)
+
+    assert [str(missing_id.value), str(missing_description.value)] == snapshot(
+        [
+            'Capabilities with defer_loading=True must have an id.',
+            'Capabilities with defer_loading=True must have a description.',
+        ]
+    )
+
+
+def test_deferred_model_settings_are_rejected() -> None:
+    """Model settings cannot be safely changed by loading a capability mid-run yet."""
+
+    @dataclass
+    class SettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings | None:
+            return _ModelSettings(temperature=0.5)
+
+    with pytest.raises(UserError) as exc_info:
+        CombinedCapability(
+            [
+                SettingsCap(
+                    id='settings',
+                    description='Changes model settings.',
+                    defer_loading=True,
+                )
+            ]
+        ).get_model_settings()
+
+    assert str(exc_info.value) == snapshot(
+        "Deferred capability 'settings' provides model settings, but lazy-loading model settings is not supported yet. "
+        'Remove the model settings from this capability or set `defer_loading=False`.'
+    )
+
+
+def test_deferred_builtin_tools_are_rejected() -> None:
+    """Builtin tools cannot be hidden and revealed through the function-tool loader yet."""
+    cap = BuiltinTool[None](
+        tool=WebSearchTool(),
+        id='web-search',
+        description='Search the web.',
+        defer_loading=True,
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        CombinedCapability([cap]).get_builtin_tools()
+
+    assert str(exc_info.value) == snapshot(
+        "Deferred capability 'web-search' provides builtin tools, but lazy-loading builtin tools is not supported yet. "
+        'Remove the builtin tools from this capability or set `defer_loading=False`.'
+    )
+
+
+def test_deferred_loading_catalog_ignores_legacy_deferred_capabilities_without_id() -> None:
+    """The loader catalog tolerates malformed legacy capabilities without advertising them."""
+
+    class LegacyDeferredCapability(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.id = None
+            self.description = 'Legacy deferred capability.'
+            self.defer_loading = True
+
+    ctx = _build_run_context(None)
+    ctx.capabilities = {
+        'legacy': LegacyDeferredCapability(),
+        'reports': Capability[None](
+            id='reports',
+            description='Report tools.',
+            defer_loading=True,
+        ),
+    }
+    create_catalog = DeferredLoadingCapability[None]().get_instructions()
+    assert callable(create_catalog)
+
+    assert create_catalog(ctx) == snapshot(
+        'The following capabilities are deferred and can be loaded via load_capability: reports: Report tools.'
+    )
+
+
+def test_agent_get_instructions_merges_agent_capability_and_run_instructions() -> None:
+    """The compatibility helper keeps the same instruction ordering as run execution."""
+    agent = Agent(TestModel(), instructions='Agent instructions.')
+    literal, functions = agent._get_instructions(  # pyright: ignore[reportPrivateUsage]
+        additional_instructions='Run instructions.',
+        cap_instructions=['Capability instructions.'],
+    )
+
+    assert {'literal': literal, 'dynamic_instruction_count': len(functions)} == snapshot(
+        {
+            'literal': 'Agent instructions.\nCapability instructions.\nRun instructions.',
+            'dynamic_instruction_count': 0,
+        }
+    )
+
+
+async def test_load_capability_tool_name_conflict_raises() -> None:
+    """The framework loader must not be shadowed by a user tool with the same name."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def load_capability() -> str:
+        return 'user-defined loader'  # pragma: no cover
+
+    hidden = Capability[None](
+        id='hidden',
+        description='Hidden instructions.',
+        instructions='Hidden instructions.',
+        defer_loading=True,
+    )
+    agent = Agent(TestModel(), toolsets=[toolset], capabilities=[hidden])
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi')
+
+    assert str(exc_info.value) == snapshot(
+        "Tool name 'load_capability' is reserved for deferred capability loading. Rename your tool to avoid conflicts."
+    )
+
+
+async def test_duplicate_capability_ids_raise() -> None:
+    """Capability ids are used as a run registry, so duplicates must fail loudly."""
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            Capability[None](id='dup', description='First capability.', instructions='First.'),
+            Capability[None](id='dup', description='Second capability.', instructions='Second.'),
+        ],
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi')
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
+    )
+
+
+async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
+    """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    def add_account_context(ctx: RunContext[None]) -> str:
+        return f'Load-time account context for run step {ctx.run_step}.'
+
+    def empty_instruction(ctx: RunContext[None]) -> None:
+        return None
+
+    always_on = Capability[None](
+        id='always-on',
+        description='Visible billing guidance.',
+        instructions='Visible billing instructions.',
+    )
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        instructions=[
+            'Use the refund policy before answering refund questions.',
+            add_account_context,
+            empty_instruction,
+        ],
+        toolset=toolset,
+        defer_loading=True,
+    )
+
+    seen_tool_names: list[list[str]] = []
+    seen_instructions: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_names.append([t.name for t in info.function_tools])
+        seen_instructions.append(info.instructions)
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'final: {refund_result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, refunds])
+
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == snapshot('final: order-123: refund allowed for 30 days')
+    assert seen_tool_names == snapshot(
+        [
+            ['search_tools', 'load_capability'],
+            ['lookup_refund_policy'],
+            ['lookup_refund_policy'],
+        ]
+    )
+    assert seen_instructions == snapshot(
+        [
+            'Visible billing instructions.\n'
+            '\nThe following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+            'Visible billing instructions.\n'
+            '\nThe following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+            'Visible billing instructions.\n'
+            '\nThe following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.',
+        ]
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='load_capability',
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=55, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='load_capability',
+                        content={
+                            'capability_id': 'refunds',
+                            'instructions': 'Use the refund policy before answering refund questions.\n\n'
+                            'Load-time account context for run step 1.',
+                        },
+                        tool_call_id='load-refunds',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=75, output_tokens=10),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup_refund_policy',
+                        content='order-123: refund allowed for 30 days',
+                        tool_call_id='lookup-refund',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded via load_capability: refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
+                usage=RequestUsage(input_tokens=81, output_tokens=17),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'hidden'  # pragma: no cover
+
+    hidden = Capability[None](
+        id='hidden',
+        description='Hidden tool access.',
+        toolset=toolset,
+        defer_loading=True,
+    )
+    seen_tool_names: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_names.append([t.name for t in info.function_tools])
+        if not any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'missing'},
+                        tool_call_id='load-missing',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hidden])
+    result = await agent.run('load missing')
+
+    assert result.output == snapshot('done')
+    assert seen_tool_names == snapshot(
+        [
+            ['search_tools', 'load_capability'],
+            ['search_tools', 'load_capability'],
+        ]
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='load missing', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: hidden: Hidden tool access.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='load_capability',
+                        args={'id': 'missing'},
+                        tool_call_id='load-missing',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='load_capability',
+                        content="No capability found with id 'missing'.",
+                        tool_call_id='load-missing',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='The following capabilities are deferred and can be loaded via load_capability: hidden: Hidden tool access.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_infer_fmt_explicit():

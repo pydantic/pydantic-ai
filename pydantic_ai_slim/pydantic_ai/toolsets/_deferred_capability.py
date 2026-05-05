@@ -13,6 +13,7 @@ from pydantic_ai._deferred import (
 from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -54,6 +55,12 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         ]
         if not unloaded:
             return all_tools
+
+        if LOAD_CAPABILITY_TOOL_NAME in all_tools:
+            raise UserError(
+                f"Tool name '{LOAD_CAPABILITY_TOOL_NAME}' is reserved for deferred capability loading. "
+                'Rename your tool to avoid conflicts.'
+            )
 
         load_tool_def = ToolDefinition(
             name=LOAD_CAPABILITY_TOOL_NAME,

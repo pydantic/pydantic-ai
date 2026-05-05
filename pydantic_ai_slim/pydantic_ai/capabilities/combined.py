@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
@@ -11,7 +10,7 @@ from pydantic_ai import _system_prompt
 from pydantic_ai._deferred import prepare_capability_tool_definitions
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import gather
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -81,6 +80,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         settings_chain: list[ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]] = []
         for capability in self.capabilities:
             cap_settings = capability.get_model_settings()
+            if capability.defer_loading is True and cap_settings is not None:
+                raise UserError(
+                    f'Deferred capability {capability.id!r} provides model settings, but lazy-loading model '
+                    'settings is not supported yet. Remove the model settings from this capability or set '
+                    '`defer_loading=False`.'
+                )
             if cap_settings is not None:
                 settings_chain.append(cap_settings)
         if not settings_chain:
@@ -127,17 +132,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     ),
                 )
             )
+        # TODO:
+        # There is one concern, I am not removing the toolset instructions right now
+        # Those should be deferred too but there can be multiple toolsets and I am not sure if they would be relevant without the toolset being loaded?
+        # I am confused about the mechanism they should use to load the instructions.
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         builtin_tools: list[AgentBuiltinTool[AgentDepsT]] = []
         for capability in self.capabilities:
-            if capability.defer_loading is True:
-                warnings.warn(
-                    f'Deferred capability {capability.id} is being used to provide builtin tools. It will not be deferred.',
-                    stacklevel=2,
+            cap_builtin_tools = capability.get_builtin_tools() or []
+            if capability.defer_loading is True and cap_builtin_tools:
+                raise UserError(
+                    f'Deferred capability {capability.id!r} provides builtin tools, but lazy-loading builtin '
+                    'tools is not supported yet. Remove the builtin tools from this capability or set '
+                    '`defer_loading=False`.'
                 )
-            builtin_tools.extend(capability.get_builtin_tools() or [])
+            builtin_tools.extend(cap_builtin_tools)
         return builtin_tools
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

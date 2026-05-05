@@ -30,6 +30,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Tool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._tool_search import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -774,6 +775,42 @@ async def test_tool_search_inherits_defer_loading_from_capability():
     assert tools['eager_tool'].tool_def.defer_loading is False
 
 
+async def test_tool_search_make_visible_preserves_already_visible_tool():
+    """The helper is idempotent for tools already revealed by their owning capability."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=False)
+    def eager_tool() -> str:  # pragma: no cover
+        """Explicit eager tool."""
+        return 'eager'
+
+    capability = Capability[None](
+        id='example',
+        description='Example capability.',
+        defer_loading=True,
+        toolset=toolset,
+    )
+    cap_toolset = CombinedCapability([capability]).get_toolset()
+    assert isinstance(cap_toolset, AbstractToolset)
+    cap_toolset = cast(AbstractToolset[None], cap_toolset)
+
+    tools = await cap_toolset.get_tools(_build_run_context(None))
+    tool = tools['eager_tool']
+    visible = ToolSearchToolset._make_visible(tool)  # pyright: ignore[reportPrivateUsage]
+
+    assert visible is tool
+    assert visible.tool_def == snapshot(
+        ToolDefinition(
+            name='eager_tool',
+            parameters_json_schema={'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            description='Explicit eager tool.',
+            defer_loading=False,
+            return_schema={'type': 'string'},
+            capability_id='example',
+        )
+    )
+
+
 async def test_tool_search_reveals_loaded_capability_tools():
     toolset: FunctionToolset[None] = FunctionToolset()
 
@@ -814,6 +851,54 @@ async def test_tool_search_reveals_loaded_capability_tools():
 
     assert list(tools) == snapshot(['inherited_tool', 'eager_tool'])
     assert tools['inherited_tool'].tool_def.defer_loading is False
+
+
+async def test_tool_search_ignores_malformed_loaded_capability_history():
+    """Malformed `load_capability` results must not unlock capability-scoped tools."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain
+    def inherited_tool() -> str:  # pragma: no cover
+        """Inherited deferred tool."""
+        return 'inherited'
+
+    capability = Capability[None](
+        id='reports',
+        description='Report tools.',
+        defer_loading=True,
+        toolset=toolset,
+    )
+    cap_toolset = CombinedCapability([capability]).get_toolset()
+    assert isinstance(cap_toolset, AbstractToolset)
+    cap_toolset = cast(AbstractToolset[None], cap_toolset)
+    searchable: ToolSearchToolset[None] = ToolSearchToolset(wrapped=cap_toolset)
+
+    cases: dict[str, object] = {
+        'not_a_dict': 'loaded reports',
+        'missing_capability_id': {'instructions': None},
+        'non_string_capability_id': {'capability_id': 123, 'instructions': None},
+        'non_string_instructions': {'capability_id': 'reports', 'instructions': ['bad']},
+        'valid': {'capability_id': 'reports', 'instructions': None},
+    }
+    visible_tools: dict[str, list[str]] = {}
+
+    for case_name, content in cases.items():
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, content=content)])
+        ]
+        ctx = _build_run_context(None, messages=messages)
+        tools = await searchable.get_tools(ctx)
+        visible_tools[case_name] = list(tools)
+
+    assert visible_tools == snapshot(
+        {
+            'not_a_dict': ['search_tools'],
+            'missing_capability_id': ['search_tools'],
+            'non_string_capability_id': ['search_tools'],
+            'non_string_instructions': ['search_tools'],
+            'valid': ['inherited_tool'],
+        }
+    )
 
 
 async def test_agent_auto_injects_tool_search_capability():
