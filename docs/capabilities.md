@@ -27,6 +27,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] | Filters or modifies [output tool][pydantic_ai.output.ToolOutput] definitions per step | — |
 | [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] | Wraps a capability and prefixes its tool names | Yes |
 | [`BuiltinTool`][pydantic_ai.capabilities.BuiltinTool] | Registers a [builtin tool](builtin-tools.md) with the agent | Yes |
+| [`Capability`][pydantic_ai.capabilities.Capability] | Bundles instructions and a toolset without subclassing | — |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] | — |
 | [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] | Includes return type schemas in tool definitions sent to the model | Yes |
 | [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] | Merges metadata key-value pairs onto selected tools | Yes |
@@ -371,6 +372,160 @@ assert first_request.parts[0].content == 'You are a helpful assistant.'
 _(This example is complete, it can be run "as is")_
 
 The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode.
+
+## Deferred capability loading
+
+Deferred capability loading is progressive disclosure for capabilities. It lets an agent advertise a specialist capability by `id` and `description`, while keeping that capability's instructions and tools out of the model's initial context.
+
+When the model calls `load_capability(id)`, Pydantic AI returns the capability's instructions and exposes its function tools on later model requests. This is useful for agents with several specialist modes where most runs only need one of them.
+
+For large flat tool collections, use [tool search](tools-advanced.md#tool-search) instead. Tool search discovers individual tools; deferred capability loading unlocks a named bundle of instructions and tools.
+
+### Deferring a capability
+
+Every deferred capability needs:
+
+* a stable, unique [`id`][pydantic_ai.capabilities.AbstractCapability.id]
+* a short [`description`][pydantic_ai.capabilities.AbstractCapability.description], or an overridden [`get_description()`][pydantic_ai.capabilities.AbstractCapability.get_description]
+* `defer_loading=True`
+
+[`Capability`][pydantic_ai.capabilities.Capability] is the simplest way to defer static instructions and a [toolset](toolsets.md):
+
+```python {title="deferred_capability_support.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+refund_tools = FunctionToolset()
+
+
+@refund_tools.tool_plain
+def lookup_refund_policy(order_id: str) -> str:
+    """Look up whether an order is still eligible for a refund."""
+    return f'{order_id} is eligible for a refund for 30 days after purchase.'
+
+
+seen_tool_names: list[list[str]] = []
+
+
+def support_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    seen_tool_names.append([tool.name for tool in info.function_tools])
+    last_part = messages[-1].parts[-1]
+
+    if isinstance(last_part, ToolReturnPart) and last_part.tool_name == 'lookup_refund_policy':
+        return ModelResponse(parts=[TextPart(str(last_part.content))])
+
+    if any(tool.name == 'lookup_refund_policy' for tool in info.function_tools):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='lookup_refund_policy',
+                    args={'order_id': 'order-123'},
+                    tool_call_id='lookup-refund',
+                )
+            ]
+        )
+
+    return ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name='load_capability',
+                args={'id': 'refunds'},
+                tool_call_id='load-refunds',
+            )
+        ]
+    )
+
+
+agent = Agent(
+    FunctionModel(support_model),
+    instructions='Answer as a support assistant.',
+    capabilities=[
+        Capability(
+            id='refunds',
+            description='Refund policy tools and instructions.',
+            instructions='Use the refund policy before answering refund questions.',
+            toolset=refund_tools,
+            defer_loading=True,
+        )
+    ],
+)
+
+result = agent.run_sync('Can I get a refund for order-123?')
+print(result.output)
+#> order-123 is eligible for a refund for 30 days after purchase.
+print(seen_tool_names)
+"""
+[
+    ['search_tools', 'load_capability'],
+    ['lookup_refund_policy'],
+    ['lookup_refund_policy'],
+]
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+The first tool list only includes `search_tools` and `load_capability`; `lookup_refund_policy` is hidden. After the model loads `refunds`, the refund instructions are returned as the tool result and the refund tool is available.
+
+### Dynamic descriptions and load-time instructions
+
+Subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] when the catalog entry or load-time instructions depend on the current run:
+
+```python {title="dynamic_deferred_capability.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class SupportDeps:
+    plan: str
+    account_id: str
+
+
+@dataclass
+class AccountCapability(AbstractCapability[SupportDeps]):
+    def get_description(self, ctx: RunContext[SupportDeps] | None) -> str:
+        plan = ctx.deps.plan if ctx else 'the current'
+        return f'Account-management tools for {plan} plan customers.'
+
+    def get_instructions(self):
+        def load_instructions(ctx: RunContext[SupportDeps]) -> str:
+            return f'Use account ID {ctx.deps.account_id} for account-management tools.'
+
+        return load_instructions
+
+
+account_capability = AccountCapability(
+    id='account-management',
+    defer_loading=True,
+)
+```
+
+The description is visible before loading. Dynamic instructions run when `load_capability` is called, so they can use the current [`RunContext`][pydantic_ai.tools.RunContext] without bloating the first request.
+
+### Gotchas
+
+[`id`][pydantic_ai.capabilities.AbstractCapability.id] values must be unique across all capabilities in a run, not just deferred ones.
+
+`load_capability` is reserved when any deferred capability is present. `search_tools` is reserved when [tool search](tools-advanced.md#tool-search) is active.
+
+Deferred capabilities currently support instructions and function tools. Model settings and [builtin tools](builtin-tools.md) must stay in always-on capabilities.
+
+Tools provided by a deferred capability inherit the capability's `defer_loading=True` unless the tool explicitly sets its own `defer_loading` value.
+
+Loaded capability state comes from the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) removes the `load_capability` tool return, the model may need to load the capability again.
+
+[Deferred tool calls](deferred-tools.md#deferred-tools) are separate: they control when a tool call is executed, not whether the model can see a capability.
 
 ## Building custom capabilities
 
