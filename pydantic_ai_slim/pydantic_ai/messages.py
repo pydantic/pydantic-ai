@@ -1742,6 +1742,13 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    def __post_init__(self) -> None:
+        # Per-instance attribute populated by the instrumentation layer from
+        # `ToolDefinition.metadata` to drive OTel rendering hints (e.g. syntax highlighting).
+        # Declared here rather than as a dataclass field so it stays out of `__init__`,
+        # equality, repr, Pydantic JSON schema, and serialization.
+        self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
+
     def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -2410,6 +2417,11 @@ class ModelResponse:
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
+                if part.otel_metadata:
+                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
+                        call_part['code_arg_name'] = code_arg_name
+                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
+                        call_part['code_arg_language'] = code_arg_language
                 if settings.include_content and part.args is not None:
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args

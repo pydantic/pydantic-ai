@@ -2198,12 +2198,15 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
-        return BuiltinToolCallPart(
+        part = BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=_BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME[item.name],
             args=tool_args,
             tool_call_id=item.id,
         )
+        if item.name == 'code_execution':
+            part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+        return part
     if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
         # Normalize the wire `{"query": "..."}` into the cross-provider
         # `{"queries": [...]}` shape carried on the typed call part. The bm25/regex

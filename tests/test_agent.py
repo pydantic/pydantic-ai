@@ -7055,6 +7055,17 @@ async def test_provider_aexit_without_aenter():
     await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
 
 
+@requires_openai
+async def test_provider_aexit_without_aenter_then_async_with():
+    """Bare __aexit__ before any __aenter__ must not corrupt later lifecycle state."""
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+    async with provider:
+        assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+        assert not provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    assert provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+
+
 # TODO(v2): uncomment when we re-enable the ResourceWarning in Provider.__del__
 # @requires_openai
 # async def test_provider_del_warns_on_unclosed_client():
