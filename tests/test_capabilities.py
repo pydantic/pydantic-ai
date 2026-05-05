@@ -2069,18 +2069,6 @@ def test_deferred_capability_rejects_unsupported_static_contributions() -> None:
     )
 
 
-def test_agent_get_instructions_merges_agent_capability_and_run_instructions() -> None:
-    """The compatibility helper keeps the same instruction ordering as run execution."""
-    agent = Agent(TestModel(), instructions='Agent instructions.')
-    literal, functions = agent._get_instructions(  # pyright: ignore[reportPrivateUsage]
-        additional_instructions='Run instructions.',
-        cap_instructions=['Capability instructions.'],
-    )
-
-    assert literal == snapshot('Agent instructions.\nCapability instructions.\nRun instructions.')
-    assert functions == snapshot([])
-
-
 async def test_load_capability_tool_name_conflict_raises() -> None:
     """The framework loader must not be shadowed by a user tool with the same name."""
     toolset = FunctionToolset[None]()

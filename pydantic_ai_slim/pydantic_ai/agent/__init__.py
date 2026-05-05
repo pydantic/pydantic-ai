@@ -1250,14 +1250,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_context.model_settings = merged
             return merged
 
-        # Build instructions with per-run capability contributions
-        collected_instructions = self._collect_instructions(
-            additional_instructions=instructions,
-            cap_instructions=cap_instructions,
-        )
-
-        instructions_literal, instructions_functions = self._get_prompt_instructions(collected_instructions)
-
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
             output_toolset=output_toolset,
@@ -1268,6 +1260,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
             toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+        )
+
+        # Build instructions with per-run capability contributions
+        instructions_literal, instructions_functions = self._get_instructions(
+            additional_instructions=instructions,
+            cap_instructions=cap_instructions,
         )
 
         async def get_instructions(
@@ -2423,22 +2421,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _collect_instructions(
-        self,
-        additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
-    ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
-        override_instructions = self._override_instructions.get()
-        if override_instructions:
-            # Override replaces all instructions, including capability contributions.
-            return override_instructions.value
-        else:
-            instructions = self._instructions.copy()
-            instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
-            if additional_instructions is not None:
-                instructions.extend(_instructions.normalize_instructions(additional_instructions))
-            return instructions
-
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
@@ -2448,16 +2430,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Toolset instructions are collected separately during run execution.
         """
-        instructions = self._collect_instructions(
-            additional_instructions=additional_instructions,
-            cap_instructions=cap_instructions,
-        )
-        return self._get_prompt_instructions(instructions)
+        override_instructions = self._override_instructions.get()
+        if override_instructions:
+            # Override replaces all instructions, including capability contributions.
+            instructions = override_instructions.value
+        else:
+            instructions = self._instructions.copy()
+            instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
+            if additional_instructions is not None:
+                instructions.extend(_instructions.normalize_instructions(additional_instructions))
 
-    def _get_prompt_instructions(
-        self,
-        instructions: Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]],
-    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
