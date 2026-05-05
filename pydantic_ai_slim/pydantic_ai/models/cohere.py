@@ -6,9 +6,9 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError
 
-from .. import ModelHTTPError, usage
+from .. import ModelHTTPError, _utils, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BuiltinToolCallPart,
@@ -88,6 +88,27 @@ _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'TOOL_CALL': 'tool_call',
     'ERROR': 'error',
 }
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'too many tokens',
+    'exceeds the limit',
+    'prompt is too long',
+)
+
+
+def _check_context_window_exceeded(e: ApiError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    if status_code != 400:
+        return None
+    if body := _utils.as_dict(e.body):
+        message = body.get('message', '')
+        if isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+            return ContextWindowExceeded(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+    return None
 
 
 class CohereModelSettings(ModelSettings, total=False):
@@ -196,6 +217,8 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
+                if ctx_exc := _check_context_window_exceeded(e, self.model_name, status_code):
+                    raise ctx_exc from e
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 

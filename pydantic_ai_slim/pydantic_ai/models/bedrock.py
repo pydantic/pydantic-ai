@@ -54,7 +54,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
@@ -107,6 +107,8 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
     except ClientError as e:
         status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
         if isinstance(status_code, int):
+            if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
+                raise ctx_exc from e
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
@@ -378,6 +380,30 @@ class BedrockModelSettings(ModelSettings, total=False):
     as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
     for cost tracking or cross-region inference.
     """
+
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'input is too long',
+    'input tokens exceeded',
+    'maximum context length',
+    'token limit',
+)
+
+
+def _check_context_window_exceeded(e: ClientError, model_name: str, status_code: int) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    message = e.response.get('Error', {}).get('Message', '')
+    if (
+        status_code == 400
+        and isinstance(message, str)
+        and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    ):
+        return ContextWindowExceeded(
+            status_code=status_code,
+            model_name=model_name,
+            body=e.response,
+        )
+    return None
 
 
 @dataclass(init=False)

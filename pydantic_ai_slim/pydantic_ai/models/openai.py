@@ -36,7 +36,7 @@ from ..builtin_tools import (
     WebSearchTool,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import UserError
+from ..exceptions import ContextWindowExceeded, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -146,6 +146,8 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            if ctx_exc := _check_context_window_exceeded(e, model_name, status_code):
+                raise ctx_exc from e
             raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.body) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
@@ -387,6 +389,28 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
     """
     for setting in profile.openai_unsupported_model_settings:
         model_settings.pop(setting, None)
+
+
+def _check_context_window_exceeded(
+    e: APIStatusError, model_name: str, status_code: int
+) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    if status_code != 400:
+        return None
+    if body := _utils.as_dict(e.body):
+        if body.get('code') == 'context_length_exceeded':
+            return ContextWindowExceeded(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+        if (error := _utils.as_dict(body.get('error'))) and error.get('code') == 'context_length_exceeded':
+            return ContextWindowExceeded(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+            )
+    return None
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
