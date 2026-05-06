@@ -154,6 +154,8 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
+        'deepseek:deepseek-v4-flash',
+        'deepseek:deepseek-v4-pro',
         'gateway/anthropic:claude-3-haiku-20240307',
         'gateway/anthropic:claude-haiku-4-5-20251001',
         'gateway/anthropic:claude-mythos-preview',
