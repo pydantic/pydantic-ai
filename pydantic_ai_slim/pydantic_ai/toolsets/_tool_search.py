@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
 from typing import Annotated, Any
@@ -68,6 +69,40 @@ writes go to the typed content."""
 
 _MAX_SEARCH_RESULTS = 10
 _SEARCH_TOKEN_RE = re.compile(r'[a-z0-9]+')
+
+
+def _tokenize(text: str) -> set[str]:
+    """Lowercase + extract alphanumeric tokens for keyword matching.
+
+    Used for both the query and the indexed terms (tool name + description) so
+    matching is case-insensitive and word-bounded — `me` matches `get_me` but not
+    the substring inside `comment`.
+    """
+    return set(_SEARCH_TOKEN_RE.findall(text.lower()))
+
+
+def keywords_search_fn(_ctx: RunContext[Any], keywords: str, tools: Sequence[ToolDefinition]) -> list[str]:
+    """Built-in keyword-overlap search algorithm exposed as a [`ToolSearchFunc`][pydantic_ai.builtin_tools.tool_search.ToolSearchFunc].
+
+    Score each tool by how many query keywords appear in its name or description, then
+    return matching names ordered by descending score. Used both as the default
+    algorithm when `ToolSearch` was constructed without an explicit strategy AND as
+    the explicit `strategy='keywords'` choice — the difference is that the explicit
+    choice routes through the same dispatch path as a user-supplied callable, which
+    enables client-executed-native wire on supporting providers (cache benefit).
+    """
+    terms = _tokenize(keywords)
+    if not terms:
+        return []
+    scored: list[tuple[int, str]] = []
+    for tool_def in tools:
+        tool_terms = _tokenize(f'{tool_def.name} {tool_def.description or ""}')
+        score = len(terms & tool_terms)
+        if score > 0:
+            scored.append((score, tool_def.name))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [name for _, name in scored]
+
 
 _DEFAULT_TOOL_DESCRIPTION = (
     'There are additional tools not yet visible to you.'

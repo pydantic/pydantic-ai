@@ -2288,22 +2288,17 @@ async def test_tool_search_capability_strategy_none_optional_builtin():
     assert tool.optional is True
 
 
-async def test_tool_search_capability_strategy_keywords_no_builtin():
-    """``strategy='keywords'`` is explicitly local — no native builtin is registered,
-    the default keyword-overlap algorithm runs via the local ``search_tools`` function."""
-    cap = ToolSearch(strategy='keywords')
-    builtins = list(cap.get_builtin_tools())
-    assert builtins == []
-
-
 async def test_tool_search_capability_wraps_with_tool_search_toolset():
     """``strategy='keywords'`` wraps with ``ToolSearchToolset`` so the corpus is
-    exposed and ``search_tools`` carries the user's customizations."""
+    exposed and ``search_tools`` carries the user's customizations. The toolset's
+    ``search_fn`` is set to the built-in keyword-overlap algorithm so the local
+    dispatch routes through ``_run_search_fn`` (same path as a custom callable),
+    enabling client-executed-native wire on supporting providers."""
     toolset = _create_function_toolset()
     cap = ToolSearch(strategy='keywords')
     wrapped = cap.get_wrapper_toolset(toolset)
     assert isinstance(wrapped, ToolSearchToolset)
-    assert wrapped.search_fn is None
+    assert wrapped.search_fn is not None
 
 
 async def test_tool_search_capability_named_strategy_wraps_with_tool_search_toolset():
@@ -3731,3 +3726,62 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
         for call in cast(list[ResponseFunctionToolCallParam], function_calls)
     )
     assert not function_outputs
+
+
+# --- `strategy='keywords'` on natively-supporting providers ---
+#
+# `'keywords'` is a strategy CHOICE: "use the keyword-overlap algorithm". The execution
+# mode (server-side / client-executed-native / local fallback) is auto-derived from
+# the algorithm's needs and the provider's capabilities. On Anthropic and OpenAI,
+# native tool search is available and the keyword algorithm runs LOCALLY but the
+# wire ships in the provider's native tool-search shape so the prompt cache stays
+# warm across discovery rounds (deferred tools don't get re-added to the request's
+# tool definitions on each turn).
+
+
+def test_tool_search_strategy_keywords_registers_builtin_for_client_execution() -> None:
+    """`ToolSearch(strategy='keywords')` must register `ToolSearchTool(strategy='custom',
+    optional=True)` so the client-executed native path engages on supporting providers.
+
+    Currently fails because `get_builtin_tools` returns `[]` for `'keywords'`,
+    forcing the local-fallback path on every provider — losing the cache benefit
+    that the client-executed native path provides on Anthropic and OpenAI.
+    """
+    cap: ToolSearch[None] = ToolSearch(strategy='keywords')
+    builtins = cap.get_builtin_tools()
+    assert len(builtins) == 1
+    [builtin] = builtins
+    assert isinstance(builtin, ToolSearchTool)
+    # `strategy='custom'` marks the builtin as "the algorithm runs on our side"; the
+    # adapter then wires it as Anthropic's tool_use+tool_reference flavor or OpenAI's
+    # `execution='client'`. `optional=True` so it gets dropped on providers that
+    # don't support it (toolset's local `search_tools` function tool is the fallback).
+    assert builtin.strategy == 'custom'
+    assert builtin.optional is True
+
+
+async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:
+    """When `strategy='keywords'` activates the client-executed native path, the local
+    `search_tools` function (still in `function_tools` for client-execution) must run
+    the built-in keyword-overlap algorithm — not error out with no `search_fn` set.
+
+    Verifies end-to-end: the toolset's `search_fn` is wired to a callable that
+    matches keywords against the corpus, returning matching tool names.
+    """
+    cap: ToolSearch[None] = ToolSearch(strategy='keywords')
+    base = _create_function_toolset()
+    # `get_wrapper_toolset` is what the framework calls when injecting the capability.
+    ts = cap.get_wrapper_toolset(base)
+    assert isinstance(ts, ToolSearchToolset)
+    # Internal `search_fn` is set so `_run_search_fn` (not `_run_keywords_search`) handles
+    # the dispatch — but the algorithm is still keyword overlap.
+    assert ts.search_fn is not None
+
+    ctx = _build_run_context(None)
+    tools = await ts.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
+    assert isinstance(result, ToolReturn)
+    return_value = cast(dict[str, Any], result.return_value)
+    discovered_names = {match['name'] for match in return_value['discovered_tools']}
+    assert 'calculate_mortgage' in discovered_names

@@ -23,7 +23,7 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._tool_search import ToolSearchToolset
+from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
 from .abstract import AbstractCapability, CapabilityOrdering
 
 
@@ -87,11 +87,18 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
-        # A callable strategy is used as the local search function. Named strategies
-        # (`'keywords'`, `'bm25'`, `'regex'`) don't plug into the local callable:
-        # `'keywords'` means the default keyword-matching algorithm runs locally, while
-        # `'bm25'`/`'regex'` only take effect on the native provider path.
-        self._search_fn = self.strategy if callable(self.strategy) else None
+        # `'keywords'` and a callable strategy both run their algorithm on our side and
+        # both engage the provider's "client-executed" native mode where supported, so
+        # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
+        # The named strategies `'bm25'` / `'regex'` only take effect server-side
+        # (Anthropic) — no local implementation today — and `None` falls through to
+        # the toolset's default keyword-overlap algorithm.
+        if self.strategy == 'keywords':
+            self._search_fn = keywords_search_fn
+        elif callable(self.strategy):
+            self._search_fn = self.strategy
+        else:
+            self._search_fn = None
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
@@ -101,17 +108,12 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         return 'ToolSearch'
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        # `'keywords'` is explicitly-local: no builtin, the local `search_tools`
-        # function tool carries the full search workload.
-        if self.strategy == 'keywords':
-            return []
-
-        # A callable strategy surfaces as the provider's "client-executed" native mode
-        # (Anthropic: regular function tool with tool_reference result formatting;
-        # OpenAI: `execution='client'`). Models without support drop the builtin as
-        # optional and fall back to the local `search_tools` function — same callable,
-        # just executed locally instead of routed through the provider.
-        if callable(self.strategy):
+        # `'keywords'` and a callable strategy both register the `'custom'` builtin so
+        # the provider's "client-executed" native mode engages where supported (cache
+        # benefit on Anthropic and OpenAI), and silently fall back to the local
+        # `search_tools` function tool elsewhere via `optional=True`. Same dispatch
+        # path differs only in *which* algorithm runs as `_search_fn`.
+        if self.strategy == 'keywords' or callable(self.strategy):
             return [ToolSearchTool(strategy='custom', optional=True)]
 
         # `None` means "pick the best native option available, otherwise fall back
@@ -125,9 +127,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # the request must error rather than silently substitute a different algorithm.
         #
         # Assumes no local implementation of bm25/regex exists — if we ever port either
-        # to Python, `optional` should flip to `True` for that strategy and
-        # `ToolSearchToolset` should gain a matching branch, so models without native
-        # support can still honor the choice via the local path.
+        # to Python, the strategy should join the `'keywords'` branch above so models
+        # without native support can still honor the choice via the local path.
         named: ToolSearchNativeStrategy = self.strategy
         return [ToolSearchTool(strategy=named, optional=False)]
 
