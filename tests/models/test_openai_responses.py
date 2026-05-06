@@ -225,6 +225,44 @@ def test_openai_responses_image_generation_tool_unsupported_size_raises_error() 
         _resolve_openai_image_generation_size(tool)
 
 
+async def test_openai_responses_maps_mcp_call_with_empty_tool_args():
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='sk-placeholder'),
+    )
+
+    tool_call_id = 'call_abc123'
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Please call get_info')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='mcp_server:my-mcp',
+                    tool_call_id=tool_call_id,
+                    args={'action': 'call_tool', 'tool_name': 'get_info', 'tool_args': {}},
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='mcp_server:my-mcp',
+                    tool_call_id=tool_call_id,
+                    content={'output': 'some result', 'error': None},
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did you just do?')]),
+    ]
+
+    _, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, {'openai_send_reasoning_ids': True}, ModelRequestParameters()
+    )
+
+    mcp_calls = [message for message in openai_messages if message.get('type') == 'mcp_call']
+    assert len(mcp_calls) == 1
+    assert mcp_calls[0]['arguments'] == '{}'
+
+
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 

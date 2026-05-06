@@ -2495,7 +2495,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 elif (  # pragma: no branch
                                     action == 'call_tool'
                                     and (tool_name := args.get('tool_name'))
-                                    and (tool_args := args.get('tool_args'))
+                                    and (tool_args := args.get('tool_args')) is not None
                                 ):
                                     mcp_call_item = responses.response_input_item_param.McpCall(
                                         id=item.tool_call_id,
