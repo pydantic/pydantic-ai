@@ -883,16 +883,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
         )
 
-        # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
-        # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
-        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
-        messages = _clean_message_history(messages)
-
         # Translate any cross-provider history shapes the active model can't ship on the wire
         # (currently: typed `BuiltinToolSearch*Part` instances become local-shape `ToolSearch*Part`
         # when the profile doesn't support `ToolSearchTool`). Centralized here so per-adapter
         # message-prep code sees a homogeneous shape regardless of which provider produced the prior turn.
+        # Run *before* `_clean_message_history` so structural quirks introduced by the synthesis
+        # (e.g. a bare `[SearchCall, SearchReturn]` response splitting into `Response + Request`
+        # adjacent to an existing `Request`) get merged into a single `ModelRequest` below.
         messages = model.prepare_messages(messages)
+
+        # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
+        # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
+        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
+        messages = _clean_message_history(messages)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters

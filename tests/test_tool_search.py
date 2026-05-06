@@ -3275,6 +3275,43 @@ def test_synthesize_messages_metadata_kept_on_first_split_only() -> None:
     assert responses[1].usage.output_tokens == 0
 
 
+def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> None:
+    """Regression: the bare `[SearchCall, SearchReturn]` response shape — common when a model
+    finishes a turn right after server-side search results — splits into `Response + Request`,
+    which collides with the next `ModelRequest` in the history. `_clean_message_history` must
+    run *after* `prepare_messages` so the splitter's synthetic `Request([SearchReturn])` and
+    the original `Request([UserPromptPart])` merge into a single `ModelRequest`, preserving
+    strict user/assistant alternation for adapters that require it.
+    """
+    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='s1'),
+                BuiltinToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='s1'),
+            ],
+        ),
+        ModelRequest(parts=[UserPromptPart(content='follow-up')]),
+    ]
+
+    # Mirror `_make_request`'s post-fix order: synthesize first, then clean.
+    after_synthesis = synthesize_local_tool_search_messages(history)
+    cleaned = _clean_message_history(after_synthesis)
+
+    # No two consecutive `ModelRequest`s after the cleanup pass.
+    for i in range(len(cleaned) - 1):
+        if isinstance(cleaned[i], ModelRequest):
+            assert not isinstance(cleaned[i + 1], ModelRequest), f'Consecutive requests at index {i}: {cleaned}'
+
+    # The merged request carries both the synthetic search return and the original user prompt,
+    # with the tool return part sorted ahead of the user prompt.
+    last = cleaned[-1]
+    assert isinstance(last, ModelRequest)
+    assert isinstance(last.parts[0], ToolSearchReturnPart)
+    assert isinstance(last.parts[1], UserPromptPart)
+
+
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
     """Narrowing an already-typed `ToolSearchReturnPart` returns the input instance."""
     part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
