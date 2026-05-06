@@ -9,6 +9,19 @@ from . import ModelProfile
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250522', '20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 
+_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+    'claude-opus-4-7',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-6',
+)
+_ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250522', '20250825')
+_ANTHROPIC_CODE_EXECUTION_20260120_VERSIONS: tuple[AnthropicCodeExecutionToolVersion, ...] = (
+    *_ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS,
+    '20260120',
+)
+
 
 @dataclass(kw_only=True)
 class AnthropicModelProfile(ModelProfile):
@@ -105,14 +118,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
-    supports_code_execution_20260120 = model_name.startswith(
-        ('claude-opus-4-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-sonnet-4-5', 'claude-sonnet-4-6')
-    )
-    default_code_execution_tool_version: AnthropicCodeExecutionToolVersion = (
-        '20260120' if supports_code_execution_20260120 else '20250825'
-    )
-    supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = (
-        ('20250522', '20250825', '20260120') if supports_code_execution_20260120 else ('20250522', '20250825')
+    default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
+        model_name
     )
 
     return AnthropicModelProfile(
@@ -128,3 +135,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
     )
+
+
+def _code_execution_tool_versions(
+    model_name: str,
+) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
+    if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
+        return '20260120', _ANTHROPIC_CODE_EXECUTION_20260120_VERSIONS
+    return '20250825', _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS
