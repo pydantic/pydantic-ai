@@ -40,7 +40,7 @@ class SetupFromMetadata(CaseLifecycle[str, str, dict]):
 
     async def teardown(
         self,
-        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict] | None,
     ) -> None:
         pass  # Clean up resources here
 
@@ -82,7 +82,7 @@ class ConditionalCleanup(CaseLifecycle[str, str, dict]):
 
     async def teardown(
         self,
-        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict] | None,
     ) -> None:
         keep_on_failure = (self.case.metadata or {}).get('keep_on_failure', False)
         if isinstance(result, ReportCaseFailure) and keep_on_failure:
