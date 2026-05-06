@@ -42,7 +42,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
@@ -5006,7 +5006,11 @@ def test_transformer_adds_properties_to_object_schemas():
 
 
 def test_transformer_marks_bare_list_items_as_not_strict_compatible():
-    schema = {'type': 'object', 'properties': {'items': {'type': 'array', 'items': {}}}, 'required': ['items']}
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'items': {}}},
+        'required': ['items'],
+    }
 
     transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
     result = transformer.walk()
