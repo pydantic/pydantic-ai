@@ -2488,11 +2488,15 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False)
-class FunctionToolCallEvent:
-    """An event indicating the start to a call to a function tool."""
+class BaseToolCallEvent:
+    """Base class for events emitted when a tool call is about to be invoked.
+
+    Match against this in a `case` to handle [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]
+    and [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] together.
+    """
 
     part: ToolCallPart
-    """The (function) tool call to make."""
+    """The tool call to make."""
 
     _: KW_ONLY
 
@@ -2505,13 +2509,20 @@ class FunctionToolCallEvent:
     - `None`: Validation was not performed.
     """
 
-    event_kind: Literal['function_tool_call'] = 'function_tool_call'
-    """Event type identifier, used as a discriminator."""
-
     @property
     def tool_call_id(self) -> str:
         """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class FunctionToolCallEvent(BaseToolCallEvent):
+    """An event indicating the start to a call to a function tool."""
+
+    event_kind: Literal['function_tool_call'] = 'function_tool_call'
+    """Event type identifier, used as a discriminator."""
 
     @property
     @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
@@ -2519,15 +2530,37 @@ class FunctionToolCallEvent:
         """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id  # pragma: no cover
 
+
+@dataclass(repr=False)
+class OutputToolCallEvent(BaseToolCallEvent):
+    """An event indicating the start of a call to an output tool (the model's "submit final answer" call)."""
+
+    event_kind: Literal['output_tool_call'] = 'output_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass(repr=False)
+class BaseToolResultEvent:
+    """Base class for events emitted when a tool call has been completed.
+
+    Match against this in a `case` to handle [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]
+    and [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] together.
+    """
+
+    result: ToolReturnPart | RetryPromptPart
+    """The result of the tool call."""
+
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.result.tool_call_id
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False)
-class FunctionToolResultEvent:
+class FunctionToolResultEvent(BaseToolResultEvent):
     """An event indicating the result of a function tool call."""
-
-    result: ToolReturnPart | RetryPromptPart
-    """The result of the call to the function tool."""
 
     _: KW_ONLY
 
@@ -2537,12 +2570,13 @@ class FunctionToolResultEvent:
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
-    @property
-    def tool_call_id(self) -> str:
-        """An ID used to match the result to its original call."""
-        return self.result.tool_call_id
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+@dataclass(repr=False)
+class OutputToolResultEvent(BaseToolResultEvent):
+    """An event indicating the result of an output tool call."""
+
+    event_kind: Literal['output_tool_result'] = 'output_tool_result'
+    """Event type identifier, used as a discriminator."""
 
 
 @deprecated(
@@ -2580,6 +2614,8 @@ class BuiltinToolResultEvent:
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
+    | OutputToolCallEvent
+    | OutputToolResultEvent
     | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
     | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     pydantic.Discriminator('event_kind'),

@@ -27,6 +27,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -195,6 +197,12 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
         yield f'<function-tool-result name={event.result.tool_name!r}>{event.result.content}</function-tool-result>'
+
+    async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[str]:
+        yield f'<output-tool-call name={event.part.tool_name!r}>{event.part.args}</output-tool-call>'
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[str]:
+        yield f'<output-tool-result name={event.result.tool_name!r}>{event.result.content}</output-tool-result>'
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[str]:
         yield f'<run-result>{event.result.output}</run-result>'
@@ -502,7 +510,8 @@ async def test_run_stream_output_tool():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
-            "<function-tool-result name='final_result'>Final result processed.</function-tool-result>",
+            '<output-tool-call name=\'final_result\'>{"query":"Hello world"}</output-tool-call>',
+            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
             '</request>',
             "<run-result>{'results': [{'title': '\"Hello, World!\" program', 'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program'}]}</run-result>",
             '</stream>',
@@ -611,7 +620,7 @@ async def test_run_stream_output_tool_error():
             "</tool-call name='final_result'>",
             '</response>',
             '<request>',
-            "<function-tool-result name='final_result'>Tool execution was interrupted by an error.</function-tool-result>",
+            "<output-tool-result name='final_result'>Tool execution was interrupted by an error.</output-tool-result>",
             "<error type='ValueError'>Output validation failed</error>",
             '</request>',
             '</stream>',

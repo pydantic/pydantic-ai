@@ -788,8 +788,8 @@ from typing import Any
 from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
+    BaseToolCallEvent,
+    BaseToolResultEvent,
     PartStartEvent,
     TextPart,
 )
@@ -806,14 +806,16 @@ class StreamAuditor(AbstractCapability[Any]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         async for event in stream:
-            if isinstance(event, FunctionToolCallEvent):
+            if isinstance(event, BaseToolCallEvent):
                 print(f'Tool called: {event.part.tool_name}')
-            elif isinstance(event, FunctionToolResultEvent):
-                print(f'Tool result: {event.tool_return.content!r}')
+            elif isinstance(event, BaseToolResultEvent):
+                print(f'Tool result: {event.result.content!r}')
             elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                 print(f'Text: {event.part.content!r}')
             yield event
 ```
+
+Matching against [`BaseToolCallEvent`][pydantic_ai.messages.BaseToolCallEvent] and [`BaseToolResultEvent`][pydantic_ai.messages.BaseToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently.
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
