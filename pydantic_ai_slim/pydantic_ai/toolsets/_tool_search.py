@@ -46,6 +46,7 @@ class _SearchIndexEntry:
     name: str
     description: str | None
     search_terms: set[str]
+    capability_id: str | None
 
 
 @dataclass(kw_only=True)
@@ -105,6 +106,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 name=name,
                 description=tool.tool_def.description,
                 search_terms=self._search_terms(name, tool.tool_def.description),
+                capability_id=tool.tool_def.capability_id,
             )
             for name, tool in deferred.items()
             if name not in discovered
@@ -133,7 +135,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
         result.update(visible)
         for name, tool in deferred.items():
-            if name in discovered:
+            cap_id = tool.tool_def.capability_id
+            if name in discovered and not (
+                cap_id is not None
+                and cap_id not in loaded_capability_ids
+                and (capability := ctx.capabilities.get(cap_id)) is not None
+                and capability.defer_loading is True
+            ):
                 result[name] = self._make_visible(tool)
 
         return result
@@ -193,9 +201,15 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry('Please provide search keywords.')
 
         scored_matches: list[tuple[int, dict[str, str | None]]] = []
+        loaded_capability_ids = ctx.loaded_capability_ids
         for entry in search_tool.search_index:
             score = len(terms & entry.search_terms)
-            if score == 0:
+            if score == 0 or (
+                entry.capability_id is not None
+                and entry.capability_id not in loaded_capability_ids
+                and (capability := ctx.capabilities.get(entry.capability_id)) is not None
+                and capability.defer_loading is True
+            ):
                 continue
             scored_matches.append((score, {'name': entry.name, 'description': entry.description}))
 
