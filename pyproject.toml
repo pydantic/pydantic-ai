@@ -248,10 +248,6 @@ filterwarnings = [
     "ignore::RuntimeWarning:pydantic_ai.mcp",
     # ag-ui-protocol >= 0.1.15 deprecated BinaryInputContent
     "ignore:BinaryInputContent is deprecated:DeprecationWarning",
-    # `Agent(retries=...)` is deprecated in 1.x toward `tool_retries`; tests still exercise the
-    # legacy kwarg both incidentally and intentionally. The runtime warning still fires for users.
-    # TODO(v2): remove this filter and migrate any remaining sites to `tool_retries=`.
-    "ignore:`retries` is deprecated and will be removed in v2:DeprecationWarning",
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",

@@ -51,7 +51,8 @@ class Deps:
 search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     'openai:gpt-5.2',
     output_type=FlightDetails | NoFlightFound,  # type: ignore
-    retries=4,
+    tool_retries=4,
+    output_retries=4,
     system_prompt=(
         'Your job is to find the cheapest flight for the user on the given date. '
     ),

@@ -598,7 +598,8 @@ def test_tool_output_max_retries_overrides_agent_retries():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(get_weather, max_retries=target_retries),
-        retries=2,
+        tool_retries=2,
+        output_retries=2,
     )
 
     result = agent.run_sync('Hello')
@@ -818,7 +819,8 @@ def test_tool_output_max_retries_per_tool():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        retries=0,
+        tool_retries=0,
+        output_retries=0,
     )
 
     result = agent.run_sync('Hello')
@@ -3814,7 +3816,7 @@ def test_unknown_tool_multiple_retries():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=num_retries)
+    agent = Agent(FunctionModel(empty), tool_retries=num_retries, output_retries=num_retries)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
@@ -3887,7 +3889,7 @@ def test_unknown_tool_per_tool_retries_exceeded():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=1, output_retries=5)
+    agent = Agent(FunctionModel(empty), tool_retries=1, output_retries=5)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
         agent.run_sync('Hello')
@@ -7906,7 +7908,7 @@ def test_prepare_output_tools_receives_output_max_retries():
         FunctionModel(return_model),
         output_type=Foo,
         output_retries=target_retries,
-        retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
+        tool_retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
         prepare_output_tools=prep,
     )
 
@@ -10477,7 +10479,8 @@ def test_output_validator_retry_counter_with_tool_switch():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        retries=0,
+        tool_retries=0,
+        output_retries=0,
     )
 
     @agent.output_validator
@@ -10652,7 +10655,7 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
 
     deprecation_ctx = (
-        pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`')
+        pytest.warns(DeprecationWarning, match=r'`retries` is deprecated and will be removed in v2')
         if case.expects_deprecation_warning
         else nullcontext()
     )
@@ -10733,6 +10736,45 @@ def test_output_retries_run_override_without_validators():
     assert shared_toolset.max_retries == 10
 
 
+@pytest.mark.parametrize(
+    'kwargs, expected_warning',
+    [
+        ({}, None),
+        ({'tool_retries': 5}, None),
+        ({'output_retries': 5}, None),
+        ({'tool_retries': 5, 'output_retries': 5}, None),
+        ({'retries': 5}, r'`retries` is deprecated.*Use `tool_retries` instead'),
+        ({'retries': 5, 'output_retries': 3}, r'`retries` is deprecated.*Use `tool_retries` instead'),
+        (
+            {'retries': 5, 'tool_retries': 3},
+            r'`retries` is deprecated.*only setting `output_retries` via the legacy 1\.x cascade',
+        ),
+    ],
+    ids=[
+        'no-kwargs',
+        'tool_retries-only',
+        'output_retries-only',
+        'tool_retries-and-output_retries',
+        'retries-only-warns',
+        'retries-and-output_retries-warns-generic',
+        'retries-and-tool_retries-warns-cascade-callout',
+    ],
+)
+def test_agent_init_deprecation_warning(kwargs: dict[str, Any], expected_warning: str | None):
+    """Cover the `Agent.__init__` deprecation warning text for every kwarg combination.
+
+    The both-passed case (`retries=` + `tool_retries=`) gets a sharper message that calls out the
+    silent cascade to `output_retries`; everything else either warns generically or stays silent.
+    """
+    if expected_warning is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', DeprecationWarning)
+            Agent('test', **kwargs)
+    else:
+        with pytest.warns(DeprecationWarning, match=expected_warning):
+            Agent('test', **kwargs)
+
+
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
     """Unknown tool calls should not increment the global retry counter.
 
@@ -10760,7 +10802,7 @@ def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
             )
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(model_function), retries=2, output_retries=1)
+    agent = Agent(FunctionModel(model_function), tool_retries=2, output_retries=1)
 
     @agent.tool_plain
     def valid_tool(x: int) -> str:

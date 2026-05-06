@@ -630,7 +630,7 @@ class NeverOutputType(TypedDict):
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    retries=3,
+    tool_retries=3,
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )

@@ -2347,7 +2347,7 @@ async def test_run_stream_request_error():
 
 async def test_run_stream_tool_retry_exhaustion():
     """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
-    agent = Agent(model=TestModel(), retries=1)
+    agent = Agent(model=TestModel(), tool_retries=1, output_retries=1)
 
     @agent.tool_plain(retries=1)
     async def flaky_tool(query: str) -> str:
@@ -2418,7 +2418,9 @@ async def test_run_stream_output_tool_error():
     def bad_output(value: str) -> str:
         raise ValueError('Output validation failed')
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, tool_retries=0, output_retries=0
+    )
 
     request = SubmitMessage(
         id='foo',

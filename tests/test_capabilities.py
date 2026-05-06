@@ -371,19 +371,22 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_retries_override():
-    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_output_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
     assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
     assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
 
@@ -1759,7 +1762,8 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -4098,7 +4102,13 @@ class TestPrepareOutputToolsHook:
                 parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 7}', tool_call_id='c1')]
             )
 
-        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, retries=4, capabilities=[CaptureCtxCap()])
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=MyOutput,
+            tool_retries=4,
+            output_retries=4,
+            capabilities=[CaptureCtxCap()],
+        )
         await agent.run('hello')
         assert seen == [(0, 4)]
 
@@ -8857,7 +8867,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9184,7 +9194,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9260,7 +9270,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9334,7 +9344,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9408,7 +9418,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:

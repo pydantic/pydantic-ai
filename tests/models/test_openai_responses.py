@@ -2668,7 +2668,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     response instead of re-sending the same static seed and duplicating stored state.
     """
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, retries=3)
+    agent = Agent(model=model, tool_retries=3, output_retries=3)
 
     attempts: list[str] = []
 
