@@ -224,6 +224,7 @@ class Instrumentation(AbstractCapability[Any]):
             MODEL_SETTING_ATTRIBUTES,
             CostCalculationFailedWarning,
             InstrumentedModel,
+            _annotate_tool_call_otel_metadata,  # pyright: ignore[reportPrivateUsage]
             _build_tool_definitions,  # pyright: ignore[reportPrivateUsage]
         )
 
@@ -329,6 +330,7 @@ class Instrumentation(AbstractCapability[Any]):
                     span.update_name(f'{operation} {request_model}')
 
                 response = await handler(request_context)
+                _annotate_tool_call_otel_metadata(response, prepared_parameters)
                 finish(response)
                 return response
         finally:

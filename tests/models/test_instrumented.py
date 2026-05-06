@@ -2093,6 +2093,7 @@ def test_annotate_tool_call_otel_metadata():
         parts=[
             ToolCallPart(tool_name='run_code_with_tools', args={'code': 'print("hi")'}, tool_call_id='call_1'),
             ToolCallPart(tool_name='other_tool', args={'x': 1}, tool_call_id='call_2'),
+            ToolCallPart(tool_name='unrelated_metadata_tool', args={'y': 1}, tool_call_id='call_3'),
             TextPart('some text'),
         ]
     )
@@ -2107,6 +2108,13 @@ def test_annotate_tool_call_otel_metadata():
             ToolDefinition(
                 name='other_tool',
                 parameters_json_schema={'type': 'object', 'properties': {}},
+            ),
+            # Truthy metadata without `code_arg_*` keys exercises the branches that skip each
+            # individual `if code_arg_name`/`if code_arg_language`/`if otel_metadata` check.
+            ToolDefinition(
+                name='unrelated_metadata_tool',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                metadata={'foo': 'bar'},
             ),
         ],
         builtin_tools=[],
@@ -2127,6 +2135,10 @@ def test_annotate_tool_call_otel_metadata():
     other_part = response.parts[1]
     assert isinstance(other_part, ToolCallPart)
     assert other_part.otel_metadata is None
+
+    unrelated_part = response.parts[2]
+    assert isinstance(unrelated_part, ToolCallPart)
+    assert unrelated_part.otel_metadata is None
 
 
 def test_builtin_code_execution_otel_metadata_in_otel_messages():
