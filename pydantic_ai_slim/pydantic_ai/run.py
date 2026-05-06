@@ -26,6 +26,27 @@ if TYPE_CHECKING:
     from .result import FinalResult
 
 
+def _current_otel_traceparent() -> str | None:
+    """Return the W3C traceparent of the active OTel span, or None if no valid span is set.
+
+    Used as a fallback when the graph run was created without a span. In that case,
+    the agent run span is typically set by the Instrumentation capability via
+    `start_as_current_span` while the capability chain is executing, which is
+    exactly when consumers like `OnlineEvaluation` read the traceparent.
+    """
+    # `opentelemetry` and `pydantic_graph` are hard deps of pydantic_ai_slim, so the
+    # imports below cannot fail at runtime — kept lazy only to avoid pulling
+    # OTel into `run.py`'s import surface unless the fallback path actually fires.
+    from opentelemetry.trace import INVALID_SPAN, get_current_span
+
+    from pydantic_graph._utils import get_traceparent
+
+    span = get_current_span()
+    if span is INVALID_SPAN:
+        return None
+    return get_traceparent(span) or None
+
+
 @dataclasses.dataclass(repr=False)
 class AgentRun(Generic[AgentDepsT, OutputDataT]):
     """A stateful, async-iterable run of an [`Agent`][pydantic_ai.agent.Agent].
@@ -105,6 +126,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
         traceparent = self._graph_run._traceparent(required=False)  # type: ignore[reportPrivateUsage]
+        if traceparent is None:
+            # Fall back to the active OTel span, which is the agent run span
+            # when the Instrumentation capability is active.
+            traceparent = _current_otel_traceparent()
         if traceparent is None and required:  # pragma: no cover
             raise AttributeError('No span was created for this agent run')
         return traceparent

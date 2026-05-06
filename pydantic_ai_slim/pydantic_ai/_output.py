@@ -9,10 +9,9 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
-from pydantic_core import SchemaValidator, to_json
+from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
-from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
@@ -365,7 +364,7 @@ async def run_output_with_hooks(
     return cast(OutputDataT, result)
 
 
-async def execute_traced_output_function(
+async def execute_output_function(
     function_schema: _function_schema.FunctionSchema,
     *,
     run_context: RunContext[AgentDepsT],
@@ -374,9 +373,10 @@ async def execute_traced_output_function(
 ) -> Any:
     """Execute an output function within a traced span with error handling.
 
-    This function executes the output function within an OpenTelemetry span for observability,
-    automatically records the function response, and handles ModelRetry exceptions by converting
-    them to ToolRetryError when wrap_validation_errors is True.
+    Creates an `execute_tool` span scoped to the output function invocation. When the
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability has already
+    opened an outer `execute_tool` span for tool-mode output (via `wrap_output_process`),
+    this span nests inside it; otherwise it sits under the active agent run span.
 
     Args:
         function_schema: The function schema containing the function to execute
@@ -391,10 +391,13 @@ async def execute_traced_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
+    from pydantic_core import to_json
+
+    from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
+
     instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
-    # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
-    attributes = {
+    attributes: dict[str, Any] = {
         'gen_ai.operation.name': 'execute_tool',
         'gen_ai.tool.name': tool_name,
         **get_agent_run_baggage_attributes(),
@@ -440,7 +443,6 @@ async def execute_traced_output_function(
             else:
                 raise
 
-        # Record response if content inclusion is enabled
         if run_context.trace_include_content and span.is_recording():
             from .models.instrumented import InstrumentedModel
 
@@ -1007,7 +1009,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output = output[k]
 
         if self._function_schema:
-            output = await execute_traced_output_function(
+            output = await execute_output_function(
                 self._function_schema,
                 run_context=run_context,
                 args=output,
@@ -1412,7 +1414,7 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     ) -> Any:
         """Execute the text output function."""
         args = {self._str_argument_name: output}
-        return await execute_traced_output_function(
+        return await execute_output_function(
             self._function_schema, run_context=run_context, args=args, wrap_validation_errors=wrap_validation_errors
         )
 
