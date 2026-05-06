@@ -28,7 +28,20 @@ npx skills add pydantic/skills
 
 This works with 30+ agents via the [agentskills.io](https://agentskills.io) standard, including Claude Code, Codex, Cursor, and Gemini CLI.
 
+### Library Skills
+
+Pydantic AI also ships its skill bundled with the package, so you can install it directly from your project's dependencies via [library-skills.io](https://library-skills.io):
+
+```bash
+uvx library-skills --all
+```
+
+The `--all` flag is required because the skill is bundled in `pydantic-ai-slim`, which is a transitive dependency of the `pydantic-ai` meta-package. Without it, `library-skills` only scans direct dependencies and won't discover the skill.
+
+Add `--claude` to install into `.claude/skills` instead of the default `.agents` directory.
+
 ## See Also
 
 - [`pydantic/skills`](https://github.com/pydantic/skills): source repository
 - [agentskills.io](https://agentskills.io): the open standard for agent skills
+- [library-skills.io](https://library-skills.io): install agent skills bundled with your project's dependencies
