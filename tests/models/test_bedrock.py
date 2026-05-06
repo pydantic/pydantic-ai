@@ -2,10 +2,12 @@ from __future__ import annotations as _annotations
 
 import os
 from datetime import date, datetime, timezone
+from itertools import count
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -26,6 +28,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -49,6 +52,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -117,6 +121,11 @@ class _StubBedrockProvider(Provider[Any]):
         return DEFAULT_PROFILE
 
 
+async def test_bedrock_client_property_delegates_to_provider(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.client is bedrock_provider.client
+
+
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
@@ -150,6 +159,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -165,6 +175,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -282,6 +293,7 @@ async def test_bedrock_inference_profile_converse(
                 parts=[UserPromptPart(content='Say "hello" and nothing else.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello')],
@@ -293,6 +305,7 @@ async def test_bedrock_inference_profile_converse(
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -377,6 +390,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -394,6 +408,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -407,6 +422,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -426,6 +442,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -440,7 +457,6 @@ The temperature in London on 1st January 2022 was 30°C.\
 <thinking> The tool has provided the temperature for London on 1st January 2022, which was 30°C. I will now provide this information to the user.</thinking>
 The temperature in London on 1st January 2022 was 30°C.\
 """,
-                                'ctx': {'error': 'expected value at line 2 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -450,6 +466,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 timestamp=IsDatetime(),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -467,6 +484,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -479,6 +497,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -557,6 +576,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 instructions='You are a helpful chatbot.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -577,6 +597,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -590,6 +611,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 instructions='You are a helpful chatbot.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -609,6 +631,7 @@ The capital of France is Paris. If you need any further information, feel free t
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -669,6 +692,49 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
+
+
+async def test_bedrock_unified_service_tier(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = ModelSettings(service_tier='priority')
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['serviceTier'] == {'type': 'priority'}
+
+
+async def test_bedrock_unified_service_tier_auto_omits(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Top-level `service_tier='auto'` is omitted from the Bedrock request so the server default applies."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = ModelSettings(service_tier='auto')
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert 'serviceTier' not in kwargs
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -1015,6 +1081,31 @@ Since this is a test document, it probably doesn't contain any meaningful or spe
     )
 
 
+async def test_map_user_prompt_with_text_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(
+            content=[
+                'What is the main content on this document?',
+                TextContent(content='This is a test document.', metadata={'format': 'plain_text'}),
+            ]
+        ),
+        document_count=count(1),
+        supports_prompt_caching=False,
+    )
+    assert m == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is the main content on this document?'},
+                    {'text': 'This is a test document.'},
+                ],
+            }
+        ]
+    )
+
+
 @pytest.mark.vcr()
 async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
@@ -1032,6 +1123,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1047,6 +1139,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1100,6 +1193,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
@@ -1111,6 +1205,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1130,6 +1225,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
@@ -1141,6 +1237,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1165,6 +1262,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1183,6 +1281,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1202,6 +1301,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1220,6 +1320,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1251,6 +1352,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1270,6 +1372,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1289,6 +1392,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1308,6 +1412,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1349,6 +1454,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1374,6 +1480,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1482,6 +1589,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1529,6 +1637,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1556,6 +1665,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1574,6 +1684,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1714,6 +1825,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1732,6 +1844,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2296,7 +2409,7 @@ async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process this document:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2333,7 +2446,7 @@ async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_poi
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Some text content'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
         ]
     )
 
@@ -2358,7 +2471,7 @@ async def test_bedrock_cache_point_before_binary_content(allow_model_requests: N
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process the attached text file. Return the answer only.'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2394,7 +2507,7 @@ async def test_bedrock_cache_point_with_multiple_trailing_documents(
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Process these documents.'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 1',
@@ -2453,7 +2566,7 @@ async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
                     'source': {'bytes': b'\x89PNG\r\n\x1a\n'},
                 }
             },
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {
                 'document': {
                     'name': 'Document 2',
@@ -2547,7 +2660,7 @@ async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_ba
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'Analyze these:'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
             {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
         ]
@@ -2565,9 +2678,9 @@ async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, 
     assert bedrock_messages[0]['content'] == snapshot(
         [
             {'text': 'First chunk'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'text': 'Second chunk'},
-            {'cachePoint': {'type': 'default'}},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
             {'text': 'Question'},
         ]
     )
@@ -2666,6 +2779,69 @@ async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_pr
     )
 
 
+async def test_bedrock_cache_instructions_mixed_static_dynamic(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that cache point is placed after last static instruction when mixed with dynamic."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # Cache point should be after the static instruction, before the dynamic one
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Dynamic only.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # No cache point should be inserted — nothing static to cache
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Dynamic only.'},
+        ]
+    )
+
+
 async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that bedrock_cache_messages adds cache point to the last user message."""
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
@@ -2682,6 +2858,82 @@ async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provid
                 'content': [
                     {'text': 'User message to cache.'},
                     {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_and_messages_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions to cache.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions='1h', bedrock_cache_messages='1h'),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions to cache.'},
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Hi!'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_tool_definitions_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions='1h'),
+    )
+    assert tool_config and len(tool_config['tools']) == 3
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_manual_cache_point_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context to cache', CachePoint(ttl='1h'), 'Question'])])
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(),
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context to cache'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'text': 'Question'},
                 ],
             }
         ]
@@ -3340,6 +3592,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3371,6 +3624,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3383,6 +3637,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3396,6 +3651,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 parts=[UserPromptPart(content='Now multiply that by 2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3427,6 +3683,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3439,6 +3696,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3470,6 +3728,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3501,6 +3760,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 provider_details={'finish_reason': 'tool_use'},
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3513,6 +3773,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3692,6 +3953,7 @@ async def test_bedrock_model_with_instructions_only(
                 parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -3703,6 +3965,7 @@ async def test_bedrock_model_with_instructions_only(
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3738,6 +4001,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -3749,11 +4013,13 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -3765,6 +4031,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

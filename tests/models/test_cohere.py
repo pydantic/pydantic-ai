@@ -10,6 +10,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    CachePoint,
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
@@ -18,6 +19,7 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -39,8 +41,10 @@ with try_import() as imports_successful:
         AsyncClientV2,
         ChatResponse,
         TextAssistantMessageResponseContentItem,
+        TextContent as CohereTextContent,
         ToolCallV2,
         ToolCallV2Function,
+        UserChatMessageV2,
     )
     from cohere.core.api_error import ApiError
 
@@ -56,7 +60,9 @@ pytestmark = [
 
 
 def test_init():
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
+    provider = CohereProvider(api_key='foobar')
+    m = CohereModel('command-r7b-12-2024', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
     assert m.base_url == 'https://api.cohere.com'
@@ -130,6 +136,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -140,11 +147,13 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -155,6 +164,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -216,6 +226,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -232,6 +243,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -244,6 +256,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -311,6 +324,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -327,6 +341,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -339,6 +354,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -356,6 +372,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -368,6 +385,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -378,6 +396,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -389,6 +408,47 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
         )
+    )
+
+
+def test_text_content_in_request(allow_model_requests: None):
+    req = ModelRequest(
+        parts=[
+            UserPromptPart(
+                content=[
+                    'Hello there!',
+                    TextContent(
+                        content='This is some additional text content that should be included in the request.',
+                        metadata={'format': 'markdown'},
+                    ),
+                ]
+            )
+        ]
+    )
+    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            UserChatMessageV2(
+                content=[
+                    CohereTextContent(text='Hello there!'),
+                    CohereTextContent(
+                        text='This is some additional text content that should be included in the request.'
+                    ),
+                ]
+            )
+        ]
+    )
+
+
+def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: None):
+    req = ModelRequest(parts=[UserPromptPart(content=['Hello there!', CachePoint()])])
+    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            UserChatMessageV2(
+                content=[
+                    CohereTextContent(text='Hello there!'),
+                ]
+            )
+        ]
     )
 
 
@@ -462,6 +522,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -479,6 +540,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -511,6 +573,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -531,6 +594,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -551,6 +615,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -567,6 +632,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

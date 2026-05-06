@@ -10,12 +10,16 @@ on:
   pull_request_review:
     types: [submitted]
 
+permissions: {}
+
 env:
   UV_PYTHON: 3.13
   UV_FROZEN: "1"
 
 jobs:
   get-pr-info:
+    permissions:
+      contents: read
     if: |
       (
         (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
@@ -30,7 +34,7 @@ jobs:
     outputs:
       is_fork: ${{ steps.pr-info.outputs.is_fork }}
       pr_head_repo: ${{ steps.pr-info.outputs.pr_head_repo }}
-      pr_head_ref: ${{ steps.pr-info.outputs.pr_head_ref }}
+      pr_head_sha: ${{ steps.pr-info.outputs.pr_head_sha }}
     steps:
       - name: Get PR info
         if: github.event.issue.pull_request || github.event.pull_request
@@ -39,7 +43,7 @@ jobs:
           PR_NUMBER=${{ github.event.pull_request.number || github.event.issue.number }}
           PR_DATA=$(gh api repos/${{ github.repository }}/pulls/${PR_NUMBER})
           echo "pr_head_repo=$(echo "$PR_DATA" | jq -r '.head.repo.full_name')" >> $GITHUB_OUTPUT
-          echo "pr_head_ref=$(echo "$PR_DATA" | jq -r '.head.ref')" >> $GITHUB_OUTPUT
+          echo "pr_head_sha=$(echo "$PR_DATA" | jq -r '.head.sha')" >> $GITHUB_OUTPUT
           echo "is_fork=$(echo "$PR_DATA" | jq -r '.head.repo.fork')" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,11 +61,12 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 1
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-suffix: claude-code
@@ -70,7 +75,10 @@ jobs:
 
       - run: make install
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
+      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           additional_permissions: |
@@ -91,11 +99,12 @@ jobs:
       actions: read
     steps:
       - name: Checkout fork repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: ${{ needs.get-pr-info.outputs.pr_head_repo }}
-          ref: ${{ needs.get-pr-info.outputs.pr_head_ref }}
+          ref: ${{ needs.get-pr-info.outputs.pr_head_sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Check for modified config files
         run: |
@@ -108,7 +117,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
+      - uses: anthropics/claude-code-action@2fb9ee77a029749082ac35126a09ecd05fe34cf0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           additional_permissions: |

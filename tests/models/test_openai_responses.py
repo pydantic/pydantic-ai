@@ -1,5 +1,7 @@
 import json
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,7 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -26,6 +29,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -57,6 +61,7 @@ from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, respons
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
+    from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
@@ -101,12 +106,24 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
     await async_client.close()
 
 
+@asynccontextmanager
+async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple['AsyncOpenAI', str]]:
+    async with AsyncOpenAI(api_key=openai_api_key) as async_client:
+        conversation = await async_client.conversations.create()
+        try:
+            yield async_client, conversation.id
+        finally:
+            await async_client.conversations.delete(conversation.id)
+
+
 def test_openai_responses_model(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
-    model = OpenAIResponsesModel('gpt-4o')
+    provider = OpenAIProvider()
+    model = OpenAIResponsesModel('gpt-4o', provider=provider)
     assert model.model_name == 'gpt-4o'
     assert model.system == 'openai'
     assert model.base_url == 'https://api.openai.com/v1/'
+    assert model.client is provider.client
     assert model.client.api_key == 'test'
 
 
@@ -149,6 +166,26 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
     ]
     assert image_parts
     assert all(part['detail'] == 'high' for part in image_parts)
+
+
+async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(parallel_tool_calls=True))
+
+    await agent.run('Hello')
+    assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
 
 
 @pytest.mark.parametrize(
@@ -314,6 +351,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -344,6 +382,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -362,6 +401,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -387,6 +427,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -598,6 +639,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -756,6 +798,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                 provider_response_id='resp_0e3d55e9502941380068c4aa9a62f48195a373978ed720ac63',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -773,6 +816,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -794,6 +838,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -816,6 +861,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -865,6 +911,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_response_id='resp_028829e50fbcad090068c9c82e1e0081958ddc581008b39428',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -883,6 +930,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -932,6 +980,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                 provider_response_id='resp_028829e50fbcad090068c9c83b9fb88195b6b84a32e1fc83c0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -960,6 +1009,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1009,6 +1059,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                 provider_response_id='resp_0b385a0fdc82fd920068c4aaf3ced88197a88711e356b032c4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1038,6 +1089,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1156,6 +1208,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1185,6 +1238,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1234,6 +1288,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                 provider_response_id='resp_0b4f29854724a3120068c4ab0b660081919707b95b47552782',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1270,6 +1325,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1325,6 +1381,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_response_id='resp_00a60507bf41223d0068c9d2fbf93481a0ba2a7796ae2cab4c',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1633,6 +1690,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1688,6 +1746,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 provider_response_id='resp_00a60507bf41223d0068c9d31574d881a090c232646860a771',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1777,6 +1836,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1800,6 +1860,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1812,6 +1873,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1835,6 +1897,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1847,6 +1910,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1878,6 +1942,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1901,6 +1966,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1913,6 +1979,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1934,6 +2001,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1968,6 +2036,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1991,6 +2060,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2003,6 +2073,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2024,6 +2095,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2060,6 +2132,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2083,6 +2156,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2095,6 +2169,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2116,6 +2191,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2148,6 +2224,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2171,6 +2248,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2183,6 +2261,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2204,6 +2283,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2240,6 +2320,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2263,6 +2344,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2275,6 +2357,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2296,6 +2379,7 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2464,6 +2548,470 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     )
 
 
+async def test_openai_previous_response_id_concrete_seed_without_history(openai_api_key: str):
+    """A concrete seed is used as-is when there is no prior response in the history."""
+    history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id == 'resp_seed_from_prior_turn'
+    assert messages is history
+
+
+async def test_openai_previous_response_id_concrete_seed_overridden_by_history(openai_api_key: str):
+    """When the history contains a same-provider response, it overrides the concrete seed.
+
+    Regression test for the retry/continuation bug in https://github.com/pydantic/pydantic-ai/issues/5113:
+    a static seed sent on every in-run request causes OpenAI to store duplicate copies of the
+    conversation state. The most recent `provider_response_id` must take precedence.
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            model_name='gpt-5',
+            provider_name='openai',
+            provider_response_id='resp_from_first_call',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id='tc_1')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id == 'resp_from_first_call'
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id='tc_1', timestamp=IsDatetime())]
+            ),
+        ]
+    )
+
+
+async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_history(openai_api_key: str):
+    """Responses from other providers don't override the concrete seed."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            model_name='claude-sonnet-4-5',
+            provider_name='anthropic',
+            provider_response_id='msg_abc',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id == 'resp_seed_from_prior_turn'
+    assert messages is history
+
+
+async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(openai_api_key: str):
+    """A compaction in the tail is a hard chain boundary even with a concrete seed.
+
+    Crossing a compaction would re-inject the context that the compaction was meant
+    to replace, since `previous_response_id` loads the referenced response's full
+    input/output and the compaction summary is included in the new input.
+    """
+    history = [
+        ModelResponse(
+            parts=[TextPart(content='compacted summary')],
+            model_name='gpt-4.1',
+            provider_name='openai',
+            provider_response_id='resp_compact',
+            provider_details={'compaction': True},
+        ),
+        ModelRequest(parts=[UserPromptPart(content='continue after compaction')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_key: str):
+    """`'auto'` also breaks the chain at compaction, matching the concrete-seed behavior."""
+    history = [
+        ModelResponse(
+            parts=[TextPart(content='compacted summary')],
+            model_name='gpt-4.1',
+            provider_name='openai',
+            provider_response_id='resp_compact',
+            provider_details={'compaction': True},
+        ),
+        ModelRequest(parts=[UserPromptPart(content='continue after compaction')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # type: ignore
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
+    """No opt-in means no auto-chaining, even when the history contains a chainable response."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Q')]),
+        ModelResponse(
+            parts=[TextPart(content='A1')],
+            model_name='gpt-5',
+            provider_name='openai',
+            provider_response_id='resp_from_first_call',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    previous_response_id, messages = model._resolve_previous_response_id(None, history)  # type: ignore
+    assert previous_response_id is None
+    assert messages is history
+
+
+async def test_openai_previous_response_id_seed_auto_chains_through_retries(
+    allow_model_requests: None, openai_api_key: str
+):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/5113.
+
+    A concrete seed from a prior turn must act as the starting point for the first
+    in-run request only. On subsequent in-run requests (tool-call continuations,
+    `ModelRetry` retries), auto-chaining takes over so we chain to the latest stored
+    response instead of re-sending the same static seed and duplicating stored state.
+    """
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, retries=3)
+
+    attempts: list[str] = []
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        attempts.append(city)
+        if city != 'NYC':
+            raise ModelRetry(
+                'Location not recognized. The tool only supports the airport code "NYC". Call again with city="NYC".'
+            )
+        return 'Sunny, 72F'
+
+    # Turn 1 establishes a stored response we can seed from.
+    result1 = await agent.run('Say hi in one word, no punctuation.')
+    last = result1.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    seed_response_id = last.provider_response_id
+    assert seed_response_id is not None
+
+    # Turn 2 uses the seed and forces a retry + tool-call continuation inside the run.
+    captured_previous_response_ids: list[str | None] = []
+    original_responses_create: Any = model._responses_create  # pyright: ignore[reportPrivateUsage]
+
+    async def capture(*args: Any, **kwargs: Any) -> Any:
+        messages = args[0] if args else kwargs['messages']
+        settings = args[2] if len(args) >= 3 else kwargs['model_settings']
+        resolved, _ = model._resolve_previous_response_id(  # pyright: ignore[reportPrivateUsage]
+            settings.get('openai_previous_response_id'), messages
+        )
+        captured_previous_response_ids.append(resolved)
+        return await original_responses_create(*args, **kwargs)
+
+    model._responses_create = capture  # type: ignore[method-assign]
+
+    settings = OpenAIResponsesModelSettings(
+        openai_store=True,
+        openai_previous_response_id=seed_response_id,
+    )
+    result2 = await agent.run("What's the weather in New York?", model_settings=settings)
+
+    # Tool was called at least twice: first with wrong input, then correctly with "NYC".
+    assert len(attempts) >= 2
+    assert 'NYC' in attempts
+    # Final answer reports the weather returned by the tool.
+    assert 'Sunny' in result2.output or 'sunny' in result2.output
+    # At least 3 model requests: initial tool call, retry after ModelRetry, final answer.
+    assert len(captured_previous_response_ids) >= 3
+    # First request seeds from the prior turn.
+    assert captured_previous_response_ids[0] == seed_response_id
+    # Subsequent requests chain to the most recent stored response, never re-sending the static seed.
+    for resolved in captured_previous_response_ids[1:]:
+        assert resolved is not None
+        assert resolved != seed_response_id
+    # All subsequent previous_response_ids are distinct — each chains to the most recent prior response.
+    assert len(set(captured_previous_response_ids[1:])) == len(captured_previous_response_ids[1:])
+    # Snapshot the full trace so regressions in message trimming or retry structure surface here too.
+    assert result2.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content="What's the weather in New York?", timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args=IsStr(),
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=IsStr(),
+                        tool_name='get_weather',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"NYC"}',
+                        tool_call_id=IsStr(),
+                        id=IsStr(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Sunny, 72F',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr(), id=IsStr(), provider_name='openai')],
+                usage=IsInstance(RequestUsage),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': IsStr(), 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly. When asked for a code, reply only with that code.',
+        )
+        result = await agent.run(
+            'Remember this exact code for later in this conversation: CONV-PAI-5222. Reply exactly: stored',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('stored')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+        result = await agent.run(
+            'What exact code did I ask you to remember? Reply with only the code.',
+            message_history=[response],
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        )
+
+        assert result.output == snapshot('CONV-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
+async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(model=model, instructions='Follow the user instructions exactly.')
+
+        result = await agent.run(
+            'Reply exactly: stored',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+        original_pydantic_ai_conversation_id = response.conversation_id
+        assert original_pydantic_ai_conversation_id is not None
+
+        forked = await agent.run(
+            'Reply exactly: forked',
+            message_history=result.all_messages(),
+            conversation_id='new',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        )
+
+        assert forked.output == snapshot('forked')
+        request = forked.all_messages()[-2]
+        assert isinstance(request, ModelRequest)
+        assert request.conversation_id != original_pydantic_ai_conversation_id
+        response = forked.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert 'conversation_id' not in response.provider_details
+
+
+async def test_openai_conversation_id_preserves_mismatched_history(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly. When asked for a code, reply only with that code.',
+        )
+        history = [
+            ModelRequest(parts=[UserPromptPart(content='The local-only code is LOCAL-PAI-5222.')]),
+            ModelResponse(
+                parts=[TextPart(content='Understood.')],
+                model_name='claude-sonnet-4-5',
+                provider_name='anthropic',
+                provider_details={'conversation_id': conversation_id},
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Different OpenAI conversation acknowledged.')],
+                model_name='gpt-4.1',
+                provider_name='openai',
+                provider_details={'conversation_id': 'conv_different'},
+            ),
+        ]
+
+        result = await agent.run(
+            'What is the local-only code?',
+            message_history=history,
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('LOCAL-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
+async def test_openai_conversation_id_auto_without_history(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='Follow the user instructions exactly.')
+
+    result = await agent.run(
+        'Reply exactly: no conversation',
+        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+    )
+
+    assert result.output == snapshot('no conversation')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert 'conversation_id' not in response.provider_details
+
+
+async def test_openai_conversation_id_tool_call_continuation(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Use the provided tool when the user asks for the conversation code.',
+        )
+
+        @agent.tool_plain
+        def get_conversation_code() -> str:
+            return 'TOOL-PAI-5222'
+
+        result = await agent.run(
+            'Call get_conversation_code and reply with only the returned code.',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('TOOL-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
+async def test_openai_conversation_id_conflicts_with_previous_response_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UserError, match='`openai_previous_response_id` and `openai_conversation_id` cannot both be set'
+    ):
+        await agent.run(
+            'Hello',
+            model_settings=OpenAIResponsesModelSettings(
+                openai_previous_response_id='auto',
+                openai_conversation_id='auto',
+            ),
+        )
+
+
+async def test_openai_conversation_id_streaming_provider_details(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly.',
+        )
+
+        async with agent.run_stream(
+            'Reply exactly: streamed',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        ) as result:
+            output = await result.get_output()
+
+        assert output == snapshot('streamed')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
     c = response_message(
         [
@@ -2494,6 +3042,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='4', id='123', provider_name='openai')],
@@ -2505,6 +3054,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2526,6 +3076,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2578,6 +3129,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2597,6 +3149,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2644,6 +3197,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2653,7 +3207,7 @@ async def test_openai_responses_thinking_part_from_other_model(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
     m = AnthropicModel(
-        'claude-sonnet-4-0',
+        'claude-sonnet-4-6',
         provider=AnthropicProvider(api_key=anthropic_api_key),
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
@@ -2671,6 +3225,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2691,7 +3246,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         'output_tokens': 291,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -2699,6 +3254,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2723,6 +3279,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2775,6 +3332,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2805,6 +3363,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2847,6 +3406,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2892,6 +3452,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 timestamp=IsNow(tz=timezone.utc),
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2941,6 +3502,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2954,6 +3516,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 timestamp=IsNow(tz=timezone.utc),
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2977,6 +3540,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3016,6 +3580,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3029,6 +3594,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3092,6 +3658,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3108,6 +3675,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3160,6 +3728,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3187,6 +3756,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3222,6 +3792,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3249,6 +3820,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3279,6 +3851,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3339,6 +3912,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3356,6 +3930,7 @@ If you intended different grouping with parentheses, let me know.\
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3381,6 +3956,7 @@ If you intended different grouping with parentheses, let me know.\
                 provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3417,6 +3993,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3485,6 +4062,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 provider_response_id='resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4888,6 +5466,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4911,6 +5490,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -4923,6 +5503,7 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4948,6 +5529,7 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                 provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5002,6 +5584,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5074,6 +5657,7 @@ plt.show()\r
                 provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5091,6 +5675,7 @@ plt.show()\r
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5227,6 +5812,7 @@ If you want different colors or a holographic gradient background, tell me your 
                 provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5262,6 +5848,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5306,6 +5893,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 provider_response_id='resp_06c1a26fd89d07f20068dd9367869c819788cb28e6f19eff9b',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6746,6 +7334,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6798,6 +7387,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6815,6 +7405,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6867,6 +7458,7 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6900,6 +7492,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6948,6 +7541,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7074,6 +7668,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7123,6 +7718,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 provider_response_id='resp_68cdec1f3290819f99d9caba8703b251079003437d26d0c0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7134,6 +7730,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7183,6 +7780,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 provider_response_id='resp_68cdec61d0a0819fac14ed057a9946a1079003437d26d0c0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7229,6 +7827,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7276,6 +7875,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 provider_response_id='resp_0360827931d9421b0068dd8328c08c81a0ba854f245883906f',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7287,6 +7887,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7316,6 +7917,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 provider_response_id='resp_0360827931d9421b0068dd8370a70081a09d6de822ee43bbc4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7328,6 +7930,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7354,6 +7957,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7403,6 +8007,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                 provider_response_id='resp_09b7ce6df817433c0068dd8407c37881a0ad817ef3cc3a3600',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7429,6 +8034,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7478,6 +8084,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                 provider_response_id='resp_0d14a5e3c26c21180068dd871d439081908dc36e63fab0cedf',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7504,6 +8111,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7533,6 +8141,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 provider_response_id='resp_0481074da98340df0068dd88dceb1481918b1d167d99bc51cd',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7545,6 +8154,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7586,6 +8196,7 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                 provider_response_id='resp_0481074da98340df0068dd88f0ba04819185a168065ef28040',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7609,6 +8220,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7682,6 +8294,7 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 provider_response_id='resp_0b6169df6e16e9690068dd80d64aec81919c65f238307673bb',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7705,6 +8318,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7752,6 +8366,7 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                 provider_response_id='resp_08acbdf1ae54befc0068dd9ced226c8197a2e974b29c565407',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7811,6 +8426,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7840,6 +8456,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 provider_response_id='resp_001fd29e2d5573f70068ece2e6dfbc819c96557f0de72802be',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7852,6 +8469,7 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7962,6 +8580,7 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8094,6 +8713,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 provider_response_id='resp_0083938b3a28070e0068fabd81970881a0a1195f2cab45bd04',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8112,6 +8732,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8147,6 +8768,7 @@ The monorepo is organized into these main packages:  \n\
                 provider_response_id='resp_0083938b3a28070e0068fabd9d414881a089cf24784f80e021',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8195,6 +8817,7 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8373,6 +8996,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                 provider_response_id='resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8591,6 +9215,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8757,6 +9382,7 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                 provider_response_id='resp_0558010cf1416a490068faa0f945bc81a0b6a6dfb7391030d5',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8849,6 +9475,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8867,6 +9494,7 @@ async def test_openai_responses_raw_cot_only(allow_model_requests: None):
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8915,6 +9543,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8934,6 +9563,7 @@ async def test_openai_responses_raw_cot_with_summary(allow_model_requests: None)
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8984,6 +9614,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9005,6 +9636,7 @@ async def test_openai_responses_multiple_summaries(allow_model_requests: None):
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9034,6 +9666,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9065,6 +9698,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                 provider_response_id='gen-1764265411-Fu1iEX7h5MRWiL79lb94',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9178,6 +9812,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9196,6 +9831,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9213,6 +9849,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9231,6 +9868,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9241,6 +9879,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9261,6 +9900,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9278,6 +9918,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9296,6 +9937,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9306,6 +9948,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9326,6 +9969,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -9336,6 +9980,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9354,6 +9999,7 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='123',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9445,6 +10091,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -9473,6 +10120,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9491,6 +10139,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -9523,6 +10172,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9634,6 +10284,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -9662,6 +10313,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9791,6 +10443,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                     timestamp=IsNow(tz=timezone.utc),
                     instructions='You are a helpful assistant.',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -9831,6 +10484,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -9913,6 +10567,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
             provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
             provider_response_id='123',
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -10007,6 +10662,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
         timestamp=IsDatetime(),
         instructions=instructions,
         run_id=IsStr(),
+        conversation_id=IsStr(),
     )
     response = cast(ModelResponse, messages[1])
     assert response.provider_name == 'openai'
@@ -10033,6 +10689,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
         timestamp=IsDatetime(),
         instructions=instructions,
         run_id=IsStr(),
+        conversation_id=IsStr(),
     )
     response2 = cast(ModelResponse, messages2[1])
     text_part2 = next(part for part in response2.parts if isinstance(part, TextPart))
@@ -10074,8 +10731,6 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
 
 async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
-    from openai.types import responses as resp
-
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
@@ -10147,3 +10802,812 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+
+
+async def test_openai_responses_null_text(allow_model_requests: None):
+    """Test that ResponseOutputText with text=null (from gateways like Bifrost) is handled gracefully."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_001',
+                content=cast(
+                    list[Content],
+                    [
+                        ResponseOutputText.model_construct(text=None, type='output_text', annotations=[]),
+                        ResponseOutputText(text='Hello', type='output_text', annotations=[]),
+                    ],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('Hello')
+    assert result.output == snapshot('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='', id='msg_001', provider_name='openai'),
+                    TextPart(content='Hello', id='msg_001', provider_name='openai'),
+                ],
+                usage=RequestUsage(),
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
+                provider_response_id='123',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_null_text_stream(allow_model_requests: None):
+    """Test that ResponseTextDeltaEvent with delta=null (from gateways like Bifrost) is handled gracefully."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent.model_construct(
+            content_index=0,
+            delta=None,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Hello!',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=5,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Hello!',
+            type='response.output_text.done',
+            sequence_number=6,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='Hello!', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=7,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=8,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+    assert output == snapshot('Hello!')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
+                usage=RequestUsage(),
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'finish_reason': 'completed',
+                },
+                provider_response_id='resp_001',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
+    """Test that text content in ModelRequest is correctly mapped to OpenAI messages."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(content=['test', TextContent(content='test2', metadata={'key': 'value'})])
+    )
+    assert m == snapshot(
+        {'role': 'user', 'content': [{'text': 'test', 'type': 'input_text'}, {'text': 'test2', 'type': 'input_text'}]}
+    )
+
+
+async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
+    """Test OpenAI compaction: multi-turn conversation compacted via OpenAICompaction capability."""
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful math assistant. Give short answers.',
+        capabilities=[OpenAICompaction(message_count_threshold=4)],
+    )
+
+    message_history: list[Any] = []
+    result = await agent.run('What is 2+2?', message_history=message_history)
+    message_history = result.all_messages()
+    result = await agent.run('And 3+3?', message_history=message_history)
+    message_history = result.all_messages()
+    # Third run should trigger compaction (>4 messages)
+    result = await agent.run('And 5+5?', message_history=message_history)
+
+    # Verify the result is reasonable
+    assert '10' in result.output
+
+    # Verify compaction happened — there should be a CompactionPart in the messages
+    all_msgs = result.all_messages()
+    compaction_parts = [
+        part
+        for msg in all_msgs
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert len(compaction_parts) >= 1
+    compaction = compaction_parts[0]
+    assert compaction.provider_name == 'openai'
+    assert compaction.provider_details is not None
+    assert 'encrypted_content' in compaction.provider_details
+
+
+async def test_openai_responses_compact_stateful_mode_stream(allow_model_requests: None, openai_api_key: str):
+    """Streaming variant: `ResponseCompactionItem` is handled in `_get_event_iterator`.
+
+    Validates that a `PartStartEvent` is emitted for the `CompactionPart` during streaming
+    (on both the "added" and "done" events) so UIs can render compaction progress.
+    """
+    from pydantic_ai import AgentRunResultEvent
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        capabilities=[OpenAICompaction(token_threshold=1000)],
+    )
+
+    message_history: list[Any] = []
+    all_events: list[Any] = []
+    last_output = ''
+    for question in [
+        'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
+        'Now a 300-word story about a rabbit in a meadow. Be very descriptive.',
+        'Now a 300-word story about a bear in a cave. Be very descriptive.',
+        'What is 2+2?',
+    ]:
+        events = [event async for event in agent.run_stream_events(question, message_history=message_history)]
+        all_events.extend(events)
+        final = next(e for e in reversed(events) if isinstance(e, AgentRunResultEvent))
+        last_output = final.result.output
+        message_history = final.result.all_messages()
+
+    assert '4' in last_output
+
+    # Verify PartStartEvent was emitted for CompactionPart during streaming
+    compaction_start_events = [
+        e for e in all_events if isinstance(e, PartStartEvent) and isinstance(e.part, CompactionPart)
+    ]
+    assert compaction_start_events, 'expected PartStartEvent for CompactionPart during streaming'
+    assert compaction_start_events[0].part.provider_name == 'openai'
+
+    # Verify final messages contain the CompactionPart with encrypted_content
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert compaction_parts, 'expected at least one server-side compaction in streaming mode'
+    assert compaction_parts[0].provider_name == 'openai'
+    assert 'encrypted_content' in (compaction_parts[0].provider_details or {})
+
+
+async def test_openai_responses_compact_messages_direct(allow_model_requests: None, openai_api_key: str):
+    """Test OpenAI compact_messages method directly with ModelRequestContext."""
+    from pydantic_ai.models import ModelRequestContext
+
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='You are a helpful assistant.',
+    )
+
+    # Build up some history
+    message_history: list[Any] = []
+    result = await agent.run('Hello!', message_history=message_history)
+    message_history = result.all_messages()
+    result = await agent.run('How are you?', message_history=message_history)
+    messages = result.all_messages()
+
+    # Call compact_messages directly
+    request_context = ModelRequestContext(
+        model=model,
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    compacted = await model.compact_messages(request_context)
+
+    assert isinstance(compacted, ModelResponse)
+    assert len(compacted.parts) == 1
+    assert isinstance(compacted.parts[0], CompactionPart)
+    assert compacted.parts[0].provider_name == 'openai'
+    assert compacted.parts[0].provider_details is not None
+    assert 'encrypted_content' in compacted.parts[0].provider_details
+    assert compacted.usage.input_tokens > 0
+
+
+async def test_openai_responses_compact_with_auto_previous_response_id(allow_model_requests: None, openai_api_key: str):
+    """Test compact_messages with openai_previous_response_id='auto'."""
+    from pydantic_ai.models import ModelRequestContext
+
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='You are a helpful assistant.')
+
+    # Build up history with provider_response_id
+    message_history: list[Any] = []
+    result = await agent.run('Hello!', message_history=message_history)
+    messages = result.all_messages()
+
+    # Compact with auto previous_response_id
+    request_context = ModelRequestContext(
+        model=model,
+        messages=messages,
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    compacted = await model.compact_messages(request_context)
+
+    assert isinstance(compacted, ModelResponse)
+    assert len(compacted.parts) == 1
+    assert isinstance(compacted.parts[0], CompactionPart)
+
+
+async def test_openai_responses_compact_with_instructions(allow_model_requests: None, openai_api_key: str):
+    """Test compact_messages with custom instructions override."""
+    from pydantic_ai.models import ModelRequestContext
+
+    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='You are a helpful assistant.')
+
+    # Build up history
+    message_history: list[Any] = []
+    result = await agent.run('Hello!', message_history=message_history)
+    messages = result.all_messages()
+
+    # Compact with custom instructions
+    request_context = ModelRequestContext(
+        model=model,
+        messages=messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    compacted = await model.compact_messages(request_context, instructions='Summarize very briefly')
+
+    assert isinstance(compacted, ModelResponse)
+    assert len(compacted.parts) == 1
+    assert isinstance(compacted.parts[0], CompactionPart)
+
+
+async def test_openai_responses_compact_with_auto_previous_response_id_chain(
+    allow_model_requests: None, openai_api_key: str
+):
+    """Agent with OpenAICompaction + openai_previous_response_id='auto' must continue working after compaction.
+
+    Regression test: the `/compact` endpoint is stateless, so its response id cannot be
+    used as `previous_response_id` on a subsequent `responses.create` call. After
+    compaction, the next request must pass the compaction item via the input array
+    instead of chaining the compaction response id.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        capabilities=[OpenAICompaction(message_count_threshold=3)],
+    )
+
+    message_history: list[Any] = []
+    for question in ['What is 2+2?', 'And 3+3?', 'And 4+4?', '91 - 16?', "What's your favorite number?"]:
+        result = await agent.run(
+            question,
+            message_history=message_history,
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        )
+        message_history = result.all_messages()
+
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    assert compaction_parts, 'expected at least one compaction during the run'
+    # The compaction ModelResponse is marked via `provider_details={'compaction': True}`
+    # so `_get_previous_response_id_and_new_messages` breaks the auto-chain at it; its
+    # `provider_response_id` is still populated for observability.
+    for msg in message_history:
+        if isinstance(msg, ModelResponse) and any(isinstance(p, CompactionPart) for p in msg.parts):
+            assert msg.provider_details == {'compaction': True}
+            assert msg.provider_response_id is not None
+
+
+async def test_openai_responses_compact_stateful_mode(allow_model_requests: None, openai_api_key: str):
+    """Stateful `OpenAICompaction` rides along on the regular /responses call.
+
+    Sets `context_management: [{'type': 'compaction', ...}]` on the request. When
+    OpenAI triggers compaction server-side, the returned `ResponseCompactionItem`
+    is mapped to a `CompactionPart` on the `ModelResponse` so it can be
+    round-tripped via the `input` array on subsequent requests (or chained via
+    `previous_response_id`).
+    """
+    from pydantic_ai.models.openai import OpenAICompaction
+
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        # 1000 is the lowest threshold OpenAI accepts; a handful of ~300-word turns crosses it.
+        capabilities=[OpenAICompaction(token_threshold=1000)],
+    )
+
+    message_history: list[Any] = []
+    last_output = ''
+    for question in [
+        'Tell me a 300-word story about a fox exploring a forest. Be very descriptive.',
+        'Now a 300-word story about a rabbit in a meadow. Be very descriptive.',
+        'Now a 300-word story about a bear in a cave. Be very descriptive.',
+        'What is 2+2?',
+    ]:
+        result = await agent.run(question, message_history=message_history)
+        message_history = result.all_messages()
+        last_output = result.output
+
+    assert '4' in last_output
+
+    # Trace: which message kinds, which part kinds per response, and where the
+    # server-side compaction was emitted. Snapshotting the full all_messages()
+    # would be hundreds of lines of story prose; this condensed trace catches
+    # the regressions that matter (compaction emitted, parts round-tripped into
+    # subsequent requests, no orphan parts).
+    trace = [
+        (
+            type(msg).__name__,
+            [type(p).__name__ for p in msg.parts],
+        )
+        for msg in message_history
+    ]
+    assert trace == snapshot(
+        [
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart', 'CompactionPart']),
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['TextPart']),
+        ]
+    )
+
+    compaction_parts = [
+        part
+        for msg in message_history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, CompactionPart)
+    ]
+    compaction = compaction_parts[0]
+    assert compaction.provider_name == 'openai'
+    assert compaction.provider_details is not None
+    assert 'encrypted_content' in compaction.provider_details
+
+
+async def test_openai_responses_phase_non_streamed(allow_model_requests: None):
+    """`phase` on ResponseOutputMessage is captured into TextPart.provider_details."""
+    c = response_message(
+        [
+            ResponseOutputMessage.model_construct(
+                id='msg_commentary',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='Looking it up...', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='commentary',
+            ),
+            ResponseOutputMessage.model_construct(
+                id='msg_final',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='Paris.', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='final_answer',
+            ),
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run('What is the capital of France?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    text_parts = [p for p in response.parts if isinstance(p, TextPart)]
+    assert [(p.id, p.content, (p.provider_details or {}).get('phase')) for p in text_parts] == snapshot(
+        [
+            ('msg_commentary', 'Looking it up...', 'commentary'),
+            ('msg_final', 'Paris.', 'final_answer'),
+        ]
+    )
+
+
+async def test_openai_responses_phase_streamed(allow_model_requests: None):
+    """`phase` on streamed ResponseOutputMessage is captured into TextPart.provider_details."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Paris.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Paris.',
+            type='response.output_text.done',
+            sequence_number=5,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=6,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=7,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    text_parts = [p for p in response.parts if isinstance(p, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
+
+
+async def test_openai_responses_phase_round_trip(allow_model_requests: None):
+    """When the profile supports phase, it's sent back on the assistant ResponseOutputMessageParam."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    phase='final_answer',
+                ),
+            ]
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5.5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Working on it...',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'commentary'},
+                ),
+                TextPart(
+                    content='All done.',
+                    id='msg_b',
+                    provider_name='openai',
+                    provider_details={'phase': 'final_answer'},
+                ),
+            ],
+            model_name='gpt-5.5',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    assert [(m['id'], m.get('phase')) for m in assistant_messages] == snapshot(
+        [('msg_a', 'commentary'), ('msg_b', 'final_answer')]
+    )
+
+
+async def test_openai_responses_phase_skipped_when_profile_unsupported(allow_model_requests: None):
+    """When the profile does NOT support phase, it must not leak into the request payload."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='ok', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                ),
+            ]
+        )
+    )
+    # gpt-5.2 doesn't support phase; verify we don't send the field even if a previous turn carried it.
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Done.',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'final_answer'},
+                ),
+            ],
+            model_name='gpt-5.2',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    assert assistant_messages
+    assert all('phase' not in m for m in assistant_messages)
+
+
+async def test_openai_responses_phase_round_trip_without_item_id(allow_model_requests: None):
+    """Phase travels via `EasyInputMessageParam` when item ids aren't being sent."""
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage.model_construct(
+                    id='msg_999',
+                    content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    phase='final_answer',
+                ),
+            ]
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5.5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=False),
+    )
+    agent = Agent(model=model)
+
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hi')]),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    content='Working on it...',
+                    id='msg_a',
+                    provider_name='openai',
+                    provider_details={'phase': 'commentary'},
+                ),
+            ],
+            model_name='gpt-5.5',
+            provider_name='openai',
+        ),
+    ]
+
+    await agent.run('And again?', message_history=history)
+
+    sent_input = cast(list[dict[str, Any]], get_mock_responses_kwargs(mock_client)[0]['input'])
+    assistant_messages = [m for m in sent_input if isinstance(m, dict) and m.get('role') == 'assistant']
+    # No item id was sent, so we used EasyInputMessageParam — but phase still rides along.
+    assert [(m.get('id'), m.get('phase'), m.get('type')) for m in assistant_messages] == snapshot(
+        [(None, 'commentary', None)]
+    )
+
+
+async def test_openai_responses_phase_live(allow_model_requests: None, openai_api_key: str):
+    """Real cassette: gpt-5.5 sets `phase` on the preamble (commentary) and the final answer."""
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='Briefly narrate what you are about to do before calling each tool.',
+    )
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Potato City'
+
+    result = await agent.run('What is the capital of PotatoLand?')
+    text_parts_with_phase = [
+        (part.content, (part.provider_details or {}).get('phase'))
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, TextPart)
+    ]
+    assert text_parts_with_phase == snapshot(
+        [
+            ('I\'ll check the capital lookup tool for "PotatoLand."', 'commentary'),
+            ('The capital of PotatoLand is **Potato City**.', 'final_answer'),
+        ]
+    )
+
+
+def test_openai_responses_phase_profile_flag():
+    """Profile flag tracks the documented set of supporting models."""
+    assert cast(Any, openai_model_profile('gpt-5.5')).openai_supports_phase is True
+    assert cast(Any, openai_model_profile('gpt-5.4')).openai_supports_phase is True
+    assert cast(Any, openai_model_profile('gpt-5.3-codex')).openai_supports_phase is True
+    assert cast(Any, openai_model_profile('gpt-5.3')).openai_supports_phase is False
+    assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
+    assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
+    assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False

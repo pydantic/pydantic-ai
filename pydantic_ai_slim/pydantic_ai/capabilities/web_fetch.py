@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic_ai.builtin_tools import WebFetchTool
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, Tool
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.toolsets import AbstractToolset
 
 from .builtin_or_local import BuiltinOrLocalTool
 
@@ -14,15 +15,19 @@ from .builtin_or_local import BuiltinOrLocalTool
 class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching when available. No default local
-    fallback — provide a custom `local` tool if needed.
+    Uses the model's builtin URL fetching when available, falling back to a local
+    function tool (markdownify-based fetch by default) when it isn't.
+
+    The local fallback requires the `web-fetch` optional group::
+
+        pip install "pydantic-ai-slim[web-fetch]"
     """
 
     allowed_domains: list[str] | None
-    """Only fetch from these domains. Requires builtin support."""
+    """Only fetch from these domains. Enforced locally when builtin is unavailable."""
 
     blocked_domains: list[str] | None
-    """Never fetch from these domains. Requires builtin support."""
+    """Never fetch from these domains. Enforced locally when builtin is unavailable."""
 
     max_uses: int | None
     """Maximum number of fetches per run. Requires builtin support."""
@@ -39,7 +44,9 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: WebFetchTool | AgentBuiltinTool[AgentDepsT] | bool = True,
+        builtin: WebFetchTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[WebFetchTool | None] | WebFetchTool | None]
+        | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         allowed_domains: list[str] | None = None,
         blocked_domains: list[str] | None = None,
@@ -77,5 +84,25 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     def _builtin_unique_id(self) -> str:
         return WebFetchTool.kind
 
+    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        try:
+            from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+
+            return web_fetch_tool(
+                allowed_domains=self.allowed_domains,
+                blocked_domains=self.blocked_domains,
+            )
+        except ImportError:
+            import warnings
+
+            warnings.warn(
+                'WebFetch local fallback requires the `web-fetch` optional group — '
+                '`pip install "pydantic-ai-slim[web-fetch]"`. '
+                'Without it, WebFetch only works with models that support it natively.',
+                UserWarning,
+                stacklevel=2,
+            )
+            return None
+
     def _requires_builtin(self) -> bool:
-        return self.allowed_domains is not None or self.blocked_domains is not None or self.max_uses is not None
+        return self.max_uses is not None

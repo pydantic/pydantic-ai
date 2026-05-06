@@ -18,20 +18,23 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelSettings,
     RetryPromptPart,
     RunContext,
+    RunUsage,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetTool,
     UserPromptPart,
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -43,6 +46,7 @@ try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
+    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolset
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -82,7 +86,7 @@ pytestmark = [
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
-http_client = cached_async_http_client(provider='dbos')
+http_client = create_async_http_client()
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -1163,6 +1167,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1198,6 +1203,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1217,6 +1223,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1243,6 +1250,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1304,6 +1312,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1339,6 +1348,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1358,6 +1368,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1384,6 +1395,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1420,6 +1432,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1450,6 +1463,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1462,6 +1476,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1492,6 +1507,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1504,6 +1520,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -1528,6 +1545,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1551,6 +1569,44 @@ settings_dbos_agent = DBOSAgent(settings_agent)
 async def test_custom_model_settings(allow_model_requests: None, dbos: DBOS):
     result = await settings_dbos_agent.run('Give me those settings')
     assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
+
+
+mcp_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcp_instructions_agent',
+    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+)
+mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
+
+
+async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
+    """MCP instructions should propagate through DBOS wrapper toolsets."""
+    result = await mcp_instructions_dbos_agent.run('Use MCP instructions')
+    assert result.output == snapshot('Be a helpful assistant.')
+
+
+class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
+        raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
+
+
+_uninit_instructions_toolset = _TestDBOSMCPToolset(
+    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),
+    step_name_prefix='coverage_test',
+    step_config={},
+)
+
+
+async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
+    """When the MCP server isn't initialized locally, DBOS wrapper fetches instructions via a step."""
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
+
+    instructions = await _uninit_instructions_toolset.get_instructions(run_context)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
 
 
 fastmcp_agent = Agent(

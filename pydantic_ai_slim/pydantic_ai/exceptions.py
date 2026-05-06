@@ -37,9 +37,11 @@ __all__ = (
 
 
 class ModelRetry(Exception):
-    """Exception to raise when a tool function should be retried.
+    """Exception to raise to request a model retry.
 
-    The agent will return the message to the model and ask it to try calling the function/tool again.
+    Can be raised from tool functions, output validators, and capability hooks
+    (such as `after_model_request`, `after_tool_execute`, etc.) to send
+    a retry prompt back to the model asking it to try again.
     """
 
     message: str
@@ -234,7 +236,7 @@ class ModelAPIError(AgentRunError):
 
 
 class ModelHTTPError(ModelAPIError):
-    """Raised when an model provider response has a status code of 4xx or 5xx."""
+    """Raised when a model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""

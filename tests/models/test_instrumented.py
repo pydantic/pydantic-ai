@@ -28,6 +28,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -197,6 +198,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -208,6 +210,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
+                    'gen_ai.usage.cache_creation.input_tokens': 10,
+                    'gen_ai.usage.cache_read.input_tokens': 20,
                     'gen_ai.usage.details.reasoning_tokens': 30,
                     'gen_ai.usage.details.cache_write_tokens': 10,
                     'gen_ai.usage.details.cache_read_tokens': 20,
@@ -439,6 +443,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -541,6 +546,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.json_schema': {
@@ -665,6 +671,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
+                            'instruction_parts': None,
                             'thinking': None,
                         },
                         'gen_ai.request.temperature': 1,
@@ -760,6 +767,8 @@ Fix the errors and try again.\
                                 'event.name': 'gen_ai.choice',
                             },
                         ],
+                        'gen_ai.usage.cache_creation.input_tokens': 10,
+                        'gen_ai.usage.cache_read.input_tokens': 20,
                         'gen_ai.usage.details.reasoning_tokens': 30,
                         'gen_ai.usage.details.cache_write_tokens': 10,
                         'gen_ai.usage.details.cache_read_tokens': 20,
@@ -801,6 +810,7 @@ Fix the errors and try again.\
                             'prompted_output_template': None,
                             'allow_text_output': True,
                             'allow_image_output': False,
+                            'instruction_parts': None,
                             'thinking': None,
                         },
                         'gen_ai.request.temperature': 1,
@@ -866,6 +876,8 @@ Fix the errors and try again.\
                         'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
+                        'gen_ai.usage.cache_creation.input_tokens': 10,
+                        'gen_ai.usage.cache_read.input_tokens': 20,
                         'gen_ai.usage.details.reasoning_tokens': 30,
                         'gen_ai.usage.details.cache_write_tokens': 10,
                         'gen_ai.usage.details.cache_read_tokens': 20,
@@ -957,43 +969,20 @@ Fix the errors and try again.\
                                 'gen_ai.operation.name': 'chat',
                                 'gen_ai.request.model': 'gpt-4o',
                                 'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                                'gen_ai.token.type': 'input',
                             },
                             'start_time_unix_nano': IsInt(),
                             'time_unix_nano': IsInt(),
                             'count': 1,
-                            'sum': 0.00018125,
+                            'sum': 0.00188125,
                             'scale': 20,
                             'zero_count': 0,
-                            'positive': {'offset': -13033519, 'bucket_counts': [1]},
+                            'positive': {'offset': -9493905, 'bucket_counts': [1]},
                             'negative': {'offset': 0, 'bucket_counts': [0]},
                             'flags': 0,
-                            'min': 0.00018125,
-                            'max': 0.00018125,
+                            'min': 0.00188125,
+                            'max': 0.00188125,
                             'exemplars': [],
-                        },
-                        {
-                            'attributes': {
-                                'gen_ai.provider.name': 'openai',
-                                'gen_ai.system': 'openai',
-                                'gen_ai.operation.name': 'chat',
-                                'gen_ai.request.model': 'gpt-4o',
-                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                                'gen_ai.token.type': 'output',
-                            },
-                            'start_time_unix_nano': IsInt(),
-                            'time_unix_nano': IsInt(),
-                            'count': 1,
-                            'sum': 0.0017,
-                            'scale': 20,
-                            'zero_count': 0,
-                            'positive': {'offset': -9647161, 'bucket_counts': [1]},
-                            'negative': {'offset': 0, 'bucket_counts': [0]},
-                            'flags': 0,
-                            'min': 0.0017,
-                            'max': 0.0017,
-                            'exemplars': [],
-                        },
+                        }
                     ],
                     'aggregation_temporality': 1,
                 },
@@ -1103,6 +1092,42 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt2'}]},
         ]
     )
+
+
+def test_messages_to_otel_events_compaction_part():
+    """CompactionPart is not a standard OTel GenAI convention type and is skipped in OTel events."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[CompactionPart(content='Summary of conversation.', provider_name='anthropic'), TextPart('response')]
+        ),
+    ]
+    settings = InstrumentationSettings()
+    # CompactionPart is skipped; only the TextPart appears
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': 'response',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
+            }
+        ]
+    )
+
+
+def test_messages_to_otel_message_parts_compaction_part():
+    """CompactionPart is skipped in otel_message_parts (not a standard GenAI convention type)."""
+    from pydantic_ai.messages import CompactionPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('response')]),
+    ]
+    settings = InstrumentationSettings()
+    otel_messages = settings.messages_to_otel_messages(messages)
+    # CompactionPart is skipped; only TextPart appears
+    assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
 
 
 def test_messages_to_otel_events_image_url(document_content: BinaryContent):
@@ -1502,6 +1527,75 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
     )
 
 
+def test_messages_to_otel_events_with_text_content():
+    messages = [
+        ModelRequest(
+            instructions='instructions',
+            parts=[UserPromptPart(content=['user_prompt', TextContent('text content', metadata={'key': 'value'})])],
+            timestamp=IsDatetime(),
+        ),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    settings_with_content = InstrumentationSettings()
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {
+                'content': ['user_prompt', 'text content'],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+    assert settings_with_content.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt'},
+                    {'type': 'text', 'content': 'text content'},
+                ],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+        ]
+    )
+    settings_without_content = InstrumentationSettings(include_content=False)
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {
+                'content': [{'kind': 'text'}, {'kind': 'text'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text'}],
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+    assert settings_without_content.messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'text'}]},
+            {'role': 'assistant', 'parts': [{'type': 'text'}]},
+        ]
+    )
+
+
 def test_messages_without_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('system_prompt')], timestamp=IsDatetime()),
@@ -1738,6 +1832,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'instruction_parts': None,
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
@@ -1764,6 +1859,8 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     },
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
+                    'gen_ai.usage.cache_creation.input_tokens': 10,
+                    'gen_ai.usage.cache_read.input_tokens': 20,
                     'gen_ai.usage.details.reasoning_tokens': 30,
                     'gen_ai.usage.details.cache_write_tokens': 10,
                     'gen_ai.usage.details.cache_read_tokens': 20,
@@ -1985,6 +2082,208 @@ def test_build_tool_definitions():
             'parameters': {'type': 'object', 'properties': {}},
         },
     ]
+
+
+def test_annotate_tool_call_otel_metadata():
+    """`_annotate_tool_call_otel_metadata` copies metadata from tool defs onto matching tool call parts."""
+    from pydantic_ai.models.instrumented import _annotate_tool_call_otel_metadata  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.tools import ToolDefinition
+
+    response = ModelResponse(
+        parts=[
+            ToolCallPart(tool_name='run_code_with_tools', args={'code': 'print("hi")'}, tool_call_id='call_1'),
+            ToolCallPart(tool_name='other_tool', args={'x': 1}, tool_call_id='call_2'),
+            TextPart('some text'),
+        ]
+    )
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='run_code_with_tools',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+            ),
+            ToolDefinition(
+                name='other_tool',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+            ),
+        ],
+        builtin_tools=[],
+        output_tools=[],
+        output_mode='text',
+        output_object=None,
+        prompted_output_template=None,
+        allow_text_output=True,
+        allow_image_output=False,
+    )
+
+    _annotate_tool_call_otel_metadata(response, params)
+
+    code_part = response.parts[0]
+    assert isinstance(code_part, ToolCallPart)
+    assert code_part.otel_metadata == {'code_arg_name': 'code', 'code_arg_language': 'python'}
+
+    other_part = response.parts[1]
+    assert isinstance(other_part, ToolCallPart)
+    assert other_part.otel_metadata is None
+
+
+def test_builtin_code_execution_otel_metadata_in_otel_messages():
+    """Builtin code execution tool calls carry code_arg metadata in OTel output."""
+    call_part = BuiltinToolCallPart(
+        tool_name='code_execution', args={'code': '2 * 2'}, tool_call_id='call_1', provider_name='anthropic'
+    )
+    call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[call_part])]
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'code_arg_name': 'code',
+                        'code_arg_language': 'python',
+                        'arguments': {'code': '2 * 2'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_builtin_code_execution_snippet_arg():
+    """Bedrock's 'snippet' arg name is preserved in OTel output."""
+    call_part = BuiltinToolCallPart(
+        tool_name='code_execution', args={'snippet': '1 + 1'}, tool_call_id='call_1', provider_name='bedrock'
+    )
+    call_part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[call_part])]
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'code_arg_name': 'snippet',
+                        'code_arg_language': 'python',
+                        'arguments': {'snippet': '1 + 1'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_otel_metadata_in_otel_messages():
+    """`otel_metadata` on a function tool call flows through to OTel message output."""
+    tool_call = ToolCallPart(tool_name='run_code_with_tools', args={'code': 'x = 1 + 2'}, tool_call_id='call_1')
+    tool_call.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[tool_call])]
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'call_1',
+                        'name': 'run_code_with_tools',
+                        'code_arg_name': 'code',
+                        'code_arg_language': 'python',
+                        'arguments': {'code': 'x = 1 + 2'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_otel_metadata_partial_only_arg_name():
+    """`otel_metadata` with only `code_arg_name` set surfaces just that key."""
+    tool_call = ToolCallPart(tool_name='run_code', args={'code': '1+1'}, tool_call_id='call_1')
+    tool_call.otel_metadata = {'code_arg_name': 'code'}
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[tool_call])]
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'call_1',
+                        'name': 'run_code',
+                        'code_arg_name': 'code',
+                        'arguments': {'code': '1+1'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_otel_metadata_partial_only_arg_language():
+    """`otel_metadata` with only `code_arg_language` set surfaces just that key."""
+    tool_call = ToolCallPart(tool_name='run_code', args={'code': '1+1'}, tool_call_id='call_1')
+    tool_call.otel_metadata = {'code_arg_language': 'python'}
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[tool_call])]
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'call_1',
+                        'name': 'run_code',
+                        'code_arg_language': 'python',
+                        'arguments': {'code': '1+1'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+def test_otel_metadata_not_present_without_annotation():
+    """`code_arg_name`/`code_arg_language` are absent when `otel_metadata` is not set."""
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='some_tool', args={'x': 1}, tool_call_id='call_1')]),
+    ]
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {
+                        'type': 'tool_call',
+                        'id': 'call_1',
+                        'name': 'some_tool',
+                        'arguments': {'x': 1},
+                    }
+                ],
+            }
+        ]
+    )
 
 
 def test_messages_to_otel_messages_file_part_v4(document_content: BinaryContent):

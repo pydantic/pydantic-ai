@@ -8,13 +8,14 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -35,6 +36,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -335,8 +337,11 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
     result = await agent.run('What is the capital of Germany?', message_history=result.all_messages())
@@ -352,8 +357,11 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -364,8 +372,11 @@ async def test_request_async(llamacpp_model: OutlinesModel) -> None:  # pragma: 
                 timestamp=IsDatetime(),
                 instructions='Answer in one word.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -385,8 +396,11 @@ def test_request_sync(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -416,8 +430,11 @@ async def test_request_async_model(mock_async_model: OutlinesModel) -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -468,8 +485,11 @@ async def test_instructions_async_model(mock_async_model: OutlinesModel) -> None
                 instructions='Be brief.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='test')], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -480,6 +500,31 @@ async def test_multi_turn_async_model(mock_async_model: OutlinesModel) -> None:
     result1 = await agent.run('First message')
     result2 = await agent.run('Second message', message_history=result1.all_messages())
     assert result2.output == 'test'
+
+
+@skip_if_transformers_imports_unsuccessful
+async def test_text_content_input(transformers_multimodal_model: OutlinesModel):
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant'),
+                UserPromptPart(
+                    content=['Hello', TextContent(content='This is additional text content', metadata={'key': 'value'})]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+    ]
+    m = await transformers_multimodal_model._format_prompt(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert asdict(m) == snapshot(
+        {
+            'messages': [
+                {'role': 'system', 'content': 'You are a helpful assistant'},
+                {'role': 'user', 'content': ['Hello', 'This is additional text content']},
+                {'role': 'assistant', 'content': 'Hi'},
+            ]
+        }
+    )
 
 
 @skip_if_transformers_imports_unsuccessful
@@ -502,8 +547,11 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -534,8 +582,11 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
@@ -591,8 +642,11 @@ def test_output_type(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no c
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            ModelResponse(parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()
+            ),
         ]
     )
 
