@@ -344,6 +344,10 @@ async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatc
     Otherwise a misbehaving server (e.g. subprocess that ignores SIGTERM, HTTP/SSE
     connection where the server never closes its side) can deadlock the agent's
     own shutdown — `await session_task_to_await` parks forever inside `__aexit__`.
+
+    Patches `_session_runner` instead of `client_streams` (same pattern as
+    `test_aenter_cancelled_during_startup`) — testing the lifecycle invariant, not
+    the MCP protocol; avoids leaking a real subprocess into later tests.
     """
     import time
 
@@ -355,16 +359,18 @@ async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatc
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
     teardown_reached = anyio.Event()
-    original_client_streams = server.client_streams
 
-    @asynccontextmanager
-    async def hung_teardown_streams() -> AsyncIterator[Any]:
-        async with original_client_streams() as pair:
-            try:
-                yield pair
-            finally:
-                teardown_reached.set()
-                await asyncio.Event().wait()
+    async def fake_runner_with_hung_teardown() -> None:
+        state = server._session_state  # pyright: ignore[reportPrivateUsage]
+        ready_event = state.ready_event
+        stop_event = state.stop_event
+        assert ready_event is not None and stop_event is not None
+        try:
+            ready_event.set()
+            await stop_event.wait()
+        finally:
+            teardown_reached.set()
+            await asyncio.Event().wait()
 
     async def enter_then_exit() -> None:
         async with server:
@@ -375,15 +381,15 @@ async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatc
     # the regression because `__aexit__` swallows the cancellation it sends.
     safety_net = 5.0
     start = time.monotonic()
-    with patch.object(server, 'client_streams', hung_teardown_streams):
+    with patch.object(server, '_session_runner', fake_runner_with_hung_teardown):
         await asyncio.wait_for(enter_then_exit(), timeout=safety_net)
     elapsed = time.monotonic() - start
 
     assert teardown_reached.is_set(), 'transport teardown was never reached'
     assert not server.is_running
-    # With the fix: bounded by ~2 * grace plus subprocess teardown overhead. Without:
-    # `__aexit__` awaits the hung task until `wait_for`'s safety net fires (~5s).
-    # Threshold sits comfortably between the two regimes, with headroom for CI jitter.
+    # With the fix: bounded by ~2 * grace. Without: `__aexit__` awaits the hung
+    # task until `wait_for`'s safety net fires (~5s). Threshold sits comfortably
+    # between the two regimes, with headroom for CI jitter.
     assert elapsed < safety_net - 1.5, f'shutdown took {elapsed:.2f}s, expected <<{safety_net}s'
 
 
