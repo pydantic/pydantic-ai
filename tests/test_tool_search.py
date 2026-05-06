@@ -3295,14 +3295,15 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
         ModelRequest(parts=[UserPromptPart(content='follow-up')]),
     ]
 
-    # Mirror `_make_request`'s post-fix order: synthesize first, then clean.
+    # Mirror `_make_request`'s post-fix order: synthesize first, then clean. Without the cleanup
+    # pass, the synthesizer produces `Response, Request, Request` (a synthetic request for the
+    # search return next to the original request); the clean pass merges those two requests so
+    # adapters with strict user/assistant alternation see `Response, Request`.
     after_synthesis = synthesize_local_tool_search_messages(history)
-    cleaned = _clean_message_history(after_synthesis)
+    assert [type(m).__name__ for m in after_synthesis] == ['ModelResponse', 'ModelRequest', 'ModelRequest']
 
-    # No two consecutive `ModelRequest`s after the cleanup pass.
-    for i in range(len(cleaned) - 1):
-        if isinstance(cleaned[i], ModelRequest):
-            assert not isinstance(cleaned[i + 1], ModelRequest), f'Consecutive requests at index {i}: {cleaned}'
+    cleaned = _clean_message_history(after_synthesis)
+    assert [type(m).__name__ for m in cleaned] == ['ModelResponse', 'ModelRequest']
 
     # The merged request carries both the synthetic search return and the original user prompt,
     # with the tool return part sorted ahead of the user prompt.
