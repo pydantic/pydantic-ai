@@ -2495,6 +2495,27 @@ async def test_run_stream_on_complete_error():
     )
 
 
+async def test_adapter_uses_request_id_as_conversation_id():
+    """The Vercel AI top-level `id` (chat ID) is wired through to `gen_ai.conversation.id`."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='chat-xyz',
+        messages=[UIMessage(id='msg-1', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+
+    captured: list[AgentRunResult[Any]] = []
+
+    adapter = VercelAIAdapter(agent, request)
+    assert adapter.conversation_id == 'chat-xyz'
+
+    async for _ in adapter.encode_stream(adapter.run_stream(on_complete=captured.append)):
+        pass
+
+    assert captured[0].conversation_id == 'chat-xyz'
+    assert captured[0].all_messages()[-1].conversation_id == 'chat-xyz'
+
+
 async def test_run_stream_on_complete():
     agent = Agent(model=TestModel())
 
@@ -2645,6 +2666,7 @@ async def test_tool_approval_request_emission():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='foo',
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
@@ -2652,6 +2674,7 @@ async def test_tool_approval_request_emission():
                 model_name='function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='foo',
             ),
         ]
     )
@@ -2837,6 +2860,7 @@ async def test_tool_output_denied_chunk_emission():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='foo',
             ),
             ModelResponse(
                 parts=[TextPart(content='The file deletion was cancelled as requested.')],
@@ -2844,6 +2868,7 @@ async def test_tool_output_denied_chunk_emission():
                 model_name='function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='foo',
             ),
         ]
     )
@@ -3133,6 +3158,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='foo',
             ),
             ModelResponse(
                 parts=[TextPart(content='File deleted successfully.')],
@@ -3140,6 +3166,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
                 model_name='function::stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='foo',
             ),
         ]
     )
@@ -6872,6 +6899,7 @@ async def test_system_prompt_with_vercel_adapter():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -6880,6 +6908,7 @@ async def test_system_prompt_with_vercel_adapter():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
         ]
     )
@@ -6919,6 +6948,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request-2',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -6927,6 +6957,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request-2',
             ),
         ]
     )
@@ -6977,6 +7008,7 @@ async def test_system_prompt_reinjected_with_vercel_history():
                 parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request-3',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -6985,6 +7017,7 @@ async def test_system_prompt_reinjected_with_vercel_history():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request-3',
             ),
         ]
     )
@@ -7026,6 +7059,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7034,6 +7068,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
         ]
     )
@@ -7074,6 +7109,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7082,6 +7118,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
         ]
     )
@@ -7122,6 +7159,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7130,6 +7168,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
         ]
     )
@@ -7170,6 +7209,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7178,6 +7218,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
         ]
     )
@@ -7217,6 +7258,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7225,6 +7267,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id='test-request',
             ),
         ]
     )

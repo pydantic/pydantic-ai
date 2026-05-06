@@ -7,9 +7,10 @@ import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -311,14 +312,19 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
     # One active entry — the race only matters when both tasks see count > 0.
     server._running_count = 1  # pyright: ignore[reportPrivateUsage]
 
-    # Replace the real lock with one that yields before acquiring,
-    # opening the interleaving window the old code left unprotected.
-    class InterleavingLock(asyncio.Lock):
-        async def acquire(self) -> Literal[True]:
-            await asyncio.sleep(0)  # yield — lets the other task reach the same point
-            return await super().acquire()
+    class InterleavingLock:
+        def __init__(self) -> None:
+            self._inner = anyio.Lock()
 
-    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+        async def __aenter__(self) -> None:
+            await anyio.sleep(0)  # yield - lets the other task reach the same point
+            await self._inner.__aenter__()
+
+        async def __aexit__(self, *args: Any) -> None:
+            await self._inner.__aexit__(*args)
+
+    # `_enter_lock` is a `cached_property`; seeding the instance dict primes the cache.
+    vars(server)['_enter_lock'] = InterleavingLock()
 
     results = await asyncio.gather(
         server.__aexit__(None, None, None),
@@ -485,6 +491,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -515,6 +522,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -527,6 +535,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
@@ -551,6 +560,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -664,6 +674,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -694,6 +705,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -706,6 +718,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -734,6 +747,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -754,6 +768,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -784,6 +799,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -796,6 +812,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -820,6 +837,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -840,6 +858,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -870,6 +889,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -882,6 +902,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "Pydantic AI".')],
@@ -906,6 +927,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -928,6 +950,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -958,6 +981,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -970,6 +994,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -998,6 +1023,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1022,6 +1048,7 @@ async def test_tool_returning_image_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1052,6 +1079,7 @@ async def test_tool_returning_image_resource_link(
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1064,6 +1092,7 @@ async def test_tool_returning_image_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1092,6 +1121,7 @@ async def test_tool_returning_image_resource_link(
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1110,6 +1140,7 @@ async def test_tool_returning_audio_resource(
                     parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
@@ -1124,6 +1155,7 @@ async def test_tool_returning_audio_resource(
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1136,6 +1168,7 @@ async def test_tool_returning_audio_resource(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
@@ -1153,6 +1186,7 @@ async def test_tool_returning_audio_resource(
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1176,6 +1210,7 @@ async def test_tool_returning_audio_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1198,6 +1233,7 @@ async def test_tool_returning_audio_resource_link(
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1210,6 +1246,7 @@ async def test_tool_returning_audio_resource_link(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
@@ -1227,6 +1264,7 @@ async def test_tool_returning_audio_resource_link(
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1249,6 +1287,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1279,6 +1318,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_response_id='chatcmpl-CpxEaVAApbQvDQSTnqrFd0mxu7Cs3',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1291,6 +1331,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1319,6 +1360,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     provider_response_id='chatcmpl-CpxEdNdePHwVHTJLjmaHWzNUfpoNo',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1339,6 +1381,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
@@ -1363,6 +1406,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1375,6 +1419,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -1399,6 +1444,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1419,6 +1465,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1447,6 +1494,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1459,6 +1507,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
@@ -1483,6 +1532,7 @@ async def test_tool_returning_unstructured_dict(allow_model_requests: None, agen
                     provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1505,6 +1555,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1535,6 +1586,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1547,6 +1599,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1577,6 +1630,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1589,6 +1643,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1617,6 +1672,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1637,6 +1693,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
@@ -1661,6 +1718,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1673,6 +1731,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
@@ -1697,6 +1756,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1719,6 +1779,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1749,6 +1810,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-CpzU5Mhbq7bf8kaSOksp2KUTqG4u0',
                     finish_reason='tool_call',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1766,6 +1828,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1794,6 +1857,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     provider_response_id='chatcmpl-CpzU6VAYJTRYnthvYDAolptinBLkS',
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )

@@ -16,39 +16,25 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generic,
-    TypeAlias,
-    TypeGuard,
-    TypeVar,
-    get_args,
-    get_origin,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
 import anyio
 from anyio.to_thread import run_sync
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeIs,
-    is_typeddict,
-)
+from typing_extensions import ParamSpec, TypeIs, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 

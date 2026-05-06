@@ -176,7 +176,7 @@ def dispatch_in_background_thread(coro: Coroutine[Any, Any, None]) -> None:
             with _background_lock:
                 _background_threads.discard(thread)
 
-    thread = threading.Thread(target=_thread_target, daemon=True)
+    thread = threading.Thread(target=_thread_target, daemon=False)
     with _background_lock:
         _background_threads.add(thread)
     try:
