@@ -1766,11 +1766,11 @@ async def test_response_handler_triggers_streaming() -> None:
         responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
 
     # The final assembled response must come from success_model_stream (not the empty one).
-    assert any(
-        any(isinstance(p, TextPart) and 'world' in p.content for p in r.parts)
-        for r in responses
-    ), 'Expected the success-model output ("world") to appear in the streamed responses'
+    assert any(any(isinstance(p, TextPart) and 'world' in p.content for p in r.parts) for r in responses), (
+        'Expected the success-model output ("world") to appear in the streamed responses'
+    )
     assert result.is_complete
+
 
 async def test_response_handler_all_streams_rejected() -> None:
     """If every streaming model produces a response rejected by the handler,
@@ -1804,10 +1804,9 @@ async def test_stream_mixed_exception_and_response_rejection_streaming() -> None
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
         responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
-    assert any(
-        any(isinstance(p, TextPart) and 'world' in p.content for p in r.parts)
-        for r in responses
-    ), 'Expected success-model output ("world") to appear in the streamed responses'
+    assert any(any(isinstance(p, TextPart) and 'world' in p.content for p in r.parts) for r in responses), (
+        'Expected success-model output ("world") to appear in the streamed responses'
+    )
     assert result.is_complete
 
 

@@ -67,7 +67,7 @@ def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     return isinstance(value, type) and issubclass(value, Exception)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _FallbackStreamedResponse(StreamedResponse):
     """A StreamedResponse that orchestrates fallback across multiple models.
 
@@ -81,17 +81,16 @@ class _FallbackStreamedResponse(StreamedResponse):
     rejected models followed by events from the accepted model.
     """
 
-    _fallback_models: list[Model] = field(default_factory=list)
-    _request_args: tuple[Any, ...] = field(default=())
-    _should_fallback_handler: Callable[[Exception | ModelResponse], Awaitable[bool]] | None = field(default=None)
-    _on_model_selected: Callable[[Model, ModelRequestParameters], None] | None = field(default=None)
+    _fallback_models: list[Model]
+    _request_args: tuple[Any, ...]
+    _should_fallback_handler: Callable[[Exception | ModelResponse], Awaitable[bool]]
+    _on_model_selected: Callable[[Model, ModelRequestParameters], None]
     _accepted_model: Model | None = field(default=None, init=False)
     _accepted_timestamp: datetime | None = field(default=None, init=False)
     _accepted_provider_name: str | None = field(default=None, init=False)
     _accepted_provider_url: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        assert self._should_fallback_handler is not None
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
 
@@ -127,14 +126,13 @@ class _FallbackStreamedResponse(StreamedResponse):
                     self.finish_reason = inner_sr.finish_reason
                     self.provider_response_id = inner_sr.provider_response_id
                     self.provider_details = inner_sr.provider_details
-                    if self._on_model_selected is not None:
-                        self._on_model_selected(model, prepared_parameters)
+                    self._on_model_selected(model, prepared_parameters)
                     return
             except Exception as exc:
                 if await self._should_fallback_handler(exc):
                     exceptions.append(exc)
                     continue
-                raise
+                raise  # pragma: no cover
 
         _raise_fallback_exception_group(exceptions, rejected_responses)
 
