@@ -1052,6 +1052,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # also covers the no-history single-turn custom callable case (where the local
         # `search_tools` exchange is created on this turn).
         tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
+        orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -1227,6 +1228,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:
+                                if tool_use_id in orphan_tool_search_call_ids:
+                                    # Anthropic occasionally emits a `tool_search_tool_*` server tool use
+                                    # in parallel with a client `tool_use` and ends the turn before
+                                    # delivering the corresponding `tool_search_tool_*_tool_result` block
+                                    # (see anthropics/anthropic-sdk-python#1325). Direct API tolerates
+                                    # the unpaired call on resend (the result arrives in the next turn),
+                                    # but Bedrock 400s with `tool use ... was found without a corresponding
+                                    # tool_search_tool_*_tool_result block`. Drop the orphaned call from the
+                                    # wire payload — the model will re-search if it still wants to. We don't
+                                    # synthesize an empty result block because that would falsely tell the
+                                    # model the search ran and returned nothing.
+                                    continue
                                 # Round-trip the native variant (bm25/regex) so we don't
                                 # silently rewrite the algorithm. `_map_server_tool_use_block`
                                 # stashes it in `provider_details['strategy']`.
@@ -2237,6 +2250,31 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     if item.name in ('bash_code_execution', 'text_editor_code_execution', 'advisor'):  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     assert_never(item.name)
+
+
+def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:
+    """Collect `tool_call_id`s of `BuiltinToolSearchCallPart`s without a paired return.
+
+    Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a
+    client `tool_use` and ends the turn before delivering the corresponding result
+    block. The result may arrive in a later `ModelResponse` (direct API), or never
+    at all (Bedrock). Anything truly unpaired must be dropped from the wire payload
+    on the next request, since Bedrock rejects orphans with `tool use ... was found
+    without a corresponding tool_search_tool_*_tool_result block`.
+
+    The pair lookup is by `tool_call_id` across *all* messages — a return part may
+    sit in a later assistant turn than the call.
+    """
+    call_ids: set[str] = set()
+    return_ids: set[str] = set()
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, BuiltinToolSearchCallPart) and part.tool_call_id:
+                    call_ids.add(part.tool_call_id)
+                elif isinstance(part, BuiltinToolSearchReturnPart) and part.tool_call_id:
+                    return_ids.add(part.tool_call_id)
+    return call_ids - return_ids
 
 
 def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str) -> ToolSearchArgs:
