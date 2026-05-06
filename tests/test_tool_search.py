@@ -3870,6 +3870,20 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     )
 
 
+def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
+    """The shared keyword algorithm returns `[]` when the query tokenizes to nothing
+    (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
+    in the toolset) translate that into the empty-discoveries `_empty_return` shape.
+    """
+    from pydantic_ai.toolsets._tool_search import keywords_search_fn
+
+    ctx = _build_run_context(None)
+    assert keywords_search_fn(ctx, '   ', []) == []
+    # Punctuation-only queries also produce no tokens — `_SEARCH_TOKEN_RE` matches
+    # `[a-z0-9]+` only.
+    assert keywords_search_fn(ctx, '!!!', []) == []
+
+
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:
     """When `strategy='keywords'` activates the client-executed native path, the local
     `search_tools` function (still in `function_tools` for client-execution) must run
