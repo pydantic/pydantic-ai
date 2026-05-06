@@ -5005,6 +5005,16 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+def test_transformer_marks_bare_list_items_as_not_strict_compatible():
+    schema = {'type': 'object', 'properties': {'items': {'type': 'array', 'items': {}}}, 'required': ['items']}
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['items'] == {'type': 'array', 'items': {}}
+    assert transformer.is_strict_compatible is False
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
