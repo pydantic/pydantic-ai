@@ -1643,16 +1643,19 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
     from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
     # Provider-side call used the regex variant; the adapter must round-trip that choice.
+    # Anthropic's regex variant emits `pattern` (not `query`) in the wire input.
     regex_block = BetaServerToolUseBlock(
         id='srv_r',
         name='tool_search_tool_regex',
-        input={'query': '.*'},
+        input={'pattern': 'weather.*'},
         type='server_tool_use',
         caller=BetaDirectCaller(type='direct'),
     )
     call_part = _map_server_tool_use_block(regex_block, 'anthropic')
     assert isinstance(call_part, BuiltinToolCallPart)
     assert call_part.provider_details == {'strategy': 'regex'}
+    # Cross-provider canonical shape collects the regex into the `queries` slot.
+    assert call_part.args == snapshot({'queries': ['weather.*']})
 
     # On replay, the adapter should emit `tool_search_tool_regex` (not bm25).
     response = completion_message(
@@ -1690,9 +1693,61 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
     blocks = [
         cast('dict[str, Any]', block) for msg in kwargs['messages'] for block in cast('list[Any]', msg['content'])
     ]
-    names = [block['name'] for block in blocks if block.get('type') == 'server_tool_use']
+    server_blocks = [block for block in blocks if block.get('type') == 'server_tool_use']
+    names = [block['name'] for block in server_blocks]
     assert 'tool_search_tool_regex' in names
     assert 'tool_search_tool_bm25' not in names
+    # Regex variant must replay with `pattern` (not `query`) — Anthropic 400s otherwise.
+    regex_inputs = [block['input'] for block in server_blocks if block['name'] == 'tool_search_tool_regex']
+    assert regex_inputs == snapshot([{'pattern': 'weather.*'}])
+
+
+async def test_anthropic_cache_tool_definitions_skips_deferred_tools(allow_model_requests: None) -> None:
+    """`anthropic_cache_tool_definitions=True` must apply `cache_control` to the last
+    *non-deferred* tool. Anthropic rejects requests with `cache_control` and
+    `defer_loading=True` on the same tool: ``Tools with defer_loading cannot use prompt
+    caching``. Reported by @kclisp on PR #5143.
+    """
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+    response = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, str] = Agent(
+        model=model,
+        capabilities=[ToolSearch()],
+        model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
+    )
+
+    @agent.tool_plain
+    def visible_tool() -> str:  # pragma: no cover
+        return 'visible'
+
+    @agent.tool_plain(defer_loading=True)
+    def deferred_tool() -> str:  # pragma: no cover
+        return 'deferred'
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = cast('list[dict[str, Any]]', kwargs['tools'])
+    by_name = {tool['name']: tool for tool in tools}
+    # The deferred tool must NOT have `cache_control` — pairing it with `defer_loading`
+    # is what Anthropic rejects.
+    assert 'cache_control' not in by_name['deferred_tool']
+    assert by_name['deferred_tool'].get('defer_loading') is True
+    # The last non-deferred tool gets the cache breakpoint.
+    assert by_name['visible_tool']['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
 async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: None):

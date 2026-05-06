@@ -912,12 +912,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._map_tool_definition(r, model_settings) for r in model_request_parameters.tool_defs.values()
         ]
 
-        # Add cache_control to the last tool if enabled
+        # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
+        # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
+        # cannot use prompt caching`); they're hidden from the model until tool search
+        # discovers them, so they aren't part of the cacheable prompt prefix anyway.
         if tools and (cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions')):
             # If True, use '5m'; otherwise use the specified ttl value
             ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
-            last_tool = tools[-1]
-            last_tool['cache_control'] = self._build_cache_control(ttl)
+            for tool in reversed(tools):
+                if tool.get('defer_loading') is not True:
+                    tool['cache_control'] = self._build_cache_control(ttl)
+                    break
 
         return tools
 
@@ -1232,9 +1237,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 native_name = (
                                     'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
                                 )
-                                # Rebuild the wire `{"query": "..."}` shape from the
-                                # cross-provider `queries` slot. Joining with a space
-                                # matches Anthropic's BM25 / regex single-string input.
+                                # Rebuild the variant-specific wire shape from the
+                                # cross-provider `queries` slot. bm25 expects `{"query": "..."}`,
+                                # regex expects `{"pattern": "..."}`. Joining with a space
+                                # matches Anthropic's single-string input on either variant.
                                 args_dict = response_part.args_as_dict()
                                 if 'queries' in args_dict:
                                     raw_queries = args_dict.get('queries')
@@ -1243,7 +1249,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         if isinstance(raw_queries, list)
                                         else []
                                     )
-                                    wire_input: dict[str, Any] = {'query': ' '.join(queries)}
+                                    wire_key = 'pattern' if strategy == 'regex' else 'query'
+                                    wire_input: dict[str, Any] = {wire_key: ' '.join(queries)}
                                 else:
                                     wire_input = args_dict
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
@@ -2216,11 +2223,11 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
         return part
     if item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):
-        # Normalize the wire `{"query": "..."}` into the cross-provider
-        # `{"queries": [...]}` shape carried on the typed call part. The bm25/regex
-        # variant goes on `provider_details` so same-provider replay can pick the
-        # original tool name back out (`_TOOL_SEARCH_NATIVE_NAME_BY_STRATEGY`).
-        normalized_args = _normalize_tool_search_args(tool_args)
+        # Normalize the wire payload into the cross-provider `{"queries": [...]}` shape
+        # carried on the typed call part. bm25 emits `{"query": "..."}`, regex emits
+        # `{"pattern": "..."}`. The variant goes on `provider_details` so same-provider
+        # replay can pick the original tool name back out.
+        normalized_args = _normalize_tool_search_args(tool_args, item.name)
         return BuiltinToolSearchCallPart(
             provider_name=provider_name,
             args=normalized_args,
@@ -2232,16 +2239,18 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
     assert_never(item.name)
 
 
-def _normalize_tool_search_args(tool_args: dict[str, Any] | None) -> ToolSearchArgs:
+def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str) -> ToolSearchArgs:
     """Normalize an Anthropic `tool_search_tool_*.input` payload into `ToolSearchArgs`.
 
-    The wire shape is `{"query": "..."}`; the cross-provider canonical shape is
-    `{"queries": [...]}`. Used by both the non-streaming `_process_response` path
+    Wire keys differ by variant: bm25 emits `{"query": "..."}`, regex emits
+    `{"pattern": "..."}`. Both map to the cross-provider canonical
+    `{"queries": [...]}` shape. Used by both the non-streaming `_process_response` path
     (which has the full input at once) and the streaming finalizer (which has only
     accumulated JSON-string deltas to reparse at content_block_stop time).
     """
-    query_value = (tool_args or {}).get('query', '')
-    queries = [query_value] if isinstance(query_value, str) else []
+    wire_key = 'pattern' if tool_name == 'tool_search_tool_regex' else 'query'
+    raw = (tool_args or {}).get(wire_key, '')
+    queries = [raw] if isinstance(raw, str) else []
     return {'queries': queries}
 
 
@@ -2262,7 +2271,12 @@ def _finalize_streamed_tool_search_call_part(part: BuiltinToolSearchCallPart) ->
             parsed = None
     else:
         parsed = None
-    return replace(part, args=_normalize_tool_search_args(parsed))
+    # `_map_server_tool_use_block` stashes the variant on `provider_details['strategy']`
+    # at content_block_start; map it back to the wire-shape tool name so the variant's
+    # input key (`pattern` vs `query`) is honored.
+    strategy = (part.provider_details or {}).get('strategy')
+    tool_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
+    return replace(part, args=_normalize_tool_search_args(parsed, tool_name))
 
 
 def _map_tool_search_tool_result_block(
