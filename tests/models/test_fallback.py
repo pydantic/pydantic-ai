@@ -508,10 +508,10 @@ failure_model_stream = FunctionModel(stream_function=failure_response_stream)
 
 
 async def empty_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    """Yields nothing actionable — empty stream. Rejected by an emptiness handler."""
-    if False:  # pragma: no cover
-        yield ''  # marks this as an async generator for the runtime
-    return
+    """Yields whitespace only — assembled response has no actionable text content,
+    so a handler that requires non-whitespace text rejects it.
+    """
+    yield ' '
 
 
 empty_model_stream = FunctionModel(stream_function=empty_response_stream)
