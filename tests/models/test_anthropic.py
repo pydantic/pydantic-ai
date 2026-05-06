@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
+from unittest.mock import AsyncMock, MagicMock
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
@@ -75,6 +76,7 @@ with try_import() as imports_successful:
         APIStatusError,
         AsyncAnthropic,
         AsyncAnthropicBedrock,
+        AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         omit as OMIT,
     )
@@ -130,7 +132,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 if not imports_successful():  # pragma: lax no cover
-    AsyncAnthropicBedrock = AsyncAnthropicVertex = None
+    AsyncAnthropicBedrock = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -268,6 +270,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -280,11 +283,13 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -297,6 +302,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -561,36 +567,67 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
         pytest.param('1h', '1h', id='custom-1h'),
     ],
 )
-async def test_anthropic_cache_messages_deprecated_fallback_on_bedrock(
+async def test_anthropic_cache_messages_uses_per_block_cache_control(
     allow_model_requests: None,
     cache_value: bool | Literal['1h'],
     expected_ttl: str,
 ):
-    """Test that deprecated anthropic_cache_messages triggers per-block fallback on Bedrock."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    import anthropic
-    from anthropic import AsyncAnthropicBedrock
-
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
-    mock_client.base_url = 'https://bedrock.amazonaws.com'
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
+    mock_client = MockAnthropic.create_mock(c)
 
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_messages=cache_value))
 
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        result = await agent.run('Hello')
+    result = await agent.run('Hello')
     assert result.output == 'Response'
 
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is anthropic.omit
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] is OMIT
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Hello',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': expected_ttl},
+                    }
+                ],
+            }
+        ]
+    )
+
+
+async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_messages=True))
+
+    result = await agent.run(['Some context', CachePoint(ttl='1h')])
+    assert result.output == 'Response'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][-1]['content']
+    assert content == snapshot(
+        [{'text': 'Some context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
+    )
+
+
+async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=AnthropicModelSettings(anthropic_cache=True, anthropic_cache_messages=True),
+    )
+
+    with pytest.raises(UserError, match='`anthropic_cache` and `anthropic_cache_messages` cannot both be enabled'):
+        await agent.run('Hello')
 
 
 async def test_anthropic_cache_fallback_preserves_existing_cache_control(allow_model_requests: None):
@@ -1426,80 +1463,7 @@ async def test_anthropic_mixed_strict_tool_run(allow_model_requests: None, anthr
     )
 
 
-async def test_anthropic_cache_messages_deprecated(allow_model_requests: None):
-    """Test that anthropic_cache_messages is deprecated and maps to anthropic_cache."""
-    c = completion_message(
-        [BetaTextBlock(text='Response', type='text')],
-        usage=BetaUsage(input_tokens=10, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        system_prompt='System instructions to cache.',
-        model_settings=AnthropicModelSettings(
-            anthropic_cache_messages=True,
-        ),
-    )
-
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        await agent.run('User message')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # Should use top-level cache_control (server-side automatic caching)
-    assert completion_kwargs['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
-    # Messages should NOT have per-block cache_control
-    last_msg = completion_kwargs['messages'][-1]
-    for block in last_msg['content']:
-        assert 'cache_control' not in block
-
-
-async def test_anthropic_cache_messages_deprecated_custom_ttl(allow_model_requests: None):
-    """Test that deprecated anthropic_cache_messages passes through custom TTL."""
-    c = completion_message(
-        [BetaTextBlock(text='Response', type='text')],
-        usage=BetaUsage(input_tokens=10, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        system_prompt='System instructions.',
-        model_settings=AnthropicModelSettings(
-            anthropic_cache_messages='1h',
-        ),
-    )
-
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        await agent.run('User message')
-
-    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '1h'})
-
-
-async def test_anthropic_cache_and_cache_messages_conflict(allow_model_requests: None):
-    """Test that enabling both anthropic_cache and anthropic_cache_messages raises UserError."""
-    c = completion_message(
-        [BetaTextBlock(text='Response', type='text')],
-        usage=BetaUsage(input_tokens=10, output_tokens=5),
-    )
-    mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        system_prompt='System instructions.',
-        model_settings=AnthropicModelSettings(
-            anthropic_cache=True,
-            anthropic_cache_messages=True,
-        ),
-    )
-
-    with pytest.raises(UserError, match='cannot both be enabled'):
-        await agent.run('User message')
-
-
-async def test_limit_cache_points_with_deprecated_cache_messages(allow_model_requests: None):
-    """Test that deprecated anthropic_cache_messages maps to anthropic_cache for cache point limiting."""
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None):
     c = completion_message(
         [BetaTextBlock(text='Response', type='text')],
         usage=BetaUsage(input_tokens=10, output_tokens=5),
@@ -1514,36 +1478,38 @@ async def test_limit_cache_points_with_deprecated_cache_messages(allow_model_req
         ),
     )
 
-    # anthropic_cache_messages now maps to anthropic_cache (top-level cache_control),
-    # which reduces the explicit cache point budget from 4 to 3.
-    # With 4 CachePoint markers, the oldest should be removed to fit budget of 3.
-    with pytest.warns(DeprecationWarning, match='`anthropic_cache_messages` is deprecated'):
-        await agent.run(
-            [
-                'Context 1',
-                CachePoint(),  # Oldest, should be removed
-                'Context 2',
-                CachePoint(),  # Should be kept
-                'Context 3',
-                CachePoint(),  # Should be kept
-                'Context 4',
-                CachePoint(),  # Should be kept
-                'Question',
-            ]
-        )
+    await agent.run(
+        [
+            'Context 1',
+            CachePoint(),  # oldest, trimmed because total cache points (4 explicit + 1 from cache_messages) exceeds the budget of 4
+            'Context 2',
+            CachePoint(),
+            'Context 3',
+            CachePoint(),
+            'Context 4',
+            CachePoint(),
+            'Question',
+        ]
+    )
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     messages = completion_kwargs['messages']
-    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['cache_control'] is OMIT
 
-    cache_count = 0
-    for msg in messages:
-        for block in msg['content']:
-            if 'cache_control' in block:
-                cache_count += 1
-
-    # Budget is 3 (reduced from 4 by automatic caching). 4 CachePoint markers means 1 removed.
-    assert cache_count == 3
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context 1', 'type': 'text'},
+                    {'text': 'Context 2', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Context 3', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Context 4', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            }
+        ]
+    )
 
 
 async def test_limit_cache_points_all_settings(allow_model_requests: None):
@@ -1754,6 +1720,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                 parts=[UserPromptPart(content='What is 1+1? Answer with just the number.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='2')],
@@ -1775,6 +1742,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1798,6 +1766,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1816,6 +1785,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1828,6 +1798,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1871,6 +1842,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1889,6 +1861,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1902,6 +1875,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1920,6 +1894,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1933,6 +1908,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1945,6 +1921,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2089,6 +2066,85 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
     assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
+
+
+@pytest.mark.parametrize('speed', ['fast', 'standard', None])
+async def test_anthropic_speed_setting(allow_model_requests: None, speed: Literal['fast', 'standard'] | None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    settings = AnthropicModelSettings(anthropic_betas=['custom-beta'])
+    if speed is not None:
+        settings['anthropic_speed'] = speed
+    await agent.run('hello', model_settings=settings)
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    if speed is not None:
+        assert kwargs['speed'] == speed
+    else:
+        assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert ('fast-mode-2026-02-01' in betas) is (speed == 'fast')
+
+
+@pytest.mark.parametrize(
+    'speed,expected_warning',
+    [
+        ('fast', "anthropic_speed='fast' is not supported"),
+        ('standard', None),
+    ],
+)
+async def test_anthropic_speed_ignored_on_unsupported_model(
+    allow_model_requests: None,
+    speed: Literal['fast', 'standard'],
+    expected_warning: str | None,
+) -> None:
+    """On models without fast-mode support, `anthropic_speed` is omitted; `'fast'` also warns."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+    settings = AnthropicModelSettings(anthropic_speed=speed, anthropic_betas=['custom-beta'])
+
+    if expected_warning is not None:
+        with pytest.warns(UserWarning, match=expected_warning):
+            await agent.run('hello', model_settings=settings)
+    else:
+        await agent.run('hello', model_settings=settings)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
+
+
+@pytest.mark.parametrize(
+    'client_cls',
+    [
+        pytest.param(AsyncAnthropicBedrock, id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, id='vertex'),
+        pytest.param(AsyncAnthropicFoundry, id='foundry'),
+    ],
+)
+async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_requests: None, client_cls: type) -> None:
+    """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MagicMock()
+    mock_client.__class__ = client_cls
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']))
+    with pytest.warns(UserWarning, match='anthropic_speed=.fast. is not supported'):
+        await agent.run('hello')
+
+    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert call_kwargs['speed'] is OMIT
+    assert 'fast-mode-2026-02-01' not in call_kwargs['betas']
 
 
 async def test_stream_structured(allow_model_requests: None):
@@ -2746,6 +2802,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -2767,6 +2824,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2784,6 +2842,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2812,6 +2871,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 provider_response_id='msg_01TGA8SWcHTTn5674cmicbnJ',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2831,6 +2891,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2879,6 +2940,7 @@ I should provide practical advice for different methods of crossing a river.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2903,6 +2965,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2932,6 +2995,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2951,6 +3015,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2980,6 +3045,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3012,6 +3078,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3047,6 +3114,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3154,6 +3222,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3206,6 +3275,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3231,6 +3301,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3259,6 +3330,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3289,6 +3361,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3317,6 +3390,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 provider_response_id='msg_01ALwQ87pTS7hH1PjSdC9wJD',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4155,6 +4229,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                 parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4348,6 +4423,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4365,6 +4441,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4549,6 +4626,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4580,6 +4658,7 @@ async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4834,6 +4913,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5610,6 +5690,7 @@ async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_ap
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5671,6 +5752,7 @@ Let me fetch the page first.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5693,6 +5775,7 @@ Let me fetch the page first.\
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5754,6 +5837,7 @@ Let me fetch the page first.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5764,6 +5848,7 @@ Let me fetch the page first.\
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5816,6 +5901,7 @@ It notes that "virtually every Python agent framework and LLM library" uses Pyda
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5862,6 +5948,7 @@ async def test_anthropic_web_fetch_tool_stream(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5919,6 +6006,7 @@ async def test_anthropic_web_fetch_tool_stream(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6469,6 +6557,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6538,6 +6627,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6557,6 +6647,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6677,6 +6768,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6724,6 +6816,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6788,6 +6881,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6989,6 +7083,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7041,6 +7136,7 @@ print(f"3 * 12390 = {result}")\
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7058,6 +7154,7 @@ print(f"3 * 12390 = {result}")\
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7110,6 +7207,7 @@ print(f"4 * 12390 = {result}")\
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7140,6 +7238,7 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7221,6 +7320,7 @@ Here's how it breaks down following the order of operations:
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7709,6 +7809,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7730,6 +7831,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7831,6 +7933,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7854,6 +7957,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7866,6 +7970,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7893,6 +7998,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7905,6 +8011,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7940,6 +8047,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7966,6 +8074,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7978,6 +8087,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8003,6 +8113,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8038,6 +8149,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8061,6 +8173,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -8073,6 +8186,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -8094,6 +8208,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8126,6 +8241,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8151,6 +8267,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9716,6 +9833,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                 timestamp=IsDatetime(),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9765,12 +9883,14 @@ print(result)
                 provider_response_id='msg_01CSsc4t4e4ThJfJp8nsPxc5',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='And what about 4 * 12390?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9820,6 +9940,7 @@ print(result)
                 provider_response_id='msg_016hgHtSKi8fEDBmSkEtL364',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9944,6 +10065,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                 parts=[UserPromptPart(content='Please fix the tool call and try again.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Here is the corrected result.')],
@@ -9956,6 +10078,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -10348,3 +10471,41 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
             requests=1,
         )
     )
+
+
+@pytest.mark.parametrize(
+    'top_level,per_provider,expected',
+    [
+        pytest.param('auto', None, 'auto', id='top_level_auto'),
+        pytest.param('default', None, 'standard_only', id='top_level_default_maps_to_standard_only'),
+        pytest.param('flex', None, None, id='top_level_flex_omitted'),
+        pytest.param('priority', None, None, id='top_level_priority_omitted'),
+        pytest.param(None, 'standard_only', 'standard_only', id='per_provider_standard_only'),
+        pytest.param('flex', 'auto', 'auto', id='per_provider_wins'),
+    ],
+)
+async def test_anthropic_service_tier_mapping(
+    allow_model_requests: None,
+    top_level: Literal['auto', 'default', 'flex', 'priority'] | None,
+    per_provider: Literal['auto', 'standard_only'] | None,
+    expected: str | None,
+):
+    """Top-level `service_tier` maps to Anthropic's request value; `anthropic_service_tier` overrides."""
+    settings = AnthropicModelSettings()
+    if top_level is not None:
+        settings['service_tier'] = top_level
+    if per_provider is not None:
+        settings['anthropic_service_tier'] = per_provider
+
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if expected is None:
+        assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
+    else:
+        assert kwargs['service_tier'] == expected

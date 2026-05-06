@@ -147,7 +147,7 @@ class AgentSpec(BaseModel):
                     'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context, exclude_defaults=True)
-            content = yaml.dump(dumped_data, sort_keys=False)
+            content = yaml.dump(dumped_data, sort_keys=False, allow_unicode=True)
             if schema_ref:
                 content = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}\n{content}'
             path.write_text(content, encoding='utf-8')

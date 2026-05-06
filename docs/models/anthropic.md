@@ -83,6 +83,34 @@ agent = Agent(model)
 ...
 ```
 
+## Model settings
+
+You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+
+model = AnthropicModel('claude-sonnet-4-5')
+settings = AnthropicModelSettings(
+    temperature=0.2,
+    service_tier='auto',
+)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+### Service tier
+
+Anthropic supports controlling the [service tier](https://docs.anthropic.com/en/docs/build-with-claude/latency-and-throughput) to manage latency and throughput.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`anthropic_service_tier`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_service_tier] field. `anthropic_service_tier` takes precedence over the unified field when both are set, and accepts Anthropic's native values (`'auto'` or `'standard_only'`).
+
+The unified field maps as follows for Anthropic:
+
+- `'auto'`: passed through as `'auto'` (Anthropic's native value — uses priority capacity when available).
+- `'default'`: maps to `'standard_only'` (forces the standard tier, opting out of priority capacity).
+- `'flex'` and `'priority'` are not part of Anthropic's tier model and are silently ignored.
+
 ## Cloud Platform Integrations
 
 You can use Anthropic models through cloud platforms by passing a custom client to [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider].
@@ -189,7 +217,7 @@ Setting `remaining` also invalidates any prompt-cache prefix that contains the b
 
 ## Prompt Caching
 
-Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports both automatic and explicit caching approaches:
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
 
 ### Automatic Caching
 
@@ -221,13 +249,47 @@ This is ideal for multi-turn conversations where the cache breakpoint should mov
 !!! note "Bedrock and Vertex"
     Bedrock and Vertex [do not yet support automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching). On these platforms, `anthropic_cache` falls back to per-block caching on the last user message, providing the same benefit for multi-turn conversations.
 
+### Per-block Message Caching
+
+As an alternative to `anthropic_cache`, [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] adds per-block `cache_control` to the last content block of the final message instead of using Anthropic's top-level automatic caching parameter. Use this with Anthropic-compatible gateways and proxies (such as MiniMax, OpenRouter, or LiteLLM) that accept the Anthropic message format but don't support top-level automatic caching:
+
+```python {test="skip"}
+from anthropic import AsyncAnthropic
+
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+client = AsyncAnthropic(
+    api_key='your-api-key',
+    base_url='https://your-anthropic-compatible-gateway.example.com',
+)
+
+model = AnthropicModel(
+    'claude-sonnet-4-6',
+    provider=AnthropicProvider(anthropic_client=client),
+)
+agent = Agent(
+    model,
+    model_settings=AnthropicModelSettings(
+        anthropic_cache_messages=True,
+    ),
+)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+```
+
+You can also specify a custom TTL with `anthropic_cache_messages='1h'`. `anthropic_cache_messages` cannot be combined with `anthropic_cache`.
+
 ### Explicit Cache Breakpoints
 
 In addition to automatic caching, Pydantic AI provides several ways to place cache breakpoints on specific content:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker in your user messages to cache everything before it
-2. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
-3. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+2. **Cache the Final Message Block**: Set [`AnthropicModelSettings.anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+3. **Cache System Instructions**: Set [`AnthropicModelSettings.anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
+4. **Cache Tool Definitions**: Set [`AnthropicModelSettings.anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly
 
 #### Example: Comprehensive Caching Strategy
 
@@ -344,11 +406,12 @@ Anthropic enforces a maximum of 4 cache points per request. Pydantic AI automati
 Cache points can come from several sources:
 
 1. **Automatic caching**: Via `anthropic_cache` (the server applies 1 cache point to the last cacheable block)
-2. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
-3. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
-4. **Messages**: Via `CachePoint` markers (adds cache points to message content)
+2. **Final message block**: Via `anthropic_cache_messages` setting (adds cache point to last message content block)
+3. **System Prompt**: Via `anthropic_cache_instructions` setting (adds cache point to last system prompt block)
+4. **Tool Definitions**: Via `anthropic_cache_tool_definitions` setting (adds cache point to last tool definition)
+5. **Messages**: Via `CachePoint` markers (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
+Each setting uses **at most 1 cache point**, but you can combine them — except `anthropic_cache` and `anthropic_cache_messages`, which are mutually exclusive. If the total exceeds 4, Pydantic AI automatically trims excess cache points from older messages.
 
 #### Example: Combining Automatic and Explicit Caching
 
@@ -428,6 +491,27 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - `anthropic_cache` counts as 1 cache point, just like `anthropic_cache_instructions` and `anthropic_cache_tool_definitions`
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
+
+## Fast mode
+
+Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6** (`anthropic:claude-opus-4-6`) only. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    'anthropic:claude-opus-4-6',
+    model_settings=AnthropicModelSettings(anthropic_speed='fast'),
+)
+...
+```
+
+!!! note "Prompt cache interaction"
+    Switching between `'fast'` and `'standard'` invalidates the prompt cache. Requests at different speeds do not share cached prefixes, so pick one speed per cache-sensitive conversation.
+
+!!! note "Bedrock, Vertex, and Foundry"
+    Fast mode is only available on the direct Anthropic API. Bedrock, Vertex, and Foundry clients do not support the `speed` parameter, so `anthropic_speed='fast'` is ignored with a `UserWarning` on those clients.
 
 ## Message Compaction
 

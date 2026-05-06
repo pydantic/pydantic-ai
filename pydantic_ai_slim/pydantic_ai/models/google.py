@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
+import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingEffort
+from ..settings import ModelSettings, ServiceTier, ThinkingEffort
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -96,6 +97,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
         ToolCodeExecutionDict,
         ToolConfigDict,
@@ -168,30 +170,51 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
-GoogleServiceTier = Literal['pt_then_on_demand', 'pt_only', 'pt_then_flex', 'on_demand', 'flex_only']
-"""Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+GoogleVertexServiceTier = Literal[
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'pt_then_priority',
+    'on_demand',
+    'flex_only',
+    'priority_only',
+]
+"""Values for the `google_vertex_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
-(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo). Only applies when using the Vertex AI API.
-
-**Values:**
+(PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo).
 
 - `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'pt_then_priority'`: PT when quota allows, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: priority`).
 - `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
 - `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+- `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
+"""
 
-Note: these headers only affect Vertex AI. When using the GLA API they are silently ignored.
+GoogleServiceTier = Literal[
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'pt_then_priority',
+    'on_demand',
+    'flex_only',
+    'priority_only',
+]
+"""Deprecated alias for service tier values.
+
+Use [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] for Gemini API (GLA)
+or [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] for Vertex AI.
 """
 
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
-    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_safety_settings: list[SafetySettingDict]
     """The safety settings to use for the model.
@@ -243,15 +266,88 @@ class GoogleModelSettings(ModelSettings, total=False):
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
-    google_service_tier: GoogleServiceTier
-    """Vertex AI routing for Provisioned Throughput and Flex PayGo. Defaults to `'pt_then_on_demand'`.
+    google_vertex_service_tier: GoogleVertexServiceTier
+    """The service tier to use for the model request when using Vertex AI.
 
-    See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values, headers sent, and links to Google docs.
+    Controls routing for Provisioned Throughput, Flex PayGo, and Priority PayGo
+    (e.g., `'pt_only'`, `'flex_only'`, `'priority_only'`).
+
+    See [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] for all values,
+    headers sent, and links to Google docs.
     """
 
+    google_service_tier: GoogleServiceTier
+    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
 
-def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+
+def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
+    """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
+    if (deprecated := model_settings.get('google_service_tier')) is not None:
+        # stacklevel=2 points at the resolver (caller of this helper); the warning text already
+        # names the field so users can identify the source from the message itself.
+        warnings.warn(
+            '`google_service_tier` is deprecated; use `google_vertex_service_tier` for Vertex AI '
+            'or the top-level `service_tier` for the Gemini API (GLA).',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return deprecated
+    return None
+
+
+_GlaServiceTier = Literal['standard', 'flex', 'priority']
+_TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
+    'default': 'standard',
+    'flex': 'flex',
+    'priority': 'priority',
+}
+
+
+def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServiceTier | None:
+    """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
+
+    The deprecated `google_service_tier` only covers Vertex-shaped values, so on GLA we
+    ignore it (after triggering the warning) and map the top-level `service_tier`
+    (`'default'` → `'standard'`, `'flex'`/`'priority'` pass through, `'auto'` is dropped
+    so the server picks the default).
+    """
+    _get_deprecated_google_service_tier(model_settings)
+    if unified := model_settings.get('service_tier'):
+        return _TOP_LEVEL_TO_GLA_SERVICE_TIER.get(unified)
+    return None
+
+
+# Mapping from cross-provider `ServiceTier` to the safe Vertex equivalent, used when the top-level
+# `service_tier` is the only signal available. `'flex'` / `'priority'` always pick the PT-with-spillover
+# variant (never `*_only`) so PT customers keep using their reserved capacity first; users who want to
+# bypass PT must set `google_vertex_service_tier` explicitly.
+_TOP_LEVEL_TO_VERTEX_SERVICE_TIER: dict[ServiceTier, GoogleVertexServiceTier] = {
+    'auto': 'pt_then_on_demand',
+    'default': 'pt_then_on_demand',
+    'flex': 'pt_then_flex',
+    'priority': 'pt_then_priority',
+}
+
+
+def _resolve_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleVertexServiceTier:
+    """Resolve the Vertex tier to use for this request.
+
+    Per-provider `google_vertex_service_tier` wins, then the deprecated `google_service_tier`
+    (with warning), then the top-level `service_tier` mapped via
+    [`_TOP_LEVEL_TO_VERTEX_SERVICE_TIER`][]. Defaults to `'pt_then_on_demand'` so Vertex's
+    built-in PT-with-spillover behavior is the baseline.
+    """
+    if vertex_tier := model_settings.get('google_vertex_service_tier'):
+        return vertex_tier
+    if deprecated := _get_deprecated_google_service_tier(model_settings):
+        return deprecated
+    if top_level := model_settings.get('service_tier'):
+        return _TOP_LEVEL_TO_VERTEX_SERVICE_TIER[top_level]
+    return 'pt_then_on_demand'
+
+
+def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
         return {}
     if service_tier == 'pt_only':
@@ -260,10 +356,17 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
     if service_tier == 'pt_then_flex':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier == 'pt_then_priority':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
     if service_tier == 'flex_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    if service_tier == 'priority_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
 
@@ -646,8 +749,11 @@ class GoogleModel(Model[Client]):
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
-        service_tier = model_settings.get('google_service_tier', 'pt_then_on_demand')
-        headers.update(_google_vertex_service_tier_headers(service_tier))
+        gla_service_tier: _GlaServiceTier | None = None
+        if self.system == 'google-vertex':
+            headers.update(_google_vertex_service_tier_headers(_resolve_vertex_service_tier(model_settings)))
+        else:
+            gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
@@ -678,6 +784,9 @@ class GoogleModel(Model[Client]):
             response_modalities=modalities,
             image_config=image_config,
         )
+
+        if gla_service_tier is not None:
+            config['service_tier'] = cast(_GoogleSDKServiceTier, gla_service_tier)
 
         # Validate logprobs settings
         logprobs_requested = model_settings.get('google_logprobs')
@@ -716,6 +825,13 @@ class GoogleModel(Model[Client]):
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
+
+        if (
+            response.sdk_http_response
+            and response.sdk_http_response.headers
+            and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
+        ):
+            vendor_details['service_tier'] = service_tier.lower()
 
         # Add traffic_type to provider_details for Flex PayGo verification
         if response.usage_metadata and response.usage_metadata.traffic_type:
@@ -1011,6 +1127,13 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+
+                if (
+                    chunk.sdk_http_response
+                    and chunk.sdk_http_response.headers
+                    and (service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier'))
+                ):
+                    self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier.lower()}
 
                 # Capture traffic_type before the candidates guard, since usage_metadata
                 # may be present on chunks without candidates.
@@ -1481,12 +1604,14 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
 
 
 def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> BuiltinToolCallPart:
-    return BuiltinToolCallPart(
+    part = BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
+    part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+    return part
 
 
 def _map_code_execution_result(
