@@ -44,7 +44,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import (
@@ -127,13 +127,35 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'tool_calls': 'tool_call',
 }
 
+MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
+    True: 'high',
+    False: 'none',
+    'minimal': 'none',
+    'low': 'high',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to Mistral reasoning_effort strings."""
+
 
 class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request."""
 
     # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future mistral-specific settings
+    mistral_reasoning_effort: Literal['none', 'high']
+    """Control how much the model thinks before responding.
+
+    - `'high'`: The response includes a full thinking chunk before the final answer,
+      at the cost of increased token usage.
+    - `'none'`: The model thinks minimally and the thinking chunk is omitted from the response.
+
+    Takes precedence over the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting.
+
+    Only supported on models with adjustable reasoning (e.g. `mistral-small-latest`, `mistral-medium-3-5`).
+    See [the Mistral docs](https://docs.mistral.ai/studio-api/conversations/reasoning/adjustable) for details.
+    """
 
 
 @dataclass(init=False)
@@ -259,6 +281,7 @@ class MistralModel(Model[Mistral]):
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
                 stop=model_settings.get('stop_sequences', None),
+                reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -274,6 +297,7 @@ class MistralModel(Model[Mistral]):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = await self._map_messages(messages, model_request_parameters)
+        reasoning_effort = self._translate_thinking(model_settings, model_request_parameters)
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
@@ -292,6 +316,7 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                reasoning_effort=reasoning_effort,
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -316,6 +341,7 @@ class MistralModel(Model[Mistral]):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                reasoning_effort=reasoning_effort,
                 http_headers={'User-Agent': get_user_agent()},
             )
 
@@ -325,6 +351,7 @@ class MistralModel(Model[Mistral]):
                 model=str(self._model_name),
                 messages=mistral_messages,
                 stream=True,
+                reasoning_effort=reasoning_effort,
                 http_headers={'User-Agent': get_user_agent()},
             )
         assert response, 'An unexpected empty response from Mistral.'
@@ -512,6 +539,19 @@ class MistralModel(Model[Mistral]):
         if isinstance(timeout, float):  # pragma: no cover
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
+
+    @staticmethod
+    def _translate_thinking(
+        model_settings: MistralModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Literal['none', 'high'] | MistralUnset:
+        """Get reasoning effort, falling back to unified thinking when provider-specific setting is not set."""
+        if effort := model_settings.get('mistral_reasoning_effort'):
+            return effort
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return UNSET
+        return MISTRAL_REASONING_EFFORT_MAP[thinking]
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []

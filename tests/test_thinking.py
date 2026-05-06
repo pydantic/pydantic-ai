@@ -854,6 +854,83 @@ class TestCerebrasThinkingTranslation:
         assert result == 'low'
 
 
+class TestMistralThinkingTranslation:
+    """Test Mistral model _translate_thinking translation."""
+
+    @pytest.fixture(autouse=True)
+    def _require_mistral(self):
+        pytest.importorskip('mistralai', reason='mistralai not installed')
+
+    def test_thinking_true(self):
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking=True)
+        settings = MistralModelSettings()
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'high'
+
+    def test_thinking_high(self):
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking='high')
+        settings = MistralModelSettings()
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'high'
+
+    def test_thinking_low(self):
+        """thinking='low' maps to 'high' (Mistral has no in-between; any active thinking uses 'high')."""
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking='low')
+        settings = MistralModelSettings()
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'high'
+
+    def test_thinking_minimal(self):
+        """thinking='minimal' maps to 'none' — disables the thinking chunk per Mistral docs."""
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking='minimal')
+        settings = MistralModelSettings()
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'none'
+
+    def test_thinking_false(self):
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking=False)
+        settings = MistralModelSettings()
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'none'
+
+    def test_thinking_none_returns_unset(self):
+        from mistralai.client.types.basemodel import Unset as MistralUnset
+
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking=None)
+        settings = MistralModelSettings()
+        result = MistralModel._translate_thinking(settings, params)
+        assert isinstance(result, MistralUnset)
+
+    def test_provider_specific_takes_precedence(self):
+        """mistral_reasoning_effort set -> unified thinking is ignored."""
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking=True)
+        settings = MistralModelSettings(mistral_reasoning_effort='none')
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'none'
+
+    def test_provider_specific_high(self):
+        from pydantic_ai.models.mistral import MistralModel, MistralModelSettings
+
+        params = ModelRequestParameters(thinking=False)
+        settings = MistralModelSettings(mistral_reasoning_effort='high')
+        result = MistralModel._translate_thinking(settings, params)
+        assert result == 'high'
+
+
 class TestXaiThinkingTranslation:
     """Test xAI unified thinking fallback."""
 
