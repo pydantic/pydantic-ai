@@ -1,9 +1,13 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250522', '20250825', '20260120']
+"""Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 
 
 @dataclass(kw_only=True)
@@ -52,6 +56,15 @@ class AnthropicModelProfile(ModelProfile):
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """
 
+    anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion = '20250825'
+    """The Anthropic code execution tool version used when `anthropic_code_execution_tool_version='auto'`."""
+
+    anthropic_supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = (
+        '20250522',
+        '20250825',
+    )
+    """The Anthropic code execution tool versions supported by the model."""
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -92,6 +105,15 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
+    supports_code_execution_20260120 = model_name.startswith(
+        ('claude-opus-4-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-sonnet-4-5', 'claude-sonnet-4-6')
+    )
+    default_code_execution_tool_version: AnthropicCodeExecutionToolVersion = (
+        '20260120' if supports_code_execution_20260120 else '20250825'
+    )
+    supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = (
+        ('20250522', '20250825', '20260120') if supports_code_execution_20260120 else ('20250522', '20250825')
+    )
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -103,4 +125,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
+        anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
     )

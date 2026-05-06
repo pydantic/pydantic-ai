@@ -230,7 +230,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Anthropic | ✅ | |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -255,11 +255,10 @@ print(result.response.builtin_tool_calls)
     (
         BuiltinToolCallPart(
             tool_name='code_execution',
-            args={
-                'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-            },
+            args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
         BuiltinToolReturnPart(
             tool_name='code_execution',
@@ -267,12 +266,13 @@ print(result.response.builtin_tool_calls)
                 'content': [],
                 'return_code': 0,
                 'stderr': '',
-                'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                'type': 'code_execution_result',
+                'stdout': '1307674368000\n',
+                'type': 'bash_code_execution_result',
             },
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             timestamp=datetime.datetime(...),
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
     )
 ]
