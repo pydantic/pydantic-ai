@@ -33,6 +33,14 @@ class AnthropicModelProfile(ModelProfile):
     mapped to `output_config.effort`.
     """
 
+    anthropic_supports_dynamic_filtering: bool = False
+    """Whether the model supports dynamic filtering for web search/fetch (Sonnet 4.6+, Opus 4.6+).
+
+    When True and `dynamic_filtering` is not explicitly set to `False` on the builtin tool,
+    the 20260209 tool versions are used which enable server-side filtering before
+    search/fetch results enter context.
+    """
+
     anthropic_supports_xhigh_effort: bool = False
     """Whether the model supports the `xhigh` effort value in `output_config`.
 
@@ -93,6 +101,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
 
+    # Sonnet 4.6+ and Opus 4.6+ support dynamic filtering (20260209 web search/fetch)
+    supports_dynamic_filtering = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6'))
+
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
@@ -100,6 +111,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supports_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
+        anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,

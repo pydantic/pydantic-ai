@@ -38,6 +38,12 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     max_content_tokens: int | None
     """Maximum content length in tokens. Builtin-only; ignored by local tools."""
 
+    dynamic_filtering: bool | None
+    """Enable dynamic filtering for fetched content. Builtin-only; ignored by local tools.
+
+    With Anthropic, this requires `CodeExecutionTool` to also be enabled.
+    """
+
     def __init__(
         self,
         *,
@@ -50,6 +56,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
+        dynamic_filtering: bool | None = None,
     ) -> None:
         self.builtin = builtin
         self.local = local
@@ -58,6 +65,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_uses = max_uses
         self.enable_citations = enable_citations
         self.max_content_tokens = max_content_tokens
+        self.dynamic_filtering = dynamic_filtering
         self.__post_init__()
 
     def _default_builtin(self) -> WebFetchTool:
@@ -72,6 +80,8 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['enable_citations'] = self.enable_citations
         if self.max_content_tokens is not None:
             kwargs['max_content_tokens'] = self.max_content_tokens
+        if self.dynamic_filtering is not None:
+            kwargs['dynamic_filtering'] = self.dynamic_filtering
         return WebFetchTool(**kwargs)
 
     def _builtin_unique_id(self) -> str:
@@ -98,4 +108,4 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             return None
 
     def _requires_builtin(self) -> bool:
-        return self.max_uses is not None
+        return self.max_uses is not None or self.dynamic_filtering is not None

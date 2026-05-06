@@ -9908,6 +9908,109 @@ Fix the errors and try again.\
     )
 
 
+async def test_anthropic_dynamic_filtering_auto_detection(env: TestEnv, allow_model_requests: None):
+    """Test that dynamic filtering is auto-detected based on model profile."""
+    c = completion_message(
+        [BetaTextBlock(text='result', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+
+    # Sonnet 4.6 should preserve existing behavior unless code execution is also enabled.
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool(), WebFetchTool()])
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tool_types = [t['type'] for t in kwargs['tools']]
+    assert 'web_search_20250305' in tool_types
+    assert 'web_fetch_20250910' in tool_types
+    betas = kwargs.get('betas')
+    betas_list: list[str] = list(betas) if isinstance(betas, list) else []  # pyright: ignore[reportUnknownArgumentType]
+    assert 'web-fetch-2025-09-10' in betas_list
+
+    # Sonnet 4.6 should auto-select 20260209 versions when code execution is enabled.
+    mock_client_with_code = MockAnthropic.create_mock(c)
+    m_with_code = AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client_with_code)
+    )
+    agent_with_code = Agent(m_with_code, builtin_tools=[WebSearchTool(), WebFetchTool(), CodeExecutionTool()])
+    await agent_with_code.run('hello')
+
+    kwargs_with_code = get_mock_chat_completion_kwargs(mock_client_with_code)[0]
+    tool_types = [t['type'] for t in kwargs_with_code['tools']]
+    assert 'web_search_20260209' in tool_types
+    assert 'web_fetch_20260209' in tool_types
+    # 20260209 web search/fetch are GA; no web-fetch beta header needed
+    betas = kwargs_with_code.get('betas')
+    betas_list: list[str] = list(betas) if isinstance(betas, list) else []  # pyright: ignore[reportUnknownArgumentType]
+    assert 'web-fetch-2025-09-10' not in betas_list
+
+    # Sonnet 4-0 should use old versions
+    mock_client2 = MockAnthropic.create_mock(c)
+    m2 = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client2))
+    agent2 = Agent(m2, builtin_tools=[WebSearchTool(), WebFetchTool()])
+    await agent2.run('hello')
+
+    kwargs2 = get_mock_chat_completion_kwargs(mock_client2)[0]
+    tool_types2 = [t['type'] for t in kwargs2['tools']]
+    assert 'web_search_20250305' in tool_types2
+    assert 'web_fetch_20250910' in tool_types2
+    betas2 = kwargs2.get('betas')
+    betas_list2: list[str] = list(betas2) if isinstance(betas2, list) else []  # pyright: ignore[reportUnknownArgumentType]
+    assert 'web-fetch-2025-09-10' in betas_list2
+
+
+async def test_anthropic_dynamic_filtering_explicit_override(env: TestEnv, allow_model_requests: None):
+    """Test that explicit dynamic_filtering=True/False overrides auto-detection."""
+    c = completion_message(
+        [BetaTextBlock(text='result', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+
+    # Force dynamic filtering ON for a model that wouldn't auto-detect it, with required code execution enabled.
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[
+            WebSearchTool(dynamic_filtering=True),
+            WebFetchTool(dynamic_filtering=True),
+            CodeExecutionTool(),
+        ],
+    )
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tool_types = [t['type'] for t in kwargs['tools']]
+    assert 'web_search_20260209' in tool_types
+    assert 'web_fetch_20260209' in tool_types
+
+    # Force dynamic filtering OFF for a model that would auto-detect it
+    mock_client2 = MockAnthropic.create_mock(c)
+    m2 = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client2))
+    agent2 = Agent(m2, builtin_tools=[WebSearchTool(dynamic_filtering=False), WebFetchTool(dynamic_filtering=False)])
+    await agent2.run('hello')
+
+    kwargs2 = get_mock_chat_completion_kwargs(mock_client2)[0]
+    tool_types2 = [t['type'] for t in kwargs2['tools']]
+    assert 'web_search_20250305' in tool_types2
+    assert 'web_fetch_20250910' in tool_types2
+
+
+async def test_anthropic_dynamic_filtering_requires_code_execution(env: TestEnv, allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='result', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool(dynamic_filtering=True)])
+
+    with pytest.raises(UserError, match='requires `CodeExecutionTool`'):
+        await agent.run('hello')
+
+
 async def test_anthropic_compaction_capability_settings(allow_model_requests: None, anthropic_api_key: str):
     """Test that AnthropicCompaction capability correctly configures model settings."""
     from unittest.mock import Mock

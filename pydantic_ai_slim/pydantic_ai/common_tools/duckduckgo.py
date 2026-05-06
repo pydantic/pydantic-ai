@@ -1,5 +1,6 @@
 import functools
 from dataclasses import KW_ONLY, dataclass
+from typing import TYPE_CHECKING, Protocol
 
 import anyio.to_thread
 from pydantic import TypeAdapter
@@ -7,18 +8,45 @@ from typing_extensions import Any, TypedDict
 
 from pydantic_ai.tools import Tool
 
-try:
-    try:
-        from ddgs.ddgs import DDGS
-    except ImportError:  # Fallback for older versions of ddgs
-        from duckduckgo_search import DDGS
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `ddgs` to use the DuckDuckGo search tool, '
-        'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
-    ) from _import_error
-
 __all__ = ('duckduckgo_search_tool',)
+
+
+class _DuckDuckGoClient(Protocol):
+    def text(
+        self,
+        keywords: str,
+        region: str | None = None,
+        safesearch: str = 'moderate',
+        timelimit: str | None = None,
+        backend: str = 'auto',
+        max_results: int | None = None,
+    ) -> list[dict[str, str]]: ...
+
+
+if TYPE_CHECKING:
+
+    class DDGS:
+        def text(
+            self,
+            keywords: str,
+            region: str | None = None,
+            safesearch: str = 'moderate',
+            timelimit: str | None = None,
+            backend: str = 'auto',
+            max_results: int | None = None,
+        ) -> list[dict[str, str]]: ...
+
+else:
+    try:
+        try:
+            from ddgs.ddgs import DDGS
+        except ImportError:  # Fallback for older versions of ddgs
+            from duckduckgo_search import DDGS
+    except ImportError as _import_error:
+        raise ImportError(
+            'Please install `ddgs` to use the DuckDuckGo search tool, '
+            'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
+        ) from _import_error
 
 
 class DuckDuckGoResult(TypedDict):
@@ -39,7 +67,7 @@ duckduckgo_ta = TypeAdapter(list[DuckDuckGoResult])
 class DuckDuckGoSearchTool:
     """The DuckDuckGo search tool."""
 
-    client: DDGS
+    client: _DuckDuckGoClient
     """The DuckDuckGo search client."""
 
     _: KW_ONLY
@@ -61,7 +89,9 @@ class DuckDuckGoSearchTool:
         return duckduckgo_ta.validate_python(results)
 
 
-def duckduckgo_search_tool(duckduckgo_client: DDGS | None = None, max_results: int | None = None):
+def duckduckgo_search_tool(
+    duckduckgo_client: _DuckDuckGoClient | None = None, max_results: int | None = None
+) -> Tool[Any]:
     """Creates a DuckDuckGo search tool.
 
     Args:
