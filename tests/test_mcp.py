@@ -373,16 +373,18 @@ async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatc
     # Outer `wait_for` is a safety net so a regression doesn't hang the suite —
     # the real assertion is on elapsed time below. `wait_for` itself can't detect
     # the regression because `__aexit__` swallows the cancellation it sends.
+    safety_net = 5.0
     start = time.monotonic()
     with patch.object(server, 'client_streams', hung_teardown_streams):
-        await asyncio.wait_for(enter_then_exit(), timeout=5.0)
+        await asyncio.wait_for(enter_then_exit(), timeout=safety_net)
     elapsed = time.monotonic() - start
 
     assert teardown_reached.is_set(), 'transport teardown was never reached'
     assert not server.is_running
-    # With the fix: bounded by ~grace (one wait + cancel escalation). Without:
-    # `__aexit__` awaits the hung task until `wait_for`'s 5s safety net fires.
-    assert elapsed < 1.0, f'shutdown took {elapsed:.2f}s, expected ~{grace}s'
+    # With the fix: bounded by ~2 * grace plus subprocess teardown overhead. Without:
+    # `__aexit__` awaits the hung task until `wait_for`'s safety net fires (~5s).
+    # Threshold sits comfortably between the two regimes, with headroom for CI jitter.
+    assert elapsed < safety_net - 1.5, f'shutdown took {elapsed:.2f}s, expected <<{safety_net}s'
 
 
 async def test_aexit_concurrent_does_not_corrupt_nesting_counter():
