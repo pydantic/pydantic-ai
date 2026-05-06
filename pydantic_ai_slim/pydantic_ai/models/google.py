@@ -127,48 +127,6 @@ _TOOL_TYPE_TO_BUILTIN_TOOL_NAME: dict[ToolType, str] = {
 
 _BUILTIN_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_BUILTIN_TOOL_NAME.items()}
 
-# Server-side builtin tools — those that round-trip through `tool_call`/`tool_response` parts
-# when `include_server_side_tool_invocations` is enabled. `CodeExecutionTool` is excluded
-# because it uses `executable_code`/`code_execution_result`; `ImageGenerationTool` is excluded
-# because it's a model capability configured via `image_config`.
-_SERVER_SIDE_BUILTIN_TOOL_TYPES = (WebSearchTool, WebFetchTool, FileSearchTool)
-
-
-@dataclass(frozen=True)
-class _GoogleRequestFlags:
-    """Snapshot of profile flags + request-derived flags that gate Gemini-specific request shaping.
-
-    Built once per request in `_build_content_and_config` via `_GoogleRequestFlags.for_request`
-    and threaded into helpers that consume any of these flags, so the profile is read in one
-    place and the same snapshot is shared across the request lifecycle.
-    """
-
-    supports_tool_combination: bool
-    supports_server_side_tool_invocations: bool
-    has_server_side_tools: bool
-
-    @classmethod
-    def for_request(
-        cls,
-        profile: GoogleModelProfile,
-        builtin_tools: list[AbstractBuiltinTool],
-    ) -> _GoogleRequestFlags:
-        return cls(
-            supports_tool_combination=profile.google_supports_tool_combination,
-            supports_server_side_tool_invocations=profile.google_supports_server_side_tool_invocations,
-            has_server_side_tools=any(isinstance(t, _SERVER_SIDE_BUILTIN_TOOL_TYPES) for t in builtin_tools),
-        )
-
-
-# Fail-closed defaults — used as the implicit `request_flags` argument when a helper is invoked outside
-# of a real request context (e.g. unit tests that don't exercise builtin-tool plumbing).
-_DEFAULT_FLAGS: _GoogleRequestFlags = _GoogleRequestFlags(
-    supports_tool_combination=False,
-    supports_server_side_tool_invocations=False,
-    has_server_side_tools=False,
-)
-
-
 LatestGoogleModelNames = Literal[
     'gemini-flash-latest',
     'gemini-flash-lite-latest',
@@ -636,12 +594,15 @@ class GoogleModel(Model[Client]):
         return image_config
 
     def _get_tools(
-        self, model_request_parameters: ModelRequestParameters, request_flags: _GoogleRequestFlags
+        self,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        supports_tool_combination: bool = False,
     ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
         if (
             model_request_parameters.builtin_tools
             and model_request_parameters.function_tools
-            and not request_flags.supports_tool_combination
+            and not supports_tool_combination
         ):
             raise UserError('This model does not support function tools and built-in tools at the same time.')
 
@@ -676,15 +637,13 @@ class GoogleModel(Model[Client]):
         self,
         model_request_parameters: ModelRequestParameters,
         tools: list[ToolDict] | None,
-        request_flags: _GoogleRequestFlags,
+        *,
+        include_server_side_tool_invocations: bool = False,
     ) -> ToolConfigDict | None:
         # `include_server_side_tool_invocations` makes Gemini emit explicit `tool_call`/`tool_response`
         # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
         # ('Tool call context circulation is not enabled'); CodeExecutionTool uses its own
         # `executable_code`/`code_execution_result` parts; ImageGenerationTool runs through `image_config`.
-        request_server_side_tool_invocations = (
-            request_flags.supports_server_side_tool_invocations and request_flags.has_server_side_tools
-        )
         if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
             for tool in tools:
@@ -692,10 +651,10 @@ class GoogleModel(Model[Client]):
                     if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
             tool_config = _tool_config(names)
-            if request_server_side_tool_invocations:
+            if include_server_side_tool_invocations:
                 tool_config['include_server_side_tool_invocations'] = True
             return tool_config
-        if request_server_side_tool_invocations:
+        if include_server_side_tool_invocations:
             return ToolConfigDict(include_server_side_tool_invocations=True)
         return None
 
@@ -786,18 +745,21 @@ class GoogleModel(Model[Client]):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
-        request_flags = _GoogleRequestFlags.for_request(
-            GoogleModelProfile.from_profile(self.profile),
-            model_request_parameters.builtin_tools,
+        profile = GoogleModelProfile.from_profile(self.profile)
+        supports_tool_combination = profile.google_supports_tool_combination
+        include_server_side_tool_invocations = profile.google_supports_server_side_tool_invocations and any(
+            isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.builtin_tools
         )
-        tools, image_config = self._get_tools(model_request_parameters, request_flags)
+        tools, image_config = self._get_tools(
+            model_request_parameters, supports_tool_combination=supports_tool_combination
+        )
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools and not request_flags.supports_tool_combination:
+            if model_request_parameters.function_tools and not supports_tool_combination:
                 raise UserError(
                     'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
@@ -810,8 +772,14 @@ class GoogleModel(Model[Client]):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
 
-        tool_config = self._get_tool_config(model_request_parameters, tools, request_flags)
-        system_instruction, contents = await self._map_messages(messages, model_request_parameters, request_flags)
+        tool_config = self._get_tool_config(
+            model_request_parameters,
+            tools,
+            include_server_side_tool_invocations=include_server_side_tool_invocations,
+        )
+        system_instruction, contents = await self._map_messages(
+            messages, model_request_parameters, supports_tool_combination=supports_tool_combination
+        )
 
         modalities = [Modality.TEXT.value]
         if self.profile.supports_image_output:
@@ -957,7 +925,8 @@ class GoogleModel(Model[Client]):
         self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
-        request_flags: _GoogleRequestFlags,
+        *,
+        supports_tool_combination: bool = False,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
@@ -1012,7 +981,9 @@ class GoogleModel(Model[Client]):
 
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
-                maybe_content = _content_model_response(m, self.system, request_flags=request_flags)
+                maybe_content = _content_model_response(
+                    m, self.system, supports_tool_combination=supports_tool_combination
+                )
                 if maybe_content:
                     contents.append(maybe_content)
             else:
@@ -1478,7 +1449,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
 
 def _content_model_response(
-    m: ModelResponse, provider_name: str, *, request_flags: _GoogleRequestFlags = _DEFAULT_FLAGS
+    m: ModelResponse, provider_name: str, *, supports_tool_combination: bool = False
 ) -> ContentDict | None:
     parts: list[PartDict] = []
     # Thought signature emitted by a `ThinkingPart`, to be carried over to the *next* part.
@@ -1509,9 +1480,13 @@ def _content_model_response(
             else:
                 part = None
         elif isinstance(item, BuiltinToolCallPart):
-            part = _builtin_tool_call_part_dict(item, provider_name, item_signature, request_flags=request_flags)
+            part = _builtin_tool_call_part_dict(
+                item, provider_name, item_signature, supports_tool_combination=supports_tool_combination
+            )
         elif isinstance(item, BuiltinToolReturnPart):
-            part = _builtin_tool_return_part_dict(item, provider_name, item_signature, request_flags=request_flags)
+            part = _builtin_tool_return_part_dict(
+                item, provider_name, item_signature, supports_tool_combination=supports_tool_combination
+            )
         elif isinstance(item, FilePart):
             inline_data_dict: BlobDict = {'data': item.content.data, 'mime_type': item.content.media_type}
             part = _attach_signature({'inline_data': inline_data_dict}, item_signature)
@@ -1565,7 +1540,7 @@ def _function_call_part_dict(item: ToolCallPart, signature: bytes | None, *, nee
 
 
 def _builtin_tool_call_part_dict(
-    item: BuiltinToolCallPart, provider_name: str, signature: bytes | None, *, request_flags: _GoogleRequestFlags
+    item: BuiltinToolCallPart, provider_name: str, signature: bytes | None, *, supports_tool_combination: bool
 ) -> PartDict | None:
     if item.provider_name != provider_name:
         return None
@@ -1574,7 +1549,7 @@ def _builtin_tool_call_part_dict(
     tool_type = _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
-    if not _can_echo_server_side_tool_part(item.tool_call_id, request_flags=request_flags):
+    if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
     part: PartDict = {
         'tool_call': {'id': item.tool_call_id, 'tool_type': tool_type, 'args': item.args_as_dict()},
@@ -1583,7 +1558,7 @@ def _builtin_tool_call_part_dict(
 
 
 def _builtin_tool_return_part_dict(
-    item: BuiltinToolReturnPart, provider_name: str, signature: bytes | None, *, request_flags: _GoogleRequestFlags
+    item: BuiltinToolReturnPart, provider_name: str, signature: bytes | None, *, supports_tool_combination: bool
 ) -> PartDict | None:
     if item.provider_name != provider_name:
         return None
@@ -1595,7 +1570,7 @@ def _builtin_tool_return_part_dict(
     tool_type = _BUILTIN_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown builtin tool name: {item.tool_name!r}')
-    if not _can_echo_server_side_tool_part(item.tool_call_id, request_flags=request_flags):
+    if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
     response: dict[str, Any] = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
     part: PartDict = {
@@ -1604,7 +1579,7 @@ def _builtin_tool_return_part_dict(
     return _attach_signature(part, signature)
 
 
-def _can_echo_server_side_tool_part(tool_call_id: str, *, request_flags: _GoogleRequestFlags) -> bool:
+def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combination: bool) -> bool:
     """Whether a server-side builtin-tool part can be echoed back to Gemini as `tool_call` / `tool_response`.
 
     Two reasons to skip:
@@ -1617,7 +1592,7 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, request_flags: _Google
        Google id. Gemini rejects unknown ids, so message histories built before this round-trip
        support landed must drop those parts even on Gemini 3+.
     """
-    if not request_flags.supports_tool_combination:
+    if not supports_tool_combination:
         return False
     return not tool_call_id.startswith('pyd_ai_')
 

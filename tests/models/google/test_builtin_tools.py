@@ -32,20 +32,10 @@ with try_import() as imports_successful:
         WebSearchTool,
     )
     from pydantic_ai.models.google import (
-        _DEFAULT_FLAGS,  # pyright: ignore[reportPrivateUsage]
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
-        _GoogleRequestFlags,  # pyright: ignore[reportPrivateUsage]
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
-
-
-if imports_successful():
-    _TOOL_COMBINATION_FLAGS = _GoogleRequestFlags(
-        supports_tool_combination=True,
-        supports_server_side_tool_invocations=True,
-        has_server_side_tools=False,
-    )
 
 
 def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
@@ -81,7 +71,7 @@ def test_content_model_response_pre_gemini_3_drops_builtin_tool_parts():
     )
 
     assert _content_model_response(response, 'google-gla') == snapshot({'role': 'model', 'parts': [{'text': 'hello'}]})
-    assert _content_model_response(response, 'google-gla', request_flags=_TOOL_COMBINATION_FLAGS) == snapshot(
+    assert _content_model_response(response, 'google-gla', supports_tool_combination=True) == snapshot(
         {
             'role': 'model',
             'parts': [
@@ -162,7 +152,7 @@ def test_content_model_response_drops_pyd_ai_synthesized_builtin_tool_ids():
         ],
         provider_name='google-gla',
     )
-    assert _content_model_response(response, 'google-gla', request_flags=_TOOL_COMBINATION_FLAGS) == snapshot(
+    assert _content_model_response(response, 'google-gla', supports_tool_combination=True) == snapshot(
         {'role': 'model', 'parts': [{'text': 'hello'}]}
     )
 
@@ -187,8 +177,9 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
         provider_name='google-gla',
     )
 
-    request_flags = _TOOL_COMBINATION_FLAGS if supports_tool_combination else _DEFAULT_FLAGS
-    assert _content_model_response(response, 'google-gla', request_flags=request_flags) == snapshot(
+    assert _content_model_response(
+        response, 'google-gla', supports_tool_combination=supports_tool_combination
+    ) == snapshot(
         {
             'role': 'model',
             'parts': [
