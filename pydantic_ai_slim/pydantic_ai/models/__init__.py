@@ -993,8 +993,9 @@ class StreamedResponse(ABC):
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+    _cancelled: bool = field(default=False, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -1057,9 +1058,63 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            async def iterator_with_cancel_guard(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                # Suppress transport errors caused by `cancel()` tearing down the
+                # connection mid-stream. The try/except has to live inside an
+                # async generator body so it's active at every `await` during
+                # iteration.
+                try:
+                    async for event in iterator:
+                        yield event
+                except self.get_stream_cancel_errors():
+                    if not self.cancelled:
+                        raise
+
+            self._event_iterator = iterator_with_cancel_guard(
+                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            )
         return self._event_iterator
 
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation.
+
+        Sets `self._cancelled = True` before delegating to `close_stream()`
+        so the flag is visible to any iterator that observes the transport error
+        raised when the underlying connection is torn down, even if
+        `close_stream()` itself raises.
+        """
+        if self.cancelled:
+            return
+        self._cancelled = True
+        await self.close_stream()
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        """Return transport errors caused by `cancel()` tearing down the stream.
+
+        The default covers model classes whose SDKs iterate `httpx` responses
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
+        and the custom Gemini client), since they let bare `httpx` errors
+        propagate from chunk reads. Model classes that use other transports
+        (for example gRPC or botocore) should override this method.
+        """
+        return (httpx.StreamError, httpx.TransportError)
+
+    async def close_stream(self) -> None:
+        """Close the underlying HTTP/gRPC connection.
+
+        Model classes must override this to stop token generation (and billing)
+        on the remote side. Integrations that cannot support cancellation should
+        leave the default implementation so `cancel()` fails clearly rather than
+        silently reporting successful cancellation while generation continues.
+        """
+        raise NotImplementedError(
+            f'Stream cancellation is not implemented for {type(self).__name__}. '
+            'This model class must override `close_stream()` to support streaming cancellation.'
+        )
+
+    # TODO: (v2) We should not have public private methods which need to be overwritten.
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1085,6 +1140,7 @@ class StreamedResponse(ABC):
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
+            state='interrupted' if self._cancelled else 'complete',
         )
 
     # TODO (v2): Make this a property
@@ -1115,6 +1171,11 @@ class StreamedResponse(ABC):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
+        return self._cancelled
 
 
 ALLOW_MODEL_REQUESTS = True

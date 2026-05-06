@@ -538,7 +538,12 @@ class GoogleModel(Model[Client]):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
-        yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        try:
+            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        finally:
+            aclose = getattr(response, 'aclose', None)
+            if aclose is not None:
+                await aclose()
 
     def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
         """Build ImageConfigDict from ImageGenerationTool with validation."""
@@ -867,7 +872,9 @@ class GoogleModel(Model[Client]):
         self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            GenerateContentResponse, AsyncIterator[GenerateContentResponse]
+        ] = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -1112,7 +1119,7 @@ class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
     _model_name: GoogleModelName
-    _response: AsyncIterator[GenerateContentResponse]
+    _response: _utils.PeekableAsyncStream[GenerateContentResponse, AsyncIterator[GenerateContentResponse]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -1120,6 +1127,15 @@ class GeminiStreamedResponse(StreamedResponse):
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
+
+    async def close_stream(self) -> None:
+        try:
+            # google.genai types this as AsyncIterator, but at runtime it's an
+            # async generator that exposes aclose().
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -1169,7 +1185,10 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 raw_finish_reason = candidate.finish_reason
                 if raw_finish_reason and not self._has_content_filter:
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'finish_reason': raw_finish_reason.value,
+                    }
 
                     if candidate.safety_ratings:
                         self.provider_details['safety_ratings'] = [

@@ -875,6 +875,134 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+### Cancelling Streams
+
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] should be used as an async context manager so cleanup runs deterministically when you stop consuming events.
+
+!!! note "Model support"
+    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] and the deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] do not currently support stream cancellation.
+
+#### Cleaning up `run_stream_events`
+
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager:
+
+```python {title="stream_cancel_run_stream_events.py"}
+from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
+        async for event in stream:
+            if isinstance(event, PartStartEvent):
+                print(f'Started: {event.part!r}')
+                #> Started: TextPart(content='Python is a ')
+            elif isinstance(event, FinalResultEvent):
+                break  # (2)!
+```
+
+1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
+2. Breaking out of the loop leaves the `async with` block, which closes the event stream and runs cleanup.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+`run_stream_events()` does not expose a `cancel()` method. If you need an explicit model-response cancellation handle, use [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] or [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+
+#### Cancelling `run_stream`
+
+Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] to cancel the stream:
+
+```python {title="stream_cancel_run_stream.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Write a long essay about Python') as result:
+        text = ''
+        async for chunk in result.stream_text(delta=True):
+            text += chunk
+            if len(text) > 100:  # (1)!
+                await result.cancel()  # (2)!
+                break
+        print(result.cancelled)  # (3)!
+        #> True
+        print(result.response.state == 'interrupted')  # (4)!
+        #> True
+```
+
+1. Check a condition during streaming, for example whether enough text has been received.
+2. `cancel()` tells the model provider to stop generating tokens and closes the HTTP connection when the model integration supports it.
+3. The `cancelled` property reflects the cancellation state.
+4. The final [`ModelResponse`][pydantic_ai.messages.ModelResponse] is marked with `state='interrupted'` so that downstream code can identify incomplete responses.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
+
+!!! warning "Interrupted tool calls"
+    Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, but it does not filter incomplete tool calls, synthesize tool returns, or otherwise define run-resumption behavior for those partial responses. If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
+
+#### Cancelling with `iter`
+
+When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained control over the agent graph, you can cancel the [`AgentStream`][pydantic_ai.result.AgentStream] inside a `ModelRequestNode.stream()` context:
+
+```python {title="stream_cancel_iter.py"}
+from pydantic_ai import Agent, FinalResultEvent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.iter('Write a long essay about Python') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        if isinstance(event, FinalResultEvent):
+                            await stream.cancel()  # (1)!
+                            break
+```
+
+1. `AgentStream.cancel()` cancels the stream at the model request level.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Message History After Cancellation
+
+When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
+
+```python {title="stream_cancel_history.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+async def main():
+    async with agent.run_stream('Tell me about Python') as result:
+        async for text in result.stream_text(delta=True):
+            break
+        await result.cancel()
+
+    messages = result.all_messages()  # (1)!
+    print(messages[-1].state)  # (2)!
+    #> interrupted
+```
+
+1. The message history includes the interrupted response with any partial content that was received before cancellation.
+2. The interrupted response state lets your application decide whether to keep, inspect, or discard the partial response before reusing the history.
+
+_(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
+
+!!! warning "Reusing interrupted history"
+    Pydantic AI does not clean up incomplete tool calls in interrupted responses. Passing interrupted history directly into another run can therefore fail or lead to retries if the model was in the middle of emitting a tool call when cancellation happened. For now, applications that reuse interrupted history should inspect `state='interrupted'` responses and apply their own policy.
+
+!!! info "Usage tracking for cancelled streams"
+    Token usage reported by `usage()` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
+    For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
+
 ## Examples
 
 The following examples demonstrate how to use streamed responses in Pydantic AI:

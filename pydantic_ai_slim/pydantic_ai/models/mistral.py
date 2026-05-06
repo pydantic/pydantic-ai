@@ -405,7 +405,9 @@ class MistralModel(Model[Mistral]):
         model_request_parameters: ModelRequestParameters,
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            MistralCompletionEvent, MistralEventStreamAsync[MistralCompletionEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -659,13 +661,16 @@ class MistralStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Mistral models."""
 
     _model_name: MistralModelName
-    _response: AsyncIterable[MistralCompletionEvent]
+    _response: _utils.PeekableAsyncStream[MistralCompletionEvent, MistralEventStreamAsync[MistralCompletionEvent]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
 
     _delta_content: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):

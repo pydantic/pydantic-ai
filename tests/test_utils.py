@@ -124,7 +124,7 @@ def test_check_object_json_schema():
 @pytest.mark.anyio
 async def test_peekable_async_stream(peek_first: bool):
     async_stream = MockAsyncStream(iter([1, 2, 3]))
-    peekable_async_stream = PeekableAsyncStream(async_stream)
+    peekable_async_stream: PeekableAsyncStream[int, MockAsyncStream[int]] = PeekableAsyncStream(async_stream)
 
     items: list[int] = []
 
@@ -142,6 +142,20 @@ async def test_peekable_async_stream(peek_first: bool):
     assert await peekable_async_stream.is_exhausted()
     assert await peekable_async_stream.peek() is UNSET
     assert items == [1, 2, 3]
+
+
+async def test_peekable_async_stream_aclose_before_iteration():
+    class AsyncIteratorNoClose:
+        def __aiter__(self) -> AsyncIteratorNoClose:
+            return self
+
+        async def __anext__(self) -> int:
+            raise StopAsyncIteration
+
+    peekable_async_stream: PeekableAsyncStream[int, AsyncIteratorNoClose] = PeekableAsyncStream(AsyncIteratorNoClose())
+    await peekable_async_stream.aclose()
+
+    assert await peekable_async_stream.is_exhausted()
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):

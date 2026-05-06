@@ -70,6 +70,17 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+async def _cancel_task(task: Task[Any]) -> None:
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except BaseException:
+        # Called while another stream error is already propagating; await only
+        # to finish cleanup and retrieve the task exception, not replace it.
+        pass
+
+
 NEW_CONVERSATION: Literal['new'] = 'new'
 """Sentinel value for `conversation_id` that forces a fresh conversation, ignoring any
 `conversation_id` present in `message_history`. See `resolve_conversation_id`."""
@@ -522,6 +533,11 @@ class _SkipStreamedResponse(models.StreamedResponse):
     def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
+    async def close_stream(self) -> None:  # pragma: no cover
+        # _SkipStreamedResponse is produced by short-circuit paths that never
+        # open a connection; there is nothing to close.
+        pass
+
     async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
         return
         yield  # pragma: no cover
@@ -668,9 +684,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
-            # Ensure stream is fully consumed for proper usage counting
-            async for _ in agent_stream_holder[0]:
-                pass
         except BaseException as exc:
             stream_error = exc
             raise
@@ -678,11 +691,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream_done.set()
 
             if stream_error is not None:
-                wrap_task.cancel()
-                try:
-                    await wrap_task
-                except (asyncio.CancelledError, BaseException):
-                    pass
+                await _cancel_task(wrap_task)
             else:
                 try:
                     try:
@@ -1799,7 +1808,8 @@ async def _call_tools(  # noqa: C901
 
         except asyncio.CancelledError as e:
             for task in tasks:
-                task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+                if not task.done():
+                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
             raise
         except BaseException:
             # Cancel any still-running sibling tasks so they don't become
@@ -1807,7 +1817,8 @@ async def _call_tools(  # noqa: C901
             # (e.g. RuntimeError, ConnectionError) propagates out of
             # handle_call_or_result().
             for task in tasks:
-                task.cancel()
+                if not task.done():
+                    task.cancel()
             raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
@@ -2032,7 +2043,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type."""
+    """Clean the message history by merging consecutive messages."""
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
@@ -2062,6 +2073,9 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            # Interrupted responses are preserved as-is. Stream cancellation can
+            # leave incomplete tool calls, but filtering or synthesizing tool
+            # returns is a separate run-resumption semantics decision.
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)

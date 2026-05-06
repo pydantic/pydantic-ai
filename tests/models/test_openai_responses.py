@@ -10804,6 +10804,95 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
 
 
+async def test_stream_cancel(allow_model_requests: None):
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello ',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='world',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=4,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='resp_001',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_null_text(allow_model_requests: None):
     """Test that ResponseOutputText with text=null (from gateways like Bifrost) is handled gracefully."""
     c = response_message(
@@ -10863,6 +10952,8 @@ async def test_openai_responses_null_text(allow_model_requests: None):
 
 async def test_openai_responses_null_text_stream(allow_model_requests: None):
     """Test that ResponseTextDeltaEvent with delta=null (from gateways like Bifrost) is handled gracefully."""
+    from openai.types import responses as resp
+
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',

@@ -1052,7 +1052,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: OpenAIChatModelSettings | None = None,
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]] = (
+            _utils.PeekableAsyncStream(response)
+        )
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -1909,7 +1911,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
@@ -2731,7 +2735,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
-    _response: AsyncIterable[ChatCompletionChunk]
+    _response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2739,6 +2743,9 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
@@ -2929,13 +2936,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: AsyncIterable[responses.ResponseStreamEvent]
+    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):

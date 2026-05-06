@@ -618,6 +618,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )

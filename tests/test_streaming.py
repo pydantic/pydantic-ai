@@ -1,9 +1,12 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
 import json
 import re
-from collections.abc import AsyncIterable, AsyncIterator
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
@@ -16,6 +19,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import (
     Agent,
+    AgentEventStream,
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -49,6 +53,7 @@ from pydantic_ai.capabilities import CombinedCapability
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
+from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
@@ -59,7 +64,12 @@ from pydantic_graph import End
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings(
+        'ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning'
+    ),
+]
 
 
 class Foo(BaseModel):
@@ -3939,8 +3949,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
-            break
+        await anext(result.stream_text(delta=delta, debounce_by=debounce_by))
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
 
@@ -4311,3 +4320,252 @@ async def test_deferred_tool_validation_event_in_stream():
     assert tool_call_events
     # TestModel generates valid args (x=0 by default), so validation passes
     assert tool_call_events[0].args_valid is True
+
+
+# region: Stream cancellation tests
+
+
+async def test_run_stream_cancel():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.cancelled
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    # StreamedResponse.get() sets state='interrupted' when _cancelled is True
+    assert result.response.state == 'interrupted'
+
+
+async def test_run_stream_cancel_all_messages_includes_interrupted_response():
+    """After cancelling a stream, all_messages() should include the interrupted ModelResponse."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+
+    assert result.cancelled
+    assert result.response.state == 'interrupted'
+    # The interrupted ModelResponse must appear in all_messages()
+    msgs = result.all_messages()
+    assert msgs == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_cancel_guard_suppresses_transport_error():
+    """When cancel() is called mid-stream and iteration continues, _stream_cancel_guard
+    suppresses the simulated transport error and the stream ends gracefully."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        chunks: list[str] = []
+        async for text in result.stream_text(delta=True, debounce_by=None):
+            chunks.append(text)
+            if not result.cancelled:  # pragma: no branch
+                await result.cancel()
+                # Don't break: let the loop call anext() again, which resumes
+                # the generator into the _cancelled check and exercises the
+                # _stream_cancel_guard suppression branch.
+
+    assert result.cancelled
+    assert result.response.state == 'interrupted'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_cancel_after_complete():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        await result.get_output()
+        assert result.is_complete
+        # Cancelling an already-completed stream sets the flag but doesn't error
+        await result.cancel()
+        assert result.cancelled
+
+
+async def test_completed_streamed_response_cancel_noop():
+    response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
+    streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+
+    await streamed_response.cancel()
+    await streamed_response.cancel()
+
+    assert streamed_response.cancelled
+    assert streamed_response.get() is response
+    assert response.state == 'complete'
+
+
+async def test_run_stream_events_aclose():
+    agent = Agent(TestModel())
+
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+    async with agent.run_stream_events('Hello') as stream:
+        async for event in stream:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, PartStartEvent):  # pragma: no branch
+                await stream.aclose()
+                break
+
+        # After aclose, __anext__ raises StopAsyncIteration because _closed is True.
+        assert [e async for e in stream] == []
+
+        # Double close is a no-op.
+        await stream.aclose()
+
+    assert len(events) >= 1
+
+
+async def test_run_stream_events_break_cleanup():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('Hello') as stream:
+        await anext(stream)
+
+    # __aexit__ closed the generator (because _closed was False);
+    # no task leak, no error.
+
+
+async def test_agent_event_stream_standalone_break_cleanup():
+    cleanup_finished = asyncio.Event()
+
+    async def generator() -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='hello'))
+        finally:
+            cleanup_finished.set()
+
+    stream = AgentEventStream(generator())
+    async for _ in stream:  # pragma: no branch
+        break
+
+    await asyncio.wait_for(cleanup_finished.wait(), timeout=0.2)
+
+
+async def test_run_stream_events_standalone_deprecation():
+    agent = Agent(TestModel())
+
+    stream = agent.run_stream_events('Hello')
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        async for _ in stream:  # pragma: no branch
+            break
+    await stream.aclose()
+
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, DeprecationWarning)
+    assert 'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated' in str(
+        caught[0].message
+    )
+
+
+async def test_run_stream_events_external_task_cancellation():
+    """When the outer task is cancelled, the CancelledError handler forwards cancellation to the producer."""
+    never = asyncio.Event()
+
+    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+        await never.wait()  # block forever so the consumer is still awaiting when we cancel
+
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)  # let the task start and block on the stream
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
+    # Test for https://github.com/pydantic/pydantic-ai/issues/5132.
+    cleanup_finished = asyncio.Event()
+    first_event_seen = asyncio.Event()
+
+    class SlowCleanupTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[None] | None = None,
+        ) -> AsyncIterator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                try:
+                    yield stream
+                finally:
+                    await asyncio.sleep(0.2)
+                    cleanup_finished.set()
+
+    agent = Agent(SlowCleanupTestModel(custom_output_text='hello'))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            await anext(stream)
+            first_event_seen.set()
+            await asyncio.sleep(10)
+
+    task = asyncio.create_task(consume())
+    await first_event_seen.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+# endregion
