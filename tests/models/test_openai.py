@@ -4883,6 +4883,33 @@ async def test_openai_chat_instructions_fallback_with_tool_return(allow_model_re
     assert openai_messages[0] == snapshot({'content': 'Be helpful.', 'role': 'system'})
 
 
+async def test_openai_chat_tool_call_only_omits_content(allow_model_requests: None):
+    """Tool-call-only ModelResponse must not set content=None in assistant message.
+
+    Ollama's OpenAI-compatible API rejects content=null with
+    'invalid message content type: <nil>'. Omitting the key entirely is
+    valid per the OpenAI API spec and accepted by both providers.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5206.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_1')]),
+    ]
+
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    # Find the assistant message (the one with tool_calls)
+    assistant_msgs = [m for m in openai_messages if m.get('role') == 'assistant']
+    assert len(assistant_msgs) == 1
+    assistant_msg = assistant_msgs[0]
+    assert 'tool_calls' in assistant_msg
+    assert 'content' not in assistant_msg  # must NOT be set to None
+
+
 def test_openai_chat_audio_default_base64(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='success', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
