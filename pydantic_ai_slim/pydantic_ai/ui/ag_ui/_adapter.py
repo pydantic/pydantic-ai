@@ -22,7 +22,6 @@ from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
@@ -489,7 +488,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             item = multi_modal_content_ta.validate_python(raw)
                             # Narrow `BinaryContent` with an image media type to `BinaryImage` so round
                             # trips preserve the subclass (matches `BinaryContent.from_data_uri`).
-                            if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
+                            if isinstance(item, BinaryContent):
                                 item = BinaryContent.narrow_type(item)
                             bucket.append(item)
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:

@@ -18,7 +18,6 @@ from ... import _instructions
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
@@ -887,7 +886,7 @@ def _restore_multimodal_tool_output(output: Any) -> Any:
         item = multi_modal_content_ta.validate_python(raw)
         # Narrow `BinaryContent` with an image media type to `BinaryImage` so round trips through
         # the discriminator union preserve the subclass (matches `BinaryContent.from_data_uri`).
-        if isinstance(item, BinaryContent) and not isinstance(item, BinaryImage):
+        if isinstance(item, BinaryContent):
             item = BinaryContent.narrow_type(item)
         files.append(item)
     data = output.get('data')
