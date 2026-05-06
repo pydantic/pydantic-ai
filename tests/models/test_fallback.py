@@ -517,7 +517,7 @@ async def empty_response_stream(_model_messages: list[ModelMessage], _agent_info
 empty_model_stream = FunctionModel(stream_function=empty_response_stream)
 
 
-def _reject_empty_text(response: ModelResponse) -> bool:
+def reject_empty_text(response: ModelResponse) -> bool:
     """Reject responses where no TextPart has non-whitespace content."""
     for part in response.parts:
         if isinstance(part, TextPart) and part.content and part.content.strip():
@@ -1751,7 +1751,7 @@ async def test_fallback_model_concurrent_entry():
     assert provider2._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_response_handler_triggers_stream_retry() -> None:
+async def test_response_handler_triggers_streaming() -> None:
     """When the first streaming model's assembled response is rejected by a response
     handler, FallbackModel transparently switches to the next model — no exception
     surfaces to the caller, and the final ModelResponse comes from the second model.
@@ -1759,7 +1759,7 @@ async def test_response_handler_triggers_stream_retry() -> None:
     fallback_model = FallbackModel(
         empty_model_stream,
         success_model_stream,
-        fallback_on=[ModelHTTPError, _reject_empty_text],
+        fallback_on=[ModelHTTPError, reject_empty_text],
     )
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
