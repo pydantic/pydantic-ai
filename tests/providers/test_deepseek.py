@@ -53,6 +53,8 @@ def test_deep_seek_model_profile():
     provider = DeepSeekProvider(api_key='api-key')
     model = OpenAIChatModel('deepseek-r1', provider=provider)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert model.profile.supports_thinking is True
+    assert model.profile.thinking_always_enabled is True
 
 
 @pytest.mark.parametrize('model_name', ['deepseek-v4-flash', 'deepseek-v4-pro'])
