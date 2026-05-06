@@ -1,5 +1,7 @@
 import json
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -102,6 +104,16 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
     if vector_store is not None:
         await async_client.vector_stores.delete(vector_store.id)
     await async_client.close()
+
+
+@asynccontextmanager
+async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple['AsyncOpenAI', str]]:
+    async with AsyncOpenAI(api_key=openai_api_key) as async_client:
+        conversation = await async_client.conversations.create()
+        try:
+            yield async_client, conversation.id
+        finally:
+            await async_client.conversations.delete(conversation.id)
 
 
 def test_openai_responses_model(env: TestEnv):
@@ -2816,6 +2828,188 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
             ),
         ]
     )
+
+
+async def test_openai_conversation_id_explicit_and_auto(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly. When asked for a code, reply only with that code.',
+        )
+        result = await agent.run(
+            'Remember this exact code for later in this conversation: CONV-PAI-5222. Reply exactly: stored',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('stored')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+        result = await agent.run(
+            'What exact code did I ask you to remember? Reply with only the code.',
+            message_history=[response],
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        )
+
+        assert result.output == snapshot('CONV-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
+async def test_openai_conversation_id_auto_respects_pydantic_ai_conversation_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(model=model, instructions='Follow the user instructions exactly.')
+
+        result = await agent.run(
+            'Reply exactly: stored',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+        original_pydantic_ai_conversation_id = response.conversation_id
+        assert original_pydantic_ai_conversation_id is not None
+
+        forked = await agent.run(
+            'Reply exactly: forked',
+            message_history=result.all_messages(),
+            conversation_id='new',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        )
+
+        assert forked.output == snapshot('forked')
+        request = forked.all_messages()[-2]
+        assert isinstance(request, ModelRequest)
+        assert request.conversation_id != original_pydantic_ai_conversation_id
+        response = forked.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert 'conversation_id' not in response.provider_details
+
+
+async def test_openai_conversation_id_preserves_mismatched_history(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly. When asked for a code, reply only with that code.',
+        )
+        history = [
+            ModelRequest(parts=[UserPromptPart(content='The local-only code is LOCAL-PAI-5222.')]),
+            ModelResponse(
+                parts=[TextPart(content='Understood.')],
+                model_name='claude-sonnet-4-5',
+                provider_name='anthropic',
+                provider_details={'conversation_id': conversation_id},
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Different OpenAI conversation acknowledged.')],
+                model_name='gpt-4.1',
+                provider_name='openai',
+                provider_details={'conversation_id': 'conv_different'},
+            ),
+        ]
+
+        result = await agent.run(
+            'What is the local-only code?',
+            message_history=history,
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('LOCAL-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
+async def test_openai_conversation_id_auto_without_history(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, instructions='Follow the user instructions exactly.')
+
+    result = await agent.run(
+        'Reply exactly: no conversation',
+        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+    )
+
+    assert result.output == snapshot('no conversation')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert 'conversation_id' not in response.provider_details
+
+
+async def test_openai_conversation_id_tool_call_continuation(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Use the provided tool when the user asks for the conversation code.',
+        )
+
+        @agent.tool_plain
+        def get_conversation_code() -> str:
+            return 'TOOL-PAI-5222'
+
+        result = await agent.run(
+            'Call get_conversation_code and reply with only the returned code.',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        )
+
+        assert result.output == snapshot('TOOL-PAI-5222')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
+
+
+async def test_openai_conversation_id_conflicts_with_previous_response_id(
+    allow_model_requests: None, openai_api_key: str
+):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UserError, match='`openai_previous_response_id` and `openai_conversation_id` cannot both be set'
+    ):
+        await agent.run(
+            'Hello',
+            model_settings=OpenAIResponsesModelSettings(
+                openai_previous_response_id='auto',
+                openai_conversation_id='auto',
+            ),
+        )
+
+
+async def test_openai_conversation_id_streaming_provider_details(allow_model_requests: None, openai_api_key: str):
+    async with _openai_conversation(openai_api_key) as (async_client, conversation_id):
+        model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(openai_client=async_client))
+        agent = Agent(
+            model=model,
+            instructions='Follow the user instructions exactly.',
+        )
+
+        async with agent.run_stream(
+            'Reply exactly: streamed',
+            model_settings=OpenAIResponsesModelSettings(openai_conversation_id=conversation_id),
+        ) as result:
+            output = await result.get_output()
+
+        assert output == snapshot('streamed')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        assert response.provider_details is not None
+        assert response.provider_details['conversation_id'] == conversation_id
 
 
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
