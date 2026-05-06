@@ -230,6 +230,7 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
 ]
+_AnthropicCodeExecutionProviderDetailToolName: TypeAlias = Literal['bash_code_execution', 'text_editor_code_execution']
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...] = (
     'code_execution',
     'bash_code_execution',
@@ -1284,7 +1285,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                                 ),
                                             )
                                         )
-                                    case 'text_editor_code_execution':
+                                    case 'text_editor_code_execution':  # pragma: no branch
                                         assistant_content_params.append(
                                             BetaTextEditorCodeExecutionToolResultBlockParam(
                                                 tool_use_id=tool_use_id,
@@ -2081,10 +2082,8 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 
 def _anthropic_code_execution_tool_provider_details(
-    tool_name: _AnthropicCodeExecutionToolName,
-) -> dict[str, _AnthropicCodeExecutionToolName] | None:
-    if tool_name == 'code_execution':
-        return None
+    tool_name: _AnthropicCodeExecutionProviderDetailToolName,
+) -> dict[str, _AnthropicCodeExecutionProviderDetailToolName]:
     return {_ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL: tool_name}
 
 

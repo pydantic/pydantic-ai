@@ -8774,6 +8774,162 @@ async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_req
     )
 
 
+async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_tool_name(
+    allow_model_requests: None,
+):
+    """Infer Anthropic code execution tool variants from legacy names and result content."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='text_editor_code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_legacy_text_editor_call',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_legacy_text_editor_call',
+                ),
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='bash_code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_legacy_bash_call',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': 'hello\n',
+                        'type': 'bash_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_legacy_bash_call',
+                    provider_details={'anthropic_tool_name': 'not_a_code_execution_tool'},
+                ),
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id='srvtoolu_default_code_call',
+                    provider_details={'anthropic_tool_name': 123},
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': '4\n',
+                        'type': 'code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_default_code_call',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
+                    tool_call_id='srvtoolu_default_code_call',
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Replay code execution history.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_legacy_text_editor_call',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_legacy_text_editor_call',
+                        'content': {
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_legacy_bash_call',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_legacy_bash_call',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': 'hello\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_default_code_call',
+                        'name': 'code_execution',
+                        'input': {'code': 'print(2 + 2)'},
+                    },
+                    {
+                        'type': 'code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_default_code_call',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'code_execution_result',
+                        },
+                    },
+                    {
+                        'type': 'code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_default_code_call',
+                        'content': {'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
