@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from uuid import uuid4
 
+from typing_extensions import Self
+
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
@@ -178,6 +180,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
     instead to compute it dynamically.
     """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # We are having to do this because some capabilities subclasses overwrite the __init__ method and do not call super().__init__
+        instance = super().__new__(cls)
+        instance.id = str(uuid4())
+        return instance
 
     def __post_init__(self) -> None:
         if self.defer_loading:
