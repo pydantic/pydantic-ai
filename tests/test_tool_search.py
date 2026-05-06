@@ -1387,6 +1387,198 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
 
 
 @pytest.mark.vcr
+@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+async def test_anthropic_promotes_local_search_history_round_trip(
+    allow_model_requests: None, anthropic_api_key: str
+) -> None:
+    """End-to-end against live Anthropic: a turn with local-shape ``ToolSearch*Part``
+    history (from a prior cross-provider turn — e.g. on Google) runs cleanly on
+    Anthropic. The adapter promotes the local-shape return into a ``tool_result`` with
+    ``tool_reference`` content so Anthropic unlocks the discovered tool's schema, and
+    the model dispatches the discovered tool directly without issuing a fresh
+    ``tool_search_tool_*`` call.
+    """
+    pytest.importorskip('anthropic')
+    from pathlib import Path
+
+    import yaml
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    # Synthetic history: a prior turn on a non-supporting provider (Google etc.)
+    # discovered `get_exchange_rate` via the local `search_tools` function tool.
+    # Carries the local-shape typed parts on a `ToolSearchReturnPart` (sub of
+    # `ToolReturnPart`) — exactly what the toolset would emit on the local path.
+    prior_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='I might want to look up exchange rates later.')]),
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['exchange rate']}, tool_call_id='loc_search_1'),
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_exchange_rate', 'description': None}]},
+                    tool_call_id='loc_search_1',
+                ),
+            ],
+        ),
+    ]
+
+    result = await agent.run('What is the USD to EUR exchange rate?', message_history=prior_history)
+
+    # The model uses the discovered tool directly — no fresh `tool_search_tool_*` call
+    # was needed because the prior local-shape return got promoted to native shape on
+    # the wire, unlocking `get_exchange_rate` server-side.
+    rate_returns = [
+        part
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+    # No fresh native tool_search exchange after the synthetic history.
+    fresh_native_search_calls = [
+        part for msg in result.all_messages() for part in msg.parts if isinstance(part, BuiltinToolSearchCallPart)
+    ]
+    assert fresh_native_search_calls == []
+
+    # Wire-level: cassette confirms the request to Anthropic carried the prior
+    # local-shape return as a `tool_result` with `tool_reference` content (NOT a
+    # stringified JSON of the discoveries).
+    cassette_path = (
+        Path(__file__).parent
+        / 'cassettes'
+        / 'test_tool_search'
+        / 'test_anthropic_promotes_local_search_history_round_trip.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+
+    first_request_messages = cast(list[dict[str, Any]], interactions[0]['request']['parsed_body']['messages'])
+    tool_result_contents: list[Any] = [
+        block.get('content')
+        for msg in first_request_messages
+        if msg.get('role') == 'user' and isinstance(msg.get('content'), list)
+        for block in cast(list[dict[str, Any]], msg['content'])
+        if isinstance(block, dict) and block.get('type') == 'tool_result'
+    ]
+    # The `tool_reference` array shape proves the promotion fired.
+    promoted_names = {
+        cast(str, inner.get('tool_name'))
+        for content in tool_result_contents
+        if isinstance(content, list)
+        for inner in cast(list[dict[str, Any]], content)
+        if isinstance(inner, dict) and inner.get('type') == 'tool_reference'
+    }
+    assert promoted_names == {'get_exchange_rate'}
+
+
+@pytest.mark.vcr
+@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
+@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+async def test_openai_promotes_local_search_history_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
+    """End-to-end against live OpenAI: a turn with local-shape ``ToolSearch*Part``
+    history runs cleanly on OpenAI Responses. The adapter promotes the local-shape
+    pair into ``tool_search_call`` + ``tool_search_output`` items with
+    ``execution='client'``, and the model dispatches the discovered tool directly.
+    """
+    pytest.importorskip('openai')
+    from pathlib import Path
+
+    import yaml
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        return f'1 {from_currency} = 0.92 {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    prior_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='I might want to look up exchange rates later.')]),
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['exchange rate']}, tool_call_id='loc_search_1'),
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_exchange_rate', 'description': None}]},
+                    tool_call_id='loc_search_1',
+                ),
+            ],
+        ),
+    ]
+
+    result = await agent.run('What is the USD to EUR exchange rate?', message_history=prior_history)
+
+    rate_returns = [
+        part
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'get_exchange_rate'
+    ]
+    assert len(rate_returns) == 1
+    assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+    # Wire-level: cassette confirms the local-shape pair got promoted to
+    # `tool_search_call` + `tool_search_output` items with `execution='client'`.
+    cassette_path = (
+        Path(__file__).parent
+        / 'cassettes'
+        / 'test_tool_search'
+        / 'test_openai_promotes_local_search_history_round_trip.yaml'
+    )
+    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
+    interactions = cast(list[dict[str, Any]], cassette['interactions'])
+
+    first_request_input = cast(list[dict[str, Any]], interactions[0]['request']['parsed_body']['input'])
+    promoted_calls = [item for item in first_request_input if item.get('type') == 'tool_search_call']
+    promoted_outputs = [item for item in first_request_input if item.get('type') == 'tool_search_output']
+    assert promoted_calls, 'expected the local-shape call to be promoted to tool_search_call'
+    assert promoted_outputs, 'expected the local-shape return to be promoted to tool_search_output'
+    assert all(item.get('execution') == 'client' for item in promoted_calls)
+    assert all(item.get('execution') == 'client' for item in promoted_outputs)
+    promoted_tool_names = {
+        cast(str, t.get('name'))
+        for output in promoted_outputs
+        for t in cast(list[dict[str, Any]], output.get('tools', []))
+    }
+    assert 'get_exchange_rate' in promoted_tool_names
+
+
+@pytest.mark.vcr
 async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None, anthropic_api_key: str) -> None:
     """`ToolSearch(strategy='regex')` registers the regex variant of Anthropic's
     native tool search tool rather than BM25, and the live API accepts the request.
