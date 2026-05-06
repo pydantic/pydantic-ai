@@ -458,7 +458,7 @@ def vcr_config():
     return {
         'ignore_localhost': True,
         # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key'],
+        'filter_headers': ['authorization', 'x-api-key', 'cookie'],
         'decode_compressed_response': True,
     }
 
