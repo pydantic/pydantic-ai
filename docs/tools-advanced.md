@@ -542,19 +542,20 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=f
 
 Available strategy values:
 
-| `strategy` | Behavior |
-|---|---|
-| `None` (default) | Let Pydantic AI pick the best algorithm for the current provider — Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
-| `'keywords'` | Force the local keyword-overlap algorithm regardless of provider. |
-| `'bm25'` / `'regex'` | Force a specific Anthropic-native strategy. The request fails on providers that can't honor the choice (including OpenAI) rather than silently substituting a different algorithm. |
-| Callable `(ctx, query, tools) -> names` | Custom search function (sync or async). Runs locally and produces the matched names. |
+| `strategy` | Algorithm | Behavior |
+|---|---|---|
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
+| `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
+| `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
+| Callable `(ctx, query, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
 
-A custom callable also benefits from provider-native tool search on models that support a client-executed mode (Anthropic, OpenAI Responses), where deferred tools still ship with `defer_loading` on the wire so the provider can keep them out of the prompt until the search picks them. On other providers, the callable runs as the local `search_tools` function tool with no behavioural change.
+The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm and the current provider — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
 
-!!! note "Prompt caching and the local fallback"
-    On the local fallback, discovered tools are appended to the request's tool definitions for subsequent turns. On providers whose prompt cache matches by request prefix, each new discovery invalidates the cache from the tool-definition block onward — noticeable as added latency and cost on long sessions with many discovery rounds across a large tool corpus.
+!!! note "Cross-provider history replay"
+    A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
-    Anthropic and OpenAI sidestep this whenever the request can be routed to their native tool search: that includes the default `strategy=None` (server-executed) and custom callables (client-executed). In both modes, deferred tools ship with `defer_loading` on the wire and the provider keeps the visible tool list stable across discoveries. Forcing a local strategy on those providers (e.g. `strategy='keywords'`) opts out of that protection.
+    * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
+    * Native-shape `tool_search` history rendered onto a non-supporting provider is translated to the local `search_tools` function-tool exchange shape so the model sees the discoveries as a normal function-call exchange.
 
 !!! note "Tool discovery and message history"
     Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
