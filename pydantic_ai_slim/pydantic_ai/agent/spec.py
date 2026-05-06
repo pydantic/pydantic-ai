@@ -40,7 +40,7 @@ class AgentSpec(BaseModel):
     deps_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
-    retries: int = 1
+    retries: int | None = None
     output_retries: int | None = None
     end_strategy: EndStrategy = 'early'
     tool_timeout: float | None = None
@@ -196,7 +196,7 @@ class AgentSpec(BaseModel):
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
-            retries: int = 1
+            retries: int | None = None
             output_retries: int | None = None
             end_strategy: EndStrategy = 'early'
             tool_timeout: float | None = None

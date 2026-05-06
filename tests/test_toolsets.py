@@ -841,7 +841,7 @@ async def test_toolset_max_retries_inherits_from_agent():
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], retries=0)
+    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
@@ -880,7 +880,7 @@ async def test_toolset_explicit_max_retries_overrides_agent():
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], retries=0)
+    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
@@ -905,7 +905,7 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
         raise ModelRetry('Always fails')
 
     toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
-    agent = Agent('test', toolsets=[toolset], retries=0)
+    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
@@ -934,7 +934,7 @@ async def test_prepare_function_sees_agent_max_retries():
         """A tool."""
         return x
 
-    agent = Agent('test', toolsets=[toolset], retries=3)
+    agent = Agent('test', toolsets=[toolset], tool_retries=3, output_retries=3)
     result = await agent.run('call my_tool', model=TestModel())
 
     assert captured_max_retries[0] == 3
@@ -983,7 +983,7 @@ async def test_prepare_function_sees_agent_max_retries():
 async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retries():
     """When a user toolset leaves `max_retries=None` and `retries != output_retries`, the fallback
     must resolve to the agent's **tool** retry count, not the output retry count.
-    Regression: `ctx.max_retries` previously carried `max_result_retries` during `get_tools`."""
+    Regression: `ctx.max_retries` previously carried `max_output_retries` during `get_tools`."""
     attempts: list[int] = []
     toolset = FunctionToolset[None]()
 
@@ -993,7 +993,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+    agent = Agent('test', toolsets=[toolset], tool_retries=1, output_retries=5)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
@@ -1025,7 +1025,7 @@ async def test_prepare_function_sees_tool_retries_not_output_retries():
         """A tool."""
         return x
 
-    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+    agent = Agent('test', toolsets=[toolset], tool_retries=1, output_retries=5)
     result = await agent.run('call my_tool', model=TestModel())
 
     assert captured[0] == 1

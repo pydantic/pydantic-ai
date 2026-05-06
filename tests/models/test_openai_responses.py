@@ -2680,7 +2680,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     response instead of re-sending the same static seed and duplicating stored state.
     """
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, retries=3)
+    agent = Agent(model=model, tool_retries=3, output_retries=3)
 
     attempts: list[str] = []
 
@@ -7652,9 +7652,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
     agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
 
     with capture_run_messages() as messages:
-        with pytest.raises(
-            UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (1) for output validation')
-        ):
+        with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum output retries (1)')):
             await agent.run('Generate an image of an axolotl.')
 
     assert messages == snapshot(
