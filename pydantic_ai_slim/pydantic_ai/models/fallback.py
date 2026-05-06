@@ -87,6 +87,8 @@ class _FallbackStreamedResponse(StreamedResponse):
     _on_model_selected: Callable[[Model, ModelRequestParameters], None] | None = field(default=None)
     _accepted_model: Model | None = field(default=None, init=False)
     _accepted_timestamp: datetime | None = field(default=None, init=False)
+    _accepted_provider_name: str | None = field(default=None, init=False)
+    _accepted_provider_url: str | None = field(default=None, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         assert self._should_fallback_handler is not None
@@ -119,6 +121,8 @@ class _FallbackStreamedResponse(StreamedResponse):
 
                     self._accepted_model = model
                     self._accepted_timestamp = inner_sr.timestamp
+                    self._accepted_provider_name = inner_sr.provider_name
+                    self._accepted_provider_url = inner_sr.provider_url
                     self.finish_reason = inner_sr.finish_reason
                     self.provider_response_id = inner_sr.provider_response_id
                     self.provider_details = inner_sr.provider_details
@@ -144,6 +148,14 @@ class _FallbackStreamedResponse(StreamedResponse):
         if self._accepted_timestamp is not None:
             return self._accepted_timestamp
         return _now_utc()
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._accepted_provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._accepted_provider_url
 
 
 @dataclass(init=False)
@@ -331,7 +343,23 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
+        """Try each model in sequence until one succeeds.
+
+        When at least one response handler is configured in `fallback_on`, yields a
+        wrapper StreamedResponse that transparently retries on the next model if a
+        streamed response is rejected. Otherwise uses the legacy single-yield path
+        that only handles exception-based fallback during stream initialisation.
+        """
+        if self._response_handlers:
+            yield _FallbackStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _fallback_models=self.models,
+                _request_args=(messages, model_settings, model_request_parameters, run_context),
+                _should_fallback_handler=self._should_fallback,
+                _on_model_selected=self._set_span_attributes,
+            )
+            return
+
         exceptions: list[Exception] = []
 
         for model in self.models:
