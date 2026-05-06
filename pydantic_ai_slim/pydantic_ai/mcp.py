@@ -285,9 +285,11 @@ _ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
 
 _SHUTDOWN_GRACE_SECONDS = 3
-"""How long to wait for the session task to wind down after we cancel it during a
-cancelled `__aenter__`. Bounds worst-case cleanup time when the underlying transport
-is unresponsive (e.g. a hung subprocess); past this we move on without awaiting it."""
+"""How long to wait for the session task to wind down at each shutdown phase
+(graceful stop in `__aexit__`, force-cancel in either `__aenter__` cancel cleanup
+or `__aexit__` escalation). Bounds worst-case cleanup time when the underlying
+transport is unresponsive (e.g. a hung subprocess); past this we move on without
+awaiting it."""
 
 
 @dataclass
@@ -310,6 +312,22 @@ class _MCPSessionState:
     nesting_counter: int = 0
     client: ClientSession | None = None
     connect_error: BaseException | None = None
+
+    async def force_close(self, task: asyncio.Task[None]) -> None:
+        """Cancel `task` and wait up to `_SHUTDOWN_GRACE_SECONDS` for it to unwind.
+
+        Shielded against external cancellation so cleanup completes regardless of
+        the caller's cancel state; the timeout bounds worst-case wait when the
+        underlying transport's `__aexit__` can't unwind cleanly (e.g. hung
+        subprocess, server that never closes the connection).
+        """
+        task.cancel()
+        with anyio.CancelScope(shield=True):
+            with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
+                try:
+                    await task
+                except BaseException:
+                    pass
 
 
 class MCPServer(AbstractToolset[Any], ABC):
@@ -837,13 +855,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     # without impacting anyone else (we hold the lock and just started it)
                     task = state.session_task
                     state.stop_event.set()
-                    task.cancel()
-                    with anyio.CancelScope(shield=True):
-                        with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
-                            try:
-                                await task
-                            except BaseException:
-                                pass
+                    await state.force_close(task)
                     state.session_task = None
                     state.client = None
                     raise
@@ -874,11 +886,16 @@ class MCPServer(AbstractToolset[Any], ABC):
             self._cached_tools = None
             self._cached_resources = None
         # Await outside the lock: the session task's cancel scopes unwind inside the
-        # task itself, so this await can safely happen from any caller.
-        try:
-            await session_task_to_await
-        except BaseException:
-            pass
+        # task itself, so this await can safely happen from any caller. Bound the
+        # wait so a transport whose `__aexit__` deadlocks (hung subprocess, server
+        # that never closes the connection) cannot block our own shutdown forever.
+        with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
+            try:
+                await session_task_to_await
+            except BaseException:
+                pass
+            return None
+        await state.force_close(session_task_to_await)
         return None
 
     @property

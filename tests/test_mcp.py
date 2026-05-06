@@ -338,6 +338,53 @@ async def test_aenter_cancelled_during_startup():
     assert not server.is_running
 
 
+async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatch):
+    """`__aexit__` must be bounded if the transport's own `__aexit__` deadlocks.
+
+    Otherwise a misbehaving server (e.g. subprocess that ignores SIGTERM, HTTP/SSE
+    connection where the server never closes its side) can deadlock the agent's
+    own shutdown — `await session_task_to_await` parks forever inside `__aexit__`.
+    """
+    import time
+
+    import pydantic_ai.mcp as _mcp_module
+
+    grace = 0.2
+    monkeypatch.setattr(_mcp_module, '_SHUTDOWN_GRACE_SECONDS', grace)
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    teardown_reached = anyio.Event()
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def hung_teardown_streams() -> AsyncIterator[Any]:
+        async with original_client_streams() as pair:
+            try:
+                yield pair
+            finally:
+                teardown_reached.set()
+                await asyncio.Event().wait()
+
+    async def enter_then_exit() -> None:
+        async with server:
+            pass
+
+    # Outer `wait_for` is a safety net so a regression doesn't hang the suite —
+    # the real assertion is on elapsed time below. `wait_for` itself can't detect
+    # the regression because `__aexit__` swallows the cancellation it sends.
+    start = time.monotonic()
+    with patch.object(server, 'client_streams', hung_teardown_streams):
+        await asyncio.wait_for(enter_then_exit(), timeout=5.0)
+    elapsed = time.monotonic() - start
+
+    assert teardown_reached.is_set(), 'transport teardown was never reached'
+    assert not server.is_running
+    # With the fix: bounded by ~grace (one wait + cancel escalation). Without:
+    # `__aexit__` awaits the hung task until `wait_for`'s 5s safety net fires.
+    assert elapsed < 1.0, f'shutdown took {elapsed:.2f}s, expected ~{grace}s'
+
+
 async def test_aexit_concurrent_does_not_corrupt_nesting_counter():
     """Regression test: concurrent __aexit__ calls must not corrupt the nesting counter.
 
