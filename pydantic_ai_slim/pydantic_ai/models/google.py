@@ -541,7 +541,9 @@ class GoogleModel(Model[Client]):
         try:
             yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
         finally:
-            await _utils.aclose_if_available(response)
+            aclose = getattr(response, 'aclose', None)
+            if aclose is not None:
+                await aclose()
 
     def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
         """Build ImageConfigDict from ImageGenerationTool with validation."""
