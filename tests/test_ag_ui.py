@@ -114,7 +114,7 @@ with try_import() as imports_successful:
         run_ag_ui,
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
-    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, multi_modal_content_ta, parse_ag_ui_version
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -3463,6 +3463,302 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
     assert uploaded.media_type == 'application/pdf'
     assert uploaded.vendor_metadata == {'source': 'upload'}
     assert uploaded.identifier == 'my-doc.pdf'
+
+
+@pytest.mark.parametrize(
+    ('case_id', 'expected_activities'),
+    [
+        pytest.param(
+            'single-image',
+            snapshot(
+                [
+                    {
+                        'id': IsStr(),
+                        'role': 'activity',
+                        'activity_type': 'pydantic_ai_tool_return_file',
+                        'content': {
+                            'tool_call_id': 'tc-1',
+                            'files': [
+                                {
+                                    'kind': 'binary',
+                                    'data': IsStr(),
+                                    'media_type': 'image/jpeg',
+                                    'identifier': IsStr(),
+                                    'vendor_metadata': None,
+                                }
+                            ],
+                        },
+                    }
+                ]
+            ),
+            id='single-image',
+        ),
+        pytest.param(
+            'text-then-audio',
+            snapshot(
+                [
+                    {
+                        'id': IsStr(),
+                        'role': 'activity',
+                        'activity_type': 'pydantic_ai_tool_return_file',
+                        'content': {
+                            'tool_call_id': 'tc-1',
+                            'files': [
+                                {
+                                    'kind': 'binary',
+                                    'data': IsStr(),
+                                    'media_type': 'audio/mpeg',
+                                    'identifier': IsStr(),
+                                    'vendor_metadata': None,
+                                }
+                            ],
+                        },
+                    }
+                ]
+            ),
+            id='text-then-audio',
+        ),
+        pytest.param(
+            'image-and-video',
+            snapshot(
+                [
+                    {
+                        'id': IsStr(),
+                        'role': 'activity',
+                        'activity_type': 'pydantic_ai_tool_return_file',
+                        'content': {
+                            'tool_call_id': 'tc-1',
+                            'files': [
+                                {
+                                    'kind': 'binary',
+                                    'data': IsStr(),
+                                    'media_type': 'image/jpeg',
+                                    'identifier': IsStr(),
+                                    'vendor_metadata': None,
+                                },
+                                {
+                                    'kind': 'binary',
+                                    'data': IsStr(),
+                                    'media_type': 'video/mp4',
+                                    'identifier': IsStr(),
+                                    'vendor_metadata': None,
+                                },
+                            ],
+                        },
+                    }
+                ]
+            ),
+            id='image-and-video',
+        ),
+        pytest.param(
+            'document-url',
+            snapshot(
+                [
+                    {
+                        'id': IsStr(),
+                        'role': 'activity',
+                        'activity_type': 'pydantic_ai_tool_return_file',
+                        'content': {
+                            'tool_call_id': 'tc-1',
+                            'files': [
+                                {
+                                    'kind': 'document-url',
+                                    'url': 'https://example.com/doc.pdf',
+                                    'force_download': False,
+                                    'vendor_metadata': None,
+                                    'media_type': 'application/pdf',
+                                    'identifier': 'e3337d',
+                                }
+                            ],
+                        },
+                    }
+                ]
+            ),
+            id='document-url',
+        ),
+    ],
+)
+def test_dump_load_roundtrip_tool_return_multimodal(
+    case_id: str,
+    expected_activities: list[Any],
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
+) -> None:
+    """Test multimodal `ToolReturnPart.content` round-trips via the sidecar `ActivityMessage`.
+
+    `ag_ui.core.ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18, so multimodal
+    items round-trip as a separate `ActivityMessage` paired by `tool_call_id`. Tracking issue
+    for native support: https://github.com/ag-ui-protocol/ag-ui/issues/126.
+    """
+    contents: dict[str, Any] = {
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
+        'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+    }
+    content = contents[case_id]
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content)]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    activities = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert [m.model_dump() for m in activities] == expected_activities
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> None:
+    """Test that multimodal `ToolReturnPart.content` is silently dropped when `preserve_file_data=False`."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=tiny_image)]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=False)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == snapshot([])
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=False)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    # Content collapses to the empty text fallback (`model_response_str()` excludes files).
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
+    )
+
+
+def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
+    """Test multimodal `BuiltinToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    args='{"q": "test"}',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    content=['Search results', tiny_image],
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    activities = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert [m.model_dump() for m in activities] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_tool_return_file',
+                'content': {
+                    'tool_call_id': IsStr(),
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                },
+            }
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=['Search results', tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+def test_load_messages_builtin_tool_return_json_list_content_merges_with_files(tiny_image: BinaryImage) -> None:
+    """Builtin tool whose `ToolMessage.content` JSON-decodes into a list merges with sidecar files."""
+    prefixed_id = 'pyd_ai_builtin|anthropic|call_1'
+    raw = [
+        AssistantMessage(
+            id='msg-1',
+            tool_calls=[
+                ToolCall(
+                    id=prefixed_id,
+                    type='function',
+                    function=FunctionCall(name='web_search', arguments='{"q": "test"}'),
+                ),
+            ],
+        ),
+        ActivityMessage(
+            id='msg-2',
+            activity_type='pydantic_ai_tool_return_file',
+            content={
+                'tool_call_id': prefixed_id,
+                'files': [multi_modal_content_ta.dump_python(tiny_image, mode='json')],
+            },
+        ),
+        ToolMessage(
+            id='msg-3',
+            content='[{"a": 1}, {"b": 2}]',
+            tool_call_id=prefixed_id,
+        ),
+    ]
+
+    reloaded = AGUIAdapter.load_messages(raw, preserve_file_data=True)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=[{'a': 1}, {'b': 2}, tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
+def test_load_messages_sidecar_with_empty_tool_call_id_raises() -> None:
+    """Sidecar `ActivityMessage` for `pydantic_ai_tool_return_file` requires a non-empty `tool_call_id`."""
+    raw = [
+        ActivityMessage(
+            id='msg-1',
+            activity_type='pydantic_ai_tool_return_file',
+            content={'tool_call_id': '', 'files': []},
+        ),
+    ]
+    with pytest.raises(ValueError, match='must have a non-empty tool_call_id'):
+        AGUIAdapter.load_messages(raw, preserve_file_data=True)
 
 
 @pytest.mark.parametrize(

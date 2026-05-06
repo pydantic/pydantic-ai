@@ -3794,6 +3794,217 @@ async def test_adapter_dump_messages_with_tools():
     )
 
 
+@pytest.mark.parametrize(
+    ('case_id', 'expected_envelope'),
+    [
+        pytest.param(
+            'single-image',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': None,
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                }
+            ),
+            id='single-image',
+        ),
+        pytest.param(
+            'text-then-audio',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': 'the audio narration says...',
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'audio/mpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                }
+            ),
+            id='text-then-audio',
+        ),
+        pytest.param(
+            'image-and-video',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': None,
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        },
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'video/mp4',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        },
+                    ],
+                }
+            ),
+            id='image-and-video',
+        ),
+        pytest.param(
+            'document-url',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': None,
+                    'files': [
+                        {
+                            'kind': 'document-url',
+                            'url': 'https://example.com/doc.pdf',
+                            'force_download': False,
+                            'vendor_metadata': None,
+                            'media_type': 'application/pdf',
+                            'identifier': 'e3337d',
+                        }
+                    ],
+                }
+            ),
+            id='document-url',
+        ),
+        pytest.param(
+            'list-data-and-image',
+            snapshot(
+                {
+                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
+                    'data': ['hello', 'world'],
+                    'files': [
+                        {
+                            'kind': 'binary',
+                            'data': IsStr(),
+                            'media_type': 'image/jpeg',
+                            'identifier': IsStr(),
+                            'vendor_metadata': None,
+                        }
+                    ],
+                }
+            ),
+            id='list-data-and-image',
+        ),
+    ],
+)
+async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
+    case_id: str,
+    expected_envelope: dict[str, Any],
+    tiny_image: BinaryImage,
+    tiny_audio: BinaryContent,
+    tiny_video: BinaryContent,
+):
+    """Test multimodal `ToolReturnPart.content` round-trips via the `MultimodalToolOutputEnvelope`.
+
+    Vercel AI SDK has no native multimodal tool-output shape (as of ai@6.0.57); we wrap files
+    in a structured envelope inside `ToolOutputAvailablePart.output` so the dump -> load round
+    trip preserves them.
+    """
+    contents: dict[str, Any] = {
+        'single-image': tiny_image,
+        'text-then-audio': ['the audio narration says...', tiny_audio],
+        'image-and-video': [tiny_image, tiny_video],
+        'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+        'list-data-and-image': ['hello', 'world', tiny_image],
+    }
+    content = contents[case_id]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content)]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant = next(m for m in ui_messages if m.role == 'assistant')
+    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
+    assert tool_part.output == expected_envelope
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+async def test_adapter_tool_return_text_only_unchanged():
+    """Test that text-only tool returns are unaffected by the multimodal envelope path."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search', tool_call_id='tc-1', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='search', tool_call_id='tc-1', content='just a string')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant = next(m for m in ui_messages if m.role == 'assistant')
+    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
+
+    assert tool_part.output == 'just a string'
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns[0].content == 'just a string'
+
+
+async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
+    """Test multimodal `BuiltinToolReturnPart.content` round-trips via the envelope."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    args={'q': 'test'},
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_1',
+                    content=['Search results', tiny_image],
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    returns = [
+        p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, BuiltinToolReturnPart)
+    ]
+    assert returns == snapshot(
+        [
+            BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='call_1',
+                content=['Search results', tiny_image],
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+            )
+        ]
+    )
+
+
 async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
     """Test dumping messages where ToolReturnPart.metadata contains a single DataChunk."""
     messages = [

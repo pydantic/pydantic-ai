@@ -1,9 +1,17 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
 from collections.abc import Iterable, Iterator
-from typing import Any
+from typing import Any, Final, Literal
 
-from pydantic_ai.messages import BaseToolReturnPart, ProviderDetailsDelta, ToolReturnPart
+import pydantic
+from typing_extensions import Required, TypedDict
+
+from pydantic_ai.messages import (
+    BaseToolReturnPart,
+    MultiModalContent,
+    ProviderDetailsDelta,
+    ToolReturnPart,
+)
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -34,14 +42,43 @@ __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
+MULTIMODAL_TOOL_RETURN_KIND: Final[str] = 'pydantic_ai_multimodal_tool_return'
+"""Discriminator value for the multimodal tool-return envelope used in `ToolOutputAvailablePart.output`.
 
-def tool_return_output(part: BaseToolReturnPart) -> Any:
+The Vercel AI SDK does not define a multimodal shape for tool outputs as of ai@6.0.57, so we wrap
+multimodal `ToolReturnPart.content` in a structured envelope to preserve it across the round trip.
+"""
+
+
+class MultimodalToolOutputEnvelope(TypedDict, total=False):
+    """Envelope shape for multimodal `ToolReturnPart.content` carried in `ToolOutputAvailablePart.output`."""
+
+    pydantic_ai_kind: Required[Literal['pydantic_ai_multimodal_tool_return']]
+    data: Any
+    files: Required[list[dict[str, Any]]]
+
+
+multi_modal_content_ta: pydantic.TypeAdapter[MultiModalContent] = pydantic.TypeAdapter(MultiModalContent)
+"""TypeAdapter for serializing/deserializing `MultiModalContent` items in the tool-return envelope."""
+
+
+def tool_return_output(part: BaseToolReturnPart, *, include_files: bool = False) -> Any:
     """Extract the return value from a tool return part.
 
     If the model response object contains a 'return_value' key, return its value,
     otherwise return the entire output dict. This matches the streaming output format.
+
+    When `include_files=True` and `part.files` is non-empty, wrap the output in a
+    `MultimodalToolOutputEnvelope` so multimodal items survive the Vercel `dump_messages` ->
+    `load_messages` round trip (the Vercel AI SDK has no native multimodal tool-output shape).
     """
     output = part.model_response_object()
+    if include_files and part.files:
+        return {
+            'pydantic_ai_kind': MULTIMODAL_TOOL_RETURN_KIND,
+            'data': output.get('return_value', output) if output else None,
+            'files': [multi_modal_content_ta.dump_python(f, mode='json') for f in part.files],
+        }
     return output.get('return_value', output)
 
 
