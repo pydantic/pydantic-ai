@@ -188,6 +188,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -251,6 +252,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -291,6 +293,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -344,6 +347,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -584,6 +588,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -603,6 +608,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -833,6 +839,7 @@ async def test_xai_builtin_file_search_tool(
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -867,6 +874,7 @@ async def test_xai_builtin_file_search_tool(
                     provider_response_id=IsStr(),
                     finish_reason='stop',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )

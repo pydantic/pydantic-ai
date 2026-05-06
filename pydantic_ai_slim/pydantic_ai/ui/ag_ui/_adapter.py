@@ -12,6 +12,7 @@ from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     cast,
 )
 
@@ -254,11 +255,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
+        manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
         return await super().from_request(
-            request, agent=agent, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data, **kwargs
+            request,
+            agent=agent,
+            ag_ui_version=ag_ui_version,
+            preserve_file_data=preserve_file_data,
+            manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
+            **kwargs,
         )
 
     @cached_property
@@ -284,6 +293,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             return None
 
         return cast('dict[str, Any]', state)
+
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
+        return self.run_input.thread_id
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
@@ -468,6 +482,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     warnings.warn(
                         f'AG-UI message type {type(msg).__name__} is not yet implemented; skipping.',
                         UserWarning,
+                        stacklevel=2,
                     )
 
         return builder.messages

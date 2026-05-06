@@ -410,6 +410,7 @@ class _ResponsesRequestParams:
     tools: list[responses.ToolParam] | Omit
     tool_choice: Literal['none', 'required', 'auto'] | Omit
     previous_response_id: str | Omit
+    conversation: str | Omit
     reasoning: Reasoning | Omit
     text: responses.ResponseTextConfigParam | Omit
     truncation: Literal['auto', 'disabled'] | Omit
@@ -572,6 +573,24 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more information.
     """
 
+    openai_conversation_id: Literal['auto'] | str
+    """Reference an OpenAI conversation to continue durable conversation state server-side.
+
+    - `'auto'`: use the most recent OpenAI conversation ID from `ModelResponse.provider_details['conversation_id']`
+      in the message history with the same Pydantic AI `conversation_id`, when available. If the history
+      contains no such response, no `conversation` is sent.
+    - A concrete conversation ID string: use it as the OpenAI Responses API `conversation` parameter.
+
+    When a matching conversation ID is found in message history, messages that precede that response
+    are omitted from the input, since OpenAI reconstructs them from the server-side conversation.
+
+    Not compatible with
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+
+    See the [OpenAI conversation state documentation](https://platform.openai.com/docs/guides/conversation-state)
+    for more information.
+    """
+
     openai_include_code_execution_outputs: bool
     """Whether to include the code execution results in the response.
 
@@ -612,6 +631,22 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
 
+def _resolve_openai_service_tier(
+    model_settings: OpenAIChatModelSettings,
+) -> Literal['auto', 'default', 'flex', 'priority'] | Omit:
+    """Resolve the value to send as `service_tier` on the OpenAI request.
+
+    Per-provider [`openai_service_tier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_service_tier]
+    wins; otherwise the top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier]
+    maps 1:1 to OpenAI's accepted values.
+    """
+    if openai_tier := model_settings.get('openai_service_tier'):
+        return openai_tier
+    if unified := model_settings.get('service_tier'):
+        return unified
+    return OMIT
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -620,8 +655,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
-
-    client: AsyncOpenAI = field(repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -692,12 +725,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
             self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -881,7 +917,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
                     web_search_options=web_search_options or OMIT,
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=_resolve_openai_service_tier(model_settings),
                     prediction=model_settings.get('openai_prediction', OMIT),
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
@@ -1122,7 +1158,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
 
-        def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
+        def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam | None:
             for item in message.parts:
                 if isinstance(item, TextPart):
                     self._map_response_text_part(item)
@@ -1141,15 +1177,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     assert_never(item)
             return self._into_message_param()
 
-        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam | None:
             """Converts the collected texts and tool calls into a single OpenAI `ChatCompletionAssistantMessageParam`.
 
             This method serves as a hook that can be overridden by subclasses
             to implement custom logic for how collected parts are transformed into the final message parameter.
 
             Returns:
-                An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
+                An OpenAI `ChatCompletionAssistantMessageParam` representing the assistant's response,
+                or `None` if there is nothing to send (e.g. the `ModelResponse` had no parts because
+                the model returned an empty response). Returning `None` ensures we don't emit an
+                assistant message with `content=None` and no `tool_calls`, which the Chat Completions
+                API rejects with a 400 error.
             """
+            if not self.texts and not self.thinkings and not self.tool_calls:
+                return None
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
@@ -1234,8 +1276,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # Files generated by models are not sent back to models that don't themselves generate files.
             pass
 
-    def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam:
+    def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionMessageParam | None:
         """Hook that determines how `ModelResponse` is mapped into `ChatCompletionMessageParam` objects before sending.
+
+        Returns `None` to skip emitting any message for this `ModelResponse` (e.g. when it has no parts).
 
         Subclasses of `OpenAIChatModel` may override this method to provide their own mapping logic.
         """
@@ -1260,7 +1304,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
-                openai_messages.append(self._map_model_response(message))
+                if (mapped := self._map_model_response(message)) is not None:
+                    openai_messages.append(mapped)
             else:
                 assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
@@ -1548,8 +1593,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
-    client: AsyncOpenAI = field(repr=False)
-
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1579,9 +1622,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -1729,8 +1775,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Validate that we have something meaningful to count tokens for
-        if not messages and not settings.get('openai_previous_response_id'):
+        # Validate that we have something meaningful to count tokens for.
+        if (
+            not messages
+            and not settings.get('openai_previous_response_id')
+            and not settings.get('openai_conversation_id')
+        ):
             raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
         profile = OpenAIModelProfile.from_profile(self.profile)
@@ -1751,6 +1801,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tools=request_params.tools,
                 tool_choice=request_params.tool_choice,
                 previous_response_id=request_params.previous_response_id,
+                conversation=request_params.conversation,
                 reasoning=request_params.reasoning,
                 text=request_params.text,
                 truncation=request_params.truncation,
@@ -1840,6 +1891,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        if item.phase is not None:
+                            part_provider_details = part_provider_details or {}
+                            part_provider_details['phase'] = item.phase
                         # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
                         # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
@@ -1907,6 +1961,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
+        if response.conversation:
+            provider_details['conversation_id'] = response.conversation.id
 
         if refusal_text is not None:
             items = []
@@ -1972,9 +2028,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             tool_choice = 'auto'
 
-        previous_response_id, messages = self._resolve_previous_response_id(
-            model_settings.get('openai_previous_response_id'), messages
-        )
+        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
@@ -2006,11 +2060,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             text_with_verbosity['verbosity'] = verbosity
             text = text_with_verbosity
 
-        # When there are no input messages and we're not reusing a previous response,
+        # When there are no input messages and we're not reusing server-side state,
         # the OpenAI API will reject a request without any input,
         # even if there are instructions.
         # To avoid this provide an explicit empty user message.
-        if not openai_messages and not previous_response_id:
+        if not openai_messages and not previous_response_id and not conversation_id:
             openai_messages.append(
                 responses.EasyInputMessageParam(
                     role='user',
@@ -2026,6 +2080,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tools=tools or OMIT,
             tool_choice=tool_choice,
             previous_response_id=previous_response_id or OMIT,
+            conversation=conversation_id or OMIT,
             reasoning=reasoning,
             text=text,
             truncation=model_settings.get('openai_truncation', OMIT),
@@ -2111,7 +2166,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     stream=stream,
                     temperature=model_settings.get('temperature', OMIT),
                     top_p=model_settings.get('top_p', OMIT),
-                    service_tier=model_settings.get('openai_service_tier', OMIT),
+                    service_tier=_resolve_openai_service_tier(model_settings),
+                    conversation=request_params.conversation,
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
                     user=model_settings.get('openai_user', OMIT),
@@ -2311,6 +2367,66 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             return None, messages
 
+    def _resolve_server_side_state(
+        self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
+    ) -> tuple[str | None, str | None, list[ModelMessage]]:
+        previous_response_id_setting = model_settings.get('openai_previous_response_id')
+        conversation_id_setting = model_settings.get('openai_conversation_id')
+        if previous_response_id_setting is not None and conversation_id_setting is not None:
+            raise UserError(
+                '`openai_previous_response_id` and `openai_conversation_id` cannot both be set because '
+                'the OpenAI Responses API does not support `previous_response_id` with `conversation`.'
+            )
+
+        if conversation_id_setting is not None:
+            conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
+            return None, conversation_id, messages
+
+        previous_response_id, messages = self._resolve_previous_response_id(previous_response_id_setting, messages)
+        return previous_response_id, None, messages
+
+    def _resolve_conversation_id(
+        self, setting: Literal['auto'] | str, messages: list[ModelMessage]
+    ) -> tuple[str | None, list[ModelMessage]]:
+        if setting == 'auto':
+            # Agent runs stamp the active Pydantic AI conversation ID on the final request.
+            # Direct model calls may still pass an empty message list.
+            pydantic_ai_conversation_id = next((m.conversation_id for m in messages[-1:]), None)
+            return self._get_conversation_id_and_new_messages(
+                messages, pydantic_ai_conversation_id=pydantic_ai_conversation_id
+            )
+
+        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, openai_conversation_id=setting)
+        if conversation_id is not None:
+            return conversation_id, trimmed
+        return setting, messages
+
+    def _get_conversation_id_and_new_messages(
+        self,
+        messages: list[ModelMessage],
+        *,
+        openai_conversation_id: str | None = None,
+        pydantic_ai_conversation_id: str | None = None,
+    ) -> tuple[str | None, list[ModelMessage]]:
+        trimmed_messages: list[ModelMessage] = []
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                candidate = m.provider_details and m.provider_details.get('conversation_id')
+                if (
+                    pydantic_ai_conversation_id is not None
+                    and m.conversation_id is not None
+                    and m.conversation_id != pydantic_ai_conversation_id
+                ):
+                    trimmed_messages.append(m)
+                    continue
+                if isinstance(candidate, str) and (
+                    openai_conversation_id is None or candidate == openai_conversation_id
+                ):
+                    return candidate, list(reversed(trimmed_messages))
+            trimmed_messages.append(m)
+
+        return None, messages
+
     async def _map_messages(  # noqa: C901
         self,
         messages: list[ModelMessage],
@@ -2378,6 +2494,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     )
 
                     if isinstance(item, TextPart):
+                        phase = (item.provider_details or {}).get('phase')
+                        send_phase = (
+                            profile.openai_supports_phase
+                            and item.provider_name == self.system
+                            and phase in ('commentary', 'final_answer')
+                        )
                         if item.id and should_send_item_id:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
@@ -2395,10 +2517,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     text=item.content, type='output_text', annotations=[]
                                 ),
                             ]
+                            if send_phase:
+                                message_item['phase'] = phase
                         else:
-                            openai_messages.append(
-                                responses.EasyInputMessageParam(role='assistant', content=item.content)
-                            )
+                            easy_message_item = responses.EasyInputMessageParam(role='assistant', content=item.content)
+                            if send_phase:
+                                easy_message_item['phase'] = phase
+                            openai_messages.append(easy_message_item)
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
@@ -2489,7 +2614,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 elif (  # pragma: no branch
                                     action == 'call_tool'
                                     and (tool_name := args.get('tool_name'))
-                                    and (tool_args := args.get('tool_args'))
+                                    and (tool_args := args.get('tool_args')) is not None
                                 ):
                                     mcp_call_item = responses.response_input_item_param.McpCall(
                                         id=item.tool_call_id,
@@ -2753,10 +2878,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if chunk.model:
                     self._model_name = chunk.model
 
-                try:
-                    choice = chunk.choices[0]
-                except IndexError:
+                # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
+                # malformed chunks that the openai SDK's loose constructor lets through (#5165).
+                if not chunk.choices:
                     continue
+                choice = chunk.choices[0]
 
                 # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
                 if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
@@ -2934,6 +3060,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
+            # Track `phase` (commentary | final_answer) on assistant message items, captured
+            # from the `output_item.added` event and merged into the corresponding
+            # `TextPart.provider_details` on `output_text.done`.
+            _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -2942,6 +3072,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     self._usage += self._map_usage(chunk.response)
+                    self._store_conversation_id(chunk.response)
 
                     raw_finish_reason = (
                         details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -2964,6 +3095,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseCreatedEvent):
                     if chunk.response.id:  # pragma: no branch
                         self.provider_response_id = chunk.response.id
+                    self._store_conversation_id(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
@@ -2998,7 +3130,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
-                        pass
+                        if chunk.item.phase is not None:
+                            _phase_by_item[chunk.item.id] = chunk.item.phase
                     elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                         call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
@@ -3207,6 +3340,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
+                    if (phase := _phase_by_item.get(chunk.item_id)) is not None:
+                        provider_details['phase'] = phase
                     if provider_details:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
@@ -3339,6 +3474,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+
+    def _store_conversation_id(self, response: responses.Response) -> None:
+        if response.conversation:
+            self.provider_details = {**(self.provider_details or {}), 'conversation_id': response.conversation.id}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
@@ -3710,16 +3849,19 @@ def _map_code_interpreter_tool_call(
     if logs:
         result['logs'] = logs
 
+    call_part = BuiltinToolCallPart(
+        tool_name=CodeExecutionTool.kind,
+        tool_call_id=item.id,
+        args={
+            'container_id': item.container_id,
+            'code': item.code or '',
+        },
+        provider_name=provider_name,
+    )
+    call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+
     return (
-        BuiltinToolCallPart(
-            tool_name=CodeExecutionTool.kind,
-            tool_call_id=item.id,
-            args={
-                'container_id': item.container_id,
-                'code': item.code or '',
-            },
-            provider_name=provider_name,
-        ),
+        call_part,
         BuiltinToolReturnPart(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
