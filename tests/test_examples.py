@@ -84,6 +84,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+        if '.agents' in ex.path.parts:
+            continue
         if ex.path.name != '_utils.py':
             try:
                 path = ex.path.relative_to(root_dir)

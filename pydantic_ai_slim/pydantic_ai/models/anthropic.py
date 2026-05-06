@@ -1149,7 +1149,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
                                 and (args := response_part.args_as_dict())
                                 and (tool_name := args.get('tool_name'))
-                                and (tool_args := args.get('tool_args'))
+                                and (tool_args := args.get('tool_args')) is not None
                             ):  # pragma: no branch
                                 mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
                                     id=tool_use_id,
@@ -1971,12 +1971,14 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
         )
     elif item.name == 'code_execution':
-        return BuiltinToolCallPart(
+        part = BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=CodeExecutionTool.kind,
             args=tool_args,
             tool_call_id=item.id,
         )
+        part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+        return part
     elif item.name == 'web_fetch':
         return BuiltinToolCallPart(
             provider_name=provider_name,
