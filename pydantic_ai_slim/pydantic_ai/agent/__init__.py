@@ -1204,9 +1204,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_capability = base_capability
 
         # Prepend Instrumentation capability (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves.
+        # but only if the user hasn't already added one themselves. Splat any nested
+        # `CombinedCapability` (e.g. the organizational `_root_capability` container)
+        # so its leaves participate as siblings in the outer ordering pass — wrapping
+        # it would force the outer post-init to choose a single position for the inner
+        # group, raising "Conflicting positions" when the leaves span tiers.
         if instrumentation_cap is not None and not has_capability_type([effective_capability], InstrumentationCap):
-            effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
+            inner_caps = (
+                list(effective_capability.capabilities)
+                if isinstance(effective_capability, CombinedCapability)
+                else [effective_capability]
+            )
+            effective_capability = CombinedCapability([instrumentation_cap, *inner_caps])
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)

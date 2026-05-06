@@ -3933,3 +3933,34 @@ async def test_instrumentation_capability_with_noop_tracer() -> None:
     )
     result = await agent.run('hello')
     assert result.output == snapshot('success (no tool calls)')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_instrument_combines_with_outermost_and_innermost_capabilities() -> None:
+    """Auto-prepending `Instrumentation` must not wrap a `CombinedCapability` that
+    already contains both an outermost and innermost cap — the wrap would force
+    `_effective_ordering` to merge those positions and raise "Conflicting positions".
+    """
+    from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
+
+    class OutermostCap(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost')
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            pass
+
+    class InnermostCap(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='innermost')
+
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            pass
+
+    agent = Agent(
+        model=TestModel(),
+        instrument=True,
+        capabilities=[OutermostCap(), InnermostCap()],
+    )
+    result = await agent.run('hello')
+    assert result.output == snapshot('success (no tool calls)')
