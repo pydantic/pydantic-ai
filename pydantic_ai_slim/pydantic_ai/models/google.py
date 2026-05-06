@@ -714,7 +714,9 @@ class GoogleModel(Model[Client]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
-        profile = self._resolved_profile
+        # Don't use `self._resolved_profile`: `tests/test_thinking.py` invokes this as an
+        # unbound method with a `FunctionModel` carrying a `GoogleModelProfile`.
+        profile = GoogleModelProfile.from_profile(self.profile)
         if thinking is False:
             if profile.google_supports_thinking_level:
                 return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
