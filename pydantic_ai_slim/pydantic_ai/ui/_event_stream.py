@@ -13,6 +13,7 @@ from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
+    BaseToolCallEvent,
     BaseToolResultEvent,
     BinaryContent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -97,6 +98,14 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _final_result_event: FinalResultEvent | None = None
     _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
     """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
+    _handled_tool_calls: set[str] = field(default_factory=set[str])
+    """Tool call IDs whose call event has already been dispatched.
+
+    Used to dedupe the dual emission of `OutputToolCallEvent` + `FunctionToolCallEvent`
+    that fires on output-tool failure paths during the v2 transition.
+    """
+    _handled_tool_results: set[str] = field(default_factory=set[str])
+    """Tool call IDs whose result event has already been dispatched."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -171,17 +180,20 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
-                elif isinstance(event, FunctionToolCallEvent):
-                    self._pending_tool_calls[event.part.tool_call_id] = _PendingToolCall(
-                        'function', event.part.tool_name
+                elif isinstance(event, BaseToolCallEvent):
+                    tool_call_id = event.part.tool_call_id
+                    if tool_call_id in self._handled_tool_calls:
+                        # Dual emission for an output-tool failure path; the new event already handled it.
+                        continue
+                    self._handled_tool_calls.add(tool_call_id)
+                    kind: Literal['function', 'output'] = (
+                        'output' if isinstance(event, OutputToolCallEvent) else 'function'
                     )
-                    async for e in self._turn_to('request'):
-                        yield e
-                elif isinstance(event, OutputToolCallEvent):
-                    self._pending_tool_calls[event.part.tool_call_id] = _PendingToolCall('output', event.part.tool_name)
-                    # The output tool call is now tracked in `_pending_tool_calls`,
-                    # so the `FinalResultEvent` backup used by the error path is no longer needed.
-                    self._final_result_event = None
+                    self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
+                    if kind == 'output':
+                        # The output tool call is now tracked in `_pending_tool_calls`,
+                        # so the `FinalResultEvent` backup used by the error path is no longer needed.
+                        self._final_result_event = None
                     async for e in self._turn_to('request'):
                         yield e
                 elif isinstance(event, AgentRunResultEvent):
@@ -203,7 +215,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     self._final_result_event = event
 
                 elif isinstance(event, BaseToolResultEvent):
-                    self._pending_tool_calls.pop(event.result.tool_call_id, None)
+                    tool_call_id = event.result.tool_call_id
+                    self._pending_tool_calls.pop(tool_call_id, None)
+                    if tool_call_id in self._handled_tool_results:
+                        # Dual emission for an output-tool failure path; the new event already handled it.
+                        continue
+                    self._handled_tool_results.add(tool_call_id)
 
                 elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
                     # These events were deprecated before this feature was introduced
