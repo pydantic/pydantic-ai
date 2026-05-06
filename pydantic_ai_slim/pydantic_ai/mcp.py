@@ -888,14 +888,14 @@ class MCPServer(AbstractToolset[Any], ABC):
         # Await outside the lock: the session task's cancel scopes unwind inside the
         # task itself, so this await can safely happen from any caller. Bound the
         # wait so a transport whose `__aexit__` deadlocks (hung subprocess, server
-        # that never closes the connection) cannot block our own shutdown forever.
+        # that never closes the connection) cannot block our own shutdown forever;
+        # `move_on_after` cancels this `await`, which propagates the cancel through
+        # to `session_task_to_await` itself, so the runner gets torn down too.
         with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
             try:
                 await session_task_to_await
             except BaseException:
                 pass
-            return None
-        await state.force_close(session_task_to_await)
         return None
 
     @property

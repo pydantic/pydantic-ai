@@ -387,8 +387,8 @@ async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatc
 
     assert teardown_reached.is_set(), 'transport teardown was never reached'
     assert not server.is_running
-    # With the fix: bounded by ~2 * grace. Without: `__aexit__` awaits the hung
-    # task until `wait_for`'s safety net fires (~5s). Threshold sits comfortably
+    # With the fix: bounded by ~grace. Without: `__aexit__` awaits the hung task
+    # until `wait_for`'s safety net fires (~5s). Threshold sits comfortably
     # between the two regimes, with headroom for CI jitter.
     assert elapsed < safety_net - 1.5, f'shutdown took {elapsed:.2f}s, expected <<{safety_net}s'
 
