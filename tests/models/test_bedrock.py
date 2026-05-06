@@ -520,6 +520,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 timestamp=IsDatetime(),
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The')],
@@ -528,6 +529,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
                 state='interrupted',
             ),
         ]

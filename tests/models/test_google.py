@@ -333,6 +333,7 @@ async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
                 instructions='You are a helpful chatbot.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
@@ -344,6 +345,7 @@ async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
                 provider_response_id=IsStr(),
                 state='interrupted',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
