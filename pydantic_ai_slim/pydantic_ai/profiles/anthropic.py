@@ -52,6 +52,12 @@ class AnthropicModelProfile(ModelProfile):
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """
 
+    anthropic_supports_task_budgets: bool = False
+    """Whether the model supports `output_config.task_budget`.
+
+    Anthropic currently documents task budgets as a Claude Opus 4.7 beta feature.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -92,6 +98,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_xhigh_effort = model_name.startswith('claude-opus-4-7')
     disallows_budget_thinking = model_name.startswith('claude-opus-4-7')
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
+    supports_task_budgets = model_name.startswith('claude-opus-4-7')
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -103,4 +110,5 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_supports_task_budgets=supports_task_budgets,
     )
