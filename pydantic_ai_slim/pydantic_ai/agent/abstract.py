@@ -1171,34 +1171,30 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         task = asyncio.create_task(run_agent())
 
-        # TODO: Replace _task_cancel_sent flag with task.cancelling() when Python 3.10 is dropped (3.11+).
-        _task_cancel_sent: bool = False
-
         try:
             async with receive_stream:
                 async for message in receive_stream:
                     yield message
 
-            result = await task
-
         except asyncio.CancelledError as e:
             task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-            _task_cancel_sent = True
+            with contextlib.suppress(BaseException):
+                await task
             raise
 
-        finally:
-            # We do not support trio but catching via anyio anyway
-            cancelled_exc = anyio.get_cancelled_exc_class()
-            if not task.done() and not _task_cancel_sent:
-                task.cancel()
+        except BaseException:
+            task.cancel()
 
-            # Closing receive_stream during generator shutdown can race with
-            # event_stream_handler still awaiting send_stream.send(event).
-            # Suppress only those expected teardown errors so real failures still surface.
-            with contextlib.suppress(cancelled_exc, anyio.BrokenResourceError, anyio.ClosedResourceError):
+            # The consumer side is already exiting. Await the producer only to
+            # retrieve its exception and finish cleanup; it must not replace the
+            # exception that is already propagating from the consumer side.
+            with contextlib.suppress(BaseException):
                 await task
+            raise
 
-        yield AgentRunResultEvent(result)
+        else:
+            result = await task
+            yield AgentRunResultEvent(result)
 
     @overload
     def iter(

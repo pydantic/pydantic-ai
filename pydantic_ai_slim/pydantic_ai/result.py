@@ -878,9 +878,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 class AgentEventStream(Generic[OutputDataT]):
     """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
-    Wraps the underlying async generator to support explicit cancellation
-    via [`cancel()`][pydantic_ai.result.AgentEventStream.cancel] and
-    deterministic cleanup via the async context manager protocol.
+    Wraps the underlying async generator to support deterministic cleanup via the async context manager protocol.
 
     Usage:
 
@@ -889,7 +887,6 @@ class AgentEventStream(Generic[OutputDataT]):
         async with agent.run_stream_events('Hello') as stream:
             async for event in stream:
                 ...
-            # optional: await stream.cancel() to stop early
     # cleanup is automatic on __aexit__
     ```
 
@@ -949,18 +946,10 @@ class AgentEventStream(Generic[OutputDataT]):
             return await self._generator.__anext__()
         except StopAsyncIteration:
             # Not strictly necessary (aclose() on an exhausted generator is a no-op),
-            # but keeps _closed accurate after natural exhaustion so __aexit__/cancel()
-            # don't call aclose() unnecessarily.
+            # but keeps _closed accurate after natural exhaustion so __aexit__()
+            # doesn't call aclose() unnecessarily.
             self._closed = True
             raise
-
-    async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation.
-
-        Closes the underlying generator, which triggers task cancellation
-        and HTTP connection cleanup via the generator's finally block.
-        """
-        await self.aclose()
 
     async def aclose(self) -> None:
         """Close the stream and trigger any pending cleanup."""

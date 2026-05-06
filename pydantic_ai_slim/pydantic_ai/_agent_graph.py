@@ -12,7 +12,6 @@ from copy import deepcopy
 from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
-import pydantic_core
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -644,14 +643,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
-            # Race condition: early break from stream_text() could leave a pending
-            # anext() task from group_by_temporal while this drain runs, causing
-            # concurrent anext() on the same async generator. Mitigated by
-            # AgentStream._anext_lock which serializes all anext() calls through
-            # _events_iter(), including this drain path.
-            # Ensure stream is fully consumed for proper usage counting.
-            if not agent_stream_holder[0].cancelled:
-                await agent_stream_holder[0].drain()
         except BaseException as exc:
             stream_error = exc
             raise
@@ -1997,76 +1988,8 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     )
 
 
-def _tool_args_incomplete(part: _messages.BaseToolCallPart) -> bool:
-    if isinstance(part.args, dict) or not part.args:
-        return False
-    try:
-        pydantic_core.from_json(part.args)
-    except ValueError:
-        return True
-    else:
-        return False
-
-
-def _filter_interrupted_response(
-    message: _messages.ModelResponse, processed_tool_call_ids: set[str]
-) -> _messages.ModelResponse | None:
-    """Drop tool calls with incomplete args from an interrupted ``ModelResponse``.
-
-    Cancellation can leave a tool call with truncated JSON arguments. Providers
-    reject those malformed tool call parts when the history is sent back. Complete
-    tool calls are valid history even if they do not have a later tool return yet:
-    the next run can resume by executing those tool calls.
-
-    Both client-side and built-in tool calls are provider-visible, so both are
-    considered here. Built-in tool return parts live in the same response rather
-    than a later ``ModelRequest``, so they count as processed for this response.
-
-    Returns ``None`` if the response would be empty after filtering — providers like
-    OpenAI/Mistral reject empty assistant messages, so those responses must be dropped
-    entirely.
-    """
-    processed_tool_call_ids = {
-        *processed_tool_call_ids,
-        *(
-            part.tool_call_id
-            for part in message.parts
-            if isinstance(part, _messages.BuiltinToolReturnPart) and part.tool_call_id
-        ),
-    }
-    filtered_parts = [
-        part
-        for part in message.parts
-        if not (
-            isinstance(part, _messages.BaseToolCallPart)
-            and _tool_args_incomplete(part)
-            and part.tool_call_id not in processed_tool_call_ids
-        )
-    ]
-    if not filtered_parts:
-        return None
-    if len(filtered_parts) != len(message.parts):
-        return replace(message, parts=filtered_parts)
-    return message
-
-
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages and filtering tool calls with incomplete arguments.
-
-    For interrupted responses (from stream cancellation), tool calls with incomplete arguments that have no
-    corresponding tool return or retry prompt are filtered out. Complete pending tool calls are kept so
-    the next run can execute them. If an interrupted response ends up with no parts after filtering, it is
-    dropped entirely (providers like OpenAI/Mistral reject empty assistant messages).
-    """
-    # Collect tool_call_ids that already have a ToolReturnPart or RetryPromptPart in history.
-    processed_tool_call_ids: set[str] = set()
-    for message in messages:
-        if isinstance(message, _messages.ModelRequest):
-            for part in message.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
-                    if part.tool_call_id:  # pragma: no branch
-                        processed_tool_call_ids.add(part.tool_call_id)
-
+    """Clean the message history by merging consecutive messages."""
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
@@ -2096,12 +2019,9 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            if message.state == 'interrupted':
-                filtered = _filter_interrupted_response(message, processed_tool_call_ids)
-                if filtered is None:
-                    continue
-                message = filtered
-
+            # Interrupted responses are preserved as-is. Stream cancellation can
+            # leave incomplete tool calls, but filtering or synthesizing tool
+            # returns is a separate run-resumption semantics decision.
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)

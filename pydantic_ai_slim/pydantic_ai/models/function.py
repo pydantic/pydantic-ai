@@ -190,11 +190,14 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(
-            model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
-            _iter=response_stream,
-        )
+        try:
+            yield FunctionStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_name=self._model_name,
+                _iter=response_stream,
+            )
+        finally:
+            await response_stream.aclose()
 
     @property
     def provider(self) -> None:

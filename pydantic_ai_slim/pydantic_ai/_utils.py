@@ -20,11 +20,13 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Protocol,
     TypeAlias,
     TypeGuard,
     get_args,
     get_origin,
     overload,
+    runtime_checkable,
 )
 
 import anyio
@@ -176,6 +178,16 @@ def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
 
 
 T = TypeVar('T')
+
+
+@runtime_checkable
+class _AsyncCloseable(Protocol):
+    async def aclose(self) -> None: ...
+
+
+async def aclose_if_available(value: object) -> None:
+    if isinstance(value, _AsyncCloseable):
+        await value.aclose()
 
 
 @dataclass
@@ -466,6 +478,13 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         except StopAsyncIteration:
             self._exhausted = True
             raise
+
+    async def aclose(self) -> None:
+        self._exhausted = True
+        if self._source_iter is not None:
+            await aclose_if_available(self._source_iter)
+        else:
+            await aclose_if_available(self.source)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:

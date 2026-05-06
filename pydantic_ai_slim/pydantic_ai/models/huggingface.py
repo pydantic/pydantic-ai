@@ -217,7 +217,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         response = await self._completions_create(
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
-        yield await self._process_streamed_response(response, model_request_parameters)
+        try:
+            yield await self._process_streamed_response(response, model_request_parameters)
+        finally:
+            await _utils.aclose_if_available(response)
 
     @overload
     async def _completions_create(

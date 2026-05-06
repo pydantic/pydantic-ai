@@ -142,6 +142,8 @@ async def test_streamed_text_limits() -> None:
                 )
             )
             succeeded = True
+            async for _ in result.stream_text(debounce_by=None):
+                pass
 
     assert succeeded
 

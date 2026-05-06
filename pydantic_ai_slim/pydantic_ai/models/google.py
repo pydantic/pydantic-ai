@@ -538,7 +538,10 @@ class GoogleModel(Model[Client]):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
-        yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        try:
+            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        finally:
+            await _utils.aclose_if_available(response)
 
     def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
         """Build ImageConfigDict from ImageGenerationTool with validation."""

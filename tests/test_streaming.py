@@ -23,8 +23,6 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -4343,7 +4341,7 @@ async def test_completed_streamed_response_cancel_noop():
     assert response.state == 'complete'
 
 
-async def test_run_stream_events_cancel():
+async def test_run_stream_events_aclose():
     agent = Agent(TestModel())
 
     events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
@@ -4351,15 +4349,14 @@ async def test_run_stream_events_cancel():
         async for event in stream:  # pragma: no branch
             events.append(event)
             if isinstance(event, PartStartEvent):  # pragma: no branch
-                await stream.cancel()
+                await stream.aclose()
                 break
 
-        # After cancel, __anext__ raises StopAsyncIteration because _closed is True
-        events_after_cancel = [e async for e in stream]
-        assert events_after_cancel == []
+        # After aclose, __anext__ raises StopAsyncIteration because _closed is True.
+        assert [e async for e in stream] == []
 
-        # Double cancel is a no-op
-        await stream.cancel()
+        # Double close is a no-op.
+        await stream.aclose()
 
     assert len(events) >= 1
 
@@ -4398,7 +4395,7 @@ async def test_run_stream_events_standalone_deprecation():
         warnings.simplefilter('always')
         async for _ in stream:  # pragma: no branch
             break
-    await stream.cancel()
+    await stream.aclose()
 
     assert len(caught) == 1
     assert issubclass(caught[0].category, DeprecationWarning)
@@ -4471,321 +4468,6 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
         await task
 
     assert cleanup_finished.is_set()
-
-
-async def test_incomplete_tool_call_filtered_from_history():
-    """When a cancelled stream leaves an interrupted response with truncated tool call args,
-    _clean_message_history filters it out before sending to the model."""
-
-    async def my_tool(x: int) -> str:
-        return str(x)
-
-    agent = Agent(TestModel(), tools=[my_tool])
-
-    # Simulate message history from a cancelled stream:
-    # - user prompt
-    # - interrupted response with a tool call whose JSON args are truncated
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='my_tool', args='{"x": ', tool_call_id='call_1')],
-            state='interrupted',
-        ),
-    ]
-
-    # Continue the conversation: the incomplete tool call should be stripped.
-    # The interrupted response had only one part (the incomplete tool call),
-    # so the entire response is dropped from the cleaned history.
-    result = await agent.run('Continue', message_history=history)
-    # The interrupted ModelResponse with incomplete tool call args is dropped entirely
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelRequest(
-                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
-                usage=RequestUsage(input_tokens=52, output_tokens=4),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='my_tool',
-                        content='0',
-                        tool_call_id='pyd_ai_tool_call_id__my_tool',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='{"my_tool":"0"}')],
-                usage=RequestUsage(input_tokens=53, output_tokens=8),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_incomplete_tool_call_filtered_from_mixed_response():
-    """When an interrupted response mixes a non-tool-call part with an incomplete tool call,
-    the incomplete tool call is stripped and the other parts survive — the response is trimmed, not dropped."""
-
-    async def my_tool(x: int) -> str:  # pragma: no cover
-        return str(x)
-
-    agent = Agent(TestModel(), tools=[my_tool])
-
-    # Interrupted response with a TextPart and a ToolCallPart whose JSON args were truncated by cancellation.
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[
-                TextPart(content='Let me call the tool'),
-                ToolCallPart(tool_name='my_tool', args='{"x": ', tool_call_id='call_1'),
-            ],
-            state='interrupted',
-        ),
-    ]
-
-    result = await agent.run('Continue', message_history=history)
-    # The interrupted response is kept but with only the TextPart;
-    # the incomplete ToolCallPart is stripped.
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[TextPart(content='Let me call the tool')], timestamp=IsDatetime(), state='interrupted'
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=52, output_tokens=9),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_complete_pending_tool_call_kept_and_executed_on_resume():
-    """An interrupted response can contain a tool call whose JSON args completed before the cancel
-    fired but the tool was never executed. That response is valid history when the next run resumes
-    without a new user prompt, because the agent can execute the pending tool call first.
-    """
-
-    async def my_tool(x: int) -> str:
-        return str(x)
-
-    agent = Agent(TestModel(), tools=[my_tool])
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='call_1')],
-            state='interrupted',
-        ),
-    ]
-
-    result = await agent.run(message_history=history)
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='call_1')],
-                usage=RequestUsage(),
-                timestamp=IsDatetime(),
-                state='interrupted',
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='my_tool',
-                        content='1',
-                        tool_call_id='call_1',
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='{"my_tool":"1"}')],
-                usage=RequestUsage(input_tokens=52, output_tokens=8),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_builtin_tool_call_in_interrupted_response_kept():
-    """The filter must not broadly strip complete BuiltinToolCallParts."""
-
-    agent = Agent(TestModel())
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[
-                BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'pydantic'},
-                    tool_call_id='builtin_1',
-                    provider_name='test',
-                ),
-                BuiltinToolReturnPart(
-                    tool_name='web_search',
-                    content='results',
-                    tool_call_id='builtin_1',
-                    provider_name='test',
-                ),
-            ],
-            state='interrupted',
-        ),
-    ]
-
-    result = await agent.run('Continue', message_history=history)
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'pydantic'},
-                        tool_call_id='builtin_1',
-                        provider_name='test',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='web_search',
-                        content='results',
-                        tool_call_id='builtin_1',
-                        timestamp=IsDatetime(),
-                        provider_name='test',
-                    ),
-                ],
-                timestamp=IsDatetime(),
-                state='interrupted',
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=52, output_tokens=10),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_incomplete_builtin_tool_call_in_interrupted_response_filtered():
-    """BuiltinToolCallParts are provider-visible, so malformed args need the same filtering."""
-
-    agent = Agent(TestModel())
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[
-                TextPart(content='Searching'),
-                BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": ',
-                    tool_call_id='builtin_1',
-                    provider_name='test',
-                ),
-            ],
-            state='interrupted',
-        ),
-    ]
-
-    result = await agent.run('Continue', message_history=history)
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(parts=[TextPart(content='Searching')], timestamp=IsDatetime(), state='interrupted'),
-            ModelRequest(
-                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=52, output_tokens=5),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_tool_call_with_matching_return_kept_in_history():
-    """A tool call in an interrupted response with a matching ToolReturnPart in history is kept —
-    removing it would orphan the return part instead.
-    """
-
-    async def my_tool(x: int) -> str:  # pragma: no cover
-        return str(x)
-
-    agent = Agent(TestModel(), tools=[my_tool])
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')]),
-        ModelResponse(
-            parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
-            state='interrupted',
-        ),
-        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='1', tool_call_id='call_1')]),
-    ]
-
-    result = await agent.run('Continue', message_history=history)
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='call_1')],
-                timestamp=IsDatetime(),
-                state='interrupted',
-            ),
-            ModelRequest(
-                parts=[ToolReturnPart(tool_name='my_tool', content='1', tool_call_id='call_1', timestamp=IsDatetime())]
-            ),
-            ModelRequest(
-                parts=[UserPromptPart(content='Continue', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='{"my_tool":"1"}')],
-                usage=RequestUsage(input_tokens=53, output_tokens=8),
-                model_name='test',
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-        ]
-    )
 
 
 # endregion
