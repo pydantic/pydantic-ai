@@ -4,6 +4,7 @@ from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -153,7 +154,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    id: str | None = field(default=None, kw_only=True)
+    id: str = field(default_factory=lambda: str(uuid4()), kw_only=True)
     """Stable identifier for this capability instance.
 
     Required when `defer_loading=True` so the model can reference the capability
