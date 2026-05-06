@@ -99,8 +99,9 @@ class _FallbackStreamedResponse(StreamedResponse):
 
         for model in self._fallback_models:
             # Reset parts so a rejected previous model doesn't bleed into self.get()
-            # for the next attempt. Accumulated _usage is intentionally preserved so
-            # the caller sees total tokens spent across all attempts.
+            # for the next attempt. _usage is overwritten on each event below, so the
+            # caller ends up seeing only the accepted model's usage — matching the
+            # non-streaming request() semantics.
             self._parts_manager = ModelResponsePartsManager()
 
             try:
