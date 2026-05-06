@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
@@ -11,12 +12,13 @@ import anyio
 from opentelemetry.trace import get_current_span
 from typing_extensions import assert_never
 
+from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import get_first_param_type, is_async_callable, now_utc as _now_utc
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelResponse
+from ..messages import ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -63,6 +65,85 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     """Check if value is a single exception type."""
     return isinstance(value, type) and issubclass(value, Exception)
+
+
+@dataclass
+class _FallbackStreamedResponse(StreamedResponse):
+    """A StreamedResponse that orchestrates fallback across multiple models.
+
+    Yielded by FallbackModel.request_stream when at least one ResponseHandler is
+    configured. Iterates self._fallback_models in order: opens each model's
+    underlying stream, forwards every event live to the consumer (no buffering),
+    mirrors deltas to self._parts_manager so .get() reflects the accepted model's
+    response, and at end-of-stream calls self._should_fallback_handler(self.get()).
+    On rejection, resets parts state and continues to the next model. The consumer
+    iterates a single async iterator throughout — they will see events from
+    rejected models followed by events from the accepted model.
+    """
+
+    _fallback_models: list[Model] = field(default_factory=list)
+    _request_args: tuple[Any, ...] = field(default=())
+    _should_fallback_handler: Callable[[Exception | ModelResponse], Awaitable[bool]] | None = field(default=None)
+    _on_model_selected: Callable[[Model, ModelRequestParameters], None] | None = field(default=None)
+    _accepted_model: Model | None = field(default=None, init=False)
+    _accepted_timestamp: datetime | None = field(default=None, init=False)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        assert self._should_fallback_handler is not None
+        exceptions: list[Exception] = []
+        rejected_responses: list[ModelResponse] = []
+
+        messages, model_settings, model_request_parameters, run_context = self._request_args
+
+        for model in self._fallback_models:
+            # Reset parts so a rejected previous model doesn't bleed into self.get()
+            # for the next attempt. Accumulated _usage is intentionally preserved so
+            # the caller sees total tokens spent across all attempts.
+            self._parts_manager = ModelResponsePartsManager()
+
+            try:
+                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                async with model.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as inner_sr:
+                    async for event in inner_sr:
+                        # Mirror inner state so self.get() reflects this model's assembled response.
+                        self._parts_manager = inner_sr._parts_manager
+                        self._usage = inner_sr._usage
+                        yield event
+
+                    inner_response = inner_sr.get()
+                    if await self._should_fallback_handler(inner_response):
+                        rejected_responses.append(inner_response)
+                        continue
+
+                    self._accepted_model = model
+                    self._accepted_timestamp = inner_sr.timestamp
+                    self.finish_reason = inner_sr.finish_reason
+                    self.provider_response_id = inner_sr.provider_response_id
+                    self.provider_details = inner_sr.provider_details
+                    if self._on_model_selected is not None:
+                        self._on_model_selected(model, prepared_parameters)
+                    return
+            except Exception as exc:
+                if await self._should_fallback_handler(exc):
+                    exceptions.append(exc)
+                    continue
+                raise
+
+        _raise_fallback_exception_group(exceptions, rejected_responses)
+
+    @property
+    def model_name(self) -> str:
+        if self._accepted_model is None:
+            return 'fallback:pending'
+        return self._accepted_model.model_name
+
+    @property
+    def timestamp(self) -> datetime:
+        if self._accepted_timestamp is not None:
+            return self._accepted_timestamp
+        return _now_utc()
 
 
 @dataclass(init=False)
