@@ -260,7 +260,8 @@ async def test_openai_responses_maps_mcp_call_with_empty_tool_args():
 
     mcp_calls = [message for message in openai_messages if message.get('type') == 'mcp_call']
     assert len(mcp_calls) == 1
-    assert mcp_calls[0]['arguments'] == '{}'
+    mcp_call = cast(resp.response_input_item_param.McpCall, mcp_calls[0])
+    assert mcp_call['arguments'] == '{}'
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
