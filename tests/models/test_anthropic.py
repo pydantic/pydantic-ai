@@ -3869,6 +3869,34 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
 
 
+async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_extra_body(
+    allow_model_requests: None,
+):
+    settings = AnthropicModelSettings(
+        temperature=0.2,
+        extra_body={'temperature': 0.5, 'top_k': 5},
+    )
+    responses = [
+        completion_message(
+            [BetaTextBlock(text='4', type='text')],
+            usage=BetaUsage(input_tokens=10, output_tokens=1),
+        )
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings=settings)
+
+    with pytest.warns(UserWarning) as recorded:
+        await agent.run('What is 2+2?')
+
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == snapshot(
+        [
+            "Sampling parameters ['temperature', 'top_k'] are not supported by 'claude-opus-4-7'. These settings will be ignored."
+        ]
+    )
+
+
 async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
     settings = AnthropicModelSettings(temperature=0.2, extra_body={'metadata': {'keep': True}})
     responses = [

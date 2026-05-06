@@ -496,10 +496,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
-        dropped = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]
+        dropped = {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
-            dropped += [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body]
+            dropped |= {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
             model_settings['extra_body'] = {
                 key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
             }
@@ -508,8 +508,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_settings.pop(setting, None)
 
         if dropped:
+            ordered = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
-                f'Sampling parameters {dropped} are not supported by {self.model_name!r}. These settings will be ignored.',
+                f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
                 stacklevel=2,
             )
