@@ -575,6 +575,27 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     return bin_content
 
 
+# `tiny_*` fixtures: opaque 3-byte payloads for roundtrip / serialization tests where the bytes
+# are never decoded by a model and assertions only check structure (e.g. `IsStr()` on base64).
+# Prefer these whenever a real, decodable image is not required: keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads.
+# When the model has to actually see the content (e.g. VCR tests against provider APIs), use
+# the KB-scale session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_image() -> BinaryImage:
+    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
+
+
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
+@pytest.fixture
+def tiny_video() -> BinaryContent:
+    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
+
+
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
 

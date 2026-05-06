@@ -3465,26 +3465,6 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
     assert uploaded.identifier == 'my-doc.pdf'
 
 
-@pytest.fixture
-def tiny_image() -> BinaryImage:
-    """Minimal `BinaryImage` for multimodal-tool-return roundtrip tests.
-
-    Avoids the KB-scale `image_content` session fixture; the assertions only check `IsStr()` on the
-    base64 payload and rely on round-trip equality, so real image bytes add cost without coverage.
-    """
-    return BinaryImage(data=b'\x00\x01\x02', media_type='image/jpeg')
-
-
-@pytest.fixture
-def tiny_audio() -> BinaryContent:
-    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
-
-
-@pytest.fixture
-def tiny_video() -> BinaryContent:
-    return BinaryContent(data=b'\x20\x21\x22', media_type='video/mp4')
-
-
 @pytest.mark.parametrize(
     ('case_id', 'expected_activities'),
     [
