@@ -1843,6 +1843,50 @@ async def test_anthropic_cache_tool_definitions_skips_deferred_tools(allow_model
     assert by_name['visible_tool']['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
+async def test_anthropic_cache_tool_definitions_skips_when_all_tools_deferred(allow_model_requests: None) -> None:
+    """When *every* tool is deferred, there's nothing in the cacheable prompt prefix to
+    attach `cache_control` to. The loop must fall through without breaking — applying
+    `cache_control` to any deferred tool would 400 the request.
+    """
+    pytest.importorskip('anthropic')
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+    response = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent: Agent[None, str] = Agent(
+        model=model,
+        capabilities=[ToolSearch()],
+        model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
+    )
+
+    @agent.tool_plain(defer_loading=True)
+    def deferred_one() -> str:  # pragma: no cover
+        return 'one'
+
+    @agent.tool_plain(defer_loading=True)
+    def deferred_two() -> str:  # pragma: no cover
+        return 'two'
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = cast('list[dict[str, Any]]', kwargs['tools'])
+    function_tools = [tool for tool in tools if 'input_schema' in tool]
+    # No tool ends up with `cache_control` — pairing any deferred tool with it 400s.
+    for tool in function_tools:
+        assert 'cache_control' not in tool
+
+
 async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: None):
     """OpenAI Responses has no bm25/regex concept — using one must error loudly rather
     than silently falling through to OpenAI's default server-side tool search."""
