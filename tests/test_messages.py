@@ -616,6 +616,7 @@ def test_file_part_serialization_roundtrip():
                 'provider_response_id': None,
                 'finish_reason': None,
                 'run_id': None,
+                'conversation_id': None,
                 'metadata': None,
                 'state': 'complete',
             }
@@ -639,6 +640,39 @@ def test_model_messages_type_adapter_preserves_run_id():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
+
+
+def test_model_messages_type_adapter_preserves_conversation_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            conversation_id='conv-abc',
+        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], conversation_id='conv-abc'),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.conversation_id for message in deserialized] == snapshot(['conv-abc', 'conv-abc'])
+
+
+def test_model_messages_type_adapter_back_compat_missing_conversation_id():
+    """Histories serialized before the field existed should deserialize with conversation_id=None."""
+    pre_pr_serialized = [
+        {
+            'kind': 'request',
+            'parts': [{'part_kind': 'user-prompt', 'content': 'Hello'}],
+            'run_id': 'run-123',
+        },
+        {
+            'kind': 'response',
+            'parts': [{'part_kind': 'text', 'content': 'Hi'}],
+            'run_id': 'run-123',
+        },
+    ]
+    deserialized = ModelMessagesTypeAdapter.validate_python(pre_pr_serialized)
+    assert all(m.conversation_id is None for m in deserialized)
 
 
 def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():

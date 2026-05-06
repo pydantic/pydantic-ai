@@ -31,11 +31,6 @@ from typing import (
 
 import anyio
 from anyio.to_thread import run_sync
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
@@ -46,6 +41,11 @@ from typing_inspection.introspection import is_union_origin
 from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 

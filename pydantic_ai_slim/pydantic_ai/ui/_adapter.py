@@ -248,6 +248,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """Deferred tool results extracted from the request, used for tool approval workflows."""
         return None
 
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID extracted from the protocol-specific run input.
+
+        Used to correlate multiple agent runs that share message history. Returned as
+        the `gen_ai.conversation.id` OpenTelemetry span attribute on each run.
+
+        Subclasses for protocols that carry a conversation/thread/chat ID should override this
+        (e.g. AG-UI's `RunAgentInput.threadId`, Vercel AI's top-level chat `id`).
+        """
+        return None
+
     def sanitize_messages(
         self,
         messages: Sequence[ModelMessage],
@@ -451,6 +463,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -469,6 +482,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -483,6 +497,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
+        if conversation_id is None:
+            conversation_id = self.conversation_id
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
@@ -516,6 +532,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -539,6 +556,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -558,6 +576,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -577,6 +596,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -599,6 +619,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
@@ -627,6 +648,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -680,6 +702,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             adapter.run_stream(
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
                 deps=deps,
                 output_type=output_type,
                 model=model,

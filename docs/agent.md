@@ -331,6 +331,7 @@ async def main():
                 ],
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             )
         ),
         CallToolsNode(
@@ -340,6 +341,7 @@ async def main():
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             )
         ),
         End(data=FinalResult(output='The capital of France is Paris.')),
@@ -396,6 +398,7 @@ async def main():
                     ],
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             CallToolsNode(
@@ -405,6 +408,7 @@ async def main():
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -1226,6 +1230,7 @@ with capture_run_messages() as messages:  # (2)!
                 ],
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1239,6 +1244,7 @@ with capture_run_messages() as messages:  # (2)!
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             ),
             ModelRequest(
                 parts=[
@@ -1251,6 +1257,7 @@ with capture_run_messages() as messages:  # (2)!
                 ],
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             ),
             ModelResponse(
                 parts=[
@@ -1264,6 +1271,7 @@ with capture_run_messages() as messages:  # (2)!
                 model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
                 run_id='...',
+                conversation_id='...',
             ),
         ]
         """

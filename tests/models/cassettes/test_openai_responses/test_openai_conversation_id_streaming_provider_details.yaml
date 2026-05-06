@@ -1,0 +1,161 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body: {}
+    uri: https://api.openai.com/v1/conversations
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '131'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '417'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1777431496
+      id: conv_010000000000000000000000000000000000000000000000
+      metadata: {}
+      object: conversation
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '233'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      conversation: conv_010000000000000000000000000000000000000000000000
+      input:
+      - content: 'Reply exactly: streamed'
+        role: user
+      instructions: Follow the user instructions exactly.
+      model: gpt-4.1
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_01000000000000000000000000000000000000000000000000","object":"response","created_at":1777431497,"status":"in_progress","background":false,"completed_at":null,"conversation":{"id":"conv_010000000000000000000000000000000000000000000000"},"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Follow the user instructions exactly.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_01000000000000000000000000000000000000000000000000","object":"response","created_at":1777431497,"status":"in_progress","background":false,"completed_at":null,"conversation":{"id":"conv_010000000000000000000000000000000000000000000000"},"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Follow the user instructions exactly.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_01000000000000000000000000000000000000000000000000","type":"message","status":"in_progress","content":[],"role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_01000000000000000000000000000000000000000000000000","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"stream","item_id":"msg_01000000000000000000000000000000000000000000000000","logprobs":[],"obfuscation":"fyy9Vfz7II","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"ed","item_id":"msg_01000000000000000000000000000000000000000000000000","logprobs":[],"obfuscation":"NvT52Mb6pFGgHl","output_index":0,"sequence_number":5}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_01000000000000000000000000000000000000000000000000","logprobs":[],"output_index":0,"sequence_number":6,"text":"streamed"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_01000000000000000000000000000000000000000000000000","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"streamed"},"sequence_number":7}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_01000000000000000000000000000000000000000000000000","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"streamed"}],"role":"assistant"},"output_index":0,"sequence_number":8}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_01000000000000000000000000000000000000000000000000","object":"response","created_at":1777431497,"status":"completed","background":false,"completed_at":1777431497,"conversation":{"id":"conv_010000000000000000000000000000000000000000000000"},"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Follow the user instructions exactly.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4.1-2025-04-14","moderation":null,"output":[{"id":"msg_01000000000000000000000000000000000000000000000000","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"streamed"}],"role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":21,"input_tokens_details":{"cached_tokens":0},"output_tokens":3,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":24},"user":null,"metadata":{}},"sequence_number":9}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '568'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/conversations/conv_010000000000000000000000000000000000000000000000
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '210'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: conv_010000000000000000000000000000000000000000000000
+      object: conversation.deleted
+    status:
+      code: 200
+      message: OK
+version: 1
+...

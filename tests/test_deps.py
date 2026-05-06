@@ -40,6 +40,7 @@ def test_deps_used():
                 parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -49,6 +50,7 @@ def test_deps_used():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -61,6 +63,7 @@ def test_deps_used():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"example_tool":"MyDeps(foo=1, bar=2)"}')],
@@ -68,6 +71,7 @@ def test_deps_used():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -93,6 +97,7 @@ def test_deps_override():
                 parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -102,6 +107,7 @@ def test_deps_override():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -114,6 +120,7 @@ def test_deps_override():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"example_tool":"MyDeps(foo=1, bar=2)"}')],
@@ -121,6 +128,7 @@ def test_deps_override():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

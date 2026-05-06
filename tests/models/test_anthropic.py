@@ -324,6 +324,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -336,11 +337,13 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -353,6 +356,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1611,6 +1615,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                 parts=[UserPromptPart(content='What is 1+1? Answer with just the number.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='2')],
@@ -1632,6 +1637,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1655,6 +1661,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1673,6 +1680,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1685,6 +1693,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1728,6 +1737,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1746,6 +1756,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1759,6 +1770,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1777,6 +1789,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1790,6 +1803,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1802,6 +1816,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2682,6 +2697,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -2703,6 +2719,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2720,6 +2737,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2748,6 +2766,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 provider_response_id='msg_01TGA8SWcHTTn5674cmicbnJ',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2767,6 +2786,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2815,6 +2835,7 @@ I should provide practical advice for different methods of crossing a river.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2839,6 +2860,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2868,6 +2890,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2887,6 +2910,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2916,6 +2940,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                 provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2948,6 +2973,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2983,6 +3009,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3090,6 +3117,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3142,6 +3170,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3167,6 +3196,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3195,6 +3225,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_response_id='msg_016e2w8nkCuArd5HFSfEwke7',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3225,6 +3256,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3253,6 +3285,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 provider_response_id='msg_01ALwQ87pTS7hH1PjSdC9wJD',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4039,6 +4072,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                 parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4232,6 +4266,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 provider_response_id='msg_0119wM5YxCLg3hwUWrxEQ9Y8',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4249,6 +4284,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4433,6 +4469,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
                 provider_response_id='msg_01Vatv9GeGaeqVHfSGhkU7mo',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4464,6 +4501,7 @@ async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4718,6 +4756,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 provider_response_id='msg_01QmxBSdEbD9ZeBWDVgFDoQ5',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5494,6 +5533,7 @@ async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_ap
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5555,6 +5595,7 @@ Let me fetch the page first.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5577,6 +5618,7 @@ Let me fetch the page first.\
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5638,6 +5680,7 @@ Let me fetch the page first.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5648,6 +5691,7 @@ Let me fetch the page first.\
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5700,6 +5744,7 @@ It notes that "virtually every Python agent framework and LLM library" uses Pyda
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5746,6 +5791,7 @@ async def test_anthropic_web_fetch_tool_stream(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5803,6 +5849,7 @@ async def test_anthropic_web_fetch_tool_stream(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6353,6 +6400,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6422,6 +6470,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 provider_response_id='msg_01MYDjkvBDRaKsY6PDwQz3n6',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6441,6 +6490,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6561,6 +6611,7 @@ Pydantic ensures runtime data integrity through type hints and is foundational t
                 provider_response_id='msg_01DSGib8F7nNoYprfYSGp1sd',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6608,6 +6659,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6672,6 +6724,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 provider_response_id='msg_01Xf6SmUVY1mDrSwFc5RsY3n',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6873,6 +6926,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6925,6 +6979,7 @@ print(f"3 * 12390 = {result}")\
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -6942,6 +6997,7 @@ print(f"3 * 12390 = {result}")\
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -6994,6 +7050,7 @@ print(f"4 * 12390 = {result}")\
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7024,6 +7081,7 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7105,6 +7163,7 @@ Here's how it breaks down following the order of operations:
                 provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7593,6 +7652,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7614,6 +7674,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7715,6 +7776,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7738,6 +7800,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7750,6 +7813,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7777,6 +7841,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7789,6 +7854,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7824,6 +7890,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7850,6 +7917,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7862,6 +7930,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7887,6 +7956,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -7922,6 +7992,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -7945,6 +8016,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -7957,6 +8029,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -7978,6 +8051,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -8010,6 +8084,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -8035,6 +8110,7 @@ async def test_anthropic_prompted_output_multiple(allow_model_requests: None, an
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9600,6 +9676,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                 timestamp=IsDatetime(),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9649,12 +9726,14 @@ print(result)
                 provider_response_id='msg_01CSsc4t4e4ThJfJp8nsPxc5',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='And what about 4 * 12390?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -9704,6 +9783,7 @@ print(result)
                 provider_response_id='msg_016hgHtSKi8fEDBmSkEtL364',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -9828,6 +9908,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                 parts=[UserPromptPart(content='Please fix the tool call and try again.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Here is the corrected result.')],
@@ -9840,6 +9921,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

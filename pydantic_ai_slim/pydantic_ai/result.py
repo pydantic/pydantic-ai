@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
@@ -10,6 +9,7 @@ from datetime import datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
+import anyio
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
 
@@ -66,7 +66,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
 
-    _anext_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -164,6 +164,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """The unique identifier for the agent run."""
         assert self._run_ctx.run_id is not None
         return self._run_ctx.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        assert self._run_ctx.conversation_id is not None
+        return self._run_ctx.conversation_id
 
     @property
     def metadata(self) -> dict[str, Any] | None:
@@ -658,6 +664,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        if self._run_result is not None:
+            return self._run_result.conversation_id
+        elif self._stream_response is not None:
+            return self._stream_response.conversation_id
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -676,9 +692,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def _record_response(self, message: _messages.ModelResponse) -> None:
-        """Append a model response to the message history with the correct run_id."""
+        """Append a model response to the message history with the correct run and conversation IDs."""
         if self._stream_response:  # pragma: no branch
             message.run_id = self._stream_response.run_id
+            message.conversation_id = self._stream_response.conversation_id
         self._all_messages.append(message)
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
@@ -850,6 +867,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._streamed_run_result.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._streamed_run_result.conversation_id
 
     @property
     def metadata(self) -> dict[str, Any] | None:
