@@ -8630,9 +8630,15 @@ Everything looks perfect! The file contains the text you specified.\
     )
 
 
-async def test_anthropic_text_editor_code_execution_tool_message_replay():
+async def test_anthropic_text_editor_code_execution_tool_message_replay(allow_model_requests: None):
     """Serialize Anthropic text editor code execution metadata back to Anthropic block params."""
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='View the file.')], timestamp=IsDatetime()),
@@ -8664,12 +8670,9 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
         ),
     ]
 
-    model_request_parameters = ModelRequestParameters(
-        function_tools=[], builtin_tools=[CodeExecutionTool()], output_tools=[]
-    )
-    _, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
+    await agent.run('Continue.', message_history=messages)
 
-    assert anthropic_messages == snapshot(
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'type': 'text', 'text': 'View the file.'}]},
             {
@@ -8695,13 +8698,20 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay():
                     },
                 ],
             },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
         ]
     )
 
 
-async def test_anthropic_bash_code_execution_tool_message_replay():
+async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_requests: None):
     """Serialize Anthropic bash code execution metadata back to Anthropic block params."""
-    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Run a shell command.')], timestamp=IsDatetime()),
@@ -8732,12 +8742,9 @@ async def test_anthropic_bash_code_execution_tool_message_replay():
         ),
     ]
 
-    model_request_parameters = ModelRequestParameters(
-        function_tools=[], builtin_tools=[CodeExecutionTool()], output_tools=[]
-    )
-    _, anthropic_messages = await m._map_message(messages, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
+    await agent.run('Continue.', message_history=messages)
 
-    assert anthropic_messages == snapshot(
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'type': 'text', 'text': 'Run a shell command.'}]},
             {
@@ -8762,6 +8769,7 @@ async def test_anthropic_bash_code_execution_tool_message_replay():
                     },
                 ],
             },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
         ]
     )
 
