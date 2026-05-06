@@ -75,7 +75,8 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_builtin': None,
+                    'unless_builtin': None,
+                    'with_builtin': None,
                     'return_schema': None,
                     'include_return_schema': None,
                 }
@@ -144,7 +145,8 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_builtin': None,
+                    'unless_builtin': None,
+                    'with_builtin': None,
                     'return_schema': None,
                     'include_return_schema': None,
                 }

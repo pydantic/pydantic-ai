@@ -27,6 +27,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     XSearchTool,
 )
+from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -41,6 +42,7 @@ from pydantic_ai.capabilities import (
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
+    ToolSearch,
     Toolset,
     WebFetch,
     WebSearch,
@@ -110,6 +112,7 @@ def test_capability_types() -> None:
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
+            'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
@@ -1001,6 +1004,19 @@ though not all of these settings are supported by all models.\
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'ToolSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'strategy': {
+                            'anyOf': [{'enum': ['bm25', 'regex', 'custom'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Strategy',
+                        },
+                    },
+                    'title': 'ToolSearchTool',
+                    'type': 'object',
+                },
                 'UrlContextTool': {
                     'deprecated': True,
                     'properties': {
@@ -1167,6 +1183,7 @@ Supported by:
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
                                 {'type': 'null'},
@@ -1253,6 +1270,13 @@ Supported by:
                     'properties': {'PrefixTools': {'$ref': '#/$defs/spec_params_PrefixTools'}},
                     'required': ['PrefixTools'],
                     'title': 'spec_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {'ToolSearch': {'$ref': '#/$defs/spec_params_ToolSearch'}},
+                    'required': ['ToolSearch'],
+                    'title': 'spec_ToolSearch',
                     'type': 'object',
                 },
                 'spec_WebFetch': {
@@ -1381,6 +1405,8 @@ Supported by:
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'const': 'ToolSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ToolSearch'},
                                 {'const': 'WebFetch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
@@ -1390,6 +1416,30 @@ Supported by:
                     },
                     'required': ['prefix', 'capability'],
                     'title': 'spec_params_PrefixTools',
+                    'type': 'object',
+                },
+                'spec_params_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'strategy': {
+                            'anyOf': [
+                                {'const': 'keywords', 'type': 'string'},
+                                {'enum': ['bm25', 'regex'], 'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Strategy',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'tool_description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Tool Description',
+                        },
+                        'parameter_description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Parameter Description',
+                        },
+                    },
+                    'title': 'spec_params_ToolSearch',
                     'type': 'object',
                 },
                 'spec_params_WebFetch': {
@@ -1525,6 +1575,8 @@ Supported by:
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'const': 'ToolSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ToolSearch'},
                             {'const': 'WebFetch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
@@ -1615,8 +1667,9 @@ def test_builtin_tools_param_wrapped_as_capabilities():
     assert len(builtin_caps) == 2
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
     assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
-    # Also available via _cap_builtin_tools
-    assert len(agent._cap_builtin_tools) == 2  # pyright: ignore[reportPrivateUsage]
+    # Also available via _cap_builtin_tools (ToolSearchTool is auto-injected).
+    cap_tools = [t for t in agent._cap_builtin_tools if not isinstance(t, ToolSearchTool)]  # pyright: ignore[reportPrivateUsage]
+    assert len(cap_tools) == 2
 
 
 def test_agent_from_spec_builtin_tool():
@@ -4526,7 +4579,7 @@ class TestImageGenerationCapability:
         import dataclasses
         import inspect
 
-        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        # partial_images is excluded — not useful for subagent fallback (no streaming).
         builtin_fields = {
             f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
         }
@@ -6244,7 +6297,7 @@ def test_builtin_or_local_with_explicit_builtin():
     # get_builtin_tools returns the explicit builtin
     assert len(cap.get_builtin_tools()) == 1
     assert isinstance(cap.get_builtin_tools()[0], WebSearchTool)
-    # get_toolset wraps local with prefer_builtin from _builtin_unique_id()
+    # get_toolset wraps local with unless_builtin from _builtin_unique_id()
     toolset = cap.get_toolset()
     assert toolset is not None
 

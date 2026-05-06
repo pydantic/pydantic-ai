@@ -35,6 +35,12 @@ from ..builtin_tools import (
     MCPServerTool,
     WebSearchTool,
 )
+from ..builtin_tools.tool_search import (
+    TOOL_SEARCH_FUNCTION_TOOL_NAME,
+    ToolSearchArgs,
+    ToolSearchMatch,
+    ToolSearchTool,
+)
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
@@ -43,6 +49,8 @@ from ..messages import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    BuiltinToolSearchCallPart,
+    BuiltinToolSearchReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -116,12 +124,14 @@ try:
         ComputerToolParam,
         FileSearchToolParam,
         ResponseCompactionItem,
+        ToolSearchToolParam,
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
     from openai.types.responses.response_create_params import ContextManagement
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
+    from openai.types.responses.response_input_item_param import ToolSearchCall as ToolSearchCallParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
     from openai.types.responses.response_reasoning_item_param import (
@@ -129,6 +139,10 @@ try:
         Summary as ReasoningSummary,
     )
     from openai.types.responses.response_status import ResponseStatus
+    from openai.types.responses.response_tool_search_call import ResponseToolSearchCall
+    from openai.types.responses.response_tool_search_output_item_param_param import (
+        ResponseToolSearchOutputItemParamParam,
+    )
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -753,7 +767,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if (
             any(isinstance(tool, WebSearchTool) for tool in model_request_parameters.builtin_tools)
             and not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search
-            and not any(t.prefer_builtin == 'web_search' for t in model_request_parameters.function_tools)
+            and not any(t.unless_builtin == 'web_search' for t in model_request_parameters.function_tools)
         ):
             raise UserError(
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
@@ -1618,7 +1632,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
+        )
 
     async def compact_messages(
         self,
@@ -1764,6 +1780,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
+        # Index tool_search_output items by call_id so we can pair them with the
+        # corresponding tool_search_call when we encounter it (they may come in either
+        # order).
+        tool_search_outputs: dict[str, responses.ResponseToolSearchOutputItem] = {
+            output_item.call_id: output_item
+            for output_item in response.output
+            if isinstance(output_item, responses.ResponseToolSearchOutputItem) and output_item.call_id is not None
+        }
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -1825,9 +1849,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
+                # When the Responses API wraps a discovered deferred tool in a namespace
+                # (tool-search flow), it requires the namespace to be round-tripped on
+                # subsequent turns. Preserve it via `provider_details`.
+                fn_provider_details: dict[str, Any] | None = None
+                if item.namespace:
+                    fn_provider_details = {'namespace': item.namespace}
                 items.append(
                     ToolCallPart(
-                        item.name, item.arguments, tool_call_id=item.call_id, id=item.id, provider_name=self.system
+                        item.name,
+                        item.arguments,
+                        tool_call_id=item.call_id,
+                        id=item.id,
+                        provider_name=self.system,
+                        provider_details=fn_provider_details,
                     )
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
@@ -1840,6 +1875,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 call_part, return_part = _map_web_search_tool_call(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
+            elif isinstance(item, responses.ResponseToolSearchCall):
+                if item.execution == 'client':
+                    # Client-executed: emit a regular ToolCallPart so the standard agent-graph
+                    # tool-execution path runs the local `search_tools` function. The matching
+                    # `ToolReturnPart` is produced by the tool runner, not here.
+                    items.append(_map_client_tool_search_call(item, self.system))
+                else:
+                    output_item = tool_search_outputs.get(item.call_id) if item.call_id else None
+                    call_part, return_part = _map_tool_search_call(item, output_item, self.system)
+                    items.append(call_part)
+                    items.append(return_part)
+            elif isinstance(item, responses.ResponseToolSearchOutputItem):
+                # The output item is paired with its call via `tool_search_outputs`; skip here.
+                pass
             elif isinstance(item, responses.response_output_item.ImageGenerationCall):
                 call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
                 items.append(call_part)
@@ -2095,9 +2144,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return reasoning or OMIT
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+        # In client-executed tool search mode the `search_tools` function tool is
+        # represented on the wire by `ToolSearchToolParam(execution='client')` — sending
+        # it as a regular function tool too makes OpenAI emit `function_call` items
+        # instead of `tool_search_call` items. The local dispatch path still sees the
+        # function tool via `ModelRequestParameters.function_tools` (unaffected by this
+        # filtering), so `_search_tools` continues to run normally.
+        client_tool_search = _has_tool_search(model_request_parameters)
+        return [
+            self._map_tool_definition(r)
+            for r in model_request_parameters.tool_defs.values()
+            if not (client_tool_search and r.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+        ]
 
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+    def _get_builtin_tools(  # noqa: C901
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
         for tool in model_request_parameters.builtin_tools:
@@ -2149,7 +2211,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     mcp_tool['server_url'] = tool.url
 
                 tools.append(mcp_tool)
-            elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+            elif isinstance(tool, ImageGenerationTool):
                 has_image_generating_tool = True
                 size = _resolve_openai_image_generation_size(tool)
                 output_compression = tool.output_compression if tool.output_compression is not None else 100
@@ -2166,6 +2228,39 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         size=size,
                     )
                 )
+            elif isinstance(tool, ToolSearchTool):  # pragma: no branch
+                # OpenAI's Responses API has no concept of named native strategies — the
+                # `tool_search` builtin is one knob, decided server-side. Honor the user's
+                # explicit choice or fail loudly; do not silently run a different algorithm.
+                # `'custom'` is the internal marker for callable strategies and is handled
+                # below — only named native strategies (`'bm25'`/`'regex'`) raise here.
+                if tool.strategy is not None and tool.strategy != 'custom':
+                    raise UserError(
+                        f'`ToolSearch(strategy={tool.strategy!r})` is an Anthropic-native strategy '
+                        'and is not supported by OpenAI Responses. Use `strategy=None` (default, '
+                        "provider-managed), `strategy='keywords'` (local keyword matching), or "
+                        'a callable strategy.'
+                    )
+                # With `strategy='custom'`, the search runs client-side via our local
+                # `search_tools` function tool: the provider surfaces the search as a
+                # `tool_search_call` with `execution='client'`, we dispatch it through the
+                # normal function-call path, and reply with a `tool_search_output` that
+                # carries the discovered tool definitions.
+                if tool.strategy == 'custom':
+                    search_tool_def = _find_search_tool_definition(model_request_parameters)
+                    parameters = dict(search_tool_def.parameters_json_schema) if search_tool_def else {}
+                    # OpenAI's strict JSON schema mode is opt-in for client tool search — the
+                    # `additionalProperties: False` is what it prefers for closed-world schemas.
+                    parameters.setdefault('additionalProperties', False)
+                    tool_search_param: ToolSearchToolParam = {
+                        'type': 'tool_search',
+                        'execution': 'client',
+                        'description': (search_tool_def.description if search_tool_def else None),
+                        'parameters': parameters,
+                    }
+                    tools.append(tool_search_param)
+                else:
+                    tools.append(ToolSearchToolParam(type='tool_search'))
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -2176,7 +2271,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
-        return {
+        tool_param: responses.FunctionToolParam = {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
@@ -2185,6 +2280,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
+        if f.with_builtin == ToolSearchTool.kind:
+            # `defer_loading` on the wire controls OpenAI's native tool search caching.
+            # `ToolDefinition.defer_loading` is the local discovery flag — separate
+            # concern — so we gate on `with_builtin` to know we're on the native
+            # path.
+            tool_param['defer_loading'] = True
+        return tool_param
 
     def _resolve_previous_response_id(
         self,
@@ -2327,6 +2429,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
+        # With `execution='client'` tool search, `search_tools` calls/returns need to be
+        # replayed as `tool_search_call` / `tool_search_output` items so the provider can
+        # pair them with the builtin and unlock the discovered tools. The current
+        # request's builtin configuration is the source of truth: a `ToolCallPart` for
+        # `search_tools` originating from this provider (`provider_name == self.system`)
+        # belongs in the client-execution flow whenever a custom-callable tool search is
+        # active.
+        client_tool_search_active = _has_tool_search(model_request_parameters)
+        client_replay_call_ids: set[str] = set()
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -2339,13 +2450,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        output = await self._map_tool_return_output(part)
-                        item = FunctionCallOutput(
-                            type='function_call_output',
-                            call_id=call_id,
-                            output=output,
-                        )
-                        openai_messages.append(item)
+                        if call_id in client_replay_call_ids:
+                            # Replay the local `search_tools` result as a
+                            # `tool_search_output` so the provider rehydrates the
+                            # discovered-tool state tied to the `tool_search_call`.
+                            openai_messages.append(
+                                _build_client_tool_search_output_param(part, call_id, model_request_parameters)
+                            )
+                        else:
+                            output = await self._map_tool_return_output(part)
+                            item = FunctionCallOutput(
+                                type='function_call_output',
+                                call_id=call_id,
+                                output=output,
+                            )
+                            openai_messages.append(item)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
@@ -2410,17 +2529,46 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id, id = _split_combined_tool_call_id(call_id)
                         id = id or item.id
 
-                        param = responses.ResponseFunctionToolCallParam(
-                            name=item.tool_name,
-                            arguments=item.args_as_json_str(),
-                            call_id=call_id,
-                            type='function_call',
-                        )
-                        if profile.openai_responses_requires_function_call_status_none:
-                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                        if id and should_send_item_id:  # pragma: no branch
-                            param['id'] = id
-                        openai_messages.append(param)
+                        if client_tool_search_active and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
+                            # Replay the local `search_tools` call as a `tool_search_call`
+                            # with `execution='client'` so OpenAI re-attaches it to the
+                            # builtin and unlocks the discovered tools' schemas. Fires for
+                            # any `provider_name`, including `None` (cross-provider history
+                            # from a prior local-fallback turn) and other-provider names
+                            # (Google, etc.) — `execution='client'` is OpenAI's accepted
+                            # historical-replay shape regardless of the call's origin.
+                            client_replay_call_ids.add(call_id)
+                            tool_search_call: ToolSearchCallParam = {
+                                'type': 'tool_search_call',
+                                'execution': 'client',
+                                'arguments': item.args_as_dict() or {},
+                                'call_id': call_id,
+                                'status': 'completed',
+                            }
+                            if id and should_send_item_id:  # pragma: no branch
+                                tool_search_call['id'] = id
+                            openai_messages.append(tool_search_call)
+                        else:
+                            param = responses.ResponseFunctionToolCallParam(
+                                name=item.tool_name,
+                                arguments=item.args_as_json_str(),
+                                call_id=call_id,
+                                type='function_call',
+                            )
+                            if profile.openai_responses_requires_function_call_status_none:
+                                param['status'] = None  # type: ignore[reportGeneralTypeIssues]
+                            if id and should_send_item_id:  # pragma: no branch
+                                param['id'] = id
+                            # The Responses API attaches a `namespace` to function calls
+                            # for discovered deferred tools (tool-search flow). Round-trip
+                            # it on replay or the API rejects the call as missing namespace.
+                            if (
+                                item.provider_name == self.system
+                                and item.provider_details
+                                and (ns := item.provider_details.get('namespace'))
+                            ):
+                                param['namespace'] = ns
+                            openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
                         if should_send_item_id:  # pragma: no branch
                             if (
@@ -2477,6 +2625,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
+                            elif item.tool_name == ToolSearchTool.kind and item.tool_call_id:
+                                openai_messages.append(
+                                    responses.response_input_item_param.ToolSearchCall(
+                                        id=item.id or item.tool_call_id,
+                                        call_id=item.tool_call_id,
+                                        arguments=item.args_as_dict() or {},
+                                        type='tool_search_call',
+                                        execution='server',
+                                        status='completed',
+                                    )
+                                )
                             elif (  # pragma: no branch
                                 item.tool_name.startswith(MCPServerTool.kind)
                                 and item.tool_call_id
@@ -2521,8 +2680,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
-                            elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
+                            elif item.tool_name.startswith(MCPServerTool.kind):
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
+                                pass
+                            elif item.tool_name == ToolSearchTool.kind:  # pragma: no branch
+                                # Tool search output (discovered tool definitions) is
+                                # reconstructed server-side from the `tool_search_call` —
+                                # same pattern as web search — so nothing to send back.
                                 pass
                     elif isinstance(item, FilePart):
                         # This was generated by the `ImageGenerationTool` or `CodeExecutionTool`,
@@ -3000,6 +3164,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                     if isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                        # Preserve any `namespace` the Responses API attaches to a
+                        # discovered deferred tool so it can be round-tripped on replay.
+                        fn_provider_details: dict[str, Any] | None = None
+                        if chunk.item.namespace:
+                            fn_provider_details = {'namespace': chunk.item.namespace}
                         yield self._parts_manager.handle_tool_call_part(
                             vendor_part_id=chunk.item.id,
                             tool_name=chunk.item.name,
@@ -3007,6 +3176,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             tool_call_id=chunk.item.call_id,
                             id=chunk.item.id,
                             provider_name=self.provider_name,
+                            provider_details=fn_provider_details,
                         )
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         pass
@@ -3018,10 +3188,39 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchCall):
+                        if chunk.item.execution == 'client':
+                            # Emit a regular function-tool call so the standard
+                            # tool-execution path runs our local `search_tools`.
+                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
+                            yield self._parts_manager.handle_tool_call_part(
+                                vendor_part_id=chunk.item.id,
+                                tool_name=client_call_part.tool_name,
+                                args=None,
+                                tool_call_id=client_call_part.tool_call_id,
+                                id=client_call_part.id,
+                                provider_name=self.provider_name,
+                            )
+                        else:
+                            call_part, _ = _map_tool_search_call(chunk.item, None, self.provider_name)
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                            )
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, _ = _map_file_search_tool_call(chunk.item, self.provider_name)
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                        )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
+                        # Added carries the full discovered-tools payload; emit the return
+                        # part here. Done repeats the same item — handled as a no-op
+                        # below to avoid double-emission.
+                        call_id = chunk.item.call_id or chunk.item.id
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return',
+                            part=_build_tool_search_return_part(
+                                call_id, chunk.item.status or 'completed', chunk.item, self.provider_name
+                            ),
                         )
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
@@ -3113,6 +3312,41 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
+                    elif isinstance(chunk.item, responses.ResponseToolSearchCall):
+                        if chunk.item.execution == 'client':
+                            # Feed the final args through the tool-call delta path so the
+                            # part manager resolves its pending args; there's no paired
+                            # `tool_search_output` — the return part is produced by the
+                            # local tool runner after the stream completes.
+                            #
+                            # OpenAI Responses streaming sometimes assigns a different
+                            # `call_id` between the `output_item.added` and `output_item.done`
+                            # frames for client-executed `tool_search_call`s; the server's
+                            # log of record is the latter. Pass it through here so the
+                            # `tool_search_output` we replay on the next turn references the
+                            # call_id the API actually expects.
+                            client_call_part = _map_client_tool_search_call(chunk.item, self.provider_name)
+                            client_args_json = client_call_part.args_as_json_str()
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=chunk.item.id,
+                                args=client_args_json,
+                                tool_call_id=client_call_part.tool_call_id,
+                            )
+                            if maybe_event is not None:  # pragma: no branch
+                                yield maybe_event
+                        else:
+                            call_part, _ = _map_tool_search_call(chunk.item, None, self.provider_name)
+
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=f'{chunk.item.id}-call',
+                                args=cast('str | dict[str, Any] | None', call_part.args),
+                            )
+                            if maybe_event is not None:  # pragma: no branch
+                                yield maybe_event
+                    elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
+                        # Already emitted on the matching Added event — the Done payload
+                        # is a duplicate.
+                        pass
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
@@ -3750,6 +3984,184 @@ def _map_code_interpreter_tool_call(
             provider_name=provider_name,
         ),
         file_parts,
+    )
+
+
+def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
+    """Whether the current run carries any `ToolSearchTool` builtin.
+
+    Used to gate two related behaviors:
+
+    * Filter the local `search_tools` function tool out of the wire `tools[]` (it's
+      represented by the builtin instead).
+    * Promote local-shape `ToolSearch*Part` history into native `tool_search_call` /
+      `tool_search_output` items (`execution='client'`), unlocking previously-discovered
+      `defer_loading=True` tools without forcing the model to re-search.
+
+    Both behaviors apply regardless of the active strategy (default native, named
+    native, or custom callable) — the gate is "tool search is active in some form".
+    """
+    return any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
+
+
+def _find_search_tool_definition(
+    model_request_parameters: ModelRequestParameters,
+) -> ToolDefinition | None:
+    """Locate the local ``search_tools`` function-tool definition in the current request.
+
+    In custom-callable tool search mode, ``ToolSearchToolset`` leaves its ``search_tools``
+    function tool in ``function_tools`` (no ``unless_builtin``), so we look it up by name.
+    """
+    return next(
+        (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),
+        None,
+    )
+
+
+def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:
+    """Translate an OpenAI `tool_search_call.arguments` payload into `ToolSearchArgs`.
+
+    OpenAI's server-side `tool_search` returns the picked tool paths under `paths`;
+    this helper folds that into the canonical
+    [`queries`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs] slot. Other
+    input shapes pass through with an empty `queries` list so adapters never have to
+    guess.
+    """
+    if isinstance(raw, dict):
+        paths = raw.get('paths')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(paths, list):
+            return {'queries': [p for p in paths if isinstance(p, str)]}  # pyright: ignore[reportUnknownVariableType]
+    return {'queries': []}
+
+
+def _map_tool_search_call(
+    item: ResponseToolSearchCall,
+    output_item: responses.ResponseToolSearchOutputItem | None,
+    provider_name: str,
+) -> tuple[BuiltinToolSearchCallPart, BuiltinToolSearchReturnPart]:
+    """Map OpenAI native tool search (server-executed) into typed builtin call/return parts.
+
+    Mirrors `_map_web_search_tool_call`: call and result are both server-side, so we
+    emit both parts in the same response.
+    """
+    call_id = item.call_id or item.id
+    call_part = BuiltinToolSearchCallPart(
+        provider_name=provider_name,
+        args=_normalize_tool_search_args(item.arguments),
+        tool_call_id=call_id,
+        id=item.id,
+    )
+    return call_part, _build_tool_search_return_part(call_id, item.status, output_item, provider_name)
+
+
+def _build_client_tool_search_output_param(
+    part: ToolReturnPart,
+    call_id: str,
+    model_request_parameters: ModelRequestParameters,
+) -> ResponseToolSearchOutputItemParamParam:
+    """Build a ``tool_search_output`` replay param for a local ``search_tools`` return.
+
+    Looks up each discovered tool name in ``function_tools`` and emits a
+    ``FunctionToolParam`` so OpenAI sees the same ``Tool`` definitions it originally
+    loaded in the prior turn — the shape of :class:`ResponseToolSearchOutputItemParamParam`.
+    Reads the typed
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    off of ``part.content`` rather than the sideband metadata; the tool-return value
+    is the contract.
+    """
+    discovered: list[str] = []
+    if isinstance(part.content, dict):
+        matches = part.content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(matches, list):
+            for entry in matches:  # pyright: ignore[reportUnknownVariableType]
+                if isinstance(entry, dict):
+                    name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    if isinstance(name, str):
+                        discovered.append(name)
+
+    tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
+    # `strict` is profile-dependent at initial send-time (`_map_tool_definition`
+    # consults the model profile). For replay, pass `False` so OpenAI doesn't
+    # attempt to re-validate the schema it already accepted in the prior turn.
+    tool_params: list[responses.tool_param.ToolParam] = [
+        cast(
+            'responses.tool_param.ToolParam',
+            {
+                'name': tool_def.name,
+                'parameters': tool_def.parameters_json_schema,
+                'type': 'function',
+                'description': tool_def.description,
+                'strict': False,
+            },
+        )
+        for name in discovered
+        if (tool_def := tool_defs_by_name.get(name)) is not None
+    ]
+
+    output: ResponseToolSearchOutputItemParamParam = {
+        'type': 'tool_search_output',
+        'execution': 'client',
+        'tools': tool_params,
+        'call_id': call_id,
+        'status': 'completed',
+    }
+    return output
+
+
+def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolCallPart:
+    """Map a client-executed OpenAI ``tool_search_call`` into a regular ``ToolCallPart``.
+
+    With ``ToolSearchToolParam(execution='client')``, OpenAI still emits the call wrapped
+    as a ``tool_search_call`` item but leaves execution to us: the standard agent-graph
+    tool-execution path runs the local ``search_tools`` function and produces the
+    matching ``ToolReturnPart``. We pack the model's ``{"query": "..."}`` payload as the
+    ``{"keywords": ...}`` shape the local toolset expects.
+
+    Replay later detects this case from the surrounding context — the call carries
+    ``tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME`` and there is no matching native
+    `BuiltinToolSearchCallPart` — so no envelope marker is required.
+    """
+    call_id = item.call_id or item.id
+    args_dict = cast('dict[str, Any]', item.arguments)
+    # OpenAI passes through the schema we registered with the builtin, so its
+    # ``tool_search_call.arguments`` uses our local tool's ``keywords`` key.
+    return ToolCallPart(
+        tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
+        args=args_dict,
+        tool_call_id=call_id,
+        id=item.id,
+        provider_name=provider_name,
+    )
+
+
+def _build_tool_search_return_part(
+    call_id: str,
+    status: str,
+    output_item: responses.ResponseToolSearchOutputItem | None,
+    provider_name: str,
+) -> BuiltinToolSearchReturnPart:
+    """Build the typed return part for an OpenAI tool search, with or without output.
+
+    Writes the cross-provider
+    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    to ``content`` (with as much detail as the provider returned — name and description
+    for OpenAI's full function-tool definitions) and stashes the ``status`` field on
+    ``provider_details``.
+    """
+    matches: list[ToolSearchMatch] = []
+    if output_item is not None:
+        # `output_item.tools` is a union of OpenAI Responses tool variants; only
+        # function tools carry the name + description we want. Other variants
+        # (file_search, image generation, etc.) can't appear here in practice but
+        # aren't statically excluded from the union, so we filter by type.
+        for t in output_item.tools:
+            if isinstance(t, responses.FunctionTool):
+                matches.append({'name': t.name, 'description': t.description})
+    return BuiltinToolSearchReturnPart(
+        provider_name=provider_name,
+        content={'discovered_tools': matches},
+        tool_call_id=call_id,
+        provider_details={'status': status},
     )
 
 

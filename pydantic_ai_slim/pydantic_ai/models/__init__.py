@@ -27,6 +27,7 @@ from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools.tool_search import ToolSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -755,37 +756,94 @@ class Model(ABC, Generic[InterfaceClient]):
             raise UserError('Image output is not supported by this model.')
 
         # Check builtin tools and handle fallback swap
-        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
-            supported_types = self.profile.supported_builtin_tools
-
-            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
-            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
-
-            supported_ids = {t.unique_id for t in supported_builtins}
-            unsupported_ids = {t.unique_id for t in unsupported_builtins}
-            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
-
-            # Error only for unsupported builtins that have no local fallback
-            without_fallback = unsupported_ids - fallback_ids
-            if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
-                supported_names = [t.__name__ for t in supported_types]
-                raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
-                    f'Supported: {supported_names}. '
-                    f'To use these tools with this model, provide a local fallback via '
-                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
-                )
-
-            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
-            # Remove unsupported builtins (their local fallbacks stay)
-            function_tools = [
-                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
-            ]
-            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
+        if params.builtin_tools or any(t.unless_builtin or t.with_builtin for t in params.function_tools):
+            params = self._resolve_builtin_tool_swap(params)
 
         return model_settings, params
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process the message history before it's handed to the adapter's message-prep step.
+
+        Currently translates any typed `BuiltinToolSearch*Part` instances carried over from a
+        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
+        `ToolSearch*Part` instances when the active model's profile doesn't support
+        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
+        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
+        adapter sees a normal function-call exchange against `search_tools`.
+
+        Subclasses normally don't need to override this; the framework calls it on the
+        agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
+        sees a homogeneous shape regardless of which provider produced the prior turn.
+        """
+        if ToolSearchTool not in self.profile.supported_builtin_tools:
+            from .._tool_search_synthetic import synthesize_local_tool_search_messages
+
+            return synthesize_local_tool_search_messages(messages)
+        return messages
+
+    def _resolve_builtin_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """Swap builtin tools and function-tool fallbacks/corpus based on profile support.
+
+        Four rules drive the per-tool filter:
+
+        1. ``unless_builtin`` matches a supported builtin → drop from wire.
+        2. ``with_builtin`` matches a supported builtin → keep on wire; the adapter
+           applies any builtin-specific format (e.g. Anthropic / OpenAI's wire-side
+           ``defer_loading`` flag for ``ToolSearchTool``).
+        3. ``with_builtin`` matches an *unsupported* builtin AND ``defer_loading=True``
+           → drop from wire (the corpus member is currently undiscovered, so the model has
+           no way to call it on this provider).
+        4. Otherwise → keep.
+
+        Optional unsupported builtins (currently only [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]
+        carries the flag) with no remaining corpus are silently dropped instead of raising.
+        """
+        supported_types = self.profile.supported_builtin_tools
+
+        supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
+        unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
+
+        supported_ids = {t.unique_id for t in supported_builtins}
+        unsupported_ids = {t.unique_id for t in unsupported_builtins}
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
+        optional_ids = {t.unique_id for t in unsupported_builtins if isinstance(t, ToolSearchTool) and t.optional}
+        fallback_ids = {t.unless_builtin for t in params.function_tools if t.unless_builtin}
+
+        without_fallback = unsupported_ids - fallback_ids - optional_ids
+        if without_fallback:
+            unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                f'Supported: {supported_names}. '
+                f'To use these tools with this model, provide a local fallback via '
+                f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                f'of the capability (e.g. ImageGeneration(local=my_func)).'
+            )
+
+        function_tools: list[ToolDefinition] = []
+        for t in params.function_tools:
+            # Rule 1: drop local fallback when the builtin is supported.
+            if t.unless_builtin and t.unless_builtin in supported_ids:
+                continue
+            # Rule 3: drop undiscovered corpus members when the builtin is unsupported.
+            if t.with_builtin and t.with_builtin not in supported_ids and t.defer_loading:
+                continue
+            # Rules 2 + 4: keep.
+            function_tools.append(t)
+
+        # Drop optional builtins whose managed corpus is empty after filtering —
+        # they have nothing to do, so sending them would waste a tool slot.
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
+        remaining_corpus_ids = {t.with_builtin for t in function_tools if t.with_builtin}
+        supported_builtins = [
+            t
+            for t in supported_builtins
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
+        ]
+        return replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
 
     @property
     @abstractmethod

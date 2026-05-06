@@ -4,6 +4,7 @@ from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -67,6 +68,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
+        ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
@@ -113,6 +115,7 @@ __all__ = [
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
+    'ToolSearch',
     'Toolset',
     'WebFetch',
     'WebSearch',

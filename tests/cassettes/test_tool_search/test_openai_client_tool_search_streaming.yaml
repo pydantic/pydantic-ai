@@ -1,0 +1,529 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1992'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      model: gpt-5.4
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_079ef0eb3b2757460069f3e4070518819596fbc4f4a0ac5419","object":"response","created_at":1777591303,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_079ef0eb3b2757460069f3e4070518819596fbc4f4a0ac5419","object":"response","created_at":1777591303,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tsc_079ef0eb3b2757460069f3e407edf8819591ee167ee3a0938b","type":"tool_search_call","status":"in_progress","arguments":{},"call_id":"call_zjqCDepneYJkuwYb2j2uAdqL","execution":"client"},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tsc_079ef0eb3b2757460069f3e407edf8819591ee167ee3a0938b","type":"tool_search_call","status":"completed","arguments":{"keywords":"exchange rate currency USD EUR forex"},"call_id":"call_ZFXVQ7VKUvRm9A5lSGTKTaPn","execution":"client"},"output_index":0,"sequence_number":3}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_079ef0eb3b2757460069f3e4070518819596fbc4f4a0ac5419","object":"response","created_at":1777591303,"status":"completed","background":false,"completed_at":1777591304,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"tsc_079ef0eb3b2757460069f3e407edf8819591ee167ee3a0938b","type":"tool_search_call","status":"completed","arguments":{"keywords":"exchange rate currency USD EUR forex"},"call_id":"call_ZFXVQ7VKUvRm9A5lSGTKTaPn","execution":"client"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":223,"input_tokens_details":{"cached_tokens":0},"output_tokens":25,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":248},"user":null,"metadata":{}},"sequence_number":4}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '518'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2719'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=B8tASOyShNPO6n0l_TQ9TTagvaQWJsMBtXJaudFDik0-1777591302.3055792-1.0.1.1-JiDlF3Ez6sNF0AQCWhwOrmuJ0w8rM5XtINeSyafOKw_sZ4slFMCufK0oXdg4FenGfhaqR8nLSzk4c730FG9WST4WzJMXcqmnTyNgbKJHiTbsGXT3.AwY9ru2.hUi8XPB
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      - arguments:
+          keywords: exchange rate currency USD EUR forex
+        call_id: call_ZFXVQ7VKUvRm9A5lSGTKTaPn
+        execution: client
+        id: tsc_079ef0eb3b2757460069f3e407edf8819591ee167ee3a0938b
+        status: completed
+        type: tool_search_call
+      - call_id: call_ZFXVQ7VKUvRm9A5lSGTKTaPn
+        execution: client
+        status: completed
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: false
+          type: function
+        type: tool_search_output
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      model: gpt-5.4
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_079ef0eb3b2757460069f3e408c98c8195b6416b0f41692972","object":"response","created_at":1777591304,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}},{"type":"namespace","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","tools":[{"type":"function","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_079ef0eb3b2757460069f3e408c98c8195b6416b0f41692972","object":"response","created_at":1777591304,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}},{"type":"namespace","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","tools":[{"type":"function","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","type":"function_call","status":"in_progress","arguments":"","call_id":"call_vG6r76LLxSwHtInGco7CwZLM","name":"get_exchange_rate","namespace":"get_exchange_rate"},"output_index":0,"sequence_number":2}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"Jx4ABHQhlM1Zwn","output_index":0,"sequence_number":3}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"from","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"LM6acPObWsXd","output_index":0,"sequence_number":4}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"_currency","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"0LtqJYY","output_index":0,"sequence_number":5}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"DC2I2Y0KNo1Ja","output_index":0,"sequence_number":6}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"USD","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"0mc58ICAt6SiZ","output_index":0,"sequence_number":7}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\",\"","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"MWTSOtGIK3bur","output_index":0,"sequence_number":8}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"to","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"sZWoJmcbUZoTN3","output_index":0,"sequence_number":9}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"_currency","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"jWM8LLJ","output_index":0,"sequence_number":10}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"UKcr43JEJA2ZJ","output_index":0,"sequence_number":11}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"EUR","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"KsKrlGreYZkf4","output_index":0,"sequence_number":12}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","obfuscation":"Krp55gKy2pXiSH","output_index":0,"sequence_number":13}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{\"from_currency\":\"USD\",\"to_currency\":\"EUR\"}","item_id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","output_index":0,"sequence_number":14}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","type":"function_call","status":"completed","arguments":"{\"from_currency\":\"USD\",\"to_currency\":\"EUR\"}","call_id":"call_vG6r76LLxSwHtInGco7CwZLM","name":"get_exchange_rate","namespace":"get_exchange_rate"},"output_index":0,"sequence_number":15}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_079ef0eb3b2757460069f3e408c98c8195b6416b0f41692972","object":"response","created_at":1777591304,"status":"completed","background":false,"completed_at":1777591306,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d","type":"function_call","status":"completed","arguments":"{\"from_currency\":\"USD\",\"to_currency\":\"EUR\"}","call_id":"call_vG6r76LLxSwHtInGco7CwZLM","name":"get_exchange_rate","namespace":"get_exchange_rate"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}},{"type":"namespace","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","tools":[{"type":"function","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":408,"input_tokens_details":{"cached_tokens":0},"output_tokens":26,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":434},"user":null,"metadata":{}},"sequence_number":16}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '713'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3092'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=B8tASOyShNPO6n0l_TQ9TTagvaQWJsMBtXJaudFDik0-1777591302.3055792-1.0.1.1-JiDlF3Ez6sNF0AQCWhwOrmuJ0w8rM5XtINeSyafOKw_sZ4slFMCufK0oXdg4FenGfhaqR8nLSzk4c730FG9WST4WzJMXcqmnTyNgbKJHiTbsGXT3.AwY9ru2.hUi8XPB
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the current exchange rate from USD to EUR?
+        role: user
+      - arguments:
+          keywords: exchange rate currency USD EUR forex
+        call_id: call_ZFXVQ7VKUvRm9A5lSGTKTaPn
+        execution: client
+        id: tsc_079ef0eb3b2757460069f3e407edf8819591ee167ee3a0938b
+        status: completed
+        type: tool_search_call
+      - call_id: call_ZFXVQ7VKUvRm9A5lSGTKTaPn
+        execution: client
+        status: completed
+        tools:
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              from_currency:
+                type: string
+              to_currency:
+                type: string
+            required:
+            - from_currency
+            - to_currency
+            type: object
+          strict: false
+          type: function
+        type: tool_search_output
+      - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
+        call_id: call_vG6r76LLxSwHtInGco7CwZLM
+        id: fc_079ef0eb3b2757460069f3e409dd5881958b09da833f42780d
+        name: get_exchange_rate
+        namespace: get_exchange_rate
+        type: function_call
+      - call_id: call_vG6r76LLxSwHtInGco7CwZLM
+        output: 1 USD = 0.92 EUR
+        type: function_call_output
+      instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
+        discover and activate the right one before answering.
+      model: gpt-5.4
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
+          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
+          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+        execution: client
+        parameters:
+          additionalProperties: false
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        type: tool_search
+      - description: Get the current weather for a city.
+        name: get_weather
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up the current exchange rate between two currencies.
+        name: get_exchange_rate
+        parameters:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up stock price by ticker symbol.
+        name: stock_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_079ef0eb3b2757460069f3e40adcb88195a8e63f63ef0daf8f","object":"response","created_at":1777591306,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}},{"type":"namespace","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","tools":[{"type":"function","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_079ef0eb3b2757460069f3e40adcb88195a8e63f63ef0daf8f","object":"response","created_at":1777591306,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}},{"type":"namespace","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","tools":[{"type":"function","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Current","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"ZWI7u0LI6","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" rate","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"vR2WgGc8xel","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":":","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"g6TrCQLzZePgkGY","output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" **","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"fr5ziT2s4gIu2","output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"1","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"15Jrygru1OZQ8iK","output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" USD","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"VVqBWsbuRngr","output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" =","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"AjGlzuZL1B9X6G","output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"Bhk08D1wZR7XTx7","output_index":0,"sequence_number":11}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"0","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"DZaf28VB4kQiykW","output_index":0,"sequence_number":12}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"RAV3227Mma9IWfX","output_index":0,"sequence_number":13}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"92","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"juCy2Y2gytkwoq","output_index":0,"sequence_number":14}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" EUR","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"fvsG39VSMHCn","output_index":0,"sequence_number":15}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"**","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"dPWl7iTfkjcP6l","output_index":0,"sequence_number":16}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"obfuscation":"PJNFq74H35xVheS","output_index":0,"sequence_number":17}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","logprobs":[],"output_index":0,"sequence_number":18,"text":"Current rate: **1 USD = 0.92 EUR**."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"Current rate: **1 USD = 0.92 EUR**."},"sequence_number":19}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Current rate: **1 USD = 0.92 EUR**."}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":20}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_079ef0eb3b2757460069f3e40adcb88195a8e63f63ef0daf8f","object":"response","created_at":1777591306,"status":"completed","background":false,"completed_at":1777591308,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When you need a capability not provided by your visible tools, call the built-in tool search first to discover and activate the right one before answering.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.4-2026-03-05","moderation":null,"output":[{"id":"msg_079ef0eb3b2757460069f3e40c57788195a62db06f2d1d7d77","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Current rate: **1 USD = 0.92 EUR**."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"in_memory","reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"function","description":"Get the current weather for a city.","name":"get_weather","parameters":{"additionalProperties":false,"properties":{"city":{"type":"string"}},"required":["city"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up stock price by ticker symbol.","name":"stock_lookup","parameters":{"additionalProperties":false,"properties":{"symbol":{"type":"string"}},"required":["symbol"],"type":"object"},"strict":true},{"type":"tool_search","description":"There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.","execution":"client","parameters":{"properties":{"keywords":{"description":"Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.","type":"string"}},"required":["keywords"],"type":"object","additionalProperties":false}},{"type":"namespace","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","tools":[{"type":"function","description":"Look up the current exchange rate between two currencies.","name":"get_exchange_rate","parameters":{"additionalProperties":false,"properties":{"from_currency":{"type":"string"},"to_currency":{"type":"string"}},"required":["from_currency","to_currency"],"type":"object"},"strict":true}]}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":456,"input_tokens_details":{"cached_tokens":0},"output_tokens":18,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":474},"user":null,"metadata":{}},"sequence_number":21}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '267'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

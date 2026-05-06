@@ -90,7 +90,7 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
         return None
 
     def _builtin_unique_id(self) -> str:
-        """The unique_id used for `prefer_builtin` on local tool definitions.
+        """The unique_id used for `unless_builtin` on local tool definitions.
 
         By default, derived from the builtin tool's `unique_id` property.
         Override in subclasses for custom behavior.
@@ -137,10 +137,10 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
         if self.builtin is not False:
             uid = self._builtin_unique_id()
 
-            async def _add_prefer_builtin(
+            async def _add_unless_builtin(
                 ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [replace(d, prefer_builtin=uid) for d in tool_defs]
+                return [replace(d, unless_builtin=uid) for d in tool_defs]
 
-            return PreparedToolset(wrapped=toolset, prepare_func=_add_prefer_builtin)
+            return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_builtin)
         return toolset

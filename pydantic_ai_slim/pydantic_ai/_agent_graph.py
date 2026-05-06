@@ -20,6 +20,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
@@ -482,6 +483,18 @@ async def _prepare_request_parameters(
                 if t is not None:
                     builtin_tools.append(t)
 
+    # Drop the auto-injected `ToolSearchTool` builtin when the search corpus is empty —
+    # the toolset has nothing to manage, so emitting the builtin would waste a tool slot
+    # and surface an inert builtin in `ModelRequestParameters` snapshots. Filtering
+    # here (at MRP-construction time) keeps the request shape honest before
+    # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
+    # preserved so the request still fails loudly on unsupported models.
+    has_tool_search_corpus = any(t.with_builtin == ToolSearchTool.kind for t in function_tools)
+    if not has_tool_search_corpus:
+        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
+        # isinstance narrowing.
+        builtin_tools = [t for t in builtin_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
         builtin_tools=builtin_tools,
@@ -874,6 +887,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         messages = _clean_message_history(messages)
+
+        # Translate any cross-provider history shapes the active model can't ship on the wire
+        # (currently: typed `BuiltinToolSearch*Part` instances become local-shape `ToolSearch*Part`
+        # when the profile doesn't support `ToolSearchTool`). Centralized here so per-adapter
+        # message-prep code sees a homogeneous shape regardless of which provider produced the prior turn.
+        messages = model.prepare_messages(messages)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters

@@ -88,7 +88,8 @@ class ToolManager(Generic[AgentDepsT]):
     ctx: RunContext[AgentDepsT] | None = None
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
-    """The cached tools for this run step."""
+    """The cached tools for this run step. Keyed by the name the model calls the tool
+    by (``tool_def.name``)."""
     failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
@@ -173,11 +174,8 @@ class ToolManager(Generic[AgentDepsT]):
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        try:
-            return self.tools[name].tool_def
-        except KeyError:
-            return None
+        tool = self.tools.get(name)
+        return tool.tool_def if tool is not None else None
 
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
@@ -367,7 +365,8 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         if tool is None:
             if self.tools:
-                msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+                available = sorted(self.tools.keys())
+                msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
             else:
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
