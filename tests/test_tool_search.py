@@ -1665,7 +1665,7 @@ def test_anthropic_custom_replay_blocks_malformed_content():
     )
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
-    refs, message = _build_custom_tool_search_replay_blocks(malformed, custom_tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(malformed, tool_search_active=True)
     assert refs is None and message is None
 
 
@@ -3202,7 +3202,7 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(empty, custom_tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(empty, tool_search_active=True)
     assert refs == []
     assert message == 'No matches; try other keywords.'
 
@@ -3220,7 +3220,7 @@ def test_anthropic_custom_replay_blocks_matches_not_a_list() -> None:
         content={'discovered_tools': 'not-a-list'},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(malformed, custom_tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(malformed, tool_search_active=True)
     assert refs is None and message is None
 
 
@@ -3245,7 +3245,7 @@ def test_anthropic_custom_replay_blocks_skips_non_dict_match_entries() -> None:
         },
         tool_call_id='c1',
     )
-    refs, _msg = _build_custom_tool_search_replay_blocks(mixed, custom_tool_search_active=True)
+    refs, _msg = _build_custom_tool_search_replay_blocks(mixed, tool_search_active=True)
     assert refs is not None
     tool_names = [r['tool_name'] for r in refs]
     assert tool_names == ['foo', 'bar']
@@ -3479,3 +3479,255 @@ def test_openai_build_client_tool_search_output_param_handles_malformed_content(
     )
     out_mixed = _build_client_tool_search_output_param(part_mixed, 'c3', params)
     assert out_mixed['tools'] == []
+
+
+# --- Cross-provider local→native promotion ---
+#
+# The local-fallback path emits typed `ToolSearchCallPart` / `ToolSearchReturnPart`
+# (subclasses of the regular `ToolCallPart` / `ToolReturnPart`). When a follow-up
+# turn runs on a provider that natively supports tool search, the adapter should
+# render those local-shape parts back into the provider's native wire format so the
+# previously discovered tools get unlocked from `defer_loading=True` without forcing
+# the model to re-search. This must work regardless of the current turn's `strategy`
+# (default native, named native, or custom callable) — the gate is "current request
+# has any tool search active", not "strategy is custom".
+
+
+async def test_anthropic_promotes_local_search_history_with_default_native_strategy() -> None:
+    """Local-shape ``ToolSearch*Part`` from a prior cross-provider turn must render
+    into Anthropic's native tool_search wire when the current turn is the default
+    server-executed strategy (``ToolSearchTool()`` / `strategy=None`).
+
+    The wire shape uses Anthropic's "client-side flavor" of tool search per empirical
+    research: a standard ``tool_use`` for the local ``search_tools`` function tool
+    paired with a ``tool_result`` whose ``content`` is a ``tool_reference`` array
+    (NOT a string of stringified discoveries). Anthropic's server unlocks the
+    discovered tools' schemas from ``defer_loading=true`` once it sees the
+    ``tool_reference`` block.
+
+    Currently fails because ``_build_custom_tool_search_replay_blocks`` is gated on
+    ``strategy='custom'``, so the default-strategy case falls through and the return
+    is rendered as a plain ``tool_result`` carrying stringified content — the
+    discovered tools stay hidden and the model has to re-search.
+    """
+    pytest.importorskip('anthropic')
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic
+
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='c1'),
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    tool_call_id='c1',
+                ),
+            ],
+        ),
+    ]
+    # Default native strategy (NOT 'custom') — currently the gate that activates the
+    # tool_reference replay re-formatting only fires for `strategy='custom'`.
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    _system, anthropic_messages = await model._map_message(history, params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    tool_results: list[dict[str, Any]] = [
+        c
+        for m in anthropic_messages
+        if m['role'] == 'user' and isinstance(m['content'], list)
+        for c in cast(list[Any], m['content'])
+        if isinstance(c, dict) and cast(dict[str, Any], c).get('type') == 'tool_result'
+    ]
+    [tool_result] = tool_results
+    # Promotion target: the result content must be a `tool_reference` array, not a
+    # stringified discovery JSON. Anthropic uses this shape to unlock deferred tools.
+    assert tool_result['content'] == [{'type': 'tool_reference', 'tool_name': 'get_weather'}]
+
+
+async def test_anthropic_promotes_local_search_history_with_named_native_strategy() -> None:
+    """Same promotion as above but with an explicit named native strategy
+    (``strategy='bm25'``). Confirms the gate is "any tool search active", not "custom"
+    or "default" — whenever the provider supports native tool search and the current
+    request carries it, the historical local-shape parts get the native wire.
+    """
+    pytest.importorskip('anthropic')
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic
+
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a calc tool')]),
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['calc']}, tool_call_id='c2'),
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate', 'description': None}]},
+                    tool_call_id='c2',
+                ),
+            ],
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[ToolSearchTool(strategy='bm25')],
+        allow_text_output=True,
+    )
+
+    _system, anthropic_messages = await model._map_message(history, params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+    tool_results: list[dict[str, Any]] = [
+        c
+        for m in anthropic_messages
+        if m['role'] == 'user' and isinstance(m['content'], list)
+        for c in cast(list[Any], m['content'])
+        if isinstance(c, dict) and cast(dict[str, Any], c).get('type') == 'tool_result'
+    ]
+    [tool_result] = tool_results
+    assert tool_result['content'] == [{'type': 'tool_reference', 'tool_name': 'calculate'}]
+
+
+async def test_openai_promotes_local_search_history_with_default_native_strategy() -> None:
+    """Local-shape ``ToolSearch*Part`` from a prior cross-provider turn must render
+    into OpenAI's native tool_search wire when the current turn is the default
+    server-executed strategy (``ToolSearchTool()`` / `strategy=None`).
+
+    The wire shape uses ``tool_search_call`` + ``tool_search_output`` items with
+    ``execution='client'`` per empirical research — even though the current turn is
+    server-executed, the historical replay must use ``execution='client'`` because
+    the prior turn was framework-executed locally and OpenAI accepts ``'client'`` as
+    the historical-replay shape regardless of the current turn's mode.
+
+    Currently fails because both ``_get_tools`` and the ``_map_messages`` replay
+    branches are gated on ``_has_custom_tool_search`` (i.e. ``strategy='custom'`` on
+    the active builtin), so the default-native case never activates the promotion.
+    """
+    pytest.importorskip('openai')
+    from openai.types.responses import ResponseFunctionToolCallParam
+
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.tools import ToolDefinition
+
+    from .models.mock_openai import MockOpenAIResponses
+
+    model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+
+    discovered_tool = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'city': {'type': 'string'}},
+            'required': ['city'],
+        },
+    )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='oc1'),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    tool_call_id='oc1',
+                ),
+            ],
+        ),
+    ]
+    # Default native strategy — `ToolSearchTool()` with no `strategy='custom'`.
+    # Discovered tool needs to be in `function_tools` so the replay can pair the
+    # `tool_search_output.tools[]` schema by name.
+    params = ModelRequestParameters(
+        function_tools=[discovered_tool],
+        builtin_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
+
+    # The local search call should render as a `tool_search_call` item with
+    # `execution='client'`, and the local return should render as a paired
+    # `tool_search_output` carrying the `get_weather` schema.
+    tool_search_calls = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_call'
+    ]
+    tool_search_outputs = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_output'
+    ]
+    function_calls = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'function_call'
+    ]
+    function_outputs = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'function_call_output'
+    ]
+
+    assert len(tool_search_calls) == 1, (
+        f'expected 1 tool_search_call, got {len(tool_search_calls)}; full output: {openai_messages}'
+    )
+    assert len(tool_search_outputs) == 1
+    assert tool_search_calls[0].get('execution') == 'client'
+    assert tool_search_outputs[0].get('execution') == 'client'
+
+    # Output carries the discovered tool's full schema for OpenAI to "rediscover".
+    output_tools = cast(list[dict[str, Any]], tool_search_outputs[0].get('tools'))
+    assert len(output_tools) == 1
+    assert output_tools[0]['name'] == 'get_weather'
+    assert output_tools[0]['type'] == 'function'
+
+    # The `search_tools` exchange must NOT also surface as a regular function_call /
+    # function_call_output — that would double-count the discovery.
+    assert not any(
+        cast(dict[str, Any], call).get('name') == _SEARCH_TOOLS_NAME
+        for call in cast(list[ResponseFunctionToolCallParam], function_calls)
+    )
+    assert not function_outputs

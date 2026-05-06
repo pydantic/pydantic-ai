@@ -1038,12 +1038,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-        # In custom-callable tool search mode, `search_tools` is a regular function tool and
-        # Anthropic expects its results as `tool_reference` blocks so discovered tools get
-        # unlocked on the provider side.
-        custom_tool_search_active = any(
-            isinstance(t, ToolSearchTool) and t.strategy == 'custom' for t in model_request_parameters.builtin_tools
-        )
+        # Whenever the current request carries any `ToolSearchTool` builtin, render any
+        # local-shape `search_tools` history exchanges as Anthropic's "client-side"
+        # tool-search wire — `tool_use` paired with a `tool_result` whose `content` is a
+        # `tool_reference` array. This unlocks the deferred tools' schemas server-side
+        # without forcing the model to re-search, and works regardless of the current
+        # turn's strategy (default native, named native, or custom callable). The flag
+        # also covers the no-history single-turn custom callable case (where the local
+        # `search_tools` exchange is created on this turn).
+        tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -1060,7 +1063,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
-                            request_part, custom_tool_search_active
+                            request_part, tool_search_active
                         )
                         if custom_tool_refs:
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
@@ -2108,9 +2111,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 
 def _build_custom_tool_search_replay_blocks(
-    request_part: ToolReturnPart, custom_tool_search_active: bool
+    request_part: ToolReturnPart, tool_search_active: bool
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
-    """Custom-callable tool-search replay payload for the Anthropic `tool_result` block.
+    """Tool-search replay payload for the Anthropic `tool_result` block.
 
     Reads the typed
     [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
@@ -2120,11 +2123,16 @@ def _build_custom_tool_search_replay_blocks(
     * `empty_message`: fallback text to send when no matches were found (Anthropic
       rejects an empty `tool_result` content list).
 
-    Returns `(None, None)` when this isn't a custom-callable tool-search return —
-    wrong tool, custom mode inactive, or content doesn't parse — so the caller falls
-    through to the default text-formatting path.
+    Returns `(None, None)` when the current request has no tool search active or this
+    isn't a `search_tools` return — the caller then falls through to the default
+    text-formatting path. Fires for any active tool-search strategy (default native,
+    named native, or custom callable), so cross-provider history (e.g. a prior local
+    turn on Google) gets re-shaped into Anthropic's "client-side" tool_search wire
+    when the current turn runs on Anthropic. Both flavors live in one helper because
+    the wire shape is the same: `tool_use` + `tool_result` with `tool_reference`
+    content blocks.
     """
-    if not custom_tool_search_active or request_part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
+    if not tool_search_active or request_part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
         return None, None
     content = request_part.content
     if not isinstance(content, dict):

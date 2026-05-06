@@ -2141,7 +2141,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # instead of `tool_search_call` items. The local dispatch path still sees the
         # function tool via `ModelRequestParameters.function_tools` (unaffected by this
         # filtering), so `_search_tools` continues to run normally.
-        client_tool_search = _has_custom_tool_search(model_request_parameters)
+        client_tool_search = _has_tool_search(model_request_parameters)
         return [
             self._map_tool_definition(r)
             for r in model_request_parameters.tool_defs.values()
@@ -2427,7 +2427,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `search_tools` originating from this provider (`provider_name == self.system`)
         # belongs in the client-execution flow whenever a custom-callable tool search is
         # active.
-        client_tool_search_active = _has_custom_tool_search(model_request_parameters)
+        client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
 
         openai_messages: list[responses.ResponseInputItemParam] = []
@@ -2520,14 +2520,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id, id = _split_combined_tool_call_id(call_id)
                         id = id or item.id
 
-                        if (
-                            client_tool_search_active
-                            and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
-                            and item.provider_name == self.system
-                        ):
+                        if client_tool_search_active and item.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME:
                             # Replay the local `search_tools` call as a `tool_search_call`
                             # with `execution='client'` so OpenAI re-attaches it to the
-                            # builtin and resumes the client-side discovery flow.
+                            # builtin and unlocks the discovered tools' schemas. Fires for
+                            # any `provider_name`, including `None` (cross-provider history
+                            # from a prior local-fallback turn) and other-provider names
+                            # (Google, etc.) — `execution='client'` is OpenAI's accepted
+                            # historical-replay shape regardless of the call's origin.
                             client_replay_call_ids.add(call_id)
                             tool_search_call: ToolSearchCallParam = {
                                 'type': 'tool_search_call',
@@ -3978,9 +3978,21 @@ def _map_code_interpreter_tool_call(
     )
 
 
-def _has_custom_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
-    """Whether the current run uses client-executed tool search (callable strategy)."""
-    return any(isinstance(t, ToolSearchTool) and t.strategy == 'custom' for t in model_request_parameters.builtin_tools)
+def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
+    """Whether the current run carries any `ToolSearchTool` builtin.
+
+    Used to gate two related behaviors:
+
+    * Filter the local `search_tools` function tool out of the wire `tools[]` (it's
+      represented by the builtin instead).
+    * Promote local-shape `ToolSearch*Part` history into native `tool_search_call` /
+      `tool_search_output` items (`execution='client'`), unlocking previously-discovered
+      `defer_loading=True` tools without forcing the model to re-search.
+
+    Both behaviors apply regardless of the active strategy (default native, named
+    native, or custom callable) — the gate is "tool search is active in some form".
+    """
+    return any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
 
 
 def _find_search_tool_definition(
