@@ -39,7 +39,10 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """Maximum content length in tokens. Builtin-only; ignored by local tools."""
 
     dynamic_filtering: bool | None
-    """Enable dynamic filtering for fetched content. Builtin-only; ignored by local tools."""
+    """Enable dynamic filtering for fetched content. Builtin-only; ignored by local tools.
+
+    With Anthropic, this requires `CodeExecutionTool` to also be enabled.
+    """
 
     def __init__(
         self,
@@ -105,4 +108,4 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             return None
 
     def _requires_builtin(self) -> bool:
-        return self.max_uses is not None
+        return self.max_uses is not None or self.dynamic_filtering is not None

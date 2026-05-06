@@ -911,17 +911,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         profile = AnthropicModelProfile.from_profile(self.profile)
+        has_code_execution = any(isinstance(tool, CodeExecutionTool) for tool in model_request_parameters.builtin_tools)
+
+        def use_dynamic_filtering(tool: WebSearchTool | WebFetchTool) -> bool:
+            if tool.dynamic_filtering is True and not has_code_execution:
+                raise UserError(
+                    '`dynamic_filtering=True` requires `CodeExecutionTool` to be enabled with the Anthropic provider.'
+                )
+            return tool.dynamic_filtering is True or (
+                tool.dynamic_filtering is None and profile.anthropic_supports_dynamic_filtering and has_code_execution
+            )
+
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = (
                     BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
                 )
-                use_dynamic_filtering = (
-                    tool.dynamic_filtering
-                    if tool.dynamic_filtering is not None
-                    else profile.anthropic_supports_dynamic_filtering
-                )
-                if use_dynamic_filtering:
+                if use_dynamic_filtering(tool):
                     tools.append(
                         BetaWebSearchTool20260209Param(
                             name='web_search',
@@ -948,12 +954,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 beta_features.add('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-                use_dynamic_filtering = (
-                    tool.dynamic_filtering
-                    if tool.dynamic_filtering is not None
-                    else profile.anthropic_supports_dynamic_filtering
-                )
-                if use_dynamic_filtering:
+                if use_dynamic_filtering(tool):
                     tools.append(
                         BetaWebFetchTool20260209Param(
                             name='web_fetch',
