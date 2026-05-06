@@ -3760,6 +3760,116 @@ def test_tool_search_strategy_keywords_registers_builtin_for_client_execution() 
     assert builtin.optional is True
 
 
+async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> None:
+    """Multi-hop chain: Anthropic-native turn 1 → local turn 2 (Google etc.) → OpenAI turn 3.
+
+    The persisted history at turn 3 carries BOTH a `BuiltinToolSearch*Part` from the
+    Anthropic turn AND a `ToolSearch*Part` from the local turn. OpenAI's adapter must
+    promote both into native `tool_search_call`+`tool_search_output` items so the
+    discovered tools' schemas stay unlocked across the entire chain — the model
+    shouldn't have to re-search anything it discovered earlier.
+    """
+    pytest.importorskip('openai')
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.tools import ToolDefinition
+
+    from .models.mock_openai import MockOpenAIResponses
+
+    model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+
+    weather = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city.',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+    )
+    calc = ToolDefinition(
+        name='calculate_mortgage',
+        description='Calculate monthly mortgage payment.',
+        parameters_json_schema={'type': 'object', 'properties': {'p': {'type': 'number'}}, 'required': ['p']},
+    )
+
+    # Turn 1 on Anthropic: native bm25, discovers `get_weather`.
+    # Turn 2 on Google: local function tool, discovers `calculate_mortgage`.
+    # Turn 3 on OpenAI: should promote BOTH discoveries to native wire.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        # Anthropic-native (turn 1) — `BuiltinToolSearch*Part`.
+        ModelResponse(
+            parts=[
+                BuiltinToolSearchCallPart(
+                    args={'queries': ['weather']},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                    provider_details={'strategy': 'bm25'},
+                ),
+                BuiltinToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='now find a mortgage one')]),
+        # Local fallback (turn 2 on Google or similar) — `ToolSearch*Part`.
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['mortgage']}, tool_call_id='loc_1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    tool_call_id='loc_1',
+                ),
+            ],
+        ),
+        ModelRequest(parts=[UserPromptPart(content='now compute both')]),
+    ]
+
+    params = ModelRequestParameters(
+        function_tools=[weather, calc],
+        builtin_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
+
+    tool_search_calls = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_call'
+    ]
+    tool_search_outputs = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_output'
+    ]
+
+    # Both prior discoveries should surface as native tool_search exchanges with execution=client.
+    # The local-fallback one promotes via the new gating; the Anthropic-native one is left as-is
+    # because its provider_name doesn't match self.system (foreign-provider builtin parts are
+    # filtered out from the OpenAI wire, but get_weather still needs to be discoverable — that's
+    # handled by the toolset re-emitting it as a regular function tool in this turn's `tools[]`).
+    assert len(tool_search_calls) >= 1, (
+        f'expected at least one promoted tool_search_call (local→native), got {len(tool_search_calls)}; '
+        f'output: {openai_messages}'
+    )
+    assert len(tool_search_outputs) >= 1
+    # The local discovery (`calculate_mortgage`) made it into the promoted output.
+    output_tools_names = {
+        cast(dict[str, Any], t).get('name')
+        for output in tool_search_outputs
+        for t in cast(list[Any], cast(dict[str, Any], output).get('tools', []))
+    }
+    assert 'calculate_mortgage' in output_tools_names, (
+        f'local-fallback discovery should be promoted; got tools: {output_tools_names}'
+    )
+
+
 async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_fn() -> None:
     """When `strategy='keywords'` activates the client-executed native path, the local
     `search_tools` function (still in `function_tools` for client-execution) must run
