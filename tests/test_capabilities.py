@@ -4683,6 +4683,7 @@ class TestXSearchCapability:
                     parts=[UserPromptPart(content='What is happening on X?', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -4696,6 +4697,7 @@ class TestXSearchCapability:
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -4708,6 +4710,7 @@ class TestXSearchCapability:
                     ],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
@@ -4715,6 +4718,7 @@ class TestXSearchCapability:
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
