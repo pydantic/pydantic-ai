@@ -1,0 +1,51 @@
+name: Harness Compat
+
+# Verifies that pydantic-ai changes don't break the pydantic-ai-harness lint /
+# typecheck / test suite. Calls the harness's `compat-test.yml` reusable
+# workflow with the change's HEAD SHA + repo (so fork PRs are tested against
+# the code in the fork, not main).
+#
+# Triggers:
+# - PRs touching `pydantic_ai_slim/**`: required to merge.
+# - Pushes to `main`: confirms the merged commit still works (catches
+#   anything that slipped through path-filter gaps).
+# - Push of `v*` tags: gates a release on harness compatibility.
+#
+# Fork PRs are gated behind the `safe-for-ci` label so a maintainer reviews
+# the diff before CI runs the fork's pydantic-ai code through the harness
+# suite. The called workflow itself runs without secrets and with
+# `contents: read` only — the label is defense-in-depth against running
+# unreviewed code on CI infrastructure, not a privilege escalation barrier.
+#
+# Fork PRs without the label produce a `skipped` job result. The
+# `harness-compat-gate` job in `ci.yml` enforces the label requirement via the
+# `check` gate so unlabeled fork PRs can't be merged (`check` fails when the
+# gate fails). Add `harness compat` to required-status-checks in branch
+# protection so the actual cross-repo run is also enforced when it runs.
+
+on:
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+    paths:
+      - 'pydantic_ai_slim/**'
+      - '.github/workflows/harness-compat.yml'
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  harness-compat:
+    name: harness compat
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe-for-ci')
+    # Same-org reusable workflow under shared maintenance; SHA pinning would force a coordination bump
+    # on every harness change without security benefit. Ignore configured in `.github/zizmor.yml`.
+    uses: pydantic/pydantic-ai-harness/.github/workflows/compat-test.yml@main
+    with:
+      pydantic-ai-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      pydantic-ai-repo: ${{ github.event.pull_request.head.repo.full_name || github.repository }}

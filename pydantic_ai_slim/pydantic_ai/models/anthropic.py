@@ -1149,7 +1149,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
                                 and (args := response_part.args_as_dict())
                                 and (tool_name := args.get('tool_name'))
-                                and (tool_args := args.get('tool_args'))
+                                and (tool_args := args.get('tool_args')) is not None
                             ):  # pragma: no branch
                                 mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
                                     id=tool_use_id,
