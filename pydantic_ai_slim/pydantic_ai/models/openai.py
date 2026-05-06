@@ -1072,6 +1072,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
             _provider_timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else None,
+            _timestamp=number_to_datetime(first_chunk.created) if first_chunk.created else _now_utc(),
             _model_settings=model_settings,
         )
 

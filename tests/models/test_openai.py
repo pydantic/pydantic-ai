@@ -585,6 +585,23 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+async def test_stream_text_falls_back_to_local_timestamp_when_created_missing(allow_model_requests: None):
+    first_chunk = text_chunk('hello ')
+    first_chunk.created = 0
+    stream = [first_chunk, text_chunk('world', finish_reason='stop')]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == ['hello ', 'hello world']
+        assert result.timestamp() != datetime(1970, 1, 1, tzinfo=timezone.utc)
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response.timestamp != datetime(1970, 1, 1, tzinfo=timezone.utc)
+                assert response.provider_details == {'finish_reason': 'stop'}
+
+
 async def test_stream_text_finish_reason(allow_model_requests: None):
     first_chunk = text_chunk('hello ')
     # Test that we get the model name from a later chunk if it is not set on the first one, like on Azure OpenAI with content filter enabled.
