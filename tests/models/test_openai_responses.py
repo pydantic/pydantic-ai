@@ -10821,6 +10821,7 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
                 parts=[UserPromptPart(content='The quick brown fox jumps over the lazy dog.', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=(run_id := IsStr()),
+                conversation_id=(conversation_id := IsStr()),
             ),
             ModelResponse(
                 parts=[
@@ -10839,6 +10840,7 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=run_id,
+                conversation_id=conversation_id,
             ),
         ]
     )
