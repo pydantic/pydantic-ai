@@ -679,6 +679,30 @@ agent = Agent(model)
 ...
 ```
 
+### FuturMix
+
+To use [FuturMix.ai](https://futurmix.ai), go to [futurmix.ai](https://futurmix.ai) and create an API key.
+
+You can use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with a custom base URL:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'claude-sonnet-4-20250514',
+    provider=OpenAIProvider(
+        base_url='https://futurmix.ai/v1',
+        api_key='your-futurmix-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+For a complete list of available models, visit [futurmix.ai](https://futurmix.ai).
+
 ### Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
