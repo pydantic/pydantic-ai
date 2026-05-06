@@ -190,7 +190,10 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
-AnthropicModelName = ModelParam
+LatestAnthropicModelNames = ModelParam
+"""Anthropic model names from the installed SDK."""
+
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -1662,8 +1665,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         edits = context_management.get('edits') or ()
         if any(isinstance(e, dict) and e.get('type') == _ANTHROPIC_COMPACT_EDIT_TYPE for e in edits):
             raise UserError(
-                '`anthropic_task_budget.remaining` cannot be combined with the '
-                f'`{_ANTHROPIC_COMPACT_EDIT_TYPE}` context-management edit (used by `AnthropicCompaction`). '
+                '`anthropic_task_budget.remaining` cannot be combined with `AnthropicCompaction`: '
+                'Anthropic rejects this combination because server-side compaction tracks the budget itself. '
                 'Use `remaining` for client-side budget tracking, or `AnthropicCompaction` '
                 'for server-side compaction — not both.'
             )

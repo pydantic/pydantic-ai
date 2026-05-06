@@ -1350,8 +1350,8 @@ async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(al
     """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
 
     Anthropic's API rejects requests that combine `output_config.task_budget.remaining`
-    with a `compact_20260112` context-management edit; we surface this as a `UserError`
-    before sending the request so users see a clear message instead of an opaque 400.
+    with server-side `AnthropicCompaction`; we surface this as a `UserError` before
+    sending the request so users see a clear message instead of an opaque 400.
     """
     c = completion_message(
         [BetaTextBlock(text='Hello!', type='text')],
@@ -1368,7 +1368,7 @@ async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(al
     )
     agent = Agent(model, capabilities=[AnthropicCompaction(token_threshold=50_000)])
 
-    with pytest.raises(UserError, match='cannot be combined with the `compact_20260112`'):
+    with pytest.raises(UserError, match='cannot be combined with `AnthropicCompaction`'):
         await agent.run('Hello')
 
 
@@ -1427,7 +1427,7 @@ async def test_anthropic_task_budget_remaining_rejects_compaction_part_in_histor
         ),
     ]
 
-    with pytest.raises(UserError, match='cannot be combined with the `compact_20260112`'):
+    with pytest.raises(UserError, match='cannot be combined with `AnthropicCompaction`'):
         await agent.run('Hello', message_history=message_history)
 
 

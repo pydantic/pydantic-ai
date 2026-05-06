@@ -201,19 +201,16 @@ agent = Agent(model, model_settings=settings)
 Task budgets compose with [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_effort]: effort tunes per-step reasoning depth, while task budgets cap total work across the loop. Both fields end up under the same `output_config` object.
 
 !!! note
-    Task budgets are advisory, not a hard cap; pair them with [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] for an enforced ceiling. Omit `remaining` when you resend the full, uncompacted history so the server tracks the countdown for you. Only set `remaining` explicitly when carrying a budget across compaction or other rewritten context.
+    Task budgets are advisory, not a hard cap; pair them with [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] for an enforced ceiling.
 
 ### Carrying budgets across compaction
 
-The `remaining` field on `task_budget` is for *client-side* compaction patterns (you summarize earlier turns yourself between requests, so the server has no memory of how much budget was spent before the rewrite). Compute it from your own tracked usage and pass it on the next request so the countdown continues from where you left off rather than resetting to `total`.
+If you use [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] for server-side compaction, you can skip this section: the server tracks the countdown itself, so leave `remaining` unset and let `total` self-regulate.
 
-!!! note
-    Pydantic AI does not track `remaining` for you. When you do client-side compaction, you are responsible for accumulating token usage across requests yourself (e.g. from [`RunUsage`][pydantic_ai.usage.RunUsage] on each run) and passing the updated `remaining` on the next request. For server-side compaction via [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction], leave `remaining` unset — the server tracks the countdown.
+The `remaining` field on `task_budget` is for *client-side* compaction patterns where you summarize earlier turns yourself between requests, so the server has no memory of how much budget was spent before the rewrite. Pydantic AI does not track `remaining` for you — accumulate token usage across requests yourself (e.g. from [`RunUsage`][pydantic_ai.usage.RunUsage] on each run) and pass the updated value on the next request so the countdown continues from where you left off rather than resetting to `total`. Setting `remaining` also invalidates any prompt-cache prefix that contains the budget, so if you want to preserve caching, set `total` once and let the server self-regulate against the running countdown.
 
 !!! warning
-    `task_budget.remaining` is mutually exclusive with [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]: Anthropic rejects requests that combine `remaining` with a `compact_20260112` context-management edit, because server-side compaction tracks the budget itself. Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request when this combination is configured. Choose one: `remaining` for client-side budget tracking, or [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] for server-side compaction.
-
-Setting `remaining` also invalidates any prompt-cache prefix that contains the budget. If you want to preserve caching, set `total` once and let the server self-regulate against the running countdown.
+    `task_budget.remaining` is mutually exclusive with [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction]: Anthropic rejects requests that combine the two because server-side compaction tracks the budget itself. Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request when this combination is configured. Choose one: `remaining` for client-side budget tracking, or [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] for server-side compaction.
 
 ## Prompt Caching
 
