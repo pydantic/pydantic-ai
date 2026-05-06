@@ -2578,13 +2578,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # retry budget (matches `_build_output_run_context`'s contract — see #4745).
                 # `output_toolset.max_retries` is set to `max_output_retries` at agent construction.
                 output_cap = run_capability
-                if output_max_retries is None:
-                    output_max_retries = self._max_output_retries
+                effective_output_max_retries = (
+                    output_max_retries if output_max_retries is not None else self._max_output_retries
+                )
 
                 async def _dispatch_prepare_output_tools(
                     ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
                 ) -> list[ToolDefinition]:
-                    output_ctx = replace(ctx, max_retries=output_max_retries)
+                    output_ctx = replace(ctx, max_retries=effective_output_max_retries)
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
