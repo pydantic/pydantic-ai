@@ -6314,6 +6314,47 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param.get('allowed_domains') is None
 
 
+async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcptoolu_123',
+                    args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcptoolu_123',
+                    content={'content': [{'type': 'text', 'text': '2026-05-06T00:00:00Z'}], 'is_error': False},
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did you call?')]),
+    ]
+
+    await model.request(
+        messages,
+        {},
+        ModelRequestParameters(
+            builtin_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+        ),
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'][1]['content'][0] == snapshot(
+        {'id': 'mcptoolu_123', 'type': 'mcp_tool_use', 'server_name': 'clock', 'name': 'current_time', 'input': {}}
+    )
+
+
 @pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))

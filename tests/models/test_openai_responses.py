@@ -8548,6 +8548,65 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
     assert web_search_item['id'] == long_id
 
 
+async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcp_123',
+                    args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcp_123',
+                    content={'output': '2026-05-06T00:00:00Z', 'error': None},
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did you call?')]),
+    ]
+
+    await model.request(
+        messages,
+        cast(OpenAIResponsesModelSettings, {'openai_send_reasoning_ids': True}),
+        ModelRequestParameters(
+            builtin_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+        ),
+    )
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert response_kwargs['input'][1] == snapshot(
+        {
+            'id': 'mcp_123',
+            'server_label': 'clock',
+            'name': 'current_time',
+            'arguments': '{}',
+            'error': None,
+            'output': None,
+            'type': 'mcp_call',
+        }
+    )
+
+
 async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel(
         'o4-mini',
