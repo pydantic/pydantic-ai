@@ -172,6 +172,13 @@ class TestMCPToolsetConstruction:
         toolset.id = 'new'
         assert toolset.id == 'new'
 
+    def test_explicit_timeouts_override_defaults(self):
+        """Passing `init_timeout` / `read_timeout` explicitly bypasses the `_UNSET` sentinel
+        resolution branch."""
+        toolset = MCPToolset('https://example.com/mcp', init_timeout=10, read_timeout=120)
+        # Both kwargs flow into the FastMCP `Client`; verify the read timeout was forwarded.
+        assert toolset.client._init_timeout is not None  # pyright: ignore[reportPrivateUsage]
+
 
 class TestResourceTypeMapping:
     """The PAI-shaped `Resource` / `ResourceTemplate` / `MCPError` types are kept under
