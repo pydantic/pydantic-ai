@@ -1439,6 +1439,13 @@ _MCPToolsetClientInput: TypeAlias = (
 )
 
 
+_UNSET: Any = object()
+"""Sentinel for `MCPToolset.__init__` to distinguish "not passed" from "passed `None`/default value"
+when validating that no kwargs were passed alongside a pre-built `fastmcp.Client`. Using a sentinel
+keeps the conflict checks in sync with the actual default values, so changing a default doesn't
+silently break the conflict check."""
+
+
 @dataclass(init=False, repr=False)
 class MCPToolset(AbstractToolset[AgentDepsT]):
     """A toolset for connecting to an MCP server.
@@ -1596,8 +1603,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         progress_handler: ProgressHandler | None = None,
         message_handler: MessageHandlerT | None = None,
         client_info: mcp_types.Implementation | None = None,
-        init_timeout: float | None = 5,
-        read_timeout: float | None = 5 * 60,
+        init_timeout: float | None = _UNSET,
+        read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
         auth: httpx.Auth | Literal['oauth'] | str | None = None,
@@ -1678,10 +1685,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 'http_client': http_client,
             }
             conflicts = [name for name, value in forwarded_values.items() if value is not None]
-            # `init_timeout` and `read_timeout` have non-None defaults; check against those.
-            if init_timeout != 5:
+            # `init_timeout`/`read_timeout` use `_UNSET` as their default so we can detect "passed
+            # explicitly" vs "default" without coupling to the literal default values.
+            if init_timeout is not _UNSET:
                 conflicts.append('init_timeout')
-            if read_timeout != 5 * 60:
+            if read_timeout is not _UNSET:
                 conflicts.append('read_timeout')
             if conflicts:
                 names = ', '.join(repr(n) for n in conflicts)
@@ -1698,6 +1706,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 raise ValueError(
                     '`headers` and `http_client` are mutually exclusive — set headers on the `http_client` instead.'
                 )
+
+            # Resolve sentinels to actual defaults now that the conflict check has run.
+            if init_timeout is _UNSET:
+                init_timeout = 5
+            if read_timeout is _UNSET:
+                read_timeout = 5 * 60
 
             transport = _build_transport(
                 client,
@@ -2064,7 +2078,7 @@ def _build_transport(
     auth: httpx.Auth | Literal['oauth'] | str | None,
     verify: ssl.SSLContext | bool | str | None,
     read_timeout: float | None,
-) -> Any:
+) -> _MCPToolsetClientInput:
     """Build a FastMCP transport from a flexible input.
 
     For URL-shaped inputs combined with HTTP-specific kwargs, we construct the transport explicitly
@@ -2082,6 +2096,7 @@ def _build_transport(
                 url=url,
                 headers=headers,
                 auth=auth,
+                verify=verify,
                 # SSE keeps its own read timeout for the long-lived event stream.
                 sse_read_timeout=read_timeout if read_timeout is not None else 5 * 60,
                 httpx_client_factory=factory,
