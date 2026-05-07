@@ -412,18 +412,41 @@ class TestMCPToolsetIntegration:
             content = await toolset.read_resource(greeting)
         assert content == 'Hello, world!'
 
-    async def test_resource_methods_without_capability(self):
-        """When the server doesn't advertise resources, the methods return empty lists."""
-        server: FastMCP[None] = FastMCP('no_resources_server')
-
-        @server.tool()
-        async def noop() -> str:
-            return 'ok'
-
-        toolset = MCPToolset(server)
+    async def test_resource_methods_without_capability(self, fastmcp_server: FastMCP[None]):
+        """When the server's `capabilities.resources` is `False`, the methods return empty lists
+        without round-tripping to the server."""
+        toolset = MCPToolset(fastmcp_server)
         async with toolset:
+            # Force the capability off to exercise the early-return branches.
+            from pydantic_ai.mcp import ServerCapabilities
+
+            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_resources() == []
             assert await toolset.list_resource_templates() == []
+
+    async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _CacheInvalidatingMessageHandler  # type: ignore[attr-defined]
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _CacheInvalidatingMessageHandler(toolset, user_handler=None)
+        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
+        # An unrelated notification shouldn't touch the caches.
+        await handler(
+            mcp_types.ServerNotification(
+                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            )
+        )
+        assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
+
+    async def test_message_handler_ignores_non_notification_messages(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _CacheInvalidatingMessageHandler  # type: ignore[attr-defined]
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _CacheInvalidatingMessageHandler(toolset, user_handler=None)
+        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
+        # Exception messages are passed through but shouldn't crash or invalidate caches.
+        await handler(RuntimeError('transport error'))
+        assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_invalidates_caches(
         self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
@@ -521,6 +544,36 @@ class TestMCPToolsetIntegration:
                 await toolset.direct_call_tool('boom', {})
 
 
+class TestToolResultMapping:
+    """Direct unit tests for `_map_fastmcp_tool_result` — easier than crafting a server response
+    that bypasses FastMCP's `structured_content` shortcut."""
+
+    def test_text_content_returns_str(self):
+        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+
+        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='hello'))
+        assert out == 'hello'
+
+    def test_text_content_with_json_object_is_parsed(self):
+        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+
+        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='{"a": 1}'))
+        assert out == {'a': 1}
+
+    def test_text_content_with_json_array_is_parsed(self):
+        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+
+        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='[1, 2, 3]'))
+        assert out == [1, 2, 3]
+
+    def test_text_content_with_invalid_json_falls_back_to_text(self):
+        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+
+        # Starts with `{` but isn't valid JSON.
+        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='{not valid'))
+        assert out == '{not valid'
+
+
 class TestSamplingHandler:
     async def test_sampling_handler_round_trip(self):
         """Drive the sampling handler built from `sampling_model=` to cover its body."""
@@ -586,6 +639,19 @@ class TestResourceMethodErrorPaths:
 
 
 class TestLoadMCPToolsets:
+    async def test_loads_toolsets_from_config_without_env(self):
+        """Stdio entries without an `env` field also produce valid toolsets."""
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'tests.mcp_server']},
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config))
+            toolsets = load_mcp_toolsets(config_path)
+        assert len(toolsets) == 1
+
     async def test_loads_toolsets_from_config_with_prefix(self):
         config = {
             'mcpServers': {
