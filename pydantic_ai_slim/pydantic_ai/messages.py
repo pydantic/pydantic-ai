@@ -201,9 +201,12 @@ class FileUrl(ABC):
     """
 
     metadata: dict[str, Any] | None = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+    """Application-only data attached to the file. Not sent to the LLM.
 
-    For files mapped from MCP tool results or resources, this is populated from the source's `_meta` field.
+    Distinct from [`vendor_metadata`][pydantic_ai.messages.FileUrl.vendor_metadata]: that field carries
+    provider-specific hints (e.g. OpenAI's image `detail`) that *are* sent to the API, whereas `metadata`
+    is for opaque payloads you want to read back programmatically — e.g. an `_meta` field surfaced from
+    an MCP tool result.
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
@@ -525,9 +528,12 @@ class BinaryContent:
     """
 
     metadata: dict[str, Any] | None = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+    """Application-only data attached to the binary content. Not sent to the LLM.
 
-    For files mapped from MCP tool results or resources, this is populated from the source's `_meta` field.
+    Distinct from [`vendor_metadata`][pydantic_ai.messages.BinaryContent.vendor_metadata]: that field
+    carries provider-specific hints (e.g. OpenAI's image `detail`) that *are* sent to the API, whereas
+    `metadata` is for opaque payloads you want to read back programmatically — e.g. an `_meta` field
+    surfaced from an MCP tool result.
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
@@ -766,7 +772,12 @@ class UploadedFile:
     """
 
     metadata: dict[str, Any] | None = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Application-only data attached to the uploaded file. Not sent to the LLM.
+
+    Distinct from [`vendor_metadata`][pydantic_ai.messages.UploadedFile.vendor_metadata]: that field
+    carries provider-specific hints that *are* sent to the API, whereas `metadata` is for opaque
+    payloads you want to read back programmatically.
+    """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
