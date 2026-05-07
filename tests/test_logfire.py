@@ -3879,6 +3879,35 @@ def test_instrumentation_capability_explicit(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_agent_with_user_provided_instrumented_model(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """If a user explicitly hands an `InstrumentedModel` to `Agent(model=...)`, its
+    settings drive the agent's instrumentation — the model is unwrapped and the
+    `Instrumentation` capability emits the spans.
+    """
+    from pydantic_ai.models.instrumented import InstrumentedModel
+
+    settings = InstrumentationSettings()
+    agent = Agent(model=InstrumentedModel(TestModel(), settings))
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'agent run',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_instrumentation_capability_template_description(
     capfire: CaptureLogfire,
 ) -> None:
