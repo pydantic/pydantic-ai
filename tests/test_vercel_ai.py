@@ -5,7 +5,6 @@ import json
 import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
-from unittest.mock import Mock
 
 import pytest
 
@@ -40,6 +39,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturn,
+    ToolReturnContent,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
@@ -3795,23 +3795,17 @@ async def test_adapter_dump_messages_with_tools():
 
 
 @pytest.mark.parametrize(
-    ('case_id', 'expected_envelope'),
+    ('case_id', 'expected_output'),
     [
         pytest.param(
             'single-image',
             snapshot(
                 {
-                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
-                    'data': None,
-                    'files': [
-                        {
-                            'kind': 'binary',
-                            'data': IsStr(),
-                            'media_type': 'image/jpeg',
-                            'identifier': IsStr(),
-                            'vendor_metadata': None,
-                        }
-                    ],
+                    'data': 'AAEC',
+                    'media_type': 'image/jpeg',
+                    'vendor_metadata': None,
+                    'kind': 'binary',
+                    'identifier': '0c7a62',
                 }
             ),
             id='single-image',
@@ -3819,45 +3813,38 @@ async def test_adapter_dump_messages_with_tools():
         pytest.param(
             'text-then-audio',
             snapshot(
-                {
-                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
-                    'data': 'the audio narration says...',
-                    'files': [
-                        {
-                            'kind': 'binary',
-                            'data': IsStr(),
-                            'media_type': 'audio/mpeg',
-                            'identifier': IsStr(),
-                            'vendor_metadata': None,
-                        }
-                    ],
-                }
+                [
+                    'the audio narration says...',
+                    {
+                        'data': 'EBES',
+                        'media_type': 'audio/mpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': 'c4c10d',
+                    },
+                ]
             ),
             id='text-then-audio',
         ),
         pytest.param(
             'image-and-video',
             snapshot(
-                {
-                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
-                    'data': None,
-                    'files': [
-                        {
-                            'kind': 'binary',
-                            'data': IsStr(),
-                            'media_type': 'image/jpeg',
-                            'identifier': IsStr(),
-                            'vendor_metadata': None,
-                        },
-                        {
-                            'kind': 'binary',
-                            'data': IsStr(),
-                            'media_type': 'video/mp4',
-                            'identifier': IsStr(),
-                            'vendor_metadata': None,
-                        },
-                    ],
-                }
+                [
+                    {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                    {
+                        'data': 'ICEi',
+                        'media_type': 'video/mp4',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': 'ddb5a7',
+                    },
+                ]
             ),
             id='image-and-video',
         ),
@@ -3865,18 +3852,12 @@ async def test_adapter_dump_messages_with_tools():
             'document-url',
             snapshot(
                 {
-                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
-                    'data': None,
-                    'files': [
-                        {
-                            'kind': 'document-url',
-                            'url': 'https://example.com/doc.pdf',
-                            'force_download': False,
-                            'vendor_metadata': None,
-                            'media_type': 'application/pdf',
-                            'identifier': 'e3337d',
-                        }
-                    ],
+                    'url': 'https://example.com/doc.pdf',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'document-url',
+                    'media_type': 'application/pdf',
+                    'identifier': 'e3337d',
                 }
             ),
             id='document-url',
@@ -3884,19 +3865,17 @@ async def test_adapter_dump_messages_with_tools():
         pytest.param(
             'list-data-and-image',
             snapshot(
-                {
-                    'pydantic_ai_kind': 'pydantic_ai_multimodal_tool_return',
-                    'data': ['hello', 'world'],
-                    'files': [
-                        {
-                            'kind': 'binary',
-                            'data': IsStr(),
-                            'media_type': 'image/jpeg',
-                            'identifier': IsStr(),
-                            'vendor_metadata': None,
-                        }
-                    ],
-                }
+                [
+                    'hello',
+                    'world',
+                    {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                ]
             ),
             id='list-data-and-image',
         ),
@@ -3904,16 +3883,16 @@ async def test_adapter_dump_messages_with_tools():
 )
 async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     case_id: str,
-    expected_envelope: dict[str, Any],
+    expected_output: Any,
     tiny_image: BinaryImage,
     tiny_audio: BinaryContent,
     tiny_video: BinaryContent,
 ):
-    """Test multimodal `ToolReturnPart.content` round-trips via the `MultimodalToolOutputEnvelope`.
+    """Multimodal `ToolReturnPart.content` round-trips through `ToolOutputAvailablePart.output`.
 
-    Vercel AI SDK has no native multimodal tool-output shape (as of ai@6.0.57); we wrap files
-    in a structured envelope inside `ToolOutputAvailablePart.output` so the dump -> load round
-    trip preserves them.
+    The output field carries the dumped `ToolReturnContent` shape directly; on load,
+    `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit
+    `Discriminator` lifted onto the recursive alias.
     """
     contents: dict[str, Any] = {
         'single-image': tiny_image,
@@ -3933,7 +3912,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     ui_messages = VercelAIAdapter.dump_messages(messages)
     assistant = next(m for m in ui_messages if m.role == 'assistant')
     tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
-    assert tool_part.output == expected_envelope
+    assert tool_part.output == expected_output
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     tool_returns = [
@@ -3945,7 +3924,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
 
 
 async def test_adapter_tool_return_text_only_unchanged():
-    """Test that text-only tool returns are unaffected by the multimodal envelope path."""
+    """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(parts=[ToolCallPart(tool_name='search', tool_call_id='tc-1', args={})]),
@@ -3966,7 +3945,7 @@ async def test_adapter_tool_return_text_only_unchanged():
 
 
 async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
-    """Test multimodal `BuiltinToolReturnPart.content` round-trips via the envelope."""
+    """Multimodal `BuiltinToolReturnPart.content` round-trips through the discriminated alias."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
@@ -7546,46 +7525,36 @@ class TestSdkVersion:
 
 
 @pytest.mark.parametrize(
-    'model_response_object,files,expected',
+    'content,expected',
     [
         pytest.param(
-            {'return_value': 'hello'},
-            [BinaryContent(data=b'x', media_type='image/png')],
+            ['hello', BinaryContent(data=b'x', media_type='image/png')],
             snapshot([{'return_value': 'hello'}, '[File: image/png]']),
             id='string_with_files',
         ),
         pytest.param(
-            {},
-            [BinaryContent(data=b'x', media_type='audio/wav')],
+            BinaryContent(data=b'x', media_type='audio/wav'),
             snapshot([{}, '[File: audio/wav]']),
             id='empty_with_files',
         ),
         pytest.param(
-            {'return_value': [1, 2]},
-            [BinaryContent(data=b'x', media_type='image/png')],
+            [[1, 2], BinaryContent(data=b'x', media_type='image/png')],
             snapshot([{'return_value': [1, 2]}, '[File: image/png]']),
             id='list_with_files',
         ),
-        pytest.param(
-            {},
-            [],
-            snapshot({}),
-            id='empty_no_files',
-        ),
+        pytest.param('', snapshot(''), id='empty_no_files'),
     ],
 )
-def test_tool_return_output_edge_cases(
-    model_response_object: dict[str, Any], files: list[BinaryContent], expected: str
-):
-    """Test `_tool_return_with_files` with files and various `model_response_object` values."""
+def test_tool_return_output_edge_cases(content: ToolReturnContent, expected: Any):
+    """`_tool_return_with_files` produces text-stream-friendly output for streaming chunks.
+
+    Multimodal cases collapse to `[model_response_object_dict, '[File: <media_type>]', ...]`;
+    text-only cases pass through `tool_return_output` (the dumped content).
+    """
     from pydantic_ai.ui.vercel_ai._event_stream import _tool_return_with_files  # pyright: ignore[reportPrivateUsage]
 
-    mock_part = Mock()
-    mock_part.model_response_object.return_value = model_response_object
-    mock_part.files = files
-
-    result = _tool_return_with_files(mock_part)
-    assert result == expected
+    part = ToolReturnPart(tool_name='t', content=content, tool_call_id='c')
+    assert _tool_return_with_files(part) == expected
 
 
 def test_describe_file_uploaded_file():

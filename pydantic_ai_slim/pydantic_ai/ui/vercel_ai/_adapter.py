@@ -28,7 +28,6 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    MultiModalContent,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -41,18 +40,17 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import (
-    MULTIMODAL_TOOL_RETURN_KIND,
     dump_provider_metadata,
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
-    multi_modal_content_ta,
     tool_return_output,
 )
 from .request_types import (
@@ -400,9 +398,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = _restore_multimodal_tool_output(
-                                        part.output if isinstance(part, ToolOutputAvailablePart) else None
-                                    )
+                                    raw_output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    output = _validate_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
                                     BuiltinToolReturnPart(
@@ -431,7 +428,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
-                                        content=_restore_multimodal_tool_output(part.output),
+                                        content=_validate_tool_output(part.output),
                                     )
                                 )
                             elif part.state == 'output-error':
@@ -618,7 +615,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
                                 input=part.args_as_dict(),
-                                output=tool_return_output(builtin_return, include_files=True),
+                                output=tool_return_output(builtin_return),
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
                             )
@@ -709,7 +706,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=tool_return_output(tool_result, include_files=True),
+                        output=tool_return_output(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -873,30 +870,26 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     return ToolDenied().message
 
 
-def _restore_multimodal_tool_output(output: Any) -> Any:
-    """Decode a `MultimodalToolOutputEnvelope` back into `ToolReturnContent`.
+def _validate_tool_output(output: Any) -> Any:
+    """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
 
-    Returns `output` unchanged when it's not an envelope.
+    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`.
     """
-    if not _is_str_dict(output) or output.get('pydantic_ai_kind') != MULTIMODAL_TOOL_RETURN_KIND:
-        return output
-    raw_files: list[Any] = output.get('files') or []
-    files: list[MultiModalContent] = []
-    for raw in raw_files:
-        item = multi_modal_content_ta.validate_python(raw)
-        # Narrow `BinaryContent` with an image media type to `BinaryImage` so round trips through
-        # the discriminator union preserve the subclass (matches `BinaryContent.from_data_uri`).
-        if isinstance(item, BinaryContent):
-            item = BinaryContent.narrow_type(item)
-        files.append(item)
-    data = output.get('data')
-    if not files:  # pragma: no cover
-        return data
-    if data is None or data == '' or data == {}:
-        return files[0] if len(files) == 1 else files
-    if isinstance(data, list):
-        return [*data, *files]
-    return [data, *files]
+    validated = tool_return_content_ta.validate_python(output)
+    return _narrow_binary_images(validated)
+
+
+def _narrow_binary_images(value: Any) -> Any:
+    """Walk a validated `ToolReturnContent` value and narrow image `BinaryContent` to `BinaryImage`."""
+    if isinstance(value, BinaryContent):
+        return BinaryContent.narrow_type(value)
+    if isinstance(value, list):
+        return [_narrow_binary_images(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, dict):
+        return {k: _narrow_binary_images(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    return value
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

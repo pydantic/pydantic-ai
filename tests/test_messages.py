@@ -1249,6 +1249,63 @@ def test_tool_return_part_binary_content_serialization():
     assert tool_return.model_response_object() == snapshot({})
 
 
+def _extract_binary(content: object) -> BinaryContent | None:
+    """Pull the `BinaryContent` instance out of a `ToolReturnPart.content` value, regardless of shape."""
+    if isinstance(content, BinaryContent):
+        return content
+    if isinstance(content, list):
+        for item in content:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(item, BinaryContent):
+                return item
+    if isinstance(content, dict):
+        for value in content.values():  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(value, BinaryContent):
+                return value
+    return None
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg'), id='scalar'),
+        pytest.param(
+            ['hello', BinaryContent(data=b'\x00\x01\x02', media_type='image/jpeg')],
+            id='list-with-binary',
+        ),
+        pytest.param(
+            {'caption': 'see image', 'attachment': BinaryContent(data=b'\x00\x01\x02', media_type='image/jpeg')},
+            id='dict-with-nested-binary',
+        ),
+    ],
+)
+def test_tool_return_part_binary_content_round_trip(content: object):
+    """`ToolReturnPart.content` containing `BinaryContent` (scalar, in a list, or in a dict)
+    must round-trip via `ModelMessagesTypeAdapter` in both `validate_json` (the wire path)
+    and `validate_python` (the replay path used by UI adapters that already parsed JSON).
+
+    Without the explicit `Discriminator` on `ToolReturnContent`, smart-union resolution picks
+    `Mapping`/`Sequence`/`Any` over the discriminated `MultiModalContent` branch in
+    `validate_python`, leaving binary leaves as plain dicts.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+    expected = _extract_binary(content)
+    assert expected is not None
+
+    json_serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    json_loaded = ModelMessagesTypeAdapter.validate_json(json_serialized)
+    json_part = json_loaded[0].parts[0]
+    assert isinstance(json_part, ToolReturnPart)
+    assert _extract_binary(json_part.content) == expected
+
+    python_serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    python_loaded = ModelMessagesTypeAdapter.validate_python(python_serialized)
+    python_part = python_loaded[0].parts[0]
+    assert isinstance(python_part, ToolReturnPart)
+    assert _extract_binary(python_part.content) == expected
+
+
 def test_tool_return_part_list_structure_preserved():
     single_dict = {'result': 'found'}
     single_item_list = [{'result': 'found'}]
