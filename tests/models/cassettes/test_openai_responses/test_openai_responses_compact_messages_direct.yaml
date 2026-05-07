@@ -1,0 +1,303 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '139'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Hello!
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1316'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1695'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775105423
+      created_at: 1775105422
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e8e119d1bc825500069cdf58e00988193ae7bf8faf7d7cbed
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Hello! How can I assist you today?
+          type: output_text
+        id: msg_0e8e119d1bc825500069cdf58f29d88193a28215a6cc2d874a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 19
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 10
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 29
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '256'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=_bWBNMWY8f8XVYSnE7FWKbuMm7WvLE.TvyHS.OqSavM-1775105421.6098542-1.0.1.1-UhzvDhFbxzvJ9Tiv9gtfvtzhFvVPeiUK8DtN9esV9DTaSdjEP0ZKnro3MF5_mGCbCeuZlHs_l.C7iWRXfRfgCvZBB8FtfQU4ed8s_oNx.uVQ6S6gAydGGoxo1ltl3qYG
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Hello!
+        role: user
+      - content: Hello! How can I assist you today?
+        role: assistant
+      - content: How are you?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1371'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1513'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775105425
+      created_at: 1775105423
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0be9b6eb4e93ff0a0069cdf58fd96481908725cdfdbdfb3db4
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: I'm just a program, but I'm here and ready to help you! How about you? How are you doing?
+          type: output_text
+        id: msg_0be9b6eb4e93ff0a0069cdf590b44c8190802d197e194313d4
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 40
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 24
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 64
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '366'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=_bWBNMWY8f8XVYSnE7FWKbuMm7WvLE.TvyHS.OqSavM-1775105421.6098542-1.0.1.1-UhzvDhFbxzvJ9Tiv9gtfvtzhFvVPeiUK8DtN9esV9DTaSdjEP0ZKnro3MF5_mGCbCeuZlHs_l.C7iWRXfRfgCvZBB8FtfQU4ed8s_oNx.uVQ6S6gAydGGoxo1ltl3qYG
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Hello!
+        role: user
+      - content: Hello! How can I assist you today?
+        role: assistant
+      - content: How are you?
+        role: user
+      - content: I'm just a program, but I'm here and ready to help you! How about you? How are you doing?
+        role: assistant
+      instructions: You are a helpful assistant.
+      model: gpt-4o-mini
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4468'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '6873'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1775105432
+      id: resp_06c64b740d724e130169cdf591eb8c81909524e53414f5cb36
+      object: response.compaction
+      output:
+      - content:
+        - text: Hello!
+          type: input_text
+        id: msg_06c64b740d724e130169cdf591efec81908b9448225db31d09
+        role: user
+        status: completed
+        type: message
+      - content:
+        - text: How are you?
+          type: input_text
+        id: msg_06c64b740d724e130169cdf591f02c8190988204e395382b77
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABpzfWYTCgQWp70FeVbtF1vLlPyb51sDfF8lYGEDyKsG2HYnq1WDR2r7Gtu8P2My-nVPbRj7_YfPC2bKWZkRgIVdCLQ6FjO1Jcolk6HtMa0pjZVMSVon1iylbzISp3Bby_EzH8JJA5gJnoDmbVuT2Qph70iPGK6MrgwJot8pmEISnxiMebGPmd77W-I6lC_3bqVGtVpsJPeZy_qb2t_w6f8wl-At87uhTHryqv9TPZ50Q2sPLSG4Tojd-7rR_HnDOaU2gpXuEf2Gjv6GxT8qgxhqPFFauQCJcvxFD86xFW_NP8nbwuX_bJsO_4z-s4unaMwnetjWKzol4VrIIAYpIxWvYqSoS3ry1QW5CilZlE4lTJlcjfEaDFZZO_GT78o6H9wi1xwRZEbNhQvPUHheJgHyuKhAvmgzesWVbl69tTqF_YhXL7Nx_5yPu9J6lOoSD9AvA5q7UJI0JyarX0Hbzm6NdJyDjtxOMzKY3nGS3Rkvi_99al4OkybvFBe78-5YFDxAeaftBIc_QsmAMS6ePz9WVhaF8oRP6NaH_UdmMnGCAF8dOW5e1IP7e6w3E0Nnqknd82BNs7vO0JpgSwXKBXDPN-3SxhVz-CrpJWbm0xOcKY1LBVO6zLHE8thHm0Bdw1rRlvLEwdM-aZL-_yklb1lXJUYwqHJfiSBsweHhaL0QRgZF2XnuWlSv5WPfxHmytV5P2MxD-nqAhwlXLNi7-wJbzH2kWDY4fsw2bhWiSl9PsvZcI3fxzx2N3gB5_1u90C2YHmMYrgHijqnBjTZgsKxj7wyICylU7tOP7ePnnqvCb-vA2BCsxqKN-L-sExABykL_noRjB9y9A-wsezk2mfwKwjJbixFXRizoPBnL60U2kFbjeaj0N1HqakSI3JLkgwo9X3xHMVSv2F9ixH2E43wmW-Upki1orA7LetBYnJJOWw5A-xaNo0M14WV5dIM2ZSF0_9snxE2LlM6YLnnNubjZ7Baz5CVTvCpBAgHu_Iu4QJXAib7Jz2jgBHEixECrViAy8YWrPkC-jUbHo2FHile1Lsff-trnP-DxULUJXXtr1o3U3oFFRisqk6xnqDD7RyvqNwGmhql_jpUxppEndiVbKQ4ckL2V1TnlenHnruw1VnqBCaC-gcLGc_K_9ti90y5IipnSkj6-dhwpQg_r75JRPX41c8qTqLc_Q0CDCXL-3GZt5iQloB7hO6WVlQ-ij4G532UcGqvReHvY2HxpWQfnpEoegadwkBjwNMDF9pFdGxxWldipbuN9S4v9rPGOeNhhoOXDv9Zfh9wNyVLXCp5w9_Q8AYm7I-pfpOYwRguJmq4W448WqGKgK62fHclMDJH_FXNu7CiY7bQ9NMSI-J6VNLMdsTUnJJ2XT1k_ECU5wbsf75cPjALu08RbVKsca0eGiKrg_HjUQe3-7nFxrL8TGL3dbDutIOBoAE1BdjkHOPFRc-YBzwbmnXLNaiii-ziQqaAq34sunFe3-ANMxf-WFBwiyvEHgLLrpcFHT-rO4nnzJw32LAOq5xUrS7S1h4UmogMxeu3OzJJcd1k7j6acm4RVwp3pGIQ0khMYwCvEMYsOSi838uU01YWyEzQlsSM9iwAhSNwiPsbyE-cJcsWVAtufx7U0QAXREJcTdorXlSHXvwueiMUY3s0WQ2WeQO5N2gh4NYEDl_lNNIQkFpFsaD7FIjf89jHbgozyo88--WQEPcPbE7L65pBwmRjomIMbZv4sUCcPcLYL2L4jottPLyuaAGDCpRLrXJeHT4bmjeIshJxsS8F9aXK8x0Z0HNEiF1wUf3KzKpPhLs0HeNZ7Rze3_gSOhFc4tEYTyOBMOjqxH-m8hoRCiUNVhiiZ6--Ez1msRw0QqLesV9yRA0FsVPBG97jfG8svdZWsPXpqRz7V4apOBwBL17rYQzyt1roAdbx8dwc3dfRNd03WVrAUKBL-NWHNIjXHizHUSqBsfHf9-RDwXSQq3MiWfJi8hm37Qs3-oGmFwBRH2purB0nc3_CpXLrl_Pb7Db5Vhz1mA8Aj4HPWtEg8Pitj7g1YxcZ4ZnNFL5bvcLExQljn5u9E69cZjXKqTYbTYbWmIpXU5EKbXzeyZgIG7bu-p8SUOcGLrpQ45qdQK_PxWHYLr6m-iaUN4Rd4N4_d-9mHLzb2T5_x-0F9wmrmflRlTkt7NbUwI7E6HUO9rLO6jigmWkR4WfP_bziwuv1xBem4OSgjAz9SUV5r0zOySy_x6QNFRXfqfSNK7ZuLWDa6HXPhk7D1Or4yFQ8Zg1LoZJEr8NxAHQ4oKzlHl2_4v1I2HygiE1jdGlQGea0_alV9G1IN9yW8m74Axa0at3q3oW0g6IwhYTE6Gho2pSGW51nWXKxcEPSp0O_QQuBi1YQ60Z_S7jYOgV6pS_vH_sZ9TllT8sGhSTcdzIARuyfwS59qQmXZOIjVFQU58EJEKOLUOVksGlrqQo_2jHR548yishPP-0T5OgMaWqP31BtXoUjIYmjMWEedI-53gZ6ucIF9Z_jl_giigmGzB9AyJAakAo_wuDpqJRxskvAf-XsTck17Pxdp0sCjU4HxQVWR4KfRIOEjjHrexYFjaeCRlH9pZvgfXpvg-f-zkfLex8TPo43fZF0XeFz_0LSPimk1GY9WcJtcO3sFLmCTG2PamEOn5JGm0PZZaLVWlWc3Pg49rmN3mycPMs65n7mfqZ05PQb0Jjlhr_83_mL1oXKFMvCvIGwKdCu_6lfzCzEiOJJWcURzotmPB1jldX_ftBPwT1oJ59qA-3OYABIfZ_w5X62inMDyYS-hc3RyZvuG5cEdmVhfdahb1Qtc5CNTyzqTijqo3k0nwi1DxAWjtFwJTrwmwVmrUzEed0SsXd_7286WVrKJMnQNzuzZ068I90OwAxDEsNxQlBE7tdFjKTbEsWVKrFpvSBXGRlBz0Rq8IR_TyAg0dQs5de358sBZP0D5h3pRuazO7iBe5g9YThPgVcELLpKRnEjTNmsCpKyu98SnMSAMEralRrkqEc4VoYreS5cvJGjkzWzgBFVZbKIxn2fHFucEn4vKQU12MDrfC6M64LBsipcyI57bZF-24Ud6bqE35CeC5uZkjXrVkajTuBCMNrHpIE2GsXFZf9gBd1OJoUXwSNDVzbUd_fMMOiOUU9ZuofZ8OTUx0_xaOcBmA5IhnoK9ZEzg6h9DMFJY5Z_ZE4X-hCEO00oTXC6YXU9wa1OQF9vMR6gAvIciWEl2GwVZf_WsLtCF74HKmQioXWQpc5GkLDjfkCepHrO_ZYjawoIv4SZnS3jys7abEm8ErCh7cIk5z3ZH8YiL_Xe_m1lroyImkRDQ_ni-AuN7exV03SOsUN-lrgn_R8_9wBW9bcoXHKpbfa2LDrneXTSmSdemZLdy6z0jdptr2NRwTgS8JGw2xfy91wiSfs9yhQX36Q97c28Asr6jk-MrVcnhgdIMGbsmEJk7_yMPbSL_FLrJO4L2gNGeuapo_GWG1ekKjyMadBTomDraxwS5sW31LwrSiFW497ETSzQvEEW0g-iz-6WOh4t2yBkBNlnUKUmRgB93_1KuE-LV5ih93YqqDJBzxqxEPyrdnYjxwdaX4B_jSElX4NXDOVaRs7zkyhSUm1-9uqLkUvsKugmGjAOYTXFJGOO8RMDtwnVsmsqWEdDjSqbIyIE_pSP2wwQMA==
+        id: cmp_06c64b740d724e130169cdf592c74c819088ac140437725688
+        type: compaction
+      usage:
+        input_tokens: 160
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 297
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 457
+    status:
+      code: 200
+      message: OK
+version: 1

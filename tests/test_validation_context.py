@@ -97,6 +97,7 @@ def test_agent_tool_call_with_validation_context():
                 parts=[UserPromptPart(content='', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -106,6 +107,7 @@ def test_agent_tool_call_with_validation_context():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -118,6 +120,7 @@ def test_agent_tool_call_with_validation_context():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"get_value":10}')],
@@ -125,6 +128,7 @@ def test_agent_tool_call_with_validation_context():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -151,6 +155,7 @@ def test_agent_output_function_with_validation_context():
                 parts=[UserPromptPart(content='', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -162,6 +167,7 @@ def test_agent_output_function_with_validation_context():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -174,6 +180,7 @@ def test_agent_output_function_with_validation_context():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -201,6 +208,7 @@ def test_agent_output_validator_with_validation_context():
                 parts=[UserPromptPart(content='', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -212,6 +220,7 @@ def test_agent_output_validator_with_validation_context():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -224,6 +233,7 @@ def test_agent_output_validator_with_validation_context():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -258,6 +268,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                 parts=[UserPromptPart(content='', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -269,6 +280,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -281,6 +293,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -292,6 +305,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -304,6 +318,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

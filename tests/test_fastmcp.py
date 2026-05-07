@@ -11,8 +11,9 @@ import pytest
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai.messages import BinaryContent, InstructionPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
@@ -41,6 +42,7 @@ with try_import() as imports_successful:
     )
 
     # Import the content mapping functions for testing
+    from pydantic_ai.mcp import CallToolFunc, ToolResult
     from pydantic_ai.toolsets.fastmcp import (
         FastMCPToolset,
     )
@@ -182,6 +184,11 @@ class TestFastMCPToolsetInitialization:
         toolset = FastMCPToolset(fastmcp_client)
         assert toolset.id is None
 
+    async def test_process_tool_call_default_is_none(self, fastmcp_client: Client[FastMCPTransport]):
+        """Test that process_tool_call defaults to None."""
+        toolset = FastMCPToolset(fastmcp_client)
+        assert toolset.process_tool_call is None
+
 
 class TestFastMCPToolsetContextManagement:
     """Test FastMCP Toolset context management."""
@@ -227,6 +234,48 @@ class TestFastMCPToolsetContextManagement:
             assert tools1 == tools3
 
 
+class TestFastMCPToolsetInstructions:
+    """Test FastMCP instructions handling and include_instructions behavior."""
+
+    async def test_get_instructions_disabled_returns_none(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+        run_context: RunContext[None],
+    ):
+        """When include_instructions is disabled, get_instructions returns None."""
+        toolset = FastMCPToolset(fastmcp_client, include_instructions=False)
+
+        assert await toolset.get_instructions(run_context) is None
+
+    async def test_get_instructions_enabled_tracks_context_lifecycle(self, run_context: RunContext[None]):
+        """When include_instructions is enabled, expose server instructions while entered only."""
+        instruction_server = FastMCP('instruction_server', instructions='Be a helpful assistant.')
+        instruction_client = Client(transport=instruction_server)
+        toolset = FastMCPToolset(instruction_client, include_instructions=True)
+
+        # Before entering, no initialization has happened — returns None gracefully.
+        assert await toolset.get_instructions(run_context) is None
+
+        async with toolset:
+            assert toolset.instructions == 'Be a helpful assistant.'
+            assert await toolset.get_instructions(run_context) == InstructionPart(
+                content='Be a helpful assistant.', dynamic=True
+            )
+
+        # After exiting, cached instructions are reset.
+        assert await toolset.get_instructions(run_context) is None
+
+    async def test_get_instructions_enabled_no_server_instructions(self, run_context: RunContext[None]):
+        """When include_instructions is enabled but server provides no instructions, returns None."""
+        no_instruction_server = FastMCP('no_instructions_server')
+        no_instruction_client = Client(transport=no_instruction_server)
+        toolset = FastMCPToolset(no_instruction_client, include_instructions=True)
+
+        async with toolset:
+            assert toolset.instructions is None
+            assert await toolset.get_instructions(run_context) is None
+
+
 class TestFastMCPToolsetToolDiscovery:
     """Test FastMCP Toolset tool discovery functionality."""
 
@@ -258,19 +307,31 @@ class TestFastMCPToolsetToolDiscovery:
             }
             assert set(tools.keys()) == expected_tools
 
-            # Check tool definitions
             test_tool = tools['test_tool']
-            assert test_tool.tool_def.name == 'test_tool'
-            assert test_tool.tool_def.description is not None
-            assert 'test tool that returns a formatted string' in test_tool.tool_def.description
-            assert test_tool.max_retries == 1
             assert test_tool.toolset is toolset
+            assert test_tool.tool_def.name == 'test_tool'
+            assert test_tool.tool_def.description == 'A test tool that returns a formatted string.'
+            # toolset left max_retries unset and the fixture ctx defaults to 0, so the tool inherits 0
+            assert test_tool.max_retries == 0
+            assert test_tool.tool_def.parameters_json_schema == snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'param1': {'type': 'string'}, 'param2': {'default': 0, 'type': 'integer'}},
+                    'required': ['param1'],
+                    'type': 'object',
+                }
+            )
 
-            # Check that the tool has proper schema
-            schema = test_tool.tool_def.parameters_json_schema
-            assert schema['type'] == 'object'
-            assert 'param1' in schema['properties']
-            assert 'param2' in schema['properties']
+    async def test_fastmcp_tool_for_tool_def_uses_toolset_max_retries(self, fastmcp_client: Client[FastMCPTransport]):
+        """`tool_for_tool_def` resolves `self.max_retries`: explicit int when set, fallback to `1`
+        when unset (durable-execution path has no `ctx` to inherit from)."""
+        tool_def = ToolDefinition(name='x', description='', parameters_json_schema={})
+
+        toolset_default = FastMCPToolset(fastmcp_client)
+        assert toolset_default.tool_for_tool_def(tool_def).max_retries == 1
+
+        toolset_explicit = FastMCPToolset(fastmcp_client, max_retries=5)
+        assert toolset_explicit.tool_for_tool_def(tool_def).max_retries == 5
 
     async def test_get_tools_with_empty_server(self, run_context: RunContext[None]):
         """Test getting tools from an empty FastMCP server."""
@@ -305,7 +366,7 @@ class TestFastMCPToolsetToolCalling:
                 name='test_tool', tool_args={'param1': 'hello', 'param2': 42}, ctx=run_context, tool=test_tool
             )
 
-            assert result == {'result': 'param1=hello, param2=42'}
+            assert result == 'param1=hello, param2=42'
 
     async def test_call_tool_with_structured_content(
         self,
@@ -371,7 +432,7 @@ class TestFastMCPToolsetToolCalling:
                 name='text_tool', tool_args={'message': 'Hello World'}, ctx=run_context, tool=text_tool
             )
 
-            assert result == snapshot({'result': 'Echo: Hello World'})
+            assert result == snapshot('Echo: Hello World')
 
             text_list_tool = tools['text_list_tool']
 
@@ -414,8 +475,7 @@ class TestFastMCPToolsetToolCalling:
                 name='json_tool', tool_args={'data': {'key': 'value'}}, ctx=run_context, tool=json_tool
             )
 
-            # Should parse the JSON string into a dict
-            assert result == snapshot({'result': '{"received": {"key": "value"}, "processed": true}'})
+            assert result == snapshot('{"received": {"key": "value"}, "processed": true}')
 
     async def test_call_tool_with_resource_link(
         self,
@@ -502,6 +562,47 @@ class TestFastMCPToolsetToolCalling:
 
             with pytest.raises(ModelRetry, match='This is a test error'):
                 await toolset.call_tool('error_tool', {}, run_context, error_tool)
+
+    async def test_process_tool_call_invoked(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+        run_context: RunContext[None],
+    ):
+        """Test that process_tool_call hook is invoked when set."""
+        called = False
+
+        async def process_tool_call(
+            ctx: RunContext[None],
+            call_tool: CallToolFunc,
+            name: str,
+            tool_args: dict[str, Any],
+        ) -> ToolResult:
+            nonlocal called
+            called = True
+            return await call_tool(name, tool_args, None)
+
+        toolset = FastMCPToolset(fastmcp_client, process_tool_call=process_tool_call)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            test_tool = tools['test_tool']
+            result = await toolset.call_tool('test_tool', {'param1': 'hello', 'param2': 42}, run_context, test_tool)
+        assert result == 'param1=hello, param2=42'
+        assert called
+
+    async def test_process_tool_call_none_calls_direct(
+        self,
+        fastmcp_toolset: FastMCPToolset[None],
+        run_context: RunContext[None],
+    ):
+        """Test that when process_tool_call is None, direct_call_tool is used."""
+        assert fastmcp_toolset.process_tool_call is None
+        async with fastmcp_toolset:
+            tools = await fastmcp_toolset.get_tools(run_context)
+            test_tool = tools['test_tool']
+            result = await fastmcp_toolset.call_tool(
+                'test_tool', {'param1': 'world', 'param2': 0}, run_context, test_tool
+            )
+        assert result == 'param1=world, param2=0'
 
 
 class TestFastMCPToolsetFactoryMethods:
@@ -591,7 +692,7 @@ server.run()"""
             result = await toolset.call_tool(
                 name='test_tool', tool_args={'param1': 'hello', 'param2': 42}, ctx=run_context, tool=tools['test_tool']
             )
-            assert result == {'result': 'param1=hello, param2=42'}
+            assert result == 'param1=hello, param2=42'
 
     async def test_from_mcp_config_dict(self):
         """Test creating toolset from MCP config dictionary."""

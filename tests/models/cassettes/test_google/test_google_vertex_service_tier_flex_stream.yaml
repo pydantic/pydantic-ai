@@ -1,0 +1,95 @@
+interactions:
+  - request:
+      body: grant_type=refresh_token&client_id=scrubbed&client_secret=scrubbed&refresh_token=scrubbed
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "268"
+        content-type:
+          - application/x-www-form-urlencoded
+      method: POST
+      uri: https://oauth2.googleapis.com/token
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        cache-control:
+          - no-cache, no-store, max-age=0, must-revalidate
+        content-length:
+          - "258"
+        content-type:
+          - application/json; charset=utf-8
+        expires:
+          - Mon, 01 Jan 1990 00:00:00 GMT
+        pragma:
+          - no-cache
+        transfer-encoding:
+          - chunked
+        vary:
+          - Origin
+          - X-Origin
+          - Referer
+      parsed_body:
+        access_token: scrubbed
+        expires_in: 3599
+        id_token: scrubbed
+        scope: https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/sqlservice.login
+        token_type: Bearer
+      status:
+        code: 200
+        message: OK
+  - request:
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "133"
+        content-type:
+          - application/json
+        host:
+          - aiplatform.googleapis.com
+      method: POST
+      parsed_body:
+        contents:
+          - parts:
+              - text: "Reply with exactly: OK"
+            role: user
+        generationConfig:
+          responseModalities:
+            - TEXT
+      uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3-flash-preview:streamGenerateContent?alt=sse
+    response:
+      body:
+        string:
+          "data: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"text\": \"OK\",\"thoughtSignature\":
+          \"CiQBjz1rX+z7CAOCNB0aLI7ypObFNPY+MRlb2NP1K12YF4ii184KZgGPPWtf8hWSKLNch1ghUKZUmYaaRmvoMXkZVop6kweQzDMWIG7nNn9igFtO2jKfr8VDtw4byVxetzTlWZY2nUU/Z7pshr2eBGNxTri48NB34tOiyHQbdMdybqL9zFX/m1cxuicHdApgAY89a19xSDd9+/T7FW6jTh9alzbTEiH1njI2nlYFYD6y+VgsXW2wScKJaXhxofDcHjaKes6OBdGe+kEBSGfFbd8fawSdH4oDUp/OhBbLXgtAm11I51OHxiugcQ4+FNuWCq8BAY89a1/Py3Gcr79+yZBSsigstFRRfS0BXIujppw3oUlR9lPqxWaRaTSiawcPEXHk40n5OaOOtyPgdsvnCab6CJsZua9kmTsMykamYrVb8uVB4dC6950D7d2HJ1Fhhsx7TZfz6cex50yxmkZX65HEDddeKYKN4Sl9LIBG0ZUiEXSeOeD0x1vm8qqsZQgGbhUpx0h8q3xSFDEieXo8Z7g+3MsKRKHF6teaUdFfHC5FhQp7AY89a18yIC3GC/v2FK++vjgaen3A3yqEgVvz1K4LNs7gEGZWcJ+9T3jLsYvPuUDKdG1qdX26CgHpOoO2pNTen6beeDr00AuaOpDIK2uFyRL181W16TCAP2SRX84FKuxKuGo8Brcc7CVAzUcfpPjmcKoUym+oXYHLqxz3\"}]},\"finishReason\":
+          \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\": 5,\"candidatesTokenCount\": 1,\"totalTokenCount\": 106,\"trafficType\":
+          \"ON_DEMAND_FLEX\",\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}],\"candidatesTokensDetails\":
+          [{\"modality\": \"TEXT\",\"tokenCount\": 1}],\"thoughtsTokenCount\": 100},\"modelVersion\": \"gemini-3-flash-preview\",\"createTime\":
+          \"2026-03-21T18:11:55.919086Z\",\"responseId\": \"a9--aa6MOKL4vdIPz7X2iQ4\"}\r\n\r\n"
+      headers:
+        alt-svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        content-disposition:
+          - attachment
+        content-type:
+          - text/event-stream
+        transfer-encoding:
+          - chunked
+        vary:
+          - Origin
+          - X-Origin
+          - Referer
+      status:
+        code: 200
+        message: OK
+version: 1

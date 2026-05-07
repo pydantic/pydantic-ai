@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from datetime import timezone
 from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
+from pydantic import ValidationError
 from typing_extensions import Self
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai import (
     AbstractToolset,
@@ -20,23 +29,34 @@ from pydantic_ai import (
     ToolCallPart,
     ToolsetTool,
     WrapperToolset,
+    capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    InstructionPart,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
 
 
-def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
+def build_run_context(deps: T, run_step: int = 0, max_retries: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
@@ -44,7 +64,49 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
         prompt=None,
         messages=[],
         run_step=run_step,
+        max_retries=max_retries,
     )
+
+
+class MockToolsetWithInstructions(AbstractToolset[Any]):
+    """A test toolset that returns custom instructions."""
+
+    def __init__(self, instructions: str | None = None, id: str | None = None):
+        self.custom_instructions = instructions
+        self._id = id
+
+    @property
+    def id(self) -> str | None:
+        return self._id
+
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+        return self.custom_instructions
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {}
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        return None
+
+
+async def test_mock_toolset_with_instructions_interface():
+    """Test that MockToolsetWithInstructions correctly implements AbstractToolset interface."""
+    toolset = MockToolsetWithInstructions(instructions='test instructions', id='my-id')
+    ctx = build_run_context(None)
+
+    assert toolset.id == 'my-id'
+    assert await toolset.get_tools(ctx) == {}
+    assert await toolset.call_tool('any_tool', {}, ctx, None) is None  # type: ignore[arg-type]
+
+
+async def test_function_toolset_instructions():
+    """Test that FunctionToolset returns None for instructions by default."""
+    toolset = FunctionToolset[None]()
+    ctx = build_run_context(None)
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions is None
 
 
 async def test_function_toolset():
@@ -78,6 +140,7 @@ async def test_function_toolset():
                     'type': 'object',
                 },
                 description='Add two numbers',
+                return_schema={'type': 'integer'},
             )
         ]
     )
@@ -96,6 +159,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             )
         ]
     )
@@ -119,6 +183,7 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='subtract',
@@ -129,10 +194,33 @@ async def test_function_toolset():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
+
+
+async def test_toolset_tool_function_signature_property():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    managed_toolset = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    assert managed_toolset.tools is not None
+
+    td = managed_toolset.tools['add'].tool_def
+    sig = td.function_signature
+    assert sig is not None
+    assert list(sig.params) == ['a', 'b']
+    assert td.render_signature('...') == snapshot("""\
+def add(*, a: int, b: int) -> int:
+    ...\
+""")
+
+    assert await managed_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 
 
 async def test_function_toolset_with_defaults():
@@ -149,6 +237,31 @@ async def test_function_toolset_with_defaults():
             return a + b  # pragma: no cover
 
 
+async def test_abstract_toolset_instructions_default():
+    """Test that the default instructions method returns None."""
+    toolset = MockToolsetWithInstructions(instructions=None)
+    ctx = build_run_context(None)
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions is None
+
+
+async def test_abstract_toolset_instructions_custom():
+    """Test that instructions can return custom instructions."""
+    custom_instructions = 'Use these tools carefully and always validate inputs.'
+    toolset = MockToolsetWithInstructions(instructions=custom_instructions)
+    ctx = build_run_context(None)
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions == custom_instructions
+
+
+async def test_abstract_toolset_instructions_empty_string():
+    """Test that instructions can return an empty string."""
+    toolset = MockToolsetWithInstructions(instructions='')
+    ctx = build_run_context(None)
+    instructions = await toolset.get_instructions(ctx)
+    assert instructions == ''
+
+
 async def test_function_toolset_with_defaults_overridden():
     defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
 
@@ -156,6 +269,24 @@ async def test_function_toolset_with_defaults_overridden():
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: no cover
+
+
+async def test_prepared_toolset_sync_prepare_func():
+    """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    def prepare_keep_first(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs[:1]
+
+    prepared_toolset = PreparedToolset(base_toolset, prepare_keep_first)
+
+    tools = await prepared_toolset.get_tools(build_run_context(None))
+    assert list(tools.keys()) == ['add']
 
 
 async def test_prepared_toolset_user_error_add_new_tools():
@@ -326,6 +457,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -336,6 +468,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -346,6 +479,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='adv_power',
@@ -356,6 +490,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['base', 'exponent'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
@@ -378,6 +513,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -388,6 +524,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -398,6 +535,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='str_concat',
@@ -408,6 +546,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['s1', 's2'],
                     'type': 'object',
                 },
+                return_schema={'type': 'string'},
             ),
             ToolDefinition(
                 name='str_uppercase',
@@ -418,6 +557,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['text'],
                     'type': 'object',
                 },
+                return_schema={'type': 'string'},
             ),
             ToolDefinition(
                 name='str_reverse',
@@ -428,6 +568,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['text'],
                     'type': 'object',
                 },
+                return_schema={'type': 'string'},
             ),
             ToolDefinition(
                 name='adv_power',
@@ -438,6 +579,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['base', 'exponent'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
@@ -461,6 +603,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_subtract',
@@ -471,6 +614,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
             ToolDefinition(
                 name='math_multiply',
@@ -481,6 +625,7 @@ async def test_comprehensive_toolset_composition():
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                return_schema={'type': 'integer'},
             ),
         ]
     )
@@ -629,6 +774,266 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_handle_call_wrap_validation_errors_false():
+    """`handle_call(wrap_validation_errors=False)` propagates raw errors and leaves retry-budget state untouched.
+
+    Used by sandboxed callers (e.g. code-mode dispatch) that want validation and
+    `ModelRetry` failures to surface at the sandbox `await` site as the original
+    exception type, without consuming the agent's retry budget for the wrapping call.
+    Mirrors the `wrap_validation_errors` flag on the output-tool methods.
+    """
+
+    toolset = FunctionToolset[None](max_retries=2)
+
+    @toolset.tool_plain
+    def needs_int(x: int) -> int:
+        return x * 2
+
+    @toolset.tool_plain
+    def retrying() -> int:
+        raise ModelRetry('please retry')
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+
+    # Sanity: a valid call still works in raw mode (no path differences for happy paths).
+    assert (
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='needs_int', args={'x': 5}),
+            wrap_validation_errors=False,
+        )
+        == 10
+    )
+
+    # Pydantic ValidationError on bad args propagates raw, not as ToolRetryError.
+    with pytest.raises(ValidationError):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='needs_int', args={'x': 'not an int'}),
+            wrap_validation_errors=False,
+        )
+    assert tool_manager.failed_tools == set()
+
+    # ModelRetry from the tool body propagates raw too.
+    with pytest.raises(ModelRetry, match='please retry'):
+        await tool_manager.handle_call(
+            ToolCallPart(tool_name='retrying', args={}),
+            wrap_validation_errors=False,
+        )
+    assert tool_manager.failed_tools == set()
+
+    # Default (wrap=True) still wraps as ToolRetryError and tracks failed tools.
+    with pytest.raises(ToolRetryError):
+        await tool_manager.handle_call(ToolCallPart(tool_name='needs_int', args={'x': 'not an int'}))
+    assert tool_manager.failed_tools == {'needs_int'}
+
+    with pytest.raises(ToolRetryError):
+        await tool_manager.handle_call(ToolCallPart(tool_name='retrying', args={}))
+    assert tool_manager.failed_tools == {'needs_int', 'retrying'}
+
+
+async def test_toolset_max_retries_inherits_from_agent():
+    """Agent(retries=...) should propagate to user-provided toolsets that don't set max_retries explicitly."""
+    attempts: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # retries=0 means the tool is called once and then fails immediately.
+    assert len(attempts) == 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call always_fails', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_toolset_explicit_max_retries_overrides_agent():
+    """FunctionToolset(max_retries=X) should take precedence over Agent(retries=Y)."""
+    toolset = FunctionToolset[None](max_retries=2)
+    attempts: list[int] = []
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # Initial call + 2 retries = 3 attempts.
+    assert len(attempts) == 3
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
+
+
+async def test_tool_explicit_retries_overrides_toolset_and_agent():
+    """Tool(retries=X) should take precedence over both toolset and agent defaults."""
+    attempts: list[int] = []
+
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # Initial call + 3 retries = 4 attempts.
+    assert len(attempts) == 4
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails', 'Always fails'])
+
+
+async def test_prepare_function_sees_agent_max_retries():
+    """Prepare functions should see the agent's default max_retries on ctx when the toolset doesn't set one."""
+    captured_max_retries: list[int] = []
+    captured_last_attempt: list[bool] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured_max_retries.append(ctx.max_retries)
+        captured_last_attempt.append(ctx.last_attempt)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    agent = Agent('test', toolsets=[toolset], retries=3)
+    result = await agent.run('call my_tool', model=TestModel())
+
+    assert captured_max_retries[0] == 3
+    assert captured_last_attempt[0] is False
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call my_tool', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":0}')],
+                usage=RequestUsage(input_tokens=53, output_tokens=7),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retries():
+    """When a user toolset leaves `max_retries=None` and `retries != output_retries`, the fallback
+    must resolve to the agent's **tool** retry count, not the output retry count.
+    Regression: `ctx.max_retries` previously carried `max_result_retries` during `get_tools`."""
+    attempts: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        attempts.append(x)
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
+            await agent.run('call always_fails', model=TestModel())
+
+    # retries=1 means initial call + 1 retry = 2 attempts, not 6 (which would be output_retries).
+    assert len(attempts) == 2
+    assert [type(m).__name__ for m in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    assert [p.content for p in retry_parts] == snapshot(['Always fails'])
+
+
+async def test_prepare_function_sees_tool_retries_not_output_retries():
+    """Prepare functions must see the agent's **tool** retry count on `ctx.max_retries`,
+    not the output retry count. Regression for a non-output toolset previously receiving the
+    output-tool preparation context."""
+    captured: list[int] = []
+
+    async def capture_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        captured.append(ctx.max_retries)
+        return tool_def
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(prepare=capture_prepare)
+    def my_tool(x: int) -> int:
+        """A tool."""
+        return x
+
+    agent = Agent('test', toolsets=[toolset], retries=1, output_retries=5)
+    result = await agent.run('call my_tool', model=TestModel())
+
+    assert captured[0] == 1
+    assert [type(m).__name__ for m in result.all_messages()] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+
+
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
 
@@ -653,8 +1058,8 @@ async def test_tool_manager_multiple_failed_tools():
         """Tool C that works"""
         return x * 3
 
-    # Create tool manager
-    context = build_run_context(TestDeps())
+    # Create tool manager with max_retries=1, matching what _agent_graph.py sets in a real run
+    context = build_run_context(TestDeps(), max_retries=1)
     tool_manager = await ToolManager[TestDeps](toolset).for_run_step(context)
 
     # Call tool_a - should fail and be added to failed_tools
@@ -673,7 +1078,7 @@ async def test_tool_manager_multiple_failed_tools():
     assert tool_manager.failed_tools == {'tool_a', 'tool_b'}  # unchanged
 
     # Create next run step - should have retry counts for both failed tools
-    new_context = build_run_context(TestDeps(), run_step=1)
+    new_context = build_run_context(TestDeps(), run_step=1, max_retries=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     assert new_tool_manager.ctx is not None
@@ -832,6 +1237,188 @@ async def test_dynamic_toolset():
     assert tools == {}
 
 
+async def test_dynamic_toolset_enter_failure_does_not_exit_unentered_toolset():
+    """If the inner toolset's __aenter__ raises, DynamicToolset.__aexit__ must not
+    try to exit a toolset that was never entered.
+
+    Reproduces https://github.com/pydantic/pydantic-ai/issues/3542: a per-run-step
+    factory produces a fresh toolset each step; if __aenter__ on the new one fails,
+    the old logic still stored it and the outer context manager then called
+    __aexit__ on an unentered toolset (MCPServer raised "__aexit__ called more
+    times than __aenter__").
+    """
+
+    class FlakyToolset(AbstractToolset[None]):
+        enter_count = 0
+        exit_count = 0
+        fail_on_enter = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            if self.fail_on_enter:
+                raise RuntimeError('enter failed')
+            self.enter_count += 1
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exit_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    first = FlakyToolset()
+    second = FlakyToolset()
+    second.fail_on_enter = True
+    produced = iter([first, second])
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return next(produced)
+
+    dynamic = DynamicToolset[None](toolset_func=factory)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    assert isinstance(toolset, DynamicToolset)
+    async with toolset:
+        await toolset.for_run_step(run_context)
+        assert first.enter_count == 1
+        with pytest.raises(RuntimeError, match='enter failed'):
+            await toolset.for_run_step(run_context)
+        # After the failed transition, _toolset should be None so __aexit__ is a no-op.
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+    # Old toolset was exited exactly once during the transition; the failed one
+    # was never entered so must never be exited.
+    assert first.exit_count == 1
+    assert second.exit_count == 0
+
+
+async def test_dynamic_toolset_aenter_failure_does_not_exit_unentered_toolset():
+    """If the initial outer __aenter__ fails, __aexit__ must not try to exit it."""
+
+    class FailingEnterToolset(AbstractToolset[None]):
+        exit_count = 0
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            raise RuntimeError('enter failed')
+
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
+            self.exit_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    inner = FailingEnterToolset()
+    dynamic = DynamicToolset[None](toolset_func=lambda ctx: inner, per_run_step=False)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    assert isinstance(toolset, DynamicToolset)
+    with pytest.raises(RuntimeError, match='enter failed'):
+        async with toolset:
+            pass  # pragma: no cover
+
+    assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+    assert inner.exit_count == 0
+
+
+async def test_dynamic_toolset_old_aexit_failure_does_not_store_new_toolset():
+    """If the old toolset's __aexit__ raises during a per-run-step transition,
+    the new toolset must not be stored (and thus not exited) since it was never entered.
+    """
+
+    class FailingExitToolset(AbstractToolset[None]):
+        entered = False
+        exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exited = True
+            raise RuntimeError('exit failed')
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    class TrackedToolset(AbstractToolset[None]):
+        entered = False
+        exited = False
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        async def __aenter__(self) -> Self:  # pragma: no cover
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:  # pragma: no cover
+            self.exited = True
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    first = FailingExitToolset()
+    second = TrackedToolset()
+    produced = iter([first, second])
+
+    def factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return next(produced)
+
+    dynamic = DynamicToolset[None](toolset_func=factory)
+    run_context = build_run_context(None)
+
+    toolset = await dynamic.for_run(run_context)
+    # Suppress the transition failure so we can inspect state afterwards; the
+    # outer __aexit__ must not then try to exit the never-entered second toolset.
+    with pytest.raises(RuntimeError, match='exit failed'):
+        async with toolset:
+            await toolset.for_run_step(run_context)
+            assert first.entered
+            await toolset.for_run_step(run_context)  # raises on old.__aexit__
+            pass  # pragma: no cover
+
+    assert first.exited
+    assert not second.entered
+    assert not second.exited
+
+
 async def test_dynamic_toolset_empty():
     def no_toolset_func(ctx: RunContext[None]) -> None:
         return None  # pragma: no cover
@@ -868,6 +1455,80 @@ def test_dynamic_toolset_id():
     assert toolset_with_id.id == 'my_dynamic_toolset'
 
 
+async def test_wrapper_toolsets_delegate_instructions():
+    """Test that wrapper toolsets properly delegate instructions calls."""
+    base_instructions = 'Follow the base toolset instructions carefully.'
+    base_toolset = MockToolsetWithInstructions(instructions=base_instructions)
+    ctx = build_run_context(None)
+
+    # Test PrefixedToolset delegation
+    prefixed_toolset = base_toolset.prefixed('test')
+    assert await prefixed_toolset.get_instructions(ctx) == base_instructions
+
+    # Test FilteredToolset delegation
+    def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+        return True
+
+    assert allow_all_filter(ctx, ToolDefinition(name='test', description='', parameters_json_schema={})) is True
+    filtered_toolset = base_toolset.filtered(allow_all_filter)
+    assert await filtered_toolset.get_instructions(ctx) == base_instructions
+
+    # Test RenamedToolset delegation
+    rename_map = {'old_name': 'new_name'}
+    renamed_toolset = base_toolset.renamed(rename_map)
+    assert await renamed_toolset.get_instructions(ctx) == base_instructions
+
+    # Test ApprovalRequiredToolset delegation
+    approval_toolset = base_toolset.approval_required()
+    assert await approval_toolset.get_instructions(ctx) == base_instructions
+
+    # Test PreparedToolset delegation
+    async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tools
+
+    assert await prepare_func(ctx, []) == []
+    prepared_toolset = base_toolset.prepared(prepare_func)
+    assert await prepared_toolset.get_instructions(ctx) == base_instructions
+
+
+async def test_combined_toolset_instructions():
+    """Test that CombinedToolset aggregates instructions from all contained toolsets."""
+    instructions1 = 'Instructions from toolset 1.'
+    instructions2 = 'Instructions from toolset 2.'
+
+    toolset1 = MockToolsetWithInstructions(instructions=instructions1, id='toolset1')
+    toolset2 = MockToolsetWithInstructions(instructions=instructions2, id='toolset2')
+    toolset3 = MockToolsetWithInstructions(instructions=None, id='toolset3')  # No instructions
+
+    combined = CombinedToolset([toolset1, toolset2, toolset3])
+    ctx = build_run_context(None)
+
+    # CombinedToolset aggregates non-None instructions from all contained toolsets as a list
+    instructions = await combined.get_instructions(ctx)
+    assert instructions == ['Instructions from toolset 1.', 'Instructions from toolset 2.']
+
+
+async def test_combined_toolset_instructions_all_none():
+    """Test that CombinedToolset returns None when all toolsets have no instructions."""
+    toolset1 = MockToolsetWithInstructions(instructions=None, id='toolset1')
+    toolset2 = MockToolsetWithInstructions(instructions=None, id='toolset2')
+
+    combined = CombinedToolset([toolset1, toolset2])
+    ctx = build_run_context(None)
+
+    instructions = await combined.get_instructions(ctx)
+    assert instructions is None
+
+
+async def test_combined_toolset_instructions_empty():
+    """Test that CombinedToolset returns None when no toolsets are provided."""
+    combined = CombinedToolset([])
+    ctx = build_run_context(None)
+
+    instructions = await combined.get_instructions(ctx)
+    assert instructions is None
+
+
 def test_agent_toolset_decorator_id():
     """Test that @agent.toolset decorator requires explicit id or defaults to None."""
     from pydantic_ai.models.test import TestModel
@@ -896,6 +1557,457 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+async def test_function_toolset_get_instructions_string():
+    """FunctionToolset with a string instruction returns it via get_instructions."""
+    toolset = FunctionToolset(instructions='Always use tool X for math.')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Always use tool X for math.', dynamic=False)]
+
+
+async def test_function_toolset_get_instructions_function():
+    """FunctionToolset with a function instruction calls it via get_instructions."""
+    toolset = FunctionToolset(instructions=lambda: 'Use search for lookups.')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Use search for lookups.', dynamic=True)]
+
+
+async def test_function_toolset_get_instructions_with_ctx():
+    """FunctionToolset instruction function can access RunContext."""
+
+    def my_instructions(ctx: RunContext[str]) -> str:
+        return f'Deps are: {ctx.deps}'
+
+    toolset = FunctionToolset[str](instructions=my_instructions)
+
+    ctx = build_run_context('hello')
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Deps are: hello', dynamic=True)]
+
+
+async def test_function_toolset_get_instructions_async():
+    """FunctionToolset with an async instruction function works."""
+
+    async def my_instructions() -> str:
+        return 'Async instructions here.'
+
+    toolset = FunctionToolset(instructions=my_instructions)
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Async instructions here.', dynamic=True)]
+
+
+async def test_function_toolset_get_instructions_multiple():
+    """FunctionToolset with a sequence of instructions returns them as a list."""
+    toolset = FunctionToolset(instructions=['First instruction.', lambda: 'Second instruction.'])
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [
+        InstructionPart(content='First instruction.', dynamic=False),
+        InstructionPart(content='Second instruction.', dynamic=True),
+    ]
+
+
+async def test_function_toolset_get_instructions_none_default():
+    """FunctionToolset without instructions returns None."""
+    toolset = FunctionToolset()
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result is None
+
+
+async def test_function_toolset_instructions_decorator():
+    """The @toolset.instructions decorator registers instruction functions."""
+    toolset = FunctionToolset()
+
+    @toolset.instructions
+    def my_instructions() -> str:
+        return 'Use tool Y for data processing.'
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Use tool Y for data processing.', dynamic=True)]
+
+
+async def test_function_toolset_instructions_decorator_with_ctx():
+    """The @toolset.instructions decorator works with RunContext."""
+    toolset = FunctionToolset[int]()
+
+    @toolset.instructions
+    def my_instructions(ctx: RunContext[int]) -> str:
+        return f'Dep value: {ctx.deps}'
+
+    ctx = build_run_context(42)
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Dep value: 42', dynamic=True)]
+
+
+async def test_function_toolset_instructions_decorator_combined_with_constructor():
+    """Constructor instructions and decorator instructions are combined."""
+    toolset = FunctionToolset(instructions='From constructor.')
+
+    @toolset.instructions
+    def extra() -> str:
+        return 'From decorator.'
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [
+        InstructionPart(content='From constructor.', dynamic=False),
+        InstructionPart(content='From decorator.', dynamic=True),
+    ]
+
+
+async def test_function_toolset_instructions_none_filtered():
+    """Instructions returning None are excluded."""
+    toolset = FunctionToolset(instructions=[lambda: None, 'Only this.'])
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == [InstructionPart(content='Only this.', dynamic=False)]
+
+
+async def test_function_toolset_empty_string_instructions():
+    """Empty string instructions are filtered out, returning None."""
+    toolset = FunctionToolset(instructions='')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result is None
+
+
+async def test_function_toolset_whitespace_only_instructions():
+    """Whitespace-only instructions are filtered out, returning None."""
+    toolset = FunctionToolset(instructions='   \n\n  ')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result is None
+
+
+async def test_wrapper_toolset_passes_through_instructions():
+    """WrapperToolset delegates get_instructions to wrapped toolset."""
+    inner = FunctionToolset(instructions='Inner instructions.')
+    wrapped = inner.prefixed('my')
+
+    ctx = build_run_context(None)
+    result = await wrapped.get_instructions(ctx)
+    assert result == [InstructionPart(content='Inner instructions.', dynamic=False)]
+
+
+async def test_combined_toolset_aggregates_instructions():
+    """CombinedToolset gathers instructions from all children."""
+    ts1 = FunctionToolset(instructions='Toolset 1 instructions.')
+    ts2 = FunctionToolset(instructions='Toolset 2 instructions.')
+    combined = CombinedToolset([ts1, ts2])
+
+    ctx = build_run_context(None)
+    result = await combined.get_instructions(ctx)
+    assert result == [
+        InstructionPart(content='Toolset 1 instructions.', dynamic=False),
+        InstructionPart(content='Toolset 2 instructions.', dynamic=False),
+    ]
+
+
+async def test_combined_toolset_skips_none_instructions():
+    """CombinedToolset skips toolsets that return None for instructions."""
+    ts1 = FunctionToolset(instructions='Only from ts1.')
+    ts2 = FunctionToolset()  # No instructions
+    combined = CombinedToolset([ts1, ts2])
+
+    ctx = build_run_context(None)
+    result = await combined.get_instructions(ctx)
+    assert result == [InstructionPart(content='Only from ts1.', dynamic=False)]
+
+
+async def test_combined_toolset_all_none_returns_none():
+    """CombinedToolset returns None when all children return None."""
+    ts1 = FunctionToolset()
+    ts2 = FunctionToolset()
+    combined = CombinedToolset([ts1, ts2])
+
+    ctx = build_run_context(None)
+    result = await combined.get_instructions(ctx)
+    assert result is None
+
+
+async def test_combined_toolset_with_nested_list_instructions():
+    """CombinedToolset flattens list[str] results from child CombinedToolsets (covers combined.py list branch)."""
+    ts1 = FunctionToolset(instructions='Instruction A.')
+    ts2 = FunctionToolset(instructions='Instruction B.')
+    inner = CombinedToolset([ts1, ts2])  # returns list[str]
+
+    ts3 = FunctionToolset(instructions='Instruction C.')
+    outer = CombinedToolset([inner, ts3])
+    ctx = build_run_context(None)
+
+    result = await outer.get_instructions(ctx)
+    assert result == [
+        InstructionPart(content='Instruction A.', dynamic=False),
+        InstructionPart(content='Instruction B.', dynamic=False),
+        InstructionPart(content='Instruction C.', dynamic=False),
+    ]
+
+
+async def test_combined_toolset_cancels_siblings_on_get_tools_failure():
+    """When one child's get_tools fails, siblings are cancelled instead of leaking as orphan tasks."""
+    sibling_completed = False
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('boom')
+
+    class SlowToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            nonlocal sibling_completed
+            await anyio.sleep(0.1)
+            sibling_completed = True  # pragma: no cover
+            return await self.wrapped.get_tools(ctx)  # pragma: no cover
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner), SlowToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await combined.get_tools(ctx)
+
+    await anyio.sleep(0.2)
+    assert sibling_completed is False
+
+
+async def test_combined_toolset_get_tools_preserves_exception_cause():
+    """Unwrapping the single-failure exception must preserve the original `__cause__` chain."""
+    original = ValueError('underlying')
+
+    class FailingToolset(WrapperToolset[Any]):
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            raise RuntimeError('wrapper') from original
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset([FailingToolset(inner)])
+    ctx = build_run_context(None)
+
+    with pytest.raises(RuntimeError, match='wrapper') as exc_info:
+        await combined.get_tools(ctx)
+
+    assert exc_info.value.__cause__ is original
+
+
+async def test_combined_toolset_get_tools_raises_group_on_multiple_failures():
+    """When multiple children fail concurrently, their errors surface as an ExceptionGroup."""
+
+    @dataclass
+    class RaisingToolset(WrapperToolset[Any]):
+        message: str = ''
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            await anyio.sleep(0)
+            raise RuntimeError(self.message)
+
+    inner = FunctionToolset[None]()
+    combined = CombinedToolset(
+        [RaisingToolset(wrapped=inner, message='first'), RaisingToolset(wrapped=inner, message='second')]
+    )
+    ctx = build_run_context(None)
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await combined.get_tools(ctx)
+
+    messages = {str(e) for e in exc_info.value.exceptions}
+    assert messages == {'first', 'second'}
+
+
+async def test_dynamic_toolset_instructions_before_resolution():
+    """DynamicToolset returns None for instructions before get_tools resolves it."""
+    dynamic = DynamicToolset(lambda ctx: FunctionToolset(instructions='Dynamic instructions.'))
+
+    ctx = build_run_context(None)
+    # Before get_tools is called, _toolset is None
+    result = await dynamic.get_instructions(ctx)
+    assert result is None
+
+
+async def test_dynamic_toolset_instructions_after_resolution():
+    """DynamicToolset delegates instructions after for_run_step resolves it."""
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return FunctionToolset[None](instructions='Dynamic instructions.')
+
+    dynamic = DynamicToolset(make_toolset)
+
+    ctx = build_run_context(None)
+    # for_run_step triggers factory resolution for per_run_step=True
+    await dynamic.for_run_step(ctx)
+    result = await dynamic.get_instructions(ctx)
+    assert result == [InstructionPart(content='Dynamic instructions.', dynamic=False)]
+
+
+async def test_toolset_instructions_in_agent():
+    """Toolset instructions appear in the model request when added to an agent."""
+    from pydantic_ai import Agent
+
+    toolset = FunctionToolset(instructions='Always use my_tool correctly.')
+
+    @toolset.tool_plain
+    def my_tool() -> str:
+        """A simple tool."""
+        return 'done'
+
+    agent = Agent(TestModel(), toolsets=[toolset])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Always use my_tool correctly.'  # type: ignore[union-attr]
+
+
+async def test_dynamic_toolset_instructions_on_first_request():
+    """Instructions from a DynamicToolset are present on the very first model request."""
+    from pydantic_ai import Agent
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        ts = FunctionToolset[None](instructions='Dynamic tool instructions.')
+
+        @ts.tool_plain
+        def my_dynamic_tool() -> str:
+            """A tool inside the dynamic toolset."""
+            return 'done'
+
+        return ts
+
+    agent = Agent(TestModel(), toolsets=[DynamicToolset(make_toolset)])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Dynamic tool instructions.'  # type: ignore[union-attr]
+
+
+async def test_resume_without_prompt_dynamic_toolset_instructions_resolve_once_for_request_step():
+    """Resuming from a trailing ModelResponse should resolve dynamic toolsets only once for the next request step."""
+    run_steps: list[int] = []
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        run_steps.append(ctx.run_step)
+        return FunctionToolset[None](instructions=f'Dynamic instructions at step {ctx.run_step}.')
+
+    agent = Agent(TestModel(custom_output_text='done'), toolsets=[DynamicToolset(make_toolset)])
+    result = await agent.run(message_history=[ModelResponse(parts=[TextPart(content='previous')])])
+
+    # The resume pre-check and request preparation should use the same run_step.
+    assert run_steps == [1]
+
+    requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+    assert requests[-1].instructions == 'Dynamic instructions at step 1.'
+
+
+async def test_resume_without_prompt_dynamic_toolset_with_tool_calls_resolve_once_for_request_step():
+    """Resuming from a trailing ModelResponse with ToolCallParts exercises the _handle_tool_calls path.
+
+    This is the more common resume scenario and ensures dynamic toolsets are resolved only once even
+    when the code path goes through _handle_tool_calls (which calls for_run_step).
+    """
+    run_steps: list[int] = []
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        run_steps.append(ctx.run_step)
+        toolset = FunctionToolset[None](instructions=f'Dynamic instructions at step {ctx.run_step}.')
+
+        @toolset.tool_plain
+        def greet(name: str) -> str:
+            """Greet someone by name."""
+            return f'Hello {name}!'
+
+        return toolset
+
+    agent = Agent(TestModel(custom_output_text='done'), toolsets=[DynamicToolset(make_toolset)])
+    result = await agent.run(
+        message_history=[ModelResponse(parts=[ToolCallPart(tool_name='greet', args={'name': 'Alice'})])]
+    )
+
+    # The toolset factory is evaluated multiple times:
+    # - step 1: UserPromptNode pre-check (aligned with upcoming request step)
+    # - step 0: CallToolsNode._handle_tool_calls (current run_step before increment)
+    # - step 1: ModelRequestNode._prepare_request (after run_step increment)
+    # The important thing is that the first and last evaluations use step 1.
+    assert run_steps[0] == 1
+    assert run_steps[-1] == 1
+
+    requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+    # The last request should have instructions prepared at step 1
+    assert requests[-1].instructions == 'Dynamic instructions at step 1.'
+
+
+async def test_toolset_instructions_combined_with_agent_instructions():
+    """Toolset instructions are appended after agent-level instructions."""
+    from pydantic_ai import Agent
+
+    toolset = FunctionToolset(instructions='Use search for lookups.')
+
+    @toolset.tool_plain
+    def search() -> str:
+        """Search for information."""
+        return 'results'
+
+    agent = Agent(TestModel(), instructions='You are a helpful assistant.', toolsets=[toolset])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'You are a helpful assistant.\n\nUse search for lookups.'  # type: ignore[union-attr]
+
+
+async def test_multiple_toolset_instructions_in_agent():
+    """Multiple toolsets with instructions are all included."""
+    from pydantic_ai import Agent
+
+    ts1 = FunctionToolset(instructions='Use calculator for math.')
+
+    @ts1.tool_plain
+    def calculator() -> str:
+        """Evaluate a math expression."""
+        return '4'
+
+    ts2 = FunctionToolset(instructions='Use search for lookups.')
+
+    @ts2.tool_plain
+    def search() -> str:
+        """Search for information."""
+        return 'results'
+
+    agent = Agent(TestModel(), toolsets=[ts1, ts2])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Use calculator for math.\n\nUse search for lookups.'  # type: ignore[union-attr]
+
+
+async def test_toolset_instructions_alone_satisfy_validation():
+    """Toolset instructions alone (no user prompt, no agent instructions, no history) are sufficient to run."""
+    from pydantic_ai import Agent
+
+    toolset = FunctionToolset(instructions='Always use my_tool correctly.')
+
+    @toolset.tool_plain
+    def my_tool() -> str:
+        """A simple tool."""
+        return 'done'
+
+    agent = Agent(TestModel(), toolsets=[toolset])
+    result = await agent.run()
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Always use my_tool correctly.'  # type: ignore[union-attr]
+    assert first_message.parts == []
+
+
+async def test_no_input_raises_without_toolset_instructions():
+    """Without any prompt, instructions, or history, the agent raises UserError."""
+    from pydantic_ai import Agent
+
+    agent = Agent(TestModel())
+    with pytest.raises(UserError, match='No message history, user prompt, or instructions provided'):
+        await agent.run()
 
 
 def test_tool_without_runctx_raises_warning():
@@ -1235,3 +2347,291 @@ async def test_concurrent_runs_dont_share_state():
     assert results[1].output == 'Done'
     # Each run should have its own count (1), not share state (1, 2)
     assert all(c == 1 for c in call_counts)
+
+
+def test_include_return_schemas_toolset():
+    """IncludeReturnSchemasToolset sets include_return_schema=True on wrapped tools."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.include_return_schemas()])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.include_return_schema is True
+    assert 'Return schema' in (td.description or '')
+
+
+def test_set_metadata_toolset():
+    """SetMetadataToolset merges metadata onto all wrapped tools."""
+
+    def my_tool(x: int) -> int:
+        return x
+
+    toolset = FunctionToolset(tools=[my_tool])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.with_metadata(code_mode=True, priority=1)])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td = next(td for td in params.function_tools if td.name == 'my_tool')
+    assert td.metadata is not None
+    assert td.metadata['code_mode'] is True
+    assert td.metadata['priority'] == 1
+
+
+async def test_filtered_toolset_async_filter():
+    """FilteredToolset supports async filter functions."""
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x  # pragma: no cover
+
+    async def async_filter(ctx: RunContext, td: ToolDefinition) -> bool:
+        return td.name == 'tool_a'
+
+    toolset = FunctionToolset(tools=[tool_a, tool_b])
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[toolset.filtered(async_filter)])
+    await agent.run('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tool_names = [td.name for td in params.function_tools]
+    assert tool_names == ['tool_a']
+
+
+def test_set_tool_metadata_capability():
+    """SetToolMetadata capability merges metadata onto selected tools."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=['tool_a'], code_mode=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['code_mode'] is True
+    # tool_b should not have the metadata
+    assert td_b.metadata is None or 'code_mode' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_async_selector():
+    """SetToolMetadata with async callable selector."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    async def only_tool_a(ctx: RunContext, td: ToolDefinition) -> bool:
+        return td.name == 'tool_a'
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=only_tool_a, tagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['tagged'] is True
+    assert td_b.metadata is None or 'tagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_bare_string_selector():
+    """SetToolMetadata with a bare string selector matches by exact name, not substring."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def my_tool(x: int) -> int:
+        return x
+
+    def my(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[my_tool, my],
+        capabilities=[SetToolMetadata(tools='my_tool', tagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_my_tool = next(td for td in params.function_tools if td.name == 'my_tool')
+    td_my = next(td for td in params.function_tools if td.name == 'my')
+    assert td_my_tool.metadata is not None
+    assert td_my_tool.metadata['tagged'] is True
+    # 'my' should NOT match — bare string does exact match, not substring
+    assert td_my.metadata is None or 'tagged' not in td_my.metadata
+
+
+def test_set_tool_metadata_capability_with_sync_callable_selector():
+    """SetToolMetadata with sync callable selector."""
+    from pydantic_ai.capabilities import SetToolMetadata
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[tool_a, tool_b],
+        capabilities=[SetToolMetadata(tools=lambda ctx, td: td.name == 'tool_a', flagged=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    assert td_a.metadata is not None
+    assert td_a.metadata['flagged'] is True
+    assert td_b.metadata is None or 'flagged' not in td_b.metadata
+
+
+def test_set_tool_metadata_capability_with_nested_dict_selector():
+    """SetToolMetadata with nested dict selector exercises deep metadata matching."""
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import Tool
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    def tool_c(x: float) -> float:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[
+            Tool(tool_a, metadata={'config': {'env': 'prod', 'region': 'us'}}),
+            Tool(tool_b, metadata={'config': {'env': 'staging'}}),
+            Tool(tool_c, metadata={'other': 'value'}),  # missing 'config' key entirely
+        ],
+        capabilities=[SetToolMetadata(tools={'config': {'env': 'prod'}}, verified=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    td_c = next(td for td in params.function_tools if td.name == 'tool_c')
+    # tool_a matches: config.env == 'prod' (deep inclusion, extra 'region' key is fine)
+    assert td_a.metadata is not None
+    assert td_a.metadata['verified'] is True
+    # tool_b doesn't match: config.env == 'staging'
+    assert td_b.metadata is not None
+    assert 'verified' not in td_b.metadata
+    # tool_c doesn't match: 'config' key missing entirely
+    assert td_c.metadata is not None
+    assert 'verified' not in td_c.metadata
+
+
+def test_set_tool_metadata_capability_with_dict_selector():
+    """SetToolMetadata with dict selector matches tools by metadata."""
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import Tool
+
+    def tool_a(x: int) -> int:
+        return x
+
+    def tool_b(x: str) -> str:
+        return x
+
+    test_model = TestModel()
+    agent = Agent(
+        test_model,
+        tools=[
+            Tool(tool_a, metadata={'env': 'prod'}),
+            Tool(tool_b, metadata={'env': 'staging'}),
+        ],
+        capabilities=[SetToolMetadata(tools={'env': 'prod'}, audited=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    td_b = next(td for td in params.function_tools if td.name == 'tool_b')
+    # tool_a matched the dict selector, gets audited=True merged
+    assert td_a.metadata is not None
+    assert td_a.metadata['audited'] is True
+    assert td_a.metadata['env'] == 'prod'
+    # tool_b didn't match
+    assert td_b.metadata is not None
+    assert 'audited' not in td_b.metadata
+
+
+async def test_custom_toolset_returning_plain_str_instructions():
+    """A custom AbstractToolset returning a plain str from get_instructions is treated as dynamic."""
+    from pydantic_ai import Agent
+
+    class PlainStrInstructionsToolset(FunctionToolset[None]):
+        """A toolset that overrides get_instructions to return a plain str instead of InstructionPart."""
+
+        async def get_instructions(self, ctx: RunContext[None]) -> str | None:  # type: ignore[override]
+            return 'Custom toolset instruction.'
+
+    agent = Agent(TestModel(), toolsets=[PlainStrInstructionsToolset()])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Custom toolset instruction.'  # type: ignore[union-attr]
+
+
+async def test_toolset_empty_instructions_filtered():
+    """Empty and whitespace-only instructions from toolsets are filtered out."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import InstructionPart
+
+    class EmptyInstructionsToolset(FunctionToolset[None]):
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart] | None:  # type: ignore[override]
+            return [
+                '',
+                '   ',
+                InstructionPart(content='', dynamic=True),
+                InstructionPart(content='  ', dynamic=False),
+                'valid instruction',
+                InstructionPart(content='another valid', dynamic=True),
+            ]
+
+    agent = Agent(TestModel(), toolsets=[EmptyInstructionsToolset()])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'valid instruction\n\nanother valid'  # type: ignore[union-attr]

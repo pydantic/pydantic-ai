@@ -1,24 +1,25 @@
 name: After CI
 
 on:
+  # zizmor: ignore[dangerous-triggers] -- workflow_run is needed to access secrets after CI completes on fork PRs
   workflow_run:
     workflows: [CI]
     types: [completed]
 
-permissions:
-  statuses: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   smokeshow:
     runs-on: ubuntu-latest
+    permissions:
+      statuses: write
 
     steps:
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: "3.12"
 
-      - uses: dawidd6/action-download-artifact@v6
+      - uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
         with:
           workflow: ci.yml
           name: "(diff-)?coverage-html.*"
@@ -41,6 +42,8 @@ jobs:
   deploy-docs-preview:
     runs-on: ubuntu-latest
     if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null
+    permissions:
+      pull-requests: write
     environment:
       name: deploy-docs-preview
 
@@ -49,20 +52,22 @@ jobs:
         env:
           GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
       - run: npm install
         working-directory: docs-site
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: "3.12"
           enable-cache: true
           cache-suffix: deploy-docs-preview
 
       - id: download-artifact
-        uses: dawidd6/action-download-artifact@v6
+        uses: dawidd6/action-download-artifact@8305c0f1062bb0d184d09ef4493ecb9288447732 # v20
         with:
           workflow: ci.yml
           name: site
@@ -72,7 +77,7 @@ jobs:
           workflow_conclusion: completed
           if_no_artifact_found: warn
 
-      - uses: cloudflare/wrangler-action@v3
+      - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         id: deploy
         if: steps.download-artifact.outputs.found_artifact == 'true'
         with:

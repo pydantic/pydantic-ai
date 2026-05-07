@@ -29,16 +29,20 @@ from pydantic import ValidationError
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityOrdering,
     NodeResult,
+    RawOutput,
     RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
+    WrapOutputProcessHandler,
+    WrapOutputValidateHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
@@ -46,6 +50,7 @@ from .abstract import (
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
@@ -89,96 +94,136 @@ class _ToolHookEntry(_HookEntry[_FuncT]):
 
 
 class BeforeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_run` hook functions."""
+    """Protocol for [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /) -> None | Awaitable[None]: ...
 
 class AfterRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_run` hook functions."""
+    """Protocol for [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, result: AgentRunResult[Any]) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 class WrapRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_run` hook functions."""
+    """Protocol for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, handler: WrapRunHandler) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 class OnRunErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_run_error` hook functions."""
+    """Protocol for [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, error: BaseException) -> AgentRunResult[Any] | Awaitable[AgentRunResult[Any]]: ...
 
 class BeforeNodeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_node_run` hook functions."""
+    """Protocol for [`before_node_run`][pydantic_ai.capabilities.AbstractCapability.before_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any]) -> AgentNode[Any] | Awaitable[AgentNode[Any]]: ...
 
 class AfterNodeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_node_run` hook functions."""
+    """Protocol for [`after_node_run`][pydantic_ai.capabilities.AbstractCapability.after_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], result: NodeResult[Any]) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
 
 class WrapNodeRunHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_node_run` hook functions."""
+    """Protocol for [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
 
 class OnNodeRunErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_node_run_error` hook functions."""
+    """Protocol for [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, node: AgentNode[Any], error: Exception) -> NodeResult[Any] | Awaitable[NodeResult[Any]]: ...
 
 class WrapRunEventStreamHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_run_event_stream` hook functions."""
+    """Protocol for [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
 
 class OnEventHookFunc(Protocol):
-    """Protocol for per-event hook functions (convenience over wrap_run_event_stream)."""
+    """Protocol for per-event hook functions (convenience over `wrap_run_event_stream`)."""
     def __call__(self, ctx: RunContext[Any], event: AgentStreamEvent, /) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_model_request` hook functions."""
+    """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
 
 class AfterModelRequestHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_model_request` hook functions."""
+    """Protocol for [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, response: ModelResponse) -> ModelResponse | Awaitable[ModelResponse]: ...
 
 class WrapModelRequestHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_model_request` hook functions."""
+    """Protocol for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, handler: WrapModelRequestHandler) -> ModelResponse | Awaitable[ModelResponse]: ...
 
 class OnModelRequestErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_model_request_error` hook functions."""
+    """Protocol for [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, request_context: ModelRequestContext, error: Exception) -> ModelResponse | Awaitable[ModelResponse]: ...
 
 class PrepareToolsHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.prepare_tools` hook functions."""
+    """Protocol for [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] hook functions."""
+    def __call__(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition], /) -> list[ToolDefinition] | Awaitable[list[ToolDefinition]]: ...
+
+class PrepareOutputToolsHookFunc(Protocol):
+    """Protocol for [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hook functions."""
     def __call__(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition], /) -> list[ToolDefinition] | Awaitable[list[ToolDefinition]]: ...
 
 class BeforeToolValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_tool_validate` hook functions."""
+    """Protocol for [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs) -> RawToolArgs | Awaitable[RawToolArgs]: ...
 
 class AfterToolValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_tool_validate` hook functions."""
+    """Protocol for [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class WrapToolValidateHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_tool_validate` hook functions."""
+    """Protocol for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, handler: WrapToolValidateHandler) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class OnToolValidateErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_tool_validate_error` hook functions."""
+    """Protocol for [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs, error: ValidationError | ModelRetry) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class BeforeToolExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.before_tool_execute` hook functions."""
+    """Protocol for [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs) -> ValidatedToolArgs | Awaitable[ValidatedToolArgs]: ...
 
 class AfterToolExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.after_tool_execute` hook functions."""
+    """Protocol for [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, result: Any) -> Any | Awaitable[Any]: ...
 
 class WrapToolExecuteHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.wrap_tool_execute` hook functions."""
+    """Protocol for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, handler: WrapToolExecuteHandler) -> Any | Awaitable[Any]: ...
 
 class OnToolExecuteErrorHookFunc(Protocol):
-    """Protocol for :meth:`~AbstractCapability.on_tool_execute_error` hook functions."""
+    """Protocol for [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error] hook functions."""
     def __call__(self, ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs, error: Exception) -> Any | Awaitable[Any]: ...
+
+class BeforeOutputValidateHookFunc(Protocol):
+    """Protocol for [`before_output_validate`][pydantic_ai.capabilities.AbstractCapability.before_output_validate] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput) -> RawOutput | Awaitable[RawOutput]: ...
+
+class AfterOutputValidateHookFunc(Protocol):
+    """Protocol for [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
+
+class WrapOutputValidateHookFunc(Protocol):
+    """Protocol for [`wrap_output_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_output_validate] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, handler: WrapOutputValidateHandler) -> Any | Awaitable[Any]: ...
+
+class OnOutputValidateErrorHookFunc(Protocol):
+    """Protocol for [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: RawOutput, error: ValidationError | ModelRetry) -> Any | Awaitable[Any]: ...
+
+class BeforeOutputProcessHookFunc(Protocol):
+    """Protocol for [`before_output_process`][pydantic_ai.capabilities.AbstractCapability.before_output_process] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
+
+class AfterOutputProcessHookFunc(Protocol):
+    """Protocol for [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any) -> Any | Awaitable[Any]: ...
+
+class WrapOutputProcessHookFunc(Protocol):
+    """Protocol for [`wrap_output_process`][pydantic_ai.capabilities.AbstractCapability.wrap_output_process] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, handler: WrapOutputProcessHandler) -> Any | Awaitable[Any]: ...
+
+class OnOutputProcessErrorHookFunc(Protocol):
+    """Protocol for [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, output_context: OutputContext, output: Any, error: Exception) -> Any | Awaitable[Any]: ...
+
+class HandleDeferredToolCallsHookFunc(Protocol):
+    """Protocol for [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] hook functions."""
+    def __call__(self, ctx: RunContext[Any], /, *, requests: DeferredToolRequests) -> DeferredToolResults | None | Awaitable[DeferredToolResults | None]: ...
 # fmt: on
 
 
@@ -265,7 +310,7 @@ def _tool_bare_or_parameterized(
 
 
 class _HookRegistration(Generic[AgentDepsT]):
-    """Decorator namespace for registering hooks on a :class:`Hooks` instance.
+    """Decorator namespace for registering hooks on a [`Hooks`][pydantic_ai.capabilities.Hooks] instance.
 
     Accessed via `hooks.on`. Each method corresponds to a lifecycle hook and
     can be used as a bare decorator or a parameterized decorator::
@@ -421,6 +466,17 @@ class _HookRegistration(Generic[AgentDepsT]):
     def prepare_tools(self, func: PrepareToolsHookFunc | None = None, *, timeout: float | None = None) -> Any:
         return _bare_or_parameterized(self._r, 'prepare_tools', func, timeout=timeout)
 
+    @overload
+    def prepare_output_tools(self, func: PrepareOutputToolsHookFunc, /) -> PrepareOutputToolsHookFunc: ...
+    @overload
+    def prepare_output_tools(
+        self, *, timeout: float | None = None
+    ) -> Callable[[PrepareOutputToolsHookFunc], PrepareOutputToolsHookFunc]: ...
+    def prepare_output_tools(
+        self, func: PrepareOutputToolsHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'prepare_output_tools', func, timeout=timeout)
+
     # --- Tool validation ---
 
     @overload
@@ -545,6 +601,107 @@ class _HookRegistration(Generic[AgentDepsT]):
     ) -> Any:
         return _tool_bare_or_parameterized(self._r, 'on_tool_execute_error', func, tools=tools, timeout=timeout)
 
+    # --- Output validation ---
+
+    @overload
+    def before_output_validate(self, func: BeforeOutputValidateHookFunc, /) -> BeforeOutputValidateHookFunc: ...
+    @overload
+    def before_output_validate(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeOutputValidateHookFunc], BeforeOutputValidateHookFunc]: ...
+    def before_output_validate(
+        self, func: BeforeOutputValidateHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'before_output_validate', func, timeout=timeout)
+
+    @overload
+    def after_output_validate(self, func: AfterOutputValidateHookFunc, /) -> AfterOutputValidateHookFunc: ...
+    @overload
+    def after_output_validate(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterOutputValidateHookFunc], AfterOutputValidateHookFunc]: ...
+    def after_output_validate(
+        self, func: AfterOutputValidateHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'after_output_validate', func, timeout=timeout)
+
+    @overload
+    def output_validate(self, func: WrapOutputValidateHookFunc, /) -> WrapOutputValidateHookFunc: ...
+    @overload
+    def output_validate(
+        self, *, timeout: float | None = None
+    ) -> Callable[[WrapOutputValidateHookFunc], WrapOutputValidateHookFunc]: ...
+    def output_validate(self, func: WrapOutputValidateHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_output_validate', func, timeout=timeout)
+
+    @overload
+    def output_validate_error(self, func: OnOutputValidateErrorHookFunc, /) -> OnOutputValidateErrorHookFunc: ...
+    @overload
+    def output_validate_error(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnOutputValidateErrorHookFunc], OnOutputValidateErrorHookFunc]: ...
+    def output_validate_error(
+        self, func: OnOutputValidateErrorHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'on_output_validate_error', func, timeout=timeout)
+
+    # --- Output execution ---
+
+    @overload
+    def before_output_process(self, func: BeforeOutputProcessHookFunc, /) -> BeforeOutputProcessHookFunc: ...
+    @overload
+    def before_output_process(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeOutputProcessHookFunc], BeforeOutputProcessHookFunc]: ...
+    def before_output_process(
+        self, func: BeforeOutputProcessHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'before_output_process', func, timeout=timeout)
+
+    @overload
+    def after_output_process(self, func: AfterOutputProcessHookFunc, /) -> AfterOutputProcessHookFunc: ...
+    @overload
+    def after_output_process(
+        self, *, timeout: float | None = None
+    ) -> Callable[[AfterOutputProcessHookFunc], AfterOutputProcessHookFunc]: ...
+    def after_output_process(
+        self, func: AfterOutputProcessHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'after_output_process', func, timeout=timeout)
+
+    @overload
+    def output_process(self, func: WrapOutputProcessHookFunc, /) -> WrapOutputProcessHookFunc: ...
+    @overload
+    def output_process(
+        self, *, timeout: float | None = None
+    ) -> Callable[[WrapOutputProcessHookFunc], WrapOutputProcessHookFunc]: ...
+    def output_process(self, func: WrapOutputProcessHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'wrap_output_process', func, timeout=timeout)
+
+    @overload
+    def output_process_error(self, func: OnOutputProcessErrorHookFunc, /) -> OnOutputProcessErrorHookFunc: ...
+    @overload
+    def output_process_error(
+        self, *, timeout: float | None = None
+    ) -> Callable[[OnOutputProcessErrorHookFunc], OnOutputProcessErrorHookFunc]: ...
+    def output_process_error(
+        self, func: OnOutputProcessErrorHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'on_output_process_error', func, timeout=timeout)
+
+    # --- Deferred tool calls ---
+
+    @overload
+    def deferred_tool_calls(self, func: HandleDeferredToolCallsHookFunc, /) -> HandleDeferredToolCallsHookFunc: ...
+    @overload
+    def deferred_tool_calls(
+        self, *, timeout: float | None = None
+    ) -> Callable[[HandleDeferredToolCallsHookFunc], HandleDeferredToolCallsHookFunc]: ...
+    def deferred_tool_calls(
+        self, func: HandleDeferredToolCallsHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'handle_deferred_tool_calls', func, timeout=timeout)
+
 
 # --- The Hooks capability ---
 
@@ -553,8 +710,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
     """Register hook functions via decorators or constructor kwargs.
 
     For extension developers building reusable capabilities, subclass
-    :class:`AbstractCapability` directly. For application code that needs
-    a few hooks without the ceremony of a subclass, use `Hooks`.
+    [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
+    For application code that needs a few hooks without the ceremony of a subclass,
+    use `Hooks`.
 
     Example using decorators::
 
@@ -599,6 +757,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         model_request_error: OnModelRequestErrorHookFunc | None = None,
         # Tool preparation
         prepare_tools: PrepareToolsHookFunc | None = None,
+        prepare_output_tools: PrepareOutputToolsHookFunc | None = None,
         # Tool validation
         before_tool_validate: BeforeToolValidateHookFunc | None = None,
         after_tool_validate: AfterToolValidateHookFunc | None = None,
@@ -609,7 +768,22 @@ class Hooks(AbstractCapability[AgentDepsT]):
         after_tool_execute: AfterToolExecuteHookFunc | None = None,
         tool_execute: WrapToolExecuteHookFunc | None = None,
         tool_execute_error: OnToolExecuteErrorHookFunc | None = None,
+        # Output validation
+        before_output_validate: BeforeOutputValidateHookFunc | None = None,
+        after_output_validate: AfterOutputValidateHookFunc | None = None,
+        output_validate: WrapOutputValidateHookFunc | None = None,
+        output_validate_error: OnOutputValidateErrorHookFunc | None = None,
+        # Output processing
+        before_output_process: BeforeOutputProcessHookFunc | None = None,
+        after_output_process: AfterOutputProcessHookFunc | None = None,
+        output_process: WrapOutputProcessHookFunc | None = None,
+        output_process_error: OnOutputProcessErrorHookFunc | None = None,
+        # Deferred tool calls
+        deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
+        # Ordering
+        ordering: CapabilityOrdering | None = None,
     ):
+        self._ordering = ordering
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)
         _kwargs: dict[str, Any] = {
@@ -628,6 +802,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'wrap_model_request': model_request,
             'on_model_request_error': model_request_error,
             'prepare_tools': prepare_tools,
+            'prepare_output_tools': prepare_output_tools,
             'before_tool_validate': before_tool_validate,
             'after_tool_validate': after_tool_validate,
             'wrap_tool_validate': tool_validate,
@@ -636,6 +811,15 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'after_tool_execute': after_tool_execute,
             'wrap_tool_execute': tool_execute,
             'on_tool_execute_error': tool_execute_error,
+            'before_output_validate': before_output_validate,
+            'after_output_validate': after_output_validate,
+            'wrap_output_validate': output_validate,
+            'on_output_validate_error': output_validate_error,
+            'before_output_process': before_output_process,
+            'after_output_process': after_output_process,
+            'wrap_output_process': output_process,
+            'on_output_process_error': output_process_error,
+            'handle_deferred_tool_calls': deferred_tool_calls,
         }
         for key, func in _kwargs.items():
             if func is not None:
@@ -652,6 +836,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
     @property
     def has_wrap_node_run(self) -> bool:
         return bool(self._get('wrap_node_run'))
+
+    @property
+    def has_wrap_run_event_stream(self) -> bool:
+        return bool(self._get('wrap_run_event_stream') or self._get('_on_event'))
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        return self._ordering
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -798,6 +989,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
             tool_defs = await _call_entry(entry, 'prepare_tools', ctx, tool_defs)
         return tool_defs
 
+    async def prepare_output_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        for entry in self._get('prepare_output_tools'):
+            tool_defs = await _call_entry(entry, 'prepare_output_tools', ctx, tool_defs)
+        return tool_defs
+
     async def before_tool_validate(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
     ) -> RawToolArgs:
@@ -907,6 +1105,146 @@ class Hooks(AbstractCapability[AgentDepsT]):
             except Exception as new_error:
                 error = new_error
         raise error
+
+    async def before_output_validate(
+        self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: RawOutput
+    ) -> RawOutput:
+        for entry in self._get('before_output_validate'):
+            output = await _call_entry(
+                entry, 'before_output_validate', ctx, output_context=output_context, output=output
+            )
+        return output
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        for entry in self._get('after_output_validate'):
+            output = await _call_entry(
+                entry, 'after_output_validate', ctx, output_context=output_context, output=output
+            )
+        return output
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        handler: WrapOutputValidateHandler,
+    ) -> Any:
+        entries = self._get('wrap_output_validate')
+        if not entries:
+            return await handler(output)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(
+                entry, 'wrap_output_validate', ctx, {'output_context': output_context}, chain, 'output'
+            )
+        return await chain(output)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        error: ValidationError | ModelRetry,
+    ) -> Any:
+        for entry in self._get('on_output_validate_error'):
+            try:
+                return await _call_entry(
+                    entry,
+                    'on_output_validate_error',
+                    ctx,
+                    output_context=output_context,
+                    output=output,
+                    error=error,
+                )
+            except (ValidationError, ModelRetry) as new_error:
+                error = new_error
+        raise error
+
+    async def before_output_process(
+        self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any
+    ) -> Any:
+        for entry in self._get('before_output_process'):
+            output = await _call_entry(
+                entry, 'before_output_process', ctx, output_context=output_context, output=output
+            )
+        return output
+
+    async def after_output_process(
+        self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any
+    ) -> Any:
+        for entry in self._get('after_output_process'):
+            output = await _call_entry(
+                entry,
+                'after_output_process',
+                ctx,
+                output_context=output_context,
+                output=output,
+            )
+        return output
+
+    async def wrap_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        handler: WrapOutputProcessHandler,
+    ) -> Any:
+        entries = self._get('wrap_output_process')
+        if not entries:
+            return await handler(output)
+        chain: Callable[..., Any] = handler
+        for entry in reversed(entries):
+            chain = _make_wrap_link(
+                entry, 'wrap_output_process', ctx, {'output_context': output_context}, chain, 'output'
+            )
+        return await chain(output)
+
+    async def on_output_process_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        error: Exception,
+    ) -> Any:
+        for entry in self._get('on_output_process_error'):
+            try:
+                return await _call_entry(
+                    entry, 'on_output_process_error', ctx, output_context=output_context, output=output, error=error
+                )
+            except Exception as new_error:
+                error = new_error
+        raise error
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        accumulated = DeferredToolResults()
+        remaining = requests
+        any_handled = False
+        for entry in self._get('handle_deferred_tool_calls'):
+            result = await _call_entry(entry, 'handle_deferred_tool_calls', ctx, requests=remaining)
+            if result is None or not (result.approvals or result.calls):
+                continue
+            any_handled = True
+            accumulated.update(result)
+            remaining_or_none = remaining.remaining(result)
+            if remaining_or_none is None:
+                break
+            remaining = remaining_or_none
+        return accumulated if any_handled else None
 
 
 # --- Wrap chain helper ---

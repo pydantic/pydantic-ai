@@ -12,7 +12,7 @@ from .settings import EmbeddingSettings
 
 try:
     from google.genai import Client, errors
-    from google.genai.types import ContentListUnion, EmbedContentConfig, EmbedContentResponse
+    from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
@@ -20,7 +20,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001']
+LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview']
 """Latest Google Gemini API (GLA) embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -29,6 +29,7 @@ for available models and their capabilities.
 
 LatestGoogleVertexEmbeddingModelNames = Literal[
     'gemini-embedding-001',
+    'gemini-embedding-2-preview',
     'text-embedding-005',
     'text-multilingual-embedding-002',
 ]
@@ -47,6 +48,7 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
     'gemini-embedding-001': 2048,
+    'gemini-embedding-2-preview': 8192,
     'text-embedding-005': 2048,
     'text-multilingual-embedding-002': 2048,
 }
@@ -129,9 +131,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self._client = provider.client
 
         super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> Client:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -163,10 +168,12 @@ class GoogleEmbeddingModel(EmbeddingModel):
             title=settings.get('google_title'),
         )
 
+        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in inputs]
+
         try:
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
-                contents=cast(ContentListUnion, inputs),
+                contents=contents,
                 config=config,
             )
         except errors.APIError as e:

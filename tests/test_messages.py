@@ -15,6 +15,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
     InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -22,6 +23,8 @@ from pydantic_ai import (
     ModelResponse,
     MultiModalContent,
     RequestUsage,
+    RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
@@ -99,6 +102,12 @@ def test_document_url():
     document_url = DocumentUrl(url='https://example.com/document', media_type='application/pdf')
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
+
+
+def test_text_content():
+    text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
+    assert text_content.content == 'Pydantic AI!'
+    assert text_content.metadata == {'foo': 'bar'}
 
 
 @pytest.mark.parametrize(
@@ -607,6 +616,7 @@ def test_file_part_serialization_roundtrip():
                 'provider_response_id': None,
                 'finish_reason': None,
                 'run_id': None,
+                'conversation_id': None,
                 'metadata': None,
             }
         ]
@@ -629,6 +639,59 @@ def test_model_messages_type_adapter_preserves_run_id():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
+
+
+def test_model_messages_type_adapter_preserves_conversation_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            conversation_id='conv-abc',
+        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], conversation_id='conv-abc'),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.conversation_id for message in deserialized] == snapshot(['conv-abc', 'conv-abc'])
+
+
+def test_model_messages_type_adapter_back_compat_missing_conversation_id():
+    """Histories serialized before the field existed should deserialize with conversation_id=None."""
+    pre_pr_serialized = [
+        {
+            'kind': 'request',
+            'parts': [{'part_kind': 'user-prompt', 'content': 'Hello'}],
+            'run_id': 'run-123',
+        },
+        {
+            'kind': 'response',
+            'parts': [{'part_kind': 'text', 'content': 'Hi'}],
+            'run_id': 'run-123',
+        },
+    ]
+    deserialized = ModelMessagesTypeAdapter.validate_python(pre_pr_serialized)
+    assert all(m.conversation_id is None for m in deserialized)
+
+
+def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+            ],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
 
 
 def test_model_response_convenience_methods():
@@ -1387,3 +1450,149 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
     part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
     with pytest.raises(AssertionError):
         part.args_as_dict(raise_if_invalid=True)
+
+
+def test_user_prompt_part_with_text_content():
+    part = UserPromptPart(
+        content=[
+            'Hi there',
+            TextContent(content='This is text content', metadata={'key': 'value'}),
+        ]
+    )
+    assert part.content[0] == 'Hi there'
+    assert part.content[1].metadata == snapshot({'key': 'value'})  # type: ignore[reportUnknownMemberType]
+
+
+class TestInstructionParts:
+    def test_join_helper(self):
+        """InstructionPart.join produces the correct joined string."""
+        parts = [
+            InstructionPart(content='First'),
+            InstructionPart(content='Second'),
+        ]
+        assert InstructionPart.join(parts) == 'First\n\nSecond'
+        assert InstructionPart.join([]) is None
+
+    def test_join_strips_whitespace(self):
+        """InstructionPart.join strips leading/trailing whitespace."""
+        parts = [InstructionPart(content='  Hello  ')]
+        assert InstructionPart.join(parts) == 'Hello'
+
+    def test_model_request_instructions_is_plain_string(self):
+        """ModelRequest.instructions is a plain str | None field."""
+        request = ModelRequest(parts=[], instructions='Hello world')
+        assert request.instructions == 'Hello world'
+
+    def test_model_request_instructions_default_none(self):
+        request = ModelRequest(parts=[])
+        assert request.instructions is None
+
+    def test_serialization_round_trip(self):
+        """Instructions string survives serialization and deserialization."""
+        original = ModelRequest(parts=[UserPromptPart('test')], instructions='static part\n\ndynamic part')
+
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert msg.instructions == 'static part\n\ndynamic part'
+
+    def test_repr(self):
+        """InstructionPart repr omits default values."""
+        part = InstructionPart(content='hello')
+        assert repr(part) == "InstructionPart(content='hello')"
+        dynamic_part = InstructionPart(content='world', dynamic=True)
+        assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
+
+
+def test_retry_prompt_strips_input_from_top_level_errors():
+    """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"required_field"' in response
+
+
+def test_retry_prompt_keeps_input_for_nested_errors():
+    """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' in response
+    assert '"sub_field"' in response
+
+
+def test_retry_prompt_mixed_top_level_and_nested_errors():
+    """When both top-level and nested errors exist, only top-level input should be stripped."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
+            {
+                'type': 'missing',
+                'loc': ('items', 0, 'nested_field'),
+                'msg': 'Field required',
+                'input': {'nested_key': 'nested_val'},
+            },
+        ],
+    )
+    response = part.model_response()
+    # Nested error's input should be present
+    assert '"nested_key"' in response
+    # But root-level input should not
+    assert '"root_key"' not in response
+
+
+def test_retry_prompt_strips_input_from_top_level_type_errors():
+    """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
+    part = RetryPromptPart(
+        content=[
+            {
+                'type': 'int_parsing',
+                'loc': ('age',),
+                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                'input': 'not_a_number',
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"age"' in response
+
+
+def test_retry_prompt_tool_call_keeps_input_at_top_level():
+    """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
+    part = RetryPromptPart(
+        tool_name='evaluate_content',
+        content=[
+            {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input": {}' in response
+    assert '"content"' in response
+
+
+def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
+    """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
+    part = RetryPromptPart(
+        tool_name='evaluate_content',
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 42,
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input": 42' in response
+    assert '"name"' in response
