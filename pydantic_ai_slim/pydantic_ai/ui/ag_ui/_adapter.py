@@ -166,6 +166,14 @@ def _tool_return_file_activity(tool_call_id: str, files: Sequence[MultiModalCont
     AG-UI's `ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18; this sidecar
     preserves multimodal items across the round trip. Tracked upstream in
     https://github.com/ag-ui-protocol/ag-ui/issues/126 — replace with native support once available.
+
+    The Vercel adapter's equivalent envelope was dropped after `ToolReturnContent` gained an
+    explicit `Discriminator` (so multimodal items rehydrate via `tool_return_content_ta`), but
+    AG-UI keeps the sidecar because that fix only addresses deserialization — the AG-UI wire
+    format physically can't carry non-`str` content in `ToolMessage.content` regardless of how
+    well it deserializes. When upstream lands native multimodal support, the sidecar load path
+    stays as a backward-compat fallback (matches the version-gating pattern already used for
+    `REASONING_VERSION` / `MULTIMODAL_VERSION` in `_utils.py`).
     """
     return ActivityMessage(
         id=_new_message_id(),
