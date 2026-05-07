@@ -108,7 +108,7 @@ class GraphAgentState:
 
     message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
-    retries: int = 0
+    output_retries_used: int = 0
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
@@ -140,15 +140,23 @@ class GraphAgentState:
                     f'Model token limit ({self.last_max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                 )
 
-    def increment_retries(
+    def consume_output_retry(
         self,
-        max_result_retries: int,
+        max_output_retries: int,
         error: BaseException | None = None,
     ) -> None:
-        self.retries += 1
-        if self.retries > max_result_retries:
+        """Record one unit of output-retry budget consumption.
+
+        Raises `UnexpectedModelBehavior` when `output_retries_used` would exceed
+        `max_output_retries`. Called for `ModelRetry`s from output validators (text path)
+        and for `ToolRetryError`s from output-tool dispatch / empty-or-non-actionable
+        responses; per-tool retry limits are still enforced separately by
+        `ToolManager._check_max_retries`.
+        """
+        self.output_retries_used += 1
+        if self.output_retries_used > max_output_retries:
             self.check_incomplete_tool_call()
-            message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
+            message = f'Exceeded maximum output retries ({max_output_retries})'
             raise exceptions.UnexpectedModelBehavior(message) from error
 
 
@@ -165,7 +173,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     model: models.Model
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
-    max_result_retries: int
+    max_output_retries: int
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[list[_messages.InstructionPart] | None]]
 
@@ -289,7 +297,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     run_context = replace(
                         build_run_context(ctx),
                         run_step=ctx.state.run_step + 1,
-                        retry=ctx.state.retries,
+                        retry=ctx.state.output_retries_used,
                         max_retries=ctx.deps.tool_manager.default_max_retries,
                     )
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
@@ -806,7 +814,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
-            retry=ctx.state.retries,
+            retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
@@ -963,7 +971,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
-        ctx.state.increment_retries(ctx.deps.max_result_retries, error=error)
+        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
         m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
@@ -1073,7 +1081,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                 ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
                             )
                         except ToolRetryError as e:
-                            ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                            ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
                             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                                 _messages.ModelRequest(parts=[e.tool_retry])
                             )
@@ -1098,7 +1106,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         # essentially resubmit the most recent request that resulted in an empty response,
                         # as the empty response and request will not create any items in the API payload,
                         # in the hope the model will return a non-empty response this time.
-                        ctx.state.increment_retries(ctx.deps.max_result_retries)
+                        ctx.state.consume_output_retry(ctx.deps.max_output_retries)
                         self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
                         return
 
@@ -1175,7 +1183,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     raise ToolRetryError(m)
                 except ToolRetryError as e:
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, error=e)
+                    ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
             self._events_iterator = _run_stream()
@@ -1195,7 +1203,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
-            retry=ctx.state.retries,
+            retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
@@ -1370,14 +1378,14 @@ def _build_output_run_context(
     Starts from `tool_manager.ctx` (when available) so per-tool retry counts
     (`ctx.retries[name]`) populated by `for_run_step` propagate to output hooks
     like `prepare_output_tools` and output validators. Then overrides `retry`
-    and `max_retries` with the **output** budget (`max_result_retries`),
+    and `max_retries` with the **output** budget (`max_output_retries`),
     distinct from the tool budget on `tool_manager.ctx`.
     """
     base = ctx.deps.tool_manager.ctx if ctx.deps.tool_manager.ctx is not None else build_run_context(ctx)
     return replace(
         base,
-        retry=ctx.state.retries,
-        max_retries=ctx.deps.max_result_retries,
+        retry=ctx.state.output_retries_used,
+        max_retries=ctx.deps.max_output_retries,
     )
 
 
@@ -1459,9 +1467,9 @@ async def process_tool_calls(  # noqa: C901
                     continue
                 ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
                 tool = tool_manager.tools.get(call.tool_name) if tool_manager.tools else None  # pragma: lax no cover
-                max_retries = tool.max_retries if tool else ctx.deps.max_result_retries  # pragma: lax no cover
+                max_retries = tool.max_retries if tool else ctx.deps.max_output_retries  # pragma: lax no cover
                 raise exceptions.UnexpectedModelBehavior(  # pragma: lax no cover
-                    f'Exceeded maximum retries ({max_retries}) for output validation'
+                    f'Exceeded maximum output retries ({max_retries})'
                 ) from (e.__cause__ or e)
 
             if not validated.args_valid:
@@ -1476,7 +1484,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
                 yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
-                ctx.state.retries += 1
+                ctx.state.output_retries_used += 1
                 continue
 
             # Validation passed - execute through output hooks
@@ -1491,16 +1499,16 @@ async def process_tool_calls(  # noqa: C901
                     continue
                 ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
                 max_retries = (
-                    validated.tool.max_retries if validated.tool else ctx.deps.max_result_retries
+                    validated.tool.max_retries if validated.tool else ctx.deps.max_output_retries
                 )  # pragma: lax no cover
                 raise exceptions.UnexpectedModelBehavior(  # pragma: lax no cover
-                    f'Exceeded maximum retries ({max_retries}) for output validation'
+                    f'Exceeded maximum output retries ({max_retries})'
                 ) from (e.__cause__ or e)
             except ToolRetryError as e:
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
-                ctx.state.retries += 1
+                ctx.state.output_retries_used += 1
                 continue
 
             part = _messages.ToolReturnPart(

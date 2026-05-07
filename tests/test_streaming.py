@@ -595,7 +595,7 @@ async def test_plain_response():
 
     agent = Agent(FunctionModel(stream_function=text_stream), output_type=tuple[str, str])
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
         async with agent.run_stream(''):
             pass
 
@@ -822,7 +822,8 @@ async def test_call_tool_wrong_name():
     agent = Agent(
         FunctionModel(stream_function=stream_structured_function),
         output_type=tuple[str, int],
-        retries=0,
+        tool_retries=0,
+        output_retries=0,
     )
 
     @agent.tool_plain
@@ -2688,7 +2689,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(1\\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries \\(1\\)'):
             async with agent.run_stream('test') as result:
                 await result.get_output()
 

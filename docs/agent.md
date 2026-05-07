@@ -630,7 +630,7 @@ class NeverOutputType(TypedDict):
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    retries=3,
+    tool_retries=3,
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
@@ -1083,8 +1083,19 @@ Validation errors from both function tool parameter validation and [structured o
 
 You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output function](output.md#output-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.agent.Agent.__init__], a [specific tool][pydantic_ai.agent.Agent.tool], or [outputs][pydantic_ai.agent.Agent.__init__]. The agent-level `output_retries` can also be overridden per run via `agent.run(output_retries=...)` and friends.
 - You can access the current retry count from within a tool, output validator, or output function via [`ctx.retry`][pydantic_ai.tools.RunContext.retry].
+
+### How output retries are enforced
+
+Pydantic AI enforces `output_retries` differently depending on how the model returns its final output:
+
+- **Text output path** (`output_type=str`, text-only outputs, empty or unusable model responses): a single global budget of size `output_retries` is shared across the whole run. Each invalid response consumes one unit of the budget; when it's exhausted, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Exceeded maximum output retries (N)'`.
+- **Tool output path** ([`output_type=ToolOutput(...)`](output.md#tool-output), structured outputs): `output_retries` is the *default per-tool limit*. See [Tool Output](output.md#tool-output) for per-tool overrides via [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries].
+
+For how the budget appears inside [output validators](output.md#output-validator-functions) — including what `ctx.max_retries` and `ctx.retry` reflect on each path — see the [Output validators](output.md#output-validator-functions) section.
+
+Tool retries are tracked per tool — see [Tool Execution and Retries](tools-advanced.md#tool-retries) for the per-tool counter model and the three configuration levels.
 
 Here's an example:
 
