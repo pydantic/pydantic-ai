@@ -16,7 +16,6 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -37,6 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -257,7 +257,7 @@ def test_init(model_loading_function_name: str, args: Callable[[], tuple[Any]]) 
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
     )
 
 
@@ -317,7 +317,7 @@ def test_model_loading_methods(model_loading_function_name: str, args: Callable[
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),
         ignore_streamed_leading_whitespace=False,
-        supported_builtin_tools=frozenset(),
+        supported_native_tools=frozenset(),
     )
 
 

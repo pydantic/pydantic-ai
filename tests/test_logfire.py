@@ -520,7 +520,7 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
-                                'prefer_builtin': None,
+                                'prefer_native': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
                             }
@@ -1025,7 +1025,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'defer_loading': False,
-                                'prefer_builtin': None,
+                                'prefer_native': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
                             }

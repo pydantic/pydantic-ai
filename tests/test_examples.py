@@ -23,14 +23,14 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -813,7 +813,7 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
@@ -821,7 +821,7 @@ async def model_logic(  # noqa: C901
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],

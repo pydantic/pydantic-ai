@@ -26,8 +26,8 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 

@@ -4,15 +4,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai.builtin_tools import WebFetchTool
+from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 
 @dataclass(init=False)
-class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
+class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
     Uses the model's builtin URL fetching when available, falling back to a local
@@ -41,7 +41,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: WebFetchTool
+        native: WebFetchTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[WebFetchTool | None] | WebFetchTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
@@ -51,7 +51,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
     ) -> None:
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.allowed_domains = allowed_domains
         self.blocked_domains = blocked_domains
@@ -60,7 +60,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_content_tokens = max_content_tokens
         self.__post_init__()
 
-    def _default_builtin(self) -> WebFetchTool:
+    def _default_native(self) -> WebFetchTool:
         kwargs: dict[str, Any] = {}
         if self.allowed_domains is not None:
             kwargs['allowed_domains'] = self.allowed_domains
@@ -74,7 +74,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['max_content_tokens'] = self.max_content_tokens
         return WebFetchTool(**kwargs)
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return WebFetchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
@@ -97,5 +97,5 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
             )
             return None
 
-    def _requires_builtin(self) -> bool:
+    def _requires_native(self) -> bool:
         return self.max_uses is not None

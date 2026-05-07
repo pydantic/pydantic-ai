@@ -18,8 +18,6 @@ from ... import _instructions
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -28,6 +26,8 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -82,8 +82,8 @@ if TYPE_CHECKING:
 
     from ...agent import AbstractAgent
     from ...agent.abstract import AgentMetadata
-    from ...builtin_tools import AbstractBuiltinTool
     from ...models import KnownModelName, Model
+    from ...native_tools import AbstractNativeTool
     from ...output import OutputSpec
     from ...settings import ModelSettings
     from ...tools import DeferredToolApprovalResult
@@ -178,7 +178,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -379,7 +379,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
                             builder.add(
-                                BuiltinToolCallPart(
+                                NativeToolCallPart(
                                     tool_name=tool_name,
                                     tool_call_id=tool_call_id,
                                     args=args,
@@ -400,7 +400,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = part.output if isinstance(part, ToolOutputAvailablePart) else None
                                     outcome = 'success'
                                 builder.add(
-                                    BuiltinToolReturnPart(
+                                    NativeToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=output,
@@ -513,12 +513,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         ui_parts: list[UIMessagePart] = []
 
         # For builtin tools, returns can be in the same ModelResponse as calls
-        local_builtin_returns: dict[str, BuiltinToolReturnPart] = {
-            part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)
+        local_builtin_returns: dict[str, NativeToolReturnPart] = {
+            part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)
         }
 
         for part in msg.parts:
-            if isinstance(part, BuiltinToolReturnPart):
+            if isinstance(part, NativeToolReturnPart):
                 continue
             elif isinstance(part, TextPart):
                 # Combine consecutive text parts
@@ -547,12 +547,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ),
                     )
                 )
-            elif isinstance(part, BuiltinToolCallPart):
+            elif isinstance(part, NativeToolCallPart):
                 tool_name = f'tool-{part.tool_name}'
                 if builtin_return := local_builtin_returns.get(part.tool_call_id):
                     # Builtin tool calls are represented by two parts in pydantic_ai:
-                    #   1. BuiltinToolCallPart (the tool request) -> part
-                    #   2. BuiltinToolReturnPart (the tool's output) -> builtin_return
+                    #   1. NativeToolCallPart (the tool request) -> part
+                    #   2. NativeToolReturnPart (the tool's output) -> builtin_return
                     # The Vercel AI SDK only has a single ToolOutputPart (ToolOutputAvailablePart or ToolOutputErrorPart).
                     # So, we need to combine the metadata so that when we later convert back from Vercel AI to pydantic_ai,
                     # we can properly reconstruct both the call and return parts with their respective metadata.

@@ -4,15 +4,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai.builtin_tools import WebSearchTool, WebSearchUserLocation
+from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 
 @dataclass(init=False)
-class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
+class WebSearch(NativeOrLocalTool[AgentDepsT]):
     """Web search capability.
 
     Uses the model's builtin web search when available, falling back to a local
@@ -37,7 +37,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: WebSearchTool
+        native: WebSearchTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[WebSearchTool | None] | WebSearchTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
@@ -47,7 +47,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
     ) -> None:
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.search_context_size = search_context_size
         self.user_location = user_location
@@ -56,7 +56,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         self.max_uses = max_uses
         self.__post_init__()
 
-    def _default_builtin(self) -> WebSearchTool:
+    def _default_native(self) -> WebSearchTool:
         kwargs: dict[str, Any] = {}
         if self.search_context_size is not None:
             kwargs['search_context_size'] = self.search_context_size
@@ -70,7 +70,7 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['max_uses'] = self.max_uses
         return WebSearchTool(**kwargs)
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return WebSearchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
@@ -90,5 +90,5 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
             )
             return None
 
-    def _requires_builtin(self) -> bool:
+    def _requires_native(self) -> bool:
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None

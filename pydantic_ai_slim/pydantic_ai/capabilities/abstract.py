@@ -11,8 +11,8 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -239,7 +239,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return a toolset to register with the agent, or None."""
         return None
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """Return builtin tools to register with the agent."""
         return []
 

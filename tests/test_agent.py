@@ -60,17 +60,17 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.builtin_tools import (
-    CodeExecutionTool,
-    MCPServerTool,
-    WebSearchTool,
-    WebSearchUserLocation,
-)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.providers import Provider
 from pydantic_ai.result import RunUsage

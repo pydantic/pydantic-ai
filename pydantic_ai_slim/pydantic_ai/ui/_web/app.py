@@ -9,7 +9,7 @@ from typing import TypeVar
 import httpx
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
 from .api import ModelsParam, create_api_app
@@ -110,7 +110,7 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
 def create_web_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    builtin_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,

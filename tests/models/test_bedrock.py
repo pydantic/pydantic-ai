@@ -12,8 +12,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FinalResultEvent,
@@ -23,6 +21,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -40,7 +40,6 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -49,6 +48,7 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -73,10 +73,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -3458,59 +3458,59 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                # BuiltinToolCallPart (w/dict) for bedrock (should be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart (w/dict) for bedrock (should be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     args={'snippet': 'print("hello")'},
                     tool_call_id='call_1',
                 ),
-                # BuiltinToolReturnPart for bedrock with empty provider_details (should be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for bedrock with empty provider_details (should be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_1',
                     provider_details={},
                 ),
-                # BuiltinToolCallPart for the other provider (should NOT be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart for the other provider (should NOT be included)
+                NativeToolCallPart(
                     provider_name='anthropic',
                     tool_name=CodeExecutionTool.kind,
                     args={'code': 'print("other")'},
                     tool_call_id='call_2',
                 ),
-                # BuiltinToolReturnPart for the other provider (should NOT be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the other provider (should NOT be included)
+                NativeToolReturnPart(
                     provider_name='anthropic',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': 'other', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_2',
                 ),
-                # BuiltinToolCallPart (w/str) for bedrock (should be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart (w/str) for bedrock (should be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     args='{"snippet": "10*5"}',
                     tool_call_id='call_3',
                 ),
-                # BuiltinToolReturnPart for the bedrock provider with status (should be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the bedrock provider with status (should be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name=CodeExecutionTool.kind,
                     content={'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='call_3',
                     provider_details={'status': 'success'},
                 ),
-                # BuiltinToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
-                BuiltinToolCallPart(
+                # NativeToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolCallPart(
                     provider_name='bedrock',
                     tool_name='foo',
                     args={'snippet': 'print("unknown")'},
                     tool_call_id='call_4',
                 ),
-                # BuiltinToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
-                BuiltinToolReturnPart(
+                # NativeToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolReturnPart(
                     provider_name='bedrock',
                     tool_name='foo',
                     content={'other': 'content'},
@@ -3526,7 +3526,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
         ModelRequestParameters(
             function_tools=[],
             allow_text_output=True,
-            builtin_tools=[CodeExecutionTool()],
+            native_tools=[CodeExecutionTool()],
         ),
         None,
     )
@@ -3596,13 +3596,13 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'snippet': '1234 * 5678'},
                         tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
@@ -3655,13 +3655,13 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={'snippet': '7006652 * 2'},
                         tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
@@ -3732,13 +3732,13 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args='{"snippet":"1234 * 5678"}',
                         tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
                         provider_name='bedrock',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                         tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3781,7 +3781,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og', provider_name='bedrock'
                 ),
             ),
@@ -3793,7 +3793,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"snippet":"1234 * 5678"}',
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3803,7 +3803,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3832,7 +3832,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args='{"snippet":"1234 * 5678"}',
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
@@ -3840,7 +3840,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
                     tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',

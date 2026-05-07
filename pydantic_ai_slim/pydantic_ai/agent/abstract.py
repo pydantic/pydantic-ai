@@ -29,16 +29,16 @@ from .. import (
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._template import TemplateStr
-from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AgentCapability
+from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
 from ..tool_manager import ToolManager
 from ..tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolResults,
     RunContext,
     Tool,
@@ -233,7 +233,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -257,7 +257,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -280,7 +280,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -417,7 +417,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -441,7 +441,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -464,7 +464,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -556,7 +556,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -580,7 +580,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -604,7 +604,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -847,7 +847,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -870,7 +870,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractNativeTool] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -892,7 +892,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -998,7 +998,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
@@ -1021,7 +1021,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
@@ -1043,7 +1043,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
@@ -1149,7 +1149,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
@@ -1219,7 +1219,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -1242,7 +1242,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -1266,7 +1266,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -1372,7 +1372,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,

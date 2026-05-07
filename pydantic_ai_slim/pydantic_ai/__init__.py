@@ -12,18 +12,6 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .builtin_tools import (
-    CodeExecutionTool,
-    FileSearchTool,
-    ImageGenerationTool,
-    MCPServerTool,
-    MemoryTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
-    WebFetchTool,
-    WebSearchTool,
-    WebSearchUserLocation,
-    XSearchTool,
-)
 from .capabilities import AgentCapability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
@@ -64,8 +52,6 @@ from .messages import (
     BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentFormat,
@@ -91,6 +77,8 @@ from .messages import (
     ModelResponsePartDelta,
     ModelResponseStreamEvent,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -114,6 +102,18 @@ from .messages import (
 )
 from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
+from .native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    MemoryTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+    XSearchTool,
+)
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -125,7 +125,7 @@ from .profiles import (
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import (
-    AgentBuiltinTool,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -202,8 +202,8 @@ __all__ = (
     'BaseToolCallPart',
     'BaseToolReturnPart',
     'BinaryContent',
-    'BuiltinToolCallPart',
-    'BuiltinToolReturnPart',
+    'NativeToolCallPart',
+    'NativeToolReturnPart',
     'CachePoint',
     'CompactionPart',
     'DocumentFormat',
@@ -257,7 +257,7 @@ __all__ = (
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
     # tools
-    'AgentBuiltinTool',
+    'AgentNativeTool',
     'Tool',
     'ToolDefinition',
     'RunContext',

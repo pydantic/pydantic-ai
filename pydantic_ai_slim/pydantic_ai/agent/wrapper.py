@@ -18,8 +18,8 @@ from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
 from ..settings import ModelSettings
 from ..tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolResults,
     Tool,
     ToolFuncEither,
@@ -127,7 +127,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -150,7 +150,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -173,7 +173,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -293,7 +293,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,

@@ -668,7 +668,7 @@ def test_run_web_command_agent_builtin_tools_not_duplicated(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
     """Test run_web_command only passes CLI-provided tools, not agent's builtin tools."""
-    from pydantic_ai.builtin_tools import WebSearchTool
+    from pydantic_ai.native_tools import WebSearchTool
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')

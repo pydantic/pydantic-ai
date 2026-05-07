@@ -49,13 +49,13 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -3213,10 +3213,10 @@ class MultiModelWorkflow:
 
 
 class _BuiltinToolModel(TestModel):
-    SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
+    SUPPORTED_TOOLS: frozenset[type[AbstractNativeTool]] = frozenset()
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         return cls.SUPPORTED_TOOLS
 
     def _request(
@@ -3237,8 +3237,8 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
     SUPPORTED_TOOLS = frozenset({CodeExecutionTool})
 
 
-def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
-    if WebSearchTool in ctx.model.profile.supported_builtin_tools:
+def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
+    if WebSearchTool in ctx.model.profile.supported_native_tools:
         return WebSearchTool()
     return CodeExecutionTool()
 
@@ -3638,7 +3638,7 @@ async def test_temporal_model_request_outside_workflow():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            builtin_tools=[],
+            native_tools=[],
             output_mode='text',
             allow_text_output=True,
             output_tools=[],
@@ -3672,7 +3672,7 @@ async def test_temporal_model_request_stream_outside_workflow():
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            builtin_tools=[],
+            native_tools=[],
             output_mode='text',
             allow_text_output=True,
             output_tools=[],
@@ -3863,7 +3863,7 @@ def test_temporal_model_prepare_request_with_unregistered_model_string(model_id:
 
     model_request_params = ModelRequestParameters(
         function_tools=[tool_def],
-        builtin_tools=[],
+        native_tools=[],
         output_mode='text',
         allow_text_output=True,
         output_tools=[],

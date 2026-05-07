@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import ImageGenerationTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
+from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.tools import RunContext, Tool
 
 ImageGenerationFallbackModelFunc = Callable[
@@ -62,7 +62,7 @@ class ImageGenerationSubagentTool:
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
-    builtin_tool: ImageGenerationTool
+    native_tool: ImageGenerationTool
     """The image generation tool configuration to pass to the subagent."""
 
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.'
@@ -90,7 +90,7 @@ class ImageGenerationSubagentTool:
         agent = Agent(
             model,
             output_type=BinaryImage,
-            builtin_tools=[self.builtin_tool],
+            builtin_tools=[self.native_tool],
             instructions=self.instructions,
         )
         try:
@@ -102,7 +102,7 @@ class ImageGenerationSubagentTool:
 
 def image_generation_tool(
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc,
-    builtin_tool: ImageGenerationTool,
+    native_tool: ImageGenerationTool,
     *,
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
 ) -> Tool[Any]:
@@ -111,13 +111,13 @@ def image_generation_tool(
     Args:
         model: The model to use for image generation (e.g. `'openai-responses:gpt-5.4'`),
             or a callable taking `RunContext` that returns a model.
-        builtin_tool: The image generation tool configuration to pass to the subagent.
+        native_tool: The image generation tool configuration to pass to the subagent.
         instructions: Instructions for the subagent that generates the image.
     """
     if isinstance(model, str):
         _check_image_only_model(model)
     return Tool[Any](
-        ImageGenerationSubagentTool(model=model, builtin_tool=builtin_tool, instructions=instructions).__call__,
+        ImageGenerationSubagentTool(model=model, native_tool=native_tool, instructions=instructions).__call__,
         name='generate_image',
         description='Generate an image based on the given prompt.',
     )

@@ -24,8 +24,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
@@ -35,6 +33,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -52,14 +52,6 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import (
-    CodeExecutionTool,
-    FileSearchTool,
-    ImageGenerationTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
-    WebFetchTool,
-    WebSearchTool,
-)
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -74,6 +66,14 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
+from pydantic_ai.native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -128,10 +128,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -378,7 +378,7 @@ async def test_google_model_builtin_code_execution_stream(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -391,14 +391,14 @@ async def test_google_model_builtin_code_execution_stream(
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -411,7 +411,7 @@ print(result)\
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                         tool_call_id=IsStr(),
@@ -446,7 +446,7 @@ print(result)\
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -462,7 +462,7 @@ print(result)\
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -479,7 +479,7 @@ print(result)\
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -490,7 +490,7 @@ print(result)\
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -507,7 +507,7 @@ print(result)\
             ),
             PartEndEvent(
                 index=2,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -524,7 +524,7 @@ print(result)\
             ),
             PartStartEvent(
                 index=3,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -539,7 +539,7 @@ print(result)\
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
             PartEndEvent(index=4, part=TextPart(content='The result is -428,330,955.97745.')),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -554,7 +554,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -563,7 +563,7 @@ print(result)\
                 )
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='code_execution',
                     args={
                         'code': """\
@@ -578,7 +578,7 @@ print(result)\
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
                     tool_call_id=IsStr(),
@@ -1190,13 +1190,13 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in San Francisco today']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -1274,13 +1274,13 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['current weather in Mexico City']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -1519,13 +1519,13 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in Mexico City today']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -1611,7 +1611,7 @@ async def test_google_model_web_fetch_tool(
         'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
     )
 
-    # Check that BuiltinToolCallPart and BuiltinToolReturnPart are generated
+    # Check that NativeToolCallPart and NativeToolReturnPart are generated
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1628,13 +1628,13 @@ async def test_google_model_web_fetch_tool(
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'urls': ['https://ai.pydantic.dev']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content=[
                             {
@@ -1675,7 +1675,7 @@ async def test_google_model_web_fetch_tool(
 
 
 async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    """Test WebFetchTool streaming to ensure BuiltinToolCallPart and BuiltinToolReturnPart are generated."""
+    """Test WebFetchTool streaming to ensure NativeToolCallPart and NativeToolReturnPart are generated."""
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     tool = WebFetchTool()
@@ -1694,7 +1694,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
     assert agent_run.result is not None
     messages = agent_run.result.all_messages()
 
-    # Check that BuiltinToolCallPart and BuiltinToolReturnPart are generated in messages
+    # Check that NativeToolCallPart and NativeToolReturnPart are generated in messages
     assert messages == snapshot(
         [
             ModelRequest(
@@ -1711,13 +1711,13 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_fetch',
                         args={'urls': ['https://ai.pydantic.dev']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_fetch',
                         content=[
                             {
@@ -1754,12 +1754,12 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
         ]
     )
 
-    # Check that streaming events include BuiltinToolCallPart and BuiltinToolReturnPart
+    # Check that streaming events include NativeToolCallPart and NativeToolReturnPart
     assert event_parts == snapshot(
         [
             PartStartEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_fetch',
                     args={'urls': ['https://ai.pydantic.dev']},
                     tool_call_id=IsStr(),
@@ -1768,7 +1768,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             PartEndEvent(
                 index=0,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_fetch',
                     args={'urls': ['https://ai.pydantic.dev']},
                     tool_call_id=IsStr(),
@@ -1778,7 +1778,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_fetch',
                     content=[
                         {
@@ -1801,7 +1801,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=IsStr())),
             PartEndEvent(index=2, part=TextPart(content=IsStr())),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_fetch',
                     args={'urls': ['https://ai.pydantic.dev']},
                     tool_call_id=IsStr(),
@@ -1809,7 +1809,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_fetch',
                     content=[
                         {
@@ -1842,7 +1842,7 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -1868,7 +1868,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'outcome': 'OUTCOME_OK',
@@ -1915,7 +1915,7 @@ print(f"Today in Utrecht is {formatted_date}.")
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -1929,7 +1929,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={'outcome': 'OUTCOME_OK', 'output': 'Tomorrow is Wednesday, September 17, 2025.\n'},
                         tool_call_id=IsStr(),
@@ -1974,16 +1974,16 @@ async def test_google_model_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [[UserPromptPart], [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
     )
 
@@ -2002,8 +2002,8 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -2042,8 +2042,8 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         [
             [UserPromptPart],
             [
-                BuiltinToolCallPart,
-                BuiltinToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -3960,13 +3960,13 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['', 'current 5-day weather forecast for Mexico City and what to wear']},
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content=[
                             {
@@ -4027,7 +4027,7 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
 
 async def test_google_image_generation_tool_aspect_ratio(google_provider: GoogleProvider) -> None:
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(aspect_ratio='16:9')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
@@ -4037,7 +4037,7 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
 async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:
     """Test that resolution parameter from ImageGenerationTool is added to image_config."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(size='2K')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
@@ -4047,7 +4047,7 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
 async def test_google_image_generation_resolution_with_aspect_ratio(google_provider: GoogleProvider) -> None:
     """Test that resolution and aspect_ratio from ImageGenerationTool work together."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
@@ -4057,7 +4057,7 @@ async def test_google_image_generation_resolution_with_aspect_ratio(google_provi
 async def test_google_image_generation_unsupported_size_raises_error(google_provider: GoogleProvider) -> None:
     """Test that unsupported size values raise an error."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(size='1024x1024')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
         model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -4066,7 +4066,7 @@ async def test_google_image_generation_unsupported_size_raises_error(google_prov
 async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
     """Test that 'auto' size raises an error for Google since it doesn't support intelligent size selection."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(size='auto')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
         model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -4078,7 +4078,7 @@ async def test_google_image_generation_tool_output_format(
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
@@ -4092,7 +4092,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     # 'gif' is not supported by Google
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
 
     with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
         model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -4106,13 +4106,13 @@ async def test_google_image_generation_tool_output_compression(
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     # Test explicit value
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=None)])
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
@@ -4126,22 +4126,22 @@ async def test_google_image_generation_tool_compression_validation(
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
 
     # Invalid range: < 0
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_tools(ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
 
     # Non-JPEG format (PNG)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
         model._get_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
+            ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
         )
 
     # Non-JPEG format (WebP)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
         model._get_tools(  # pyright: ignore[reportPrivateUsage]
-            ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
+            ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
         )
 
 
@@ -4150,17 +4150,17 @@ async def test_google_image_generation_silently_ignored_by_gemini_api(google_pro
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
 
     # Test output_format ignored
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
     _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test output_compression ignored
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=90)])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=90)])
     _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test both ignored when None
-    params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
+    params = ModelRequestParameters(native_tools=[ImageGenerationTool()])
     _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
@@ -4185,7 +4185,7 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     params = ModelRequestParameters(
-        builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
+        native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
 
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -4725,13 +4725,13 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={},
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content=[
                                 {
@@ -4787,13 +4787,13 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={},
                             tool_call_id=IsStr(),
                             provider_name='google-gla',
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content=[
                                 {
@@ -4903,7 +4903,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 ModelResponse(
                     parts=[
-                        BuiltinToolCallPart(
+                        NativeToolCallPart(
                             tool_name='file_search',
                             args={'query': 'Capital of France'},
                             tool_call_id=IsStr(),
@@ -4912,7 +4912,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         TextPart(
                             content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.'
                         ),
-                        BuiltinToolReturnPart(
+                        NativeToolReturnPart(
                             tool_name='file_search',
                             content=[
                                 {
@@ -4952,7 +4952,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
             [
                 PartStartEvent(
                     index=0,
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
                         tool_call_id=IsStr(),
@@ -4961,7 +4961,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartEndEvent(
                     index=0,
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
                         tool_call_id=IsStr(),
@@ -4992,7 +4992,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                 ),
                 PartStartEvent(
                     index=2,
-                    part=BuiltinToolReturnPart(
+                    part=NativeToolReturnPart(
                         tool_name='file_search',
                         content=[
                             {
@@ -5007,7 +5007,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     previous_part_kind='text',
                 ),
                 BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=BuiltinToolCallPart(
+                    part=NativeToolCallPart(
                         tool_name='file_search',
                         args={'query': 'Capital of France'},
                         tool_call_id=IsStr(),
@@ -5015,7 +5015,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     )
                 ),
                 BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=BuiltinToolReturnPart(
+                    result=NativeToolReturnPart(
                         tool_name='file_search',
                         content=[
                             {

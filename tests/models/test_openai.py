@@ -44,11 +44,11 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage

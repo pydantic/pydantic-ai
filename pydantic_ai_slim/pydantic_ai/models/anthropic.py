@@ -14,21 +14,11 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..builtin_tools import (
-    AbstractBuiltinTool,
-    CodeExecutionTool,
-    MCPServerTool,
-    MemoryTool,
-    WebFetchTool,
-    WebSearchTool,
-)
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -40,6 +30,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -51,6 +43,14 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     is_multi_modal_content,
+)
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
 )
 from ..profiles import ModelProfileSpec
 from ..profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, AnthropicModelProfile
@@ -412,7 +412,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return self._provider.name
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
@@ -615,7 +615,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Most preprocessing has happened in `prepare_request()`.
         """
         tools = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
@@ -629,7 +629,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
-        betas.update(builtin_tool_betas)
+        betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         container = self._get_container(messages, model_settings)
 
@@ -771,7 +771,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
@@ -785,7 +785,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
         betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile)
-        betas.update(builtin_tool_betas)
+        betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
@@ -809,7 +809,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
-        builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
+        builtin_tool_calls: dict[str, NativeToolCallPart] = {}
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
@@ -903,12 +903,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return tools
 
-    def _add_builtin_tools(
+    def _add_native_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
-        for tool in model_request_parameters.builtin_tools:
+        for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = (
                     BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
@@ -1117,7 +1117,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     text='\n'.join([start_tag, response_part.content, end_tag]), type='text'
                                 )
                             )
-                    elif isinstance(response_part, BuiltinToolCallPart):
+                    elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
                             if response_part.tool_name == WebSearchTool.kind:
@@ -1159,7 +1159,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     input=tool_args,
                                 )
                                 assistant_content_params.append(mcp_tool_use_block_param)
-                    elif isinstance(response_part, BuiltinToolReturnPart):
+                    elif isinstance(response_part, NativeToolReturnPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
                             if response_part.tool_name in (
@@ -1785,7 +1785,7 @@ class AnthropicStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             current_block: BetaContentBlock | None = None
 
-            builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
+            builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in self._response:
                 if isinstance(event, BetaRawMessageStartEvent):
                     self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
@@ -1960,18 +1960,18 @@ class AnthropicStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
+def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> NativeToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
 
     if item.name == 'web_search':
-        return BuiltinToolCallPart(
+        return NativeToolCallPart(
             provider_name=provider_name,
             tool_name=WebSearchTool.kind,
             args=tool_args,
             tool_call_id=item.id,
         )
     elif item.name == 'code_execution':
-        part = BuiltinToolCallPart(
+        part = NativeToolCallPart(
             provider_name=provider_name,
             tool_name=CodeExecutionTool.kind,
             args=tool_args,
@@ -1980,7 +1980,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
         return part
     elif item.name == 'web_fetch':
-        return BuiltinToolCallPart(
+        return NativeToolCallPart(
             provider_name=provider_name,
             tool_name=WebFetchTool.kind,
             args=tool_args,
@@ -2002,8 +2002,8 @@ web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockConte
 )
 
 
-def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> NativeToolReturnPart:
+    return NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=WebSearchTool.kind,
         content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
@@ -2018,8 +2018,8 @@ code_execution_tool_result_content_ta: TypeAdapter[BetaCodeExecutionToolResultBl
 
 def _map_code_execution_tool_result_block(
     item: BetaCodeExecutionToolResultBlock, provider_name: str
-) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+) -> NativeToolReturnPart:
+    return NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
@@ -2027,8 +2027,8 @@ def _map_code_execution_tool_result_block(
     )
 
 
-def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider_name: str) -> NativeToolReturnPart:
+    return NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=WebFetchTool.kind,
         # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
@@ -2037,8 +2037,8 @@ def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider
     )
 
 
-def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
-    return BuiltinToolCallPart(
+def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> NativeToolCallPart:
+    return NativeToolCallPart(
         provider_name=provider_name,
         tool_name=':'.join([MCPServerTool.kind, item.server_name]),
         args={
@@ -2051,9 +2051,9 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
 
 
 def _map_mcp_server_result_block(
-    item: BetaMCPToolResultBlock, call_part: BuiltinToolCallPart | None, provider_name: str
-) -> BuiltinToolReturnPart:
-    return BuiltinToolReturnPart(
+    item: BetaMCPToolResultBlock, call_part: NativeToolCallPart | None, provider_name: str
+) -> NativeToolReturnPart:
+    return NativeToolReturnPart(
         provider_name=provider_name,
         tool_name=call_part.tool_name if call_part else MCPServerTool.kind,
         content=item.model_dump(mode='json', include={'content', 'is_error'}),

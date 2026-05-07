@@ -11,8 +11,8 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -79,7 +79,7 @@ def validate_request_options(
 def create_api_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
-    builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+    builtin_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
@@ -106,7 +106,7 @@ def create_api_app(
     model_infos: list[ModelInfo] = []
 
     # Filter out builtin_tools that are already configured on the agent (they're always included)
-    agent_tool_ids = {t.unique_id for t in agent._cap_builtin_tools if isinstance(t, AbstractBuiltinTool)}  # pyright: ignore[reportPrivateUsage]
+    agent_tool_ids = {t.unique_id for t in agent._cap_native_tools if isinstance(t, AbstractNativeTool)}  # pyright: ignore[reportPrivateUsage]
     ui_builtin_tools = [t for t in (builtin_tools or []) if t.unique_id not in agent_tool_ids]
 
     # Build combined models: agent's model first (if exists), then provided models
@@ -125,7 +125,7 @@ def create_api_app(
             continue
         seen_model_ids.add(model_id)
         display_name = label or model.label
-        model_supported_tools = model.profile.supported_builtin_tools
+        model_supported_tools = model.profile.supported_native_tools
         supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref

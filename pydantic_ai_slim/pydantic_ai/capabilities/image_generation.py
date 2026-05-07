@@ -4,20 +4,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .builtin_or_local import BuiltinOrLocalTool
+from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
 
 
 @dataclass(init=False)
-class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
+class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
     Uses the model's builtin image generation when available. When the model doesn't
@@ -100,7 +100,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     def __init__(
         self,
         *,
-        builtin: ImageGenerationTool
+        native: ImageGenerationTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
         | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
@@ -123,7 +123,7 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
                 'ImageGeneration: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
-        self.builtin = builtin
+        self.native = native
         self.local = local
         self.fallback_model = fallback_model
         self.background = background
@@ -157,15 +157,15 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
             kwargs['aspect_ratio'] = self.aspect_ratio
         return kwargs
 
-    def _default_builtin(self) -> ImageGenerationTool:
+    def _default_native(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
 
-    def _builtin_unique_id(self) -> str:
+    def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
 
-    def _resolved_builtin(self) -> ImageGenerationTool:
+    def _resolved_native(self) -> ImageGenerationTool:
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
-        base = self.builtin if isinstance(self.builtin, ImageGenerationTool) else ImageGenerationTool()
+        base = self.native if isinstance(self.native, ImageGenerationTool) else ImageGenerationTool()
         overrides = self._image_gen_kwargs()
         if not overrides:
             return base
@@ -176,4 +176,4 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
             return None
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
-        return image_generation_tool(model=self.fallback_model, builtin_tool=self._resolved_builtin())
+        return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())

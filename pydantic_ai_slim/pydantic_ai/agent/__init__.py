@@ -48,27 +48,27 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
-from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._tool_search import ToolSearch as ToolSearchCap
-from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
+from ..capabilities.native_tool import NativeTool as NativeToolCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
+from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tool_manager import ParallelExecutionMode, ToolManager
 from ..tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     ArgsValidatorFunc,
-    BuiltinToolFunc,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
+    NativeToolFunc,
     RunContext,
     Tool,
     ToolDefinition,
@@ -103,8 +103,8 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
-    from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..native_tools import AbstractNativeTool
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -113,7 +113,7 @@ __all__ = (
     'AgentModelSettings',
     'AgentRun',
     'AgentRunResult',
-    'BuiltinToolFunc',
+    'NativeToolFunc',
     'CallToolsNode',
     'EndStrategy',
     'EventStreamHandler',
@@ -243,7 +243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] = (),
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
@@ -275,7 +275,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] = (),
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
@@ -305,7 +305,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] = (),
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
@@ -416,7 +416,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
         for builtin_tool in builtin_tools:
-            capabilities.append(BuiltinToolCap(builtin_tool))
+            capabilities.append(NativeToolCap(builtin_tool))
         if prepare_tools is not None:
             capabilities.append(PrepareTools(prepare_tools))
         if prepare_output_tools is not None:
@@ -457,7 +457,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._validation_context = validation_context
 
-        self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
+        self._cap_native_tools = list(self._root_capability.get_native_tools())
 
         self._cap_model_settings = self._root_capability.get_model_settings()
 
@@ -498,7 +498,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentBuiltinTool[AgentDepsT]]]] = ContextVar(
+        self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
             '_override_builtin_tools', default=None
         )
         self._override_instructions: ContextVar[
@@ -534,7 +534,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        builtin_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -568,7 +568,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        builtin_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -601,7 +601,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        builtin_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -734,7 +734,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        builtin_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -769,7 +769,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        builtin_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -803,7 +803,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
-        builtin_tools: Sequence[AgentBuiltinTool[Any]] = (),
+        builtin_tools: Sequence[AgentNativeTool[Any]] = (),
         prepare_tools: ToolsPrepareFunc[Any] | None = None,
         prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
         toolsets: Sequence[AgentToolset[Any]] | None = None,
@@ -942,7 +942,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -965,7 +965,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -988,7 +988,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -1209,18 +1209,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if source_cap is not None:
             cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
-            cap_builtin_tools = list(source_cap.get_builtin_tools())
+            cap_native_tools = list(source_cap.get_native_tools())
             cap_model_settings = source_cap.get_model_settings()
             cap_ts = source_cap.get_toolset()
             cap_toolsets = [cap_ts] if cap_ts is not None else []
         else:
             cap_instructions = None  # use init-time defaults
-            cap_builtin_tools = self._cap_builtin_tools
+            cap_native_tools = self._cap_native_tools
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
         if some_builtin_tools := self._override_builtin_tools.get():
-            cap_builtin_tools = list(some_builtin_tools.value)
+            cap_native_tools = list(some_builtin_tools.value)
 
         # Build model settings resolver using per-run capability
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -1296,7 +1296,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
-            builtin_tools=[*cap_builtin_tools, *(builtin_tools or [])],
+            native_tools=[*cap_native_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
@@ -1682,7 +1682,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        builtin_tools: Sequence[AgentBuiltinTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
+        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
@@ -2624,7 +2624,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         *,
         models: ModelsParam = None,
-        builtin_tools: list[AbstractBuiltinTool] | None = None,
+        builtin_tools: list[AbstractNativeTool] | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
@@ -2667,7 +2667,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Example:
             ```python
             from pydantic_ai import Agent
-            from pydantic_ai.builtin_tools import WebSearchTool
+            from pydantic_ai.native_tools import WebSearchTool
 
             agent = Agent('openai:gpt-5', builtin_tools=[WebSearchTool()])
 

@@ -19,14 +19,6 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import (
-    CodeExecutionTool,
-    ImageGenerationTool,
-    MCPServerTool,
-    WebFetchTool,
-    WebSearchTool,
-    XSearchTool,
-)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -78,6 +70,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import (
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
@@ -4243,7 +4243,7 @@ class TestWrapNodeRunHook:
         assert log[3] == 'outer:after:ModelRequestNode'
 
 
-# --- BuiltinOrLocalTool tests ---
+# --- NativeOrLocalTool tests ---
 
 
 class TestWebSearchCapability:
@@ -4275,7 +4275,7 @@ class TestWebSearchCapability:
                 )
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebSearch()])
         result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
@@ -4283,7 +4283,7 @@ class TestWebSearchCapability:
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -4298,7 +4298,7 @@ class TestWebSearchCapability:
 
     def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
@@ -4414,7 +4414,7 @@ class TestWebFetchCapability:
             request=httpx.Request('GET', 'https://example.com'),
         )
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebFetch()])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
@@ -4433,7 +4433,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -4447,7 +4447,7 @@ class TestWebFetchCapability:
 
     def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
@@ -4482,7 +4482,7 @@ class TestWebFetchCapability:
             request=httpx.Request('GET', 'https://example.com'),
         )
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
@@ -4654,7 +4654,7 @@ class TestImageGenerationCapability:
                 return ModelResponse(parts=[TextPart(content='done')])
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         result = await agent.run('Generate a test image')
         assert result.output == 'done'
@@ -4713,7 +4713,7 @@ class TestImageGenerationCapability:
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
@@ -4736,7 +4736,7 @@ class TestImageGenerationCapability:
                 return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
             return ModelResponse(parts=[TextPart(content='gave up')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate a test image')
         assert result.output == 'gave up'
@@ -4816,7 +4816,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
         inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
             capabilities=[
@@ -4891,7 +4891,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
         inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
         assert result.output == 'Here is the generated image.'
@@ -6122,19 +6122,19 @@ def test_web_fetch_with_constraints():
 def test_web_fetch_unique_id():
     """WebFetch returns the correct builtin unique_id."""
     cap = WebFetch()
-    assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+    assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()
-    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
+    assert cap._native_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
     """WebSearch capability populates builtin tool with all constraint kwargs."""
-    from pydantic_ai.builtin_tools import WebSearchUserLocation
+    from pydantic_ai.native_tools import WebSearchUserLocation
 
     cap = WebSearch(
         search_context_size='high',
@@ -6205,11 +6205,11 @@ def test_mcp_default_builtin():
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_base_no_default_builtin():
-    """BuiltinOrLocalTool base class with builtin=True raises (no _default_builtin)."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+    """NativeOrLocalTool base class with builtin=True raises (no _default_builtin)."""
+    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
 
     with pytest.raises(UserError, match='builtin=True requires a subclass'):
-        BuiltinOrLocalTool()
+        NativeOrLocalTool()
 
 
 def test_builtin_tool_from_spec_no_args():
@@ -6222,10 +6222,10 @@ def test_builtin_tool_from_spec_no_args():
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_no_default_local():
-    """BuiltinOrLocalTool base class _default_local() returns None."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+    """NativeOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
 
-    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    cap = NativeOrLocalTool(builtin=WebSearchTool())
     # Base class _default_local() returns None — no local fallback
     assert cap.local is None
     assert cap.get_toolset() is None
@@ -6233,33 +6233,33 @@ def test_builtin_or_local_no_default_local():
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_with_explicit_builtin():
-    """BuiltinOrLocalTool used directly with an explicit builtin and local tool."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+    """NativeOrLocalTool used directly with an explicit builtin and local tool."""
+    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
 
     def my_local_tool() -> str:
         """A local fallback tool."""
         return 'local result'  # pragma: no cover
 
-    cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
+    cap = NativeOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
     # get_builtin_tools returns the explicit builtin
     assert len(cap.get_builtin_tools()) == 1
     assert isinstance(cap.get_builtin_tools()[0], WebSearchTool)
-    # get_toolset wraps local with prefer_builtin from _builtin_unique_id()
+    # get_toolset wraps local with prefer_native from _native_unique_id()
     toolset = cap.get_toolset()
     assert toolset is not None
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_builtin_unique_id_non_abstract():
-    """_builtin_unique_id() raises when builtin is callable (not AbstractBuiltinTool)."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_builtin_or_local_native_unique_id_non_abstract():
+    """_native_unique_id() raises when builtin is callable (not AbstractNativeTool)."""
+    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
 
-    cap = BuiltinOrLocalTool.__new__(BuiltinOrLocalTool)
+    cap = NativeOrLocalTool.__new__(NativeOrLocalTool)
     cap.builtin = lambda ctx: WebSearchTool()
     cap.local = False
 
     with pytest.raises(UserError, match='cannot derive builtin_unique_id'):
-        cap._builtin_unique_id()  # pyright: ignore[reportPrivateUsage]
+        cap._native_unique_id()  # pyright: ignore[reportPrivateUsage]
 
 
 def test_validate_capability_not_dataclass():

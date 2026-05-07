@@ -10,9 +10,9 @@ from typing_extensions import Self
 
 from pydantic_ai import DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
@@ -58,7 +58,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
         # Starlette parameters
         debug: bool = False,

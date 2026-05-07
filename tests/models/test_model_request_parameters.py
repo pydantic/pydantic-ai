@@ -1,7 +1,8 @@
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai.builtin_tools import (
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.native_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -10,7 +11,6 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import StructuredOutputMode
 
 from .._inline_snapshot import snapshot
@@ -21,7 +21,7 @@ ta = TypeAdapter(ModelRequestParameters)
 def test_model_request_parameters_are_serializable():
     params = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[],
+        native_tools=[],
         output_mode='text',
         allow_text_output=True,
         output_tools=[],
@@ -75,7 +75,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_builtin': None,
+                    'prefer_native': None,
                     'return_schema': None,
                     'include_return_schema': None,
                 }
@@ -144,7 +144,7 @@ def test_model_request_parameters_are_serializable():
                     'metadata': None,
                     'timeout': None,
                     'defer_loading': False,
-                    'prefer_builtin': None,
+                    'prefer_native': None,
                     'return_schema': None,
                     'include_return_schema': None,
                 }

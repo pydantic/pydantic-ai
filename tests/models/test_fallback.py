@@ -25,7 +25,7 @@ from pydantic_ai import (
     ToolDefinition,
     UserPromptPart,
 )
-from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart, InstructionPart
+from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -1216,8 +1216,8 @@ async def test_web_fetch_scenario() -> None:
         # Include multiple items to cover loop iteration branch
         return ModelResponse(
             parts=[
-                BuiltinToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='web_fetch', args={'urls': ['https://example.com']}, tool_call_id='1'),
+                NativeToolReturnPart(
                     tool_name='web_fetch',
                     tool_call_id='1',
                     content=[
@@ -1237,7 +1237,7 @@ async def test_web_fetch_scenario() -> None:
         url_retrieval_status: str
 
     def web_fetch_failed(response: ModelResponse) -> bool:
-        for call, result in response.builtin_tool_calls:  # pragma: no branch
+        for call, result in response.native_tool_calls:  # pragma: no branch
             if call.tool_name != 'web_fetch':
                 continue  # pragma: lax no cover
             if not isinstance(result.content, list):

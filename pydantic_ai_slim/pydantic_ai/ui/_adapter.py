@@ -24,7 +24,6 @@ from typing_extensions import Self, TypeVar
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BaseToolCallPart,
@@ -39,6 +38,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
@@ -286,7 +286,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           the object using the server-side IAM role, so they should only be accepted
           from trusted frontends.
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
-          [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] entries at
+          [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
           the end of the history that don't have a matching entry in
           `deferred_tool_results`. Tool calls are produced by the model on the server
           side, so an unresolved tool call at the end of client-supplied history doesn't
@@ -473,7 +473,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractNativeTool] | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -561,7 +561,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
@@ -625,7 +625,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
