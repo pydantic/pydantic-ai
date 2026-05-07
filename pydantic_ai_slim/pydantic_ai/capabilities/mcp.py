@@ -53,7 +53,8 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         *,
         builtin: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
-        | bool = True,
+        | bool
+        | None = None,
         local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
@@ -61,6 +62,21 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         description: str | None = None,
     ) -> None:
+        # In v2, MCP defaults will flip from "builtin if supported else local" to "local only".
+        # Warn when both kwargs are at their defaults (the only call-site that changes behavior).
+        if builtin is None and local is None:
+            import warnings
+
+            warnings.warn(
+                'MCP() defaults will change in v2: it will run locally via FastMCP instead of '
+                "preferring the model's built-in MCP support. Pass `builtin=True` to keep the "
+                'current builtin-preferred behavior, or `builtin=True, local=False` for builtin-only.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if builtin is None:
+            builtin = True
+
         self.url = url
         self.builtin = builtin
         self.local = local

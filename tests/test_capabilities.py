@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -1337,7 +1338,7 @@ Supported by:
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
                         'builtin': {
-                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}, {'type': 'null'}],
                             'title': 'Builtin',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
@@ -6201,6 +6202,56 @@ def test_mcp_default_builtin():
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
     assert tool.id == 'my-mcp'
+
+
+def test_web_search_v2_deprecation_warning():
+    """WebSearch() with duckduckgo installed warns about v2 default change."""
+    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+    with pytest.warns(DeprecationWarning, match='WebSearch will stop auto-selecting'):
+        WebSearch()
+
+
+def test_web_search_v2_deprecation_silenced_with_explicit_local():
+    """WebSearch(local=False) does not emit the v2 deprecation warning."""
+
+    def noop_search(q: str) -> str:
+        return q  # pragma: no cover
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        WebSearch(local=False)
+        WebSearch(builtin=False, local=noop_search)
+
+
+def test_web_fetch_v2_deprecation_warning():
+    """WebFetch() with web-fetch extra installed warns about v2 default change."""
+    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    with pytest.warns(DeprecationWarning, match='WebFetch will stop auto-selecting'):
+        WebFetch()
+
+
+def test_web_fetch_v2_deprecation_silenced_with_explicit_local():
+    """WebFetch(local=False) does not emit the v2 deprecation warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        WebFetch(local=False)
+
+
+def test_mcp_v2_deprecation_warning():
+    """MCP(url=...) with no explicit builtin/local warns about v2 default change."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with pytest.warns(DeprecationWarning, match=r'MCP\(\) defaults will change'):
+        MCP(url='http://example.com/mcp')
+
+
+def test_mcp_v2_deprecation_silenced_with_explicit_kwargs():
+    """MCP(url=..., builtin=...) or MCP(url=..., local=...) does not emit the v2 deprecation warning."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        MCP(url='http://example.com/mcp', builtin=True)
+        MCP(url='http://example.com/mcp', builtin=False)
+        MCP(url='http://example.com/mcp', local=False)
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')

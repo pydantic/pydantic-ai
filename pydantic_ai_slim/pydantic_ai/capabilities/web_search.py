@@ -74,13 +74,11 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
         return WebSearchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        import warnings
+
         try:
             from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
-
-            return duckduckgo_search_tool()
         except ImportError:
-            import warnings
-
             warnings.warn(
                 'WebSearch local fallback requires the `duckduckgo` optional group — '
                 '`pip install "pydantic-ai-slim[duckduckgo]"`. '
@@ -89,6 +87,15 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
                 stacklevel=2,
             )
             return None
+
+        warnings.warn(
+            'WebSearch will stop auto-selecting DuckDuckGo based on package availability in v2. '
+            'To keep this fallback, pass `local=duckduckgo_search_tool()` explicitly. '
+            'To disable the fallback, pass `local=False`.',
+            DeprecationWarning,
+            stacklevel=4,
+        )
+        return duckduckgo_search_tool()
 
     def _requires_builtin(self) -> bool:
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
