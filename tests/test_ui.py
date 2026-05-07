@@ -628,6 +628,38 @@ async def test_run_stream_output_tool_error():
     )
 
 
+async def test_run_stream_output_tool_validation_retry_dedupes_legacy_events():
+    """Validation-failure paths emit dual `Output*` + legacy `Function*` events; the UI layer dedupes by `tool_call_id`."""
+
+    class OutputType(BaseModel):
+        value: str
+
+    call_count = 0
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: invalid args → validation failure → dual emission (Output* + legacy Function*)
+            yield {0: DeltaToolCall(name='final_result', json_args='{"bad": "x"}', tool_call_id='out_1')}
+        else:
+            # Retry: valid args → success path emits only Output*
+            yield {0: DeltaToolCall(name='final_result', json_args='{"value": "ok"}', tool_call_id='out_2')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=OutputType)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    # The first (failed) tool call should produce ONE `<output-tool-result>`, not two — the legacy
+    # `FunctionToolResultEvent` for `out_1` is dedupped at the UI layer.
+    assert sum(1 for e in events if "<output-tool-result name='final_result'>" in e) == 2
+    assert sum(1 for e in events if "<function-tool-result name='final_result'>" in e) == 0
+
+
 async def test_run_stream_on_complete_error():
     agent = Agent(model=TestModel())
 
