@@ -6204,6 +6204,9 @@ def test_mcp_default_builtin():
     assert tool.id == 'my-mcp'
 
 
+@pytest.mark.filterwarnings(
+    'ignore::RuntimeWarning'
+)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning on import
 def test_web_search_v2_deprecation_warning():
     """WebSearch() with duckduckgo installed warns about v2 default change."""
     pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
