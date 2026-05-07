@@ -7525,27 +7525,27 @@ class TestSdkVersion:
 
 
 @pytest.mark.parametrize(
-    'content,expected',
+    ('case_id', 'expected'),
     [
         pytest.param(
-            ['hello', BinaryContent(data=b'x', media_type='image/png')],
-            snapshot([{'return_value': 'hello'}, '[File: image/png]']),
+            'string_with_files',
+            snapshot([{'return_value': 'hello'}, '[File: image/jpeg]']),
             id='string_with_files',
         ),
         pytest.param(
-            BinaryContent(data=b'x', media_type='audio/wav'),
-            snapshot([{}, '[File: audio/wav]']),
+            'empty_with_files',
+            snapshot([{}, '[File: audio/mpeg]']),
             id='empty_with_files',
         ),
         pytest.param(
-            [[1, 2], BinaryContent(data=b'x', media_type='image/png')],
-            snapshot([{'return_value': [1, 2]}, '[File: image/png]']),
+            'list_with_files',
+            snapshot([{'return_value': [1, 2]}, '[File: image/jpeg]']),
             id='list_with_files',
         ),
-        pytest.param('', snapshot(''), id='empty_no_files'),
+        pytest.param('empty_no_files', snapshot(''), id='empty_no_files'),
     ],
 )
-def test_tool_return_output_edge_cases(content: ToolReturnContent, expected: Any):
+def test_tool_return_output_edge_cases(case_id: str, expected: Any, tiny_image: BinaryImage, tiny_audio: BinaryContent):
     """`_tool_return_with_files` produces text-stream-friendly output for streaming chunks.
 
     Multimodal cases collapse to `[model_response_object_dict, '[File: <media_type>]', ...]`;
@@ -7553,7 +7553,13 @@ def test_tool_return_output_edge_cases(content: ToolReturnContent, expected: Any
     """
     from pydantic_ai.ui.vercel_ai._event_stream import _tool_return_with_files  # pyright: ignore[reportPrivateUsage]
 
-    part = ToolReturnPart(tool_name='t', content=content, tool_call_id='c')
+    contents: dict[str, ToolReturnContent] = {
+        'string_with_files': ['hello', tiny_image],
+        'empty_with_files': tiny_audio,
+        'list_with_files': [[1, 2], tiny_image],
+        'empty_no_files': '',
+    }
+    part = ToolReturnPart(tool_name='t', content=contents[case_id], tool_call_id='c')
     assert _tool_return_with_files(part) == expected
 
 
