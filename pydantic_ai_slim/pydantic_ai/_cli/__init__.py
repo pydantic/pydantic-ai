@@ -1,15 +1,14 @@
 from __future__ import annotations as _annotations
 
 import argparse
-import asyncio
 import sys
-from asyncio import CancelledError
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
@@ -94,14 +93,24 @@ _import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
 
 
 def load_agent(agent_path: str) -> Agent[Any, Any] | None:
-    """Load an agent from module path in uvicorn style.
+    """Load an agent from a module path or a YAML/JSON spec file.
+
+    Supports two formats:
+    - Module path in uvicorn style: `'module:variable'`, e.g. `'test_agent:my_agent'`
+    - File path to a YAML or JSON agent spec: e.g. `'agent.yml'`, `'agent.yaml'`, `'agent.json'`
 
     Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+        agent_path: Module path or file path to load the agent from.
 
     Returns:
-        Agent instance or None if loading fails
+        Agent instance or None if loading fails.
     """
+    path = Path(agent_path)
+    if path.suffix in ('.yaml', '.yml', '.json'):  # pragma: no cover
+        if not path.is_file():
+            return None
+        return Agent.from_file(path)
+
     sys.path.insert(0, str(Path.cwd()))
     try:
         obj = _import_string_adapter.validate_python(agent_path)
@@ -152,7 +161,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     parser.add_argument(
         '--agent',
         '-a',
-        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        help='Agent to serve: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml". '
         'If omitted, creates a generic agent with the first specified model as default.',
     )
     model_arg = parser.add_argument(
@@ -239,7 +248,7 @@ subcommands:
     parser.add_argument(
         '-a',
         '--agent',
-        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+        help='Custom Agent to use: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml"',
     )
     parser.add_argument(
         '-t',
@@ -308,13 +317,13 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
+            anyio.run(ask_agent, agent, args.prompt, stream, console, code_theme)
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        return anyio.run(run_chat, stream, agent, console, code_theme, prog_name)
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -359,7 +368,7 @@ async def run_chat(
                 messages = await ask_agent(
                     agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
                 )
-            except CancelledError:  # pragma: no cover
+            except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
                 cause = getattr(e, '__cause__', None)

@@ -14,6 +14,7 @@ nav:
   - install.md
   - help.md
   - troubleshooting.md
+  - Coding Agent Skills: coding-agent-skills.md
   - Pydantic AI Gateway: gateway.md
 
   - Documentation:
@@ -22,6 +23,9 @@ nav:
           - dependencies.md
           - tools.md
           - output.md
+          - capabilities.md
+          - Hooks: hooks.md
+          - Agent Specs: agent-spec.md
           - message-history.md
           - direct.md
       - Models & Providers:
@@ -36,6 +40,7 @@ nav:
           - models/groq.md
           - models/huggingface.md
           - models/mistral.md
+          - models/ollama.md
           - models/openrouter.md
           - models/outlines.md
       - Tools & Toolsets:
@@ -55,10 +60,15 @@ nav:
           - mcp/client.md
           - mcp/fastmcp-client.md
           - mcp/server.md
+      - Extensibility: extensibility.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Web Chat UI: web.md
       - Embeddings: embeddings.md
       - Testing: testing.md
+
+  - Pydantic AI Harness:
+      - Overview: harness/overview.md
+      - Code Mode: harness/code-mode.md
 
   - Pydantic Evals:
       - Overview: evals.md
@@ -69,9 +79,11 @@ nav:
           - Overview: evals/evaluators/overview.md
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
+          - Third-Party Integrations: evals/evaluators/framework-integrations.md
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+      - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
           - Dataset Management: evals/how-to/dataset-management.md
@@ -80,6 +92,7 @@ nav:
           - Multi-Run Evaluation: evals/how-to/multi-run.md
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md
+          - Case Lifecycle Hooks: evals/how-to/lifecycle.md
       - Examples:
           - Simple Validation: evals/examples/simple-validation.md
 
@@ -99,6 +112,7 @@ nav:
           - Temporal: durable_execution/temporal.md
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
+          - Restate: durable_execution/restate.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
@@ -136,6 +150,7 @@ nav:
           - api/ag_ui.md
           - api/agent.md
           - api/builtin_tools.md
+          - api/capabilities.md
           - api/common_tools.md
           - api/concurrency.md
           - api/direct.md
@@ -144,6 +159,7 @@ nav:
           - api/exceptions.md
           - api/ext.md
           - api/format_prompt.md
+          - api/function_signature.md
           - api/mcp.md
           - api/messages.md
           - api/models/anthropic.md
@@ -160,6 +176,7 @@ nav:
           - api/models/instrumented.md
           - api/models/mcp-sampling.md
           - api/models/mistral.md
+          - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
           - api/models/outlines.md
@@ -181,6 +198,9 @@ nav:
       - pydantic_evals:
           - api/pydantic_evals/dataset.md
           - api/pydantic_evals/evaluators.md
+          - api/pydantic_evals/lifecycle.md
+          - api/pydantic_evals/online.md
+          - api/pydantic_evals/online_capability.md
           - api/pydantic_evals/reporting.md
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
@@ -367,10 +387,13 @@ plugins:
           - install.md
           - help.md
           - troubleshooting.md
+          - coding-agent-skills.md
         Concepts documentation:
           - a2a.md
           - agent.md
+          - agent-spec.md
           - builtin-tools.md
+          - capabilities.md
           - dependencies.md
           - deferred-tools.md
           - direct.md
@@ -382,6 +405,8 @@ plugins:
           - output.md
           - retries.md
           - message-history.md
+          - extensibility.md
+          - hooks.md
           - multi-agent-applications.md
           - thinking.md
           - third-party-tools.md

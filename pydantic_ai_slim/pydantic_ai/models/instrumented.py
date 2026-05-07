@@ -21,11 +21,12 @@ from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_trac
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_agent_run_baggage_attributes
 
 from .. import _otel_messages
 from .._run_context import RunContext
 from ..messages import (
+    BaseToolCallPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -92,7 +93,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = False
 
     def __init__(
@@ -102,7 +103,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[1, 2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         logger_provider: LoggerProvider | None = None,
         use_aggregated_usage_attribute_names: bool = False,
@@ -132,6 +133,9 @@ class InstrumentationSettings:
                     URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
                     Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+                Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
+                    no longer record an exception event or set the span status to ERROR — the span is left
+                    as UNSET, since deferrals are control flow, not errors.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
@@ -263,7 +267,7 @@ class InstrumentationSettings:
     ):
         if self.version == 1:
             events = self.messages_to_otel_events(input_messages, parameters)
-            for event in self.messages_to_otel_events([response], parameters):
+            for event in self.messages_to_otel_events([response]):
                 events.append(
                     LogRecord(
                         attributes={'event.name': 'gen_ai.choice'},
@@ -348,14 +352,35 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-            if price_calculation:
-                cost = float(getattr(price_calculation, f'{typ}_price'))
-                self.cost_histogram.record(cost, token_attributes)
+        if price_calculation:
+            cost = float(price_calculation.total_price)
+            self.cost_histogram.record(cost, attributes)
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+
+
+def _annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
+    """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
+
+    This allows tool definition metadata (e.g. code language hints set by the code-mode toolset)
+    to flow through to OTel events on both the model request span and the agent run span.
+    """
+    tool_defs = parameters.tool_defs
+    if not tool_defs:
+        return
+    for part in response.parts:
+        if isinstance(part, BaseToolCallPart) and (tool_def := tool_defs.get(part.tool_name)):
+            if tool_def.metadata:
+                otel_metadata: _otel_messages.ToolCallPartOtelMetadata = {}
+                if code_arg_name := tool_def.metadata.get('code_arg_name'):
+                    otel_metadata['code_arg_name'] = code_arg_name
+                if code_arg_language := tool_def.metadata.get('code_arg_language'):
+                    otel_metadata['code_arg_language'] = code_arg_language
+                if otel_metadata:
+                    part.otel_metadata = otel_metadata
 
 
 def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
@@ -411,6 +436,7 @@ class InstrumentedModel(WrapperModel):
         )
         with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+            _annotate_tool_call_otel_metadata(response, prepared_parameters)
             finish(response, prepared_parameters)
             return response
 
@@ -435,7 +461,9 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get(), prepared_parameters)
+                    response = response_stream.get()
+                    _annotate_tool_call_otel_metadata(response, prepared_parameters)
+                    finish(response, prepared_parameters)
 
     @contextmanager
     def _instrument(
@@ -453,6 +481,7 @@ class InstrumentedModel(WrapperModel):
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
             **self.model_request_parameters_attributes(model_request_parameters),
+            **get_agent_run_baggage_attributes(),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
@@ -498,15 +527,6 @@ class InstrumentedModel(WrapperModel):
                     nonlocal record_metrics
                     record_metrics = _record_metrics
 
-                    if not span.is_recording():
-                        return
-
-                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
-
-                    attributes_to_set = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
                     try:
                         price_calculation = response.cost()
                     except LookupError:
@@ -516,7 +536,18 @@ class InstrumentedModel(WrapperModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
-                    else:
+
+                    if not span.is_recording():
+                        return
+
+                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
+
+                    attributes_to_set = {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+
+                    if price_calculation:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     if response.provider_response_id is not None:

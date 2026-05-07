@@ -87,6 +87,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -98,6 +99,7 @@ print(dice_result.all_messages())
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -111,6 +113,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -122,6 +125,7 @@ print(dice_result.all_messages())
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
     ModelRequest(
         parts=[
@@ -135,6 +139,7 @@ print(dice_result.all_messages())
         timestamp=datetime.datetime(...),
         instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
         run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
         parts=[
@@ -146,6 +151,7 @@ print(dice_result.all_messages())
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
+        conversation_id='...',
     ),
 ]
 """

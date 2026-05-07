@@ -56,6 +56,10 @@ EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covar
 T = TypeVar('T')
 
 
+# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
+# without shifting positional-argument bindings, and consider reordering the existing
+# fields into a more logical grouping (e.g. identity → value → source metadata) while
+# we're free to rearrange.
 @dataclass
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
@@ -67,12 +71,17 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         value: The scalar result of the evaluation.
         reason: An optional explanation of the evaluation result.
         source: The spec of the evaluator that produced this result.
+        evaluator_version: Optional version tag for the evaluator that produced this result
+            (e.g. `'v2'`). Sourced automatically from the `evaluator_version` class attribute
+            on the `Evaluator` subclass. Lets online-evaluation dashboards filter out results
+            from retired versions without deleting historical rows.
     """
 
     name: str
     value: EvaluationScalarT
     reason: str | None
     source: EvaluatorSpec
+    evaluator_version: str | None = None
 
     def downcast(self, *value_types: type[T]) -> EvaluationResult[T] | None:
         """Attempt to downcast this result to a more specific type.
@@ -94,6 +103,10 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
+# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
+# without shifting positional-argument bindings, and consider reordering the existing
+# fields into a more logical grouping (e.g. identity → error detail → source metadata)
+# while we're free to rearrange.
 @dataclass
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
@@ -102,6 +115,13 @@ class EvaluatorFailure:
     error_message: str
     error_stacktrace: str
     source: EvaluatorSpec
+    evaluator_version: str | None = None
+    """Optional version tag for the evaluator that raised (e.g. `'v2'`). Sourced automatically
+    from the `evaluator_version` class attribute on the `Evaluator` subclass."""
+    error_type: str | None = None
+    """Class name of the exception that caused the failure (e.g. `'ValueError'`). Populated
+    automatically when `EvaluatorFailure` is constructed from a caught exception; surfaced
+    as the `error.type` attribute on emitted OTel events."""
 
 
 # Evaluators are contravariant in all of its parameters.
@@ -135,6 +155,30 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return ctx.output == ctx.expected_output
     ```
+
+    Optional class-level attributes:
+
+    - `evaluation_name`: override the default name used in reports for this evaluator's output
+      (only applies when `evaluate` returns a scalar or `EvaluationReason` — mapping outputs
+      always use their own keys).
+    - `evaluator_version`: an optional version tag (e.g. `'v2'`) describing the evaluator's
+      behavior. Propagated to online-evaluation sinks so dashboards can filter out results
+      produced by retired versions without deleting rows. Applies to every result the
+      evaluator emits. Bump whenever behavior changes in a way that invalidates prior scores.
+
+    Example:
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+    @dataclass
+    class LLMJudge(Evaluator):
+        evaluator_version = 'v2'  # bumped after prompt rewrite
+
+        def evaluate(self, ctx: EvaluatorContext) -> bool: ...
+    ```
     """
 
     @classmethod
@@ -154,6 +198,8 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
+        # TODO(v2): declare `evaluation_name: ClassVar[str | None] = None` on the
+        # base (alongside `evaluator_version`) and read it directly.
         evaluation_name = getattr(self, 'evaluation_name', None)
         if isinstance(evaluation_name, str):
             # If the evaluator has an attribute `name` of type string, use that

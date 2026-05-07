@@ -8,6 +8,7 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
+import dataclasses
 import queue
 import threading
 from collections.abc import Iterator, Sequence
@@ -31,6 +32,27 @@ __all__ = (
 )
 
 STREAM_INITIALIZATION_TIMEOUT = 30
+
+
+def _ensure_instruction_parts(
+    msgs: Sequence[messages.ModelMessage],
+    model_request_parameters: models.ModelRequestParameters,
+) -> models.ModelRequestParameters:
+    """Populate instruction_parts from message history if not already set.
+
+    When using the direct API, users set `instructions` on `ModelRequest` but may not set
+    `instruction_parts` on `ModelRequestParameters`. This bridges the gap so models that
+    read `instruction_parts` directly still see the instructions.
+    """
+    if model_request_parameters.instruction_parts is not None:
+        return model_request_parameters
+    for message in reversed(msgs):
+        if isinstance(message, messages.ModelRequest) and message.instructions is not None:
+            return dataclasses.replace(
+                model_request_parameters,
+                instruction_parts=[messages.InstructionPart(content=message.instructions)],
+            )
+    return model_request_parameters
 
 
 async def model_request(
@@ -78,10 +100,11 @@ async def model_request(
         The model response and token usage associated with the request.
     """
     model_instance = _prepare_model(model, instrument)
+    mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return await model_instance.request(
         list(messages),
         model_settings,
-        model_request_parameters or models.ModelRequestParameters(),
+        mrp,
     )
 
 
@@ -196,10 +219,11 @@ def model_request_stream(
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
     """
     model_instance = _prepare_model(model, instrument)
+    mrp = _ensure_instruction_parts(messages, model_request_parameters or models.ModelRequestParameters())
     return model_instance.request_stream(
         list(messages),
         model_settings,
-        model_request_parameters or models.ModelRequestParameters(),
+        mrp,
     )
 
 

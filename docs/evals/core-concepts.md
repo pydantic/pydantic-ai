@@ -48,7 +48,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance
 
 dataset = Dataset(
-    name='my_eval_suite',  # Optional name
+    name='my_eval_suite',
     cases=[
         Case(inputs='test input', expected_output='test output'),
     ],
@@ -76,6 +76,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected, IsInstance
 
 dataset = Dataset(
+    name='case_level_evaluators',
     cases=[
         Case(
             name='special_case',
@@ -107,6 +108,7 @@ from pydantic_evals import Case, Dataset
 
 # Define your dataset (static definition)
 dataset = Dataset(
+    name='uppercase_experiment',
     cases=[
         Case(inputs='hello', expected_output='HELLO'),
         Case(inputs='world', expected_output='WORLD'),
@@ -146,6 +148,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected
 
 dataset = Dataset(
+    name='comparison_test',
     cases=[
         Case(inputs='hello', expected_output='HELLO'),
     ],
@@ -376,6 +379,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EqualsExpected
 
 dataset = Dataset(
+    name='report_example',
     cases=[Case(inputs='hello', expected_output='HELLO')],
     evaluators=[EqualsExpected()],
 )

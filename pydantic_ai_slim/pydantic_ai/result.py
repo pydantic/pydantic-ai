@@ -17,18 +17,21 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    run_image_process_hooks,
+    run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
     DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .tool_manager import ToolManager
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
 __all__ = (
@@ -53,6 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
+    _root_capability: AbstractCapability[AgentDepsT]
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -78,7 +82,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             try:
                 yield await self.validate_response_output(response, allow_partial=True)
-            except ValidationError:
+            except (ValidationError, exceptions.ModelRetry):
                 pass
 
         if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
@@ -143,6 +147,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return self._run_ctx.run_id
 
     @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        assert self._run_ctx.conversation_id is not None
+        return self._run_ctx.conversation_id
+
+    @property
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         if self._metadata_getter is not None:
@@ -196,51 +206,76 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         output_tool_name = final_result_event.tool_name
 
-        if self._output_schema.toolset and output_tool_name is not None:
-            tool_call = next(
-                (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                None,
-            )
-            if tool_call is None:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+        try:
+            if self._output_schema.toolset and output_tool_name is not None:
+                tool_call = next(
+                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
+                    None,
                 )
-            return await self._tool_manager.handle_call(
-                tool_call, allow_partial=allow_partial, wrap_validation_errors=False
-            )
-        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
-            if not self._output_schema.allows_deferred_tools:
-                raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                if tool_call is None:
+                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                    )
+                return await self._tool_manager.handle_output_tool_call(
+                    tool_call,
+                    schema=self._output_schema,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
                 )
-            return cast(OutputDataT, deferred_tool_requests)
-        elif self._output_schema.allows_image and message.images:
-            return cast(OutputDataT, message.images[0])
-        elif text_processor := self._output_schema.text_processor:
-            text = ''
-            for part in message.parts:
-                if isinstance(part, _messages.TextPart):
-                    text += part.content
-                elif isinstance(part, _messages.BuiltinToolCallPart):
-                    # Text parts before a built-in tool call are essentially thoughts,
-                    # not part of the final result output, so we reset the accumulated text
-                    text = ''
+            elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
+                if not self._output_schema.allows_deferred_tools:
+                    raise exceptions.UserError(
+                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                    )
+                return cast(OutputDataT, deferred_tool_requests)
+            elif self._output_schema.allows_image and message.images:
+                return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
+            elif text_processor := self._output_schema.text_processor:
+                text = ''
+                for part in message.parts:
+                    if isinstance(part, _messages.TextPart):
+                        text += part.content
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
 
-            result_data = await text_processor.process(
-                text,
-                run_context=replace(self._run_ctx, partial_output=allow_partial),
-                allow_partial=allow_partial,
-                wrap_validation_errors=False,
-            )
-            for validator in self._output_validators:
-                result_data = await validator.validate(
-                    result_data, replace(self._run_ctx, partial_output=allow_partial)
+                run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+                return await run_output_with_hooks(
+                    text_processor,
+                    text=text,
+                    run_context=run_ctx,
+                    capability=self._root_capability,
+                    schema=self._output_schema,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=False,
+                    output_validators=self._output_validators,
                 )
-            return result_data
-        else:
-            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                'Invalid response, unable to process text output'
-            )
+            else:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    'Invalid response, unable to process text output'
+                )
+        except (ValidationError, exceptions.ModelRetry) as e:
+            if not allow_partial:
+                raise exceptions.UnexpectedModelBehavior(
+                    'Output validation failed during streaming, and retries are not supported in `run_stream()`'
+                ) from e
+            raise
+
+    async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:
+        """Run process hooks (including output validators) for image output."""
+        run_ctx = replace(self._run_ctx, partial_output=allow_partial)
+        return cast(
+            OutputDataT,
+            await run_image_process_hooks(
+                image,
+                capability=self._root_capability,
+                run_context=run_ctx,
+                schema=self._output_schema,
+                wrap_validation_errors=False,
+                output_validators=self._output_validators,
+            ),
+        )
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
@@ -401,9 +436,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         )
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -592,6 +627,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        if self._run_result is not None:
+            return self._run_result.conversation_id
+        elif self._stream_response is not None:
+            return self._stream_response.conversation_id
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
+
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -616,6 +661,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if message is not None:
             if self._stream_response:  # pragma: no branch
                 message.run_id = self._stream_response.run_id
+                message.conversation_id = self._stream_response.conversation_id
             self._all_messages.append(message)
         if self._on_complete is not None:
             await self._on_complete()
@@ -659,9 +705,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.all_messages_json(output_tool_return_content=output_tool_return_content)
 
     def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
-        """Return new messages associated with this run.
+        """Return the messages produced during this run.
 
-        Messages from older runs are excluded.
+        Messages provided via `message_history` and messages from older runs are excluded.
 
         Args:
             output_tool_return_content: The return content of the tool call to set in the last message.
@@ -758,6 +804,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._streamed_run_result.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._streamed_run_result.conversation_id
 
     @property
     def metadata(self) -> dict[str, Any] | None:

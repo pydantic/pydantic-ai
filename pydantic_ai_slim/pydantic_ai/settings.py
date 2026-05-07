@@ -1,7 +1,59 @@
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
+"""The string effort levels for thinking/reasoning configuration."""
+
+ThinkingLevel: TypeAlias = bool | ThinkingEffort
+"""Type alias for thinking/reasoning configuration values.
+
+- `True`: Enable thinking with the provider's default effort.
+- `False`: Disable thinking (silently ignored on always-on models).
+- `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+
+Not all providers support all levels. When a level is not natively supported,
+it maps to the closest available value (e.g. `'xhigh'` -> `'high'` on providers
+that don't support it, `'minimal'` -> `'low'` on providers without a minimal level).
+"""
+
+ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
+"""Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
+
+Values:
+
+- `'auto'`: Let the provider decide — typically means "use a higher tier (scale credits, priority capacity)
+  when available, otherwise standard." On providers without a server-side auto concept the field is
+  omitted so the provider's natural default applies.
+- `'default'`: Explicitly request the provider's standard tier — opts out of any server-side
+  auto-promotion to premium tiers.
+- `'flex'`: Lower-cost, latency-tolerant tier where the provider offers one. Silently ignored on
+  providers that don't (e.g. Anthropic).
+- `'priority'`: Higher-priority / lower-latency tier where the provider offers one. Silently ignored
+  on providers that don't.
+
+Per-provider mapping:
+
+| value | OpenAI | Anthropic | Bedrock | Google (Gemini API) | Google (Vertex AI) |
+|---|---|---|---|---|---|
+| `'auto'` | `'auto'` | `'auto'` | _(omitted)_ | _(omitted)_ | _no headers (PT then on-demand)_ |
+| `'default'` | `'default'` | `'standard_only'` | `{'type': 'default'}` | `'standard'` | _no headers (PT then on-demand)_ |
+| `'flex'` | `'flex'` | _(omitted)_ | `{'type': 'flex'}` | `'flex'` | header `Shared-Request-Type: flex` (PT then Flex PayGo) |
+| `'priority'` | `'priority'` | _(omitted)_ | `{'type': 'priority'}` | `'priority'` | header `Shared-Request-Type: priority` (PT then Priority PayGo) |
+
+On Vertex AI the unified field maps only to safe PT-with-spillover variants so customers with
+Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
+[`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier]
+with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
+(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Vertex's PT routing tiers) are reachable
+only through the per-provider field.
+
+Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
+`google_vertex_service_tier`) always take precedence over this unified field when set.
+"""
 
 
 class ModelSettings(TypedDict, total=False):
@@ -169,6 +221,47 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Groq
     * xAI
+    """
+
+    thinking: ThinkingLevel
+    """Enable or configure thinking/reasoning for the model.
+
+    - `True`: Enable thinking with the provider's default effort level.
+    - `False`: Disable thinking (silently ignored if the model always thinks).
+    - `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`: Enable thinking at a specific effort level.
+
+    When omitted, the model uses its default behavior (which may include thinking
+    for reasoning models).
+
+    Provider-specific thinking settings (e.g., `anthropic_thinking`,
+    `openai_reasoning_effort`) take precedence over this unified field.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI
+    * Gemini
+    * Groq
+    * Bedrock
+    * OpenRouter
+    * Cerebras
+    * xAI
+    """
+
+    service_tier: ServiceTier
+    """The cross-provider service tier to use for the model request.
+
+    See [`ServiceTier`][pydantic_ai.settings.ServiceTier] for the value semantics and
+    the per-provider mapping table. Provider-specific settings (`openai_service_tier`,
+    `anthropic_service_tier`, `bedrock_service_tier`, `google_vertex_service_tier`)
+    take precedence over this unified field when set.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic
+    * Bedrock
+    * Google (Gemini API and Vertex AI)
     """
 
     extra_body: object

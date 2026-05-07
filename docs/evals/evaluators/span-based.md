@@ -55,6 +55,7 @@ from pydantic_evals.evaluators import HasMatchingSpan
 logfire.configure(send_to_logfire='if-token-present')
 
 dataset = Dataset(
+    name='span_basic',
     cases=[Case(inputs='test')],
     evaluators=[
         # Check that database was queried
@@ -213,6 +214,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import HasMatchingSpan
 
 dataset = Dataset(
+    name='tool_verification',
     cases=[Case(inputs='test')],
     evaluators=[
         # Must call search tool
