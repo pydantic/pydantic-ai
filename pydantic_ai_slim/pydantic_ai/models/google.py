@@ -542,7 +542,7 @@ class GoogleModel(Model[Client]):
             yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
         finally:
             aclose = getattr(response, 'aclose', None)
-            if aclose is not None:
+            if aclose is not None:  # pragma: no branch
                 await aclose()
 
     def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:

@@ -788,7 +788,7 @@ class XaiModel(Model[AsyncClient]):
             yield await self._process_streamed_response(response_stream, model_request_parameters)
         finally:
             aclose = getattr(response_stream, 'aclose', None)
-            if aclose is not None:
+            if aclose is not None:  # pragma: no branch
                 await aclose()
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:

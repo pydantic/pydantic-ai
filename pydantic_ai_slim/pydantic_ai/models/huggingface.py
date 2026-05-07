@@ -221,7 +221,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             yield await self._process_streamed_response(response, model_request_parameters)
         finally:
             aclose = getattr(response, 'aclose', None)
-            if aclose is not None:
+            if aclose is not None:  # pragma: no branch
                 await aclose()
 
     @overload

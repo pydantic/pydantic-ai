@@ -147,10 +147,10 @@ async def test_peekable_async_stream(peek_first: bool):
 async def test_peekable_async_stream_aclose_before_iteration():
     class AsyncIteratorNoClose:
         def __aiter__(self) -> AsyncIteratorNoClose:
-            return self
+            return self  # pragma: no cover
 
         async def __anext__(self) -> int:
-            raise StopAsyncIteration
+            raise StopAsyncIteration  # pragma: no cover
 
     peekable_async_stream: PeekableAsyncStream[int, AsyncIteratorNoClose] = PeekableAsyncStream(AsyncIteratorNoClose())
     await peekable_async_stream.aclose()
