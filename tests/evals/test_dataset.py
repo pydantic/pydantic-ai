@@ -850,6 +850,30 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
     )
 
 
+@needs_logfire
+async def test_retry_metric_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Spans marked with `pydantic_ai.tool.retry` are counted into `metrics['retries']`.
+
+    The pydantic-ai tool wrapper sets this attribute on a tool span that ended
+    in a `ToolRetryError`. The dataset's metric extractor surfaces it so
+    evaluators can read `ctx.metrics['retries']` (or chart the trend over time).
+    """
+
+    async def my_task(inputs: TaskInput) -> TaskOutput:
+        with logfire.span('running tool', **{'pydantic_ai.tool.retry': True}):  # type: ignore
+            pass
+        with logfire.span('running tool', **{'pydantic_ai.tool.retry': True}):  # type: ignore
+            pass
+        # A non-retry tool span - should not be counted.
+        with logfire.span('running tool', **{'gen_ai.tool.name': 'search'}):  # type: ignore
+            pass
+        return TaskOutput(answer=f'answer to {inputs.query}')
+
+    report = await example_dataset.evaluate(my_task)
+    for case in report.cases:
+        assert case.metrics.get('retries') == 2, case
+
+
 async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
     """Test serializing a dataset to YAML."""
     yaml_path = tmp_path / 'test_cases.yaml'

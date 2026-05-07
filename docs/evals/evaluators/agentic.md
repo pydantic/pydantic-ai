@@ -28,6 +28,7 @@ Agentic evaluators answer a class of "did the agent do the right thing?" questio
 - **Trajectory shape** — did it call them in the right order, or at least use the right set? ([`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch])
 - **Argument quality** — did the tool receive the expected inputs? ([`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness])
 - **Budget discipline** — did the agent finish within a tool-call and/or model-request budget? ([`StepEfficiency`][pydantic_evals.evaluators.StepEfficiency])
+- **Retries** — did the model get tool arguments right on the first try, or did it need retries? ([`RetryCount`][pydantic_evals.evaluators.RetryCount])
 
 They are all deterministic, never call an LLM, and are cheap enough to run on every case in every experiment.
 
@@ -157,6 +158,36 @@ dataset = Dataset(
 - `'model_requests_under_budget'` — set when `max_model_requests` is provided.
 
 Stable key names make reports render consistently across runs and across cases.
+
+## RetryCount
+
+Surface the number of tool-call retries the agent had to issue. Each retry is a `ToolRetryError` raised inside the tool wrapper — covering Pydantic AI's tool argument-validation failures, tool-raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], missing tool names, and structured-output validation. A non-zero count means the model did not get its arguments right on the first try.
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import RetryCount
+
+dataset = Dataset(
+    name='retry_aware',
+    cases=[Case(inputs='Run the daily report')],
+    evaluators=[
+        # Surface the metric every run; also fail when retries exceed 2.
+        RetryCount(max_retries=2),
+    ],
+)
+```
+
+**How retries are detected:** Pydantic AI marks tool spans whose call ended in a retry with the `pydantic_ai.tool.retry` attribute. `pydantic_evals.dataset._extract_span_tree_metrics` reads that attribute into `ctx.metrics['retries']` automatically; `RetryCount` prefers that metric and falls back to walking the span tree directly.
+
+**Parameters:**
+
+- `max_retries` (`int | None`): Maximum allowed retries before the run is over budget. `None` disables the budget check; only the count metric is returned.
+- `evaluation_name` (`str | None`): Unused — results are emitted under fixed keys.
+
+**Returns:** a mapping under these **stable, documented** keys:
+
+- `'retries'` — always set, an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] whose `value` is the retry count (`int`). Useful for charting the retry-rate trend over time.
+- `'retries_under_budget'` — set when `max_retries` is provided. `True` when within budget.
 
 ## Recipes
 

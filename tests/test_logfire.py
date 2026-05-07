@@ -1351,6 +1351,7 @@ def test_include_tool_args_span_attributes(
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.tool.retry': True,
                     'tool_response': """\
 Tool error
 
@@ -1406,6 +1407,7 @@ Fix the errors and try again.\
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.tool.retry': True,
                     'logfire.level_num': 17,
                 }
             )

@@ -984,20 +984,28 @@ class _TaskRun:
 
 
 def _extract_span_tree_metrics(task_run: _TaskRun, span_tree: SpanTree) -> None:
-    """Extract standard metrics (requests, cost, token usage) from a span tree.
+    """Extract standard metrics (requests, cost, token usage, retries) from a span tree.
 
-    Iterates the span tree looking for LLM request spans (identified by the
-    ``gen_ai.request.model`` attribute) and extracts:
+    Iterates the span tree looking for:
 
-    - ``requests``: count of ``gen_ai.operation.name == 'chat'`` spans
-    - ``cost``: sum of ``operation.cost`` values
-    - Token usage from ``gen_ai.usage.*`` and ``gen_ai.usage.details.*`` attributes
+    - LLM request spans (identified by the ``gen_ai.request.model`` attribute):
+        - ``requests``: count of ``gen_ai.operation.name == 'chat'`` spans
+        - ``cost``: sum of ``operation.cost`` values
+        - Token usage from ``gen_ai.usage.*`` and ``gen_ai.usage.details.*`` attributes
+    - Tool spans whose pydantic-ai tool wrapper marked them with
+      ``pydantic_ai.tool.retry``:
+        - ``retries``: count of tool calls that ended in a retry prompt
+          (validation error, ``ModelRetry``, missing tool name, or
+          structured-output validation). A non-zero value means the model
+          did not get its arguments right on the first try.
     """
     # Idea for making this more configurable: replace the following logic with a call to a user-provided function
     #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
     #   That way users can customize this logic. We'd default to a function that does the current thing but also
     #   allow `None` to disable it entirely.
     for node in span_tree:
+        if node.attributes.get('pydantic_ai.tool.retry') is True:
+            task_run.increment_metric('retries', 1)
         if 'gen_ai.request.model' not in node.attributes:
             continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
         for k, v in node.attributes.items():

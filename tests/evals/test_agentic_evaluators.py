@@ -14,11 +14,14 @@ with try_import() as imports_successful:
         ArgumentCorrectness,
         EvaluationReason,
         EvaluatorContext,
+        RetryCount,
         StepEfficiency,
         ToolCorrectness,
         TrajectoryMatch,
     )
     from pydantic_evals.evaluators.agentic import (
+        RETRY_COUNT_KEY,
+        RETRY_COUNT_UNDER_BUDGET_KEY,
         STEP_EFFICIENCY_MODEL_REQUESTS_KEY,
         STEP_EFFICIENCY_TOOL_CALLS_KEY,
         _extract_tool_calls,  # pyright: ignore[reportPrivateUsage]
@@ -868,3 +871,108 @@ def test_step_efficiency_metrics_non_numeric_falls_back_to_spans():
     ctx = _ctx(tree=tree, metrics={})  # empty metrics -> falls back to span tree
     result = StepEfficiency(max_model_requests=5).evaluate(ctx)
     assert result[STEP_EFFICIENCY_MODEL_REQUESTS_KEY].value is True
+
+
+# ---------------------------------------------------------------------------
+# RetryCount
+# ---------------------------------------------------------------------------
+
+
+def _v2_retried_tool_span(*, name: str, span_id: int, start_offset: float) -> SpanNode:
+    """Build a v2 tool span marked with `pydantic_ai.tool.retry=True`.
+
+    The pydantic-ai tool wrapper sets this attribute on a tool span that
+    ended in a `ToolRetryError` (see `pydantic_ai.tool_manager`).
+    """
+    return _make_span(
+        name='running tool',
+        span_id=span_id,
+        attributes={
+            'gen_ai.tool.name': name,
+            'logfire.msg': f'running tool: {name}',
+            'pydantic_ai.tool.retry': True,
+        },
+        start_offset=start_offset,
+    )
+
+
+def test_retry_count_metric_only_when_no_budget():
+    # Two retried spans, no budget configured: only the count key is returned.
+    tree = _build_tree(
+        [
+            _v2_retried_tool_span(name='search', span_id=1, start_offset=0.0),
+            _v2_retried_tool_span(name='search', span_id=2, start_offset=0.1),
+        ]
+    )
+    result = RetryCount().evaluate(_ctx(tree=tree))
+    assert set(result.keys()) == {RETRY_COUNT_KEY}
+    reason = result[RETRY_COUNT_KEY]
+    assert reason.value == 2
+    assert reason.reason is not None
+    assert 'from span tree' in reason.reason
+
+
+def test_retry_count_zero_for_clean_run():
+    tree = _build_tree([_v2_tool_span(name='search', span_id=1, args='{}', start_offset=0.0)])
+    result = RetryCount().evaluate(_ctx(tree=tree))
+    assert result[RETRY_COUNT_KEY].value == 0
+
+
+def test_retry_count_prefers_metrics():
+    # Empty span tree but the extracted metric is present: trust the metric.
+    result = RetryCount().evaluate(_ctx(tree=_build_tree([]), metrics={'retries': 5}))
+    reason = result[RETRY_COUNT_KEY]
+    assert reason.value == 5
+    assert reason.reason is not None
+    assert "ctx.metrics['retries']" in reason.reason
+
+
+def test_retry_count_falls_back_to_span_tree_when_metric_missing():
+    tree = _build_tree(
+        [
+            _v2_retried_tool_span(name='search', span_id=1, start_offset=0.0),
+            _v2_tool_span(name='search', span_id=2, args='{}', start_offset=0.1),
+        ]
+    )
+    result = RetryCount().evaluate(_ctx(tree=tree, metrics={}))
+    assert result[RETRY_COUNT_KEY].value == 1
+
+
+def test_retry_count_under_budget_when_within():
+    result = RetryCount(max_retries=3).evaluate(_ctx(tree=_build_tree([]), metrics={'retries': 2}))
+    assert set(result.keys()) == {RETRY_COUNT_KEY, RETRY_COUNT_UNDER_BUDGET_KEY}
+    assert result[RETRY_COUNT_UNDER_BUDGET_KEY].value is True
+
+
+def test_retry_count_over_budget():
+    result = RetryCount(max_retries=1).evaluate(_ctx(tree=_build_tree([]), metrics={'retries': 4}))
+    reason = result[RETRY_COUNT_UNDER_BUDGET_KEY]
+    assert reason.value is False
+    assert reason.reason is not None
+    assert '4 retry(ies)' in reason.reason
+    assert 'budget=1' in reason.reason
+
+
+def test_retry_count_no_span_tree_falls_back_when_metric_present():
+    # Even with no span tree, a populated metric is enough to score.
+    ctx = _ctx(tree=SpanTreeRecordingError('spans were not recorded'), metrics={'retries': 2})
+    result = RetryCount(max_retries=5).evaluate(ctx)
+    assert result[RETRY_COUNT_KEY].value == 2
+    assert result[RETRY_COUNT_UNDER_BUDGET_KEY].value is True
+
+
+def test_retry_count_no_span_tree_and_no_metric_skips_with_reason():
+    ctx = _ctx(tree=SpanTreeRecordingError('spans were not recorded'))
+    result = RetryCount(max_retries=3).evaluate(ctx)
+    assert set(result.keys()) == {RETRY_COUNT_KEY, RETRY_COUNT_UNDER_BUDGET_KEY}
+    for reason in result.values():
+        assert reason.reason is not None
+        assert 'logfire' in reason.reason
+    assert result[RETRY_COUNT_KEY].value == 0
+    assert result[RETRY_COUNT_UNDER_BUDGET_KEY].value is False
+
+
+def test_retry_count_no_span_tree_and_no_metric_no_budget_returns_only_count():
+    ctx = _ctx(tree=SpanTreeRecordingError('spans were not recorded'))
+    result = RetryCount().evaluate(ctx)
+    assert set(result.keys()) == {RETRY_COUNT_KEY}
