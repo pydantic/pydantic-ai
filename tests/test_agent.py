@@ -2,9 +2,10 @@ import asyncio
 import json
 import re
 import sys
+import warnings
 from collections import defaultdict
 from collections.abc import AsyncIterable, AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
@@ -597,7 +598,8 @@ def test_tool_output_max_retries_overrides_agent_retries():
     agent = Agent(
         FunctionModel(return_model),
         output_type=ToolOutput(get_weather, max_retries=target_retries),
-        retries=2,
+        tool_retries=2,
+        output_retries=2,
     )
 
     result = agent.run_sync('Hello')
@@ -817,7 +819,8 @@ def test_tool_output_max_retries_per_tool():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        retries=0,
+        tool_retries=0,
+        output_retries=0,
     )
 
     result = agent.run_sync('Hello')
@@ -3451,7 +3454,7 @@ def test_empty_response_without_recovery():
     agent = Agent(FunctionModel(llm), output_type=tuple[str, int])
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
             agent.run_sync('Hello')
 
     assert messages == snapshot(
@@ -3813,7 +3816,7 @@ def test_unknown_tool_multiple_retries():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=num_retries)
+    agent = Agent(FunctionModel(empty), tool_retries=num_retries, output_retries=num_retries)
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
@@ -3886,7 +3889,7 @@ def test_unknown_tool_per_tool_retries_exceeded():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
-    agent = Agent(FunctionModel(empty), retries=1, output_retries=5)
+    agent = Agent(FunctionModel(empty), tool_retries=1, output_retries=5)
 
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
         agent.run_sync('Hello')
@@ -5544,7 +5547,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
             agent.run_sync('test')
 
     def test_exhaustive_skips_output_tool_exceeding_retries_on_validation(self):
@@ -7880,7 +7883,7 @@ def test_prepare_output_tools():
 
 def test_prepare_output_tools_receives_output_max_retries():
     """Regression for the bug surfaced in #4745 / #4859 design discussion: the
-    `prepare_output_tools` callable must see `ctx.max_retries == max_result_retries`,
+    `prepare_output_tools` callable must see `ctx.max_retries == max_output_retries`,
     not the function-tool retry budget. Also verifies `ctx.retry` advances per output retry
     and that per-tool retry counts in `ctx.retries` propagate (matching `prepare_tools`).
     """
@@ -7905,7 +7908,7 @@ def test_prepare_output_tools_receives_output_max_retries():
         FunctionModel(return_model),
         output_type=Foo,
         output_retries=target_retries,
-        retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
+        tool_retries=1,  # tool retry budget — different from output, must NOT leak into prep ctx
         prepare_output_tools=prep,
     )
 
@@ -7925,6 +7928,35 @@ def test_prepare_output_tools_receives_output_max_retries():
     # Per-tool retry counts populated by `for_run_step` propagate too — matching
     # what `prepare_tools` sees on the function-tool side.
     assert seen_per_tool_retries == [0, 1, 2, 3]
+
+
+def test_prepare_output_tools_sees_run_level_output_retries_override():
+    """`prepare_output_tools` sees the run-level `output_retries` override on `ctx.max_retries`,
+    not the agent-level default — so capability hooks observe the same budget the run will enforce.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5075#discussion_r3170685538.
+    """
+    seen_max_retries: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    async def prep(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_max_retries.append(ctx.max_retries)
+        return tool_defs
+
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=Foo,
+        output_retries=5,
+        prepare_output_tools=prep,
+    )
+
+    result = agent.run_sync('Hello', output_retries=2)
+    assert isinstance(result.output, Foo)
+    # Hook sees run-level override (2), not the agent-level default (5).
+    assert seen_max_retries == [2]
 
 
 async def test_explicit_context_manager():
@@ -9940,7 +9972,7 @@ async def test_agent_still_fails_if_none_not_allowed():
     model = FunctionModel(function=empty_model)
     agent = Agent(model, output_type=str)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         await agent.run('hello')
 
 
@@ -10292,7 +10324,7 @@ class TestOverrideWithModelSettings:
 
 
 def test_output_validator_retry_consistency_across_paths():
-    """Output validators should see global retry info, matching the text-output path.
+    """Output validators see global retry info, matching the text-output path.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/4385:
     the text path sets ctx.retry/max_retries to the global output retry counter,
@@ -10357,7 +10389,7 @@ def test_output_validator_exceeds_output_retries():
         retries_log.append(ctx.retry)
         raise ModelRetry(f'Retry {ctx.retry}')
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(2\\) for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries \\(2\\)'):
         agent.run_sync('Hello')
 
     assert retries_log == [0, 1, 2]
@@ -10367,7 +10399,7 @@ async def test_concurrent_runs_output_retry_isolation():
     """Concurrent runs on the same agent must not share output retry state.
 
     OutputToolset.for_run_step returns a shallow copy so each run gets
-    isolated _output_retry/_output_max_retries values across await points.
+    isolated _output_retry_count values across await points.
     """
     retries_by_run: dict[str, list[int]] = {'fast': [], 'slow': []}
 
@@ -10447,7 +10479,8 @@ def test_output_validator_retry_counter_with_tool_switch():
             ToolOutput(output_a, max_retries=3),
             ToolOutput(output_b, max_retries=1),
         ],
-        retries=0,
+        tool_retries=0,
+        output_retries=0,
     )
 
     @agent.output_validator
@@ -10472,7 +10505,7 @@ def test_output_tool_validation_vs_execution_retry_counting():
 
     Validation failure (bad args from model) and execution failure (ModelRetry from
     output function) both go through process_tool_calls and should both increment
-    ctx.state.retries for output validator context tracking.
+    ctx.state.output_retries_used for output validator context tracking.
     """
     validator_retries: list[int] = []
     call_count = 0
@@ -10510,6 +10543,238 @@ def test_output_tool_validation_vs_execution_retry_counting():
     assert validator_retries == [1, 2]
 
 
+@dataclass(kw_only=True)
+class OutputRetryBudgetCase:
+    """One row in the output-retry budget precedence matrix.
+
+    `init`/`override`/`run` flow into `Agent(...)`, `agent.override(...)`, and
+    `agent.run_sync(...)` respectively. The test asserts the effective budget
+    by exhausting it with an always-retrying output_validator and confirming
+    the validator saw exactly `range(expected_budget + 1)` invocations.
+
+    All cases run on the tool-output path; text-path parity has its own test
+    (`test_text_path_honors_output_retry_budget`) below.
+    """
+
+    id: str
+    init: dict[str, Any]
+    override: dict[str, Any] | None
+    run: dict[str, Any]
+    expected_budget: int
+    expects_deprecation_warning: bool
+
+
+OUTPUT_RETRY_BUDGET_CASES = [
+    OutputRetryBudgetCase(
+        id='run-arg-caps-agent-default',
+        init={'output_retries': 5},
+        override=None,
+        run={'output_retries': 2},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='run-arg-beats-spec',
+        init={'output_retries': 5},
+        override=None,
+        run={'output_retries': 2, 'spec': {'output_retries': 4}},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='spec-only-beats-agent-default',
+        init={'output_retries': 5},
+        override=None,
+        run={'spec': {'output_retries': 2}},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='override-kwarg-caps-agent-default',
+        init={'output_retries': 5},
+        override={'output_retries': 2},
+        run={},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='override-spec-honored',
+        init={'output_retries': 5},
+        override={'spec': {'output_retries': 2}},
+        run={},
+        expected_budget=2,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='override-beats-run-arg',
+        init={'output_retries': 5},
+        override={'output_retries': 1},
+        run={'output_retries': 10},
+        expected_budget=1,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='deprecated-retries-cascades',
+        init={'retries': 5},
+        override=None,
+        run={},
+        expected_budget=5,
+        expects_deprecation_warning=True,
+    ),
+    OutputRetryBudgetCase(
+        id='tool-retries-no-cascade',
+        init={'tool_retries': 5},
+        override=None,
+        run={},
+        expected_budget=1,
+        expects_deprecation_warning=False,
+    ),
+    OutputRetryBudgetCase(
+        id='retries-cascades-even-when-tool-retries-set',
+        init={'retries': 5, 'tool_retries': 3},
+        override=None,
+        run={},
+        expected_budget=5,
+        expects_deprecation_warning=True,
+    ),
+]
+
+
+@pytest.mark.parametrize('case', OUTPUT_RETRY_BUDGET_CASES, ids=lambda c: c.id)
+def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
+    """Effective output-retry budget = override > run arg > spec > agent default.
+
+    Exhausts the resolved budget with an always-retrying output_validator and asserts the
+    validator saw `range(expected_budget + 1)` invocations and the exhaustion error reports
+    the expected budget.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    deprecation_ctx = (
+        pytest.warns(DeprecationWarning, match=r'`retries` is deprecated and will be removed in v2')
+        if case.expects_deprecation_warning
+        else nullcontext()
+    )
+    with warnings.catch_warnings():
+        if not case.expects_deprecation_warning:
+            warnings.simplefilter('error', DeprecationWarning)
+        with deprecation_ctx:
+            agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), **case.init)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    expected_msg = rf'Exceeded maximum output retries \({case.expected_budget}\)'
+    override_ctx = agent.override(**case.override) if case.override is not None else nullcontext()
+
+    with override_ctx:
+        with pytest.raises(UnexpectedModelBehavior, match=expected_msg):
+            agent.run_sync('Hello', **case.run)
+
+    assert retries_log == list(range(case.expected_budget + 1))
+
+
+def test_text_path_honors_output_retry_budget():
+    """Parity check: the text-output path enforces the run-level `output_retries` override too.
+
+    The matrix above runs on the tool-output path; this test verifies the same precedence applies
+    when the model returns a `TextPart` and the agent's `output_type` is `str`.
+    """
+    retries_log: list[int] = []
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hello')])
+
+    agent = Agent(FunctionModel(return_model), output_type=str, output_retries=5)
+
+    @agent.output_validator
+    def always_retry(ctx: RunContext[None], o: str) -> str:
+        retries_log.append(ctx.retry)
+        raise ModelRetry(f'retry {ctx.retry}')
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+        agent.run_sync('Hello', output_retries=2)
+
+    assert retries_log == [0, 1, 2]
+
+
+def test_output_retries_run_override_without_validators():
+    """Run-level `output_retries` takes effect — and isolates from the shared agent-level toolset —
+    even when no output_validator is registered.
+
+    Exercises the shared-toolset clone branch: with `output_schema == self._output_schema` and no
+    output_validators registered, `Agent.iter` must clone the shared `self._output_toolset` before
+    mutating `max_retries` so the agent-level toolset retains its original budget for subsequent runs.
+    Enforcement runs through `ToolManager._check_max_retries` (per-tool), not `consume_output_retry`.
+    """
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+        # Always return invalid args → output function raises ModelRetry via validation path
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"bad_field": 1}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=ToolOutput(Foo), output_retries=10)
+    shared_toolset = agent._output_toolset  # pyright: ignore[reportPrivateUsage]
+    assert shared_toolset is not None
+    assert shared_toolset.max_retries == 10
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+        agent.run_sync('Hello', output_retries=2)
+
+    # 3 attempts: initial + 2 retries, capped by the run override at 2 (not the agent default 10)
+    assert call_count == 3
+    # The shared agent-level toolset's `max_retries` was preserved — confirms the run cloned before mutating.
+    assert shared_toolset.max_retries == 10
+
+
+@pytest.mark.parametrize(
+    'kwargs, expected_warning',
+    [
+        ({}, None),
+        ({'tool_retries': 5}, None),
+        ({'output_retries': 5}, None),
+        ({'tool_retries': 5, 'output_retries': 5}, None),
+        ({'retries': 5}, r'`retries` is deprecated.*Use `tool_retries` instead'),
+        ({'retries': 5, 'output_retries': 3}, r'`retries` is deprecated.*Use `tool_retries` instead'),
+        (
+            {'retries': 5, 'tool_retries': 3},
+            r'`retries` is deprecated.*only setting `output_retries` via the legacy 1\.x cascade',
+        ),
+    ],
+    ids=[
+        'no-kwargs',
+        'tool_retries-only',
+        'output_retries-only',
+        'tool_retries-and-output_retries',
+        'retries-only-warns',
+        'retries-and-output_retries-warns-generic',
+        'retries-and-tool_retries-warns-cascade-callout',
+    ],
+)
+def test_agent_init_deprecation_warning(kwargs: dict[str, Any], expected_warning: str | None):
+    """Cover the `Agent.__init__` deprecation warning text for every kwarg combination.
+
+    The both-passed case (`retries=` + `tool_retries=`) gets a sharper message that calls out the
+    silent cascade to `output_retries`; everything else either warns generically or stays silent.
+    """
+    if expected_warning is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', DeprecationWarning)
+            Agent('test', **kwargs)
+    else:
+        with pytest.warns(DeprecationWarning, match=expected_warning):
+            Agent('test', **kwargs)
+
+
 def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
     """Unknown tool calls should not increment the global retry counter.
 
@@ -10537,7 +10802,7 @@ def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
             )
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(model_function), retries=2, output_retries=1)
+    agent = Agent(FunctionModel(model_function), tool_retries=2, output_retries=1)
 
     @agent.tool_plain
     def valid_tool(x: int) -> str:
