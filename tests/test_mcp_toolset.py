@@ -11,6 +11,7 @@ class is validated against the same surface area as the legacy `FastMCPToolset`.
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -36,6 +37,13 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import ToolError
     from fastmcp.server import FastMCP
     from mcp import types as mcp_types
+    from mcp.types import (
+        BlobResourceContents,
+        EmbeddedResource,
+        ImageContent,
+        ResourceLink,
+    )
+    from pydantic import AnyUrl
 
     from pydantic_ai.mcp import (
         MCPError,
@@ -223,6 +231,26 @@ async def fastmcp_server() -> FastMCP[None]:
         """A tool that always raises an error — used to test error handling."""
         raise ValueError('boom')
 
+    @server.tool()
+    async def image_tool() -> ImageContent:
+        """A tool that returns an image content block."""
+        encoded = base64.b64encode(b'fake_image_bytes').decode('utf-8')
+        return ImageContent(type='image', data=encoded, mimeType='image/png')
+
+    @server.tool()
+    async def embedded_blob_tool() -> EmbeddedResource:
+        """A tool that returns an embedded blob resource."""
+        encoded = base64.b64encode(b'fake_blob_bytes').decode('utf-8')
+        return EmbeddedResource(
+            type='resource',
+            resource=BlobResourceContents(uri=AnyUrl('resource://blob.bin'), blob=encoded),
+        )
+
+    @server.tool()
+    async def resource_link_tool() -> ResourceLink:
+        """A tool that returns a resource link."""
+        return ResourceLink(type='resource_link', uri=AnyUrl('resource://greeting.txt'), name='greeting')
+
     @server.resource('resource://greeting.txt')
     async def greeting() -> str:
         return 'Hello, world!'
@@ -271,7 +299,7 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools_first = await toolset.get_tools(run_context)
             tools_second = await toolset.get_tools(run_context)
-            assert set(tools_first) == {'echo', 'add', 'boom'}
+            assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
@@ -438,12 +466,130 @@ class TestMCPToolsetIntegration:
         await handler(notification)
         assert seen == [notification]
 
+    async def test_call_tool_returns_image(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+        from pydantic_ai.messages import BinaryContent
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('image_tool', {}, run_context, tools['image_tool'])
+        assert isinstance(result, BinaryContent)
+        assert result.media_type == 'image/png'
+
+    async def test_call_tool_returns_embedded_blob(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
+        from pydantic_ai.messages import BinaryContent
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('embedded_blob_tool', {}, run_context, tools['embedded_blob_tool'])
+        assert isinstance(result, BinaryContent)
+
+    async def test_call_tool_returns_resource_link_uri(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
+    ):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('resource_link_tool', {}, run_context, tools['resource_link_tool'])
+        # `_map_fastmcp_tool_result` for ResourceLink returns the URI string.
+        assert result == 'resource://greeting.txt'
+
+    async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, log_level='warning')
+        async with toolset:
+            # Server received the logging/setLevel call without raising.
+            assert toolset.is_running
+
+    async def test_label_falls_back_to_repr(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        assert 'MCPToolset' in toolset.label
+
+    async def test_tool_for_tool_def_uses_default_retries_when_unset(self):
+        from pydantic_ai.tools import ToolDefinition
+
+        toolset = MCPToolset('https://example.com/mcp')
+        tool = toolset.tool_for_tool_def(
+            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
+        )
+        assert tool.max_retries == 1
+
+    async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+        async with toolset:
+            with pytest.raises(ToolError):
+                await toolset.direct_call_tool('boom', {})
+
+
+class TestSamplingHandler:
+    async def test_sampling_handler_round_trip(self):
+        """Drive the sampling handler built from `sampling_model=` to cover its body."""
+        import inspect
+
+        from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
+
+        model = TestModel()
+        handler = _build_sampling_handler(model)
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
+            maxTokens=42,
+            temperature=0.5,
+            stopSequences=['STOP'],
+        )
+        result = handler([], params, None)  # type: ignore[arg-type]
+        if inspect.isawaitable(result):
+            result = await result
+        assert isinstance(result, mcp_types.CreateMessageResult)
+        assert result.model == model.model_name
+
+
+class TestResourceMethodErrorPaths:
+    async def test_list_resources_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        """Server errors from `list_resources` are wrapped in `MCPError`."""
+        from unittest.mock import AsyncMock
+
+        from mcp.shared.exceptions import McpError
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_resources = AsyncMock(
+                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
+            )
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_resources()
+
+    async def test_list_resource_templates_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        from unittest.mock import AsyncMock
+
+        from mcp.shared.exceptions import McpError
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_resource_templates = AsyncMock(
+                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
+            )
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_resource_templates()
+
+    async def test_read_resource_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        from unittest.mock import AsyncMock
+
+        from mcp.shared.exceptions import McpError
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.read_resource = AsyncMock(
+                side_effect=McpError(mcp_types.ErrorData(code=-32002, message='not found'))
+            )
+            with pytest.raises(MCPError, match='not found'):
+                await toolset.read_resource('resource://missing')
+
 
 class TestLoadMCPToolsets:
     async def test_loads_toolsets_from_config_with_prefix(self):
         config = {
             'mcpServers': {
-                'alpha': {'command': 'python', 'args': ['-m', 'tests.mcp_server']},
+                'alpha': {'command': 'python', 'args': ['-m', 'tests.mcp_server'], 'env': {'FOO': 'bar'}},
             }
         }
         with TemporaryDirectory() as tmp:
