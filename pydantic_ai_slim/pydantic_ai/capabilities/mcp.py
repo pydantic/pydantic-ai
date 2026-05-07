@@ -58,7 +58,9 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         self.url = url
         self.builtin = builtin
         self.local = local
-        self.id = id
+        # It will always be set from __new__ in AbstractCapability
+        if id is not None:  # pragma: no branch
+            self.id = id
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
