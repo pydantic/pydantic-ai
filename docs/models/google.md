@@ -11,11 +11,21 @@ access Google's Gemini models via both the Generative Language API and Vertex AI
     For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses] and call `cancel()` from the same task that's iterating:
 
     ```python {title="cancel_google.py" test="skip"}
-    async with agent.run_stream('...') as result:
-        async for chunk in result.stream_text(debounce_by=None):
-            if should_stop(chunk):
-                await result.cancel()
-                break
+    from pydantic_ai import Agent
+
+    agent = Agent('google-gla:gemini-3-pro-preview')
+
+
+    def should_stop(chunk: str) -> bool:
+        return len(chunk) > 100
+
+
+    async def main():
+        async with agent.run_stream('Write a long essay about Python') as result:
+            async for chunk in result.stream_text(debounce_by=None):
+                if should_stop(chunk):
+                    await result.cancel()
+                    break
     ```
 
     Or, if you need to keep debouncing, wrap the stream with [`contextlib.aclosing`](https://docs.python.org/3/library/contextlib.html#contextlib.aclosing) so the iterator is closed before `cancel()` runs:
@@ -23,12 +33,22 @@ access Google's Gemini models via both the Generative Language API and Vertex AI
     ```python {title="cancel_google_aclosing.py" test="skip"}
     from contextlib import aclosing
 
-    async with agent.run_stream('...') as result:
-        async with aclosing(result.stream_text()) as stream:
-            async for chunk in stream:
-                if should_stop(chunk):
-                    break
-        await result.cancel()
+    from pydantic_ai import Agent
+
+    agent = Agent('google-gla:gemini-3-pro-preview')
+
+
+    def should_stop(chunk: str) -> bool:
+        return len(chunk) > 100
+
+
+    async def main():
+        async with agent.run_stream('Write a long essay about Python') as result:
+            async with aclosing(result.stream_text()) as stream:
+                async for chunk in stream:
+                    if should_stop(chunk):
+                        break
+            await result.cancel()
     ```
 
     Calling `cancel()` from a different task while iteration is in progress is not currently reliable on this provider.
