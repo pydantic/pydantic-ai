@@ -2324,6 +2324,36 @@ async def test_for_run_with_different_instructions():
     )
 
 
+async def test_for_run_receives_populated_run_context():
+    """`for_run` hooks receive a `RunContext` with run_id, conversation_id, and resolved metadata."""
+
+    captured: dict[str, Any] = {}
+
+    class CapturingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            captured['run_id'] = ctx.run_id
+            captured['conversation_id'] = ctx.conversation_id
+            captured['metadata'] = ctx.metadata
+            captured['instrumentation_version'] = ctx.instrumentation_version
+            return self
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    def metadata_factory(ctx: RunContext[None]) -> dict[str, Any]:
+        # Factory should be able to read run_id/conversation_id from the early ctx.
+        return {'run_id_seen': ctx.run_id, 'conversation_id_seen': ctx.conversation_id}
+
+    agent = Agent(FunctionModel(respond), capabilities=[CapturingCap()])
+
+    await agent.run('Hello', conversation_id='conv-123', metadata=metadata_factory)
+
+    assert captured['run_id'] is not None
+    assert captured['conversation_id'] == 'conv-123'
+    assert captured['metadata'] == {'run_id_seen': captured['run_id'], 'conversation_id_seen': 'conv-123'}
+    assert captured['instrumentation_version'] is not None
+
+
 async def test_concurrent_runs_capability_isolation():
     """Multiple concurrent runs don't share state on stateful capabilities."""
 
