@@ -34,6 +34,7 @@ try:
         TextContent,
         TextResourceContents,
     )
+    from typing_extensions import deprecated
 
     from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
@@ -57,6 +58,12 @@ ToolErrorBehavior = Literal['model_retry', 'error']
 UNKNOWN_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 
+@deprecated(
+    '`FastMCPToolset` is deprecated and will be removed in v2. '
+    'Use `pydantic_ai.mcp.MCPToolset` instead — it accepts the same input shapes and adds full '
+    'parity with the legacy `MCPServer*` classes (caching, resource methods, sampling shortcuts, '
+    'OAuth auth). See the migration guide in the v2 release notes.'
+)
 @dataclass(init=False)
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """A FastMCP Toolset that uses the FastMCP Client to call tools from a local or remote MCP Server.
@@ -64,6 +71,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     The Toolset can accept a FastMCP Client, a FastMCP Transport, or any other object which a FastMCP Transport can be created from.
 
     See https://gofastmcp.com/clients/transports for a full list of transports available.
+
+    !!! warning "Deprecated"
+        This class is deprecated in favor of [`MCPToolset`][pydantic_ai.mcp.MCPToolset], which
+        accepts the same input shapes and adds full parity with the legacy `MCPServer*` classes.
     """
 
     client: Client[Any]

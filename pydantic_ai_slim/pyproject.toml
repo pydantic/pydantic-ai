@@ -109,9 +109,11 @@ cli = [
     "pyperclip>=1.9.0",
     "pyyaml>=6.0.2",
 ]
-# MCP
-mcp = ["mcp>=1.25.0,<2.0"]
-# FastMCP
+# MCP — installs both the legacy `mcp` SDK (used by deprecated `MCPServer*`) and `fastmcp` (used
+# by the recommended `MCPToolset`). The legacy `mcp` requirement will be dropped in v2 once the
+# `MCPServer*` hierarchy is removed.
+mcp = ["mcp>=1.25.0,<2.0", "fastmcp>=3.2.4"]
+# FastMCP — alias kept for backward compatibility; prefer the `mcp` extra. Will be removed in v2.
 fastmcp = ["fastmcp>=3.2.4"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]

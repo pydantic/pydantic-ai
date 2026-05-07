@@ -222,9 +222,15 @@ include = [
 venvPath = '.'
 venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
-# which are not otherwise used
+# which are not otherwise used.
+# `reportDeprecated = false` for tests so coverage on the deprecated `MCPServer*` / `FastMCPToolset`
+# / `load_mcp_servers` paths can be maintained until v2-cut without ignore comments at every callsite.
 executionEnvironments = [
-    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # Tests still reference the deprecated `MCPServer*` / `FastMCPToolset` / `load_mcp_servers` paths
+    # to maintain coverage until v2-cut. `reportUnnecessaryTypeIgnoreComment = false` because some
+    # pre-existing per-line `# pyright: ignore[reportDeprecated]` (for non-MCP deprecations) are now
+    # technically redundant under `reportDeprecated = false`; clean them up at v2-cut.
+    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false, reportDeprecated = false, reportUnnecessaryTypeIgnoreComment = false },
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
@@ -278,6 +284,11 @@ filterwarnings = [
     # logfire to use logging.warning() instead of warnings.warn() for this diagnostic — it's
     # informational, not a deprecation, and should never be able to crash execution.
     "ignore:Found propagated trace context:RuntimeWarning",
+    # v2 prep: legacy MCP path deprecations. These fire from existing tests that exercise
+    # `MCPServer*` and `FastMCPToolset` directly to keep coverage on the deprecated classes
+    # until v2-cut. Tests targeting `MCPToolset` don't trigger these.
+    "ignore:.*is deprecated and will be removed in v2:DeprecationWarning",
+    "ignore:The `MCPServerHTTP` class is deprecated:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

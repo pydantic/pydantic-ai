@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# References deprecated `MCPServer*` / `FastMCPToolset` for backward-compat dispatch. Removed in v2.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence

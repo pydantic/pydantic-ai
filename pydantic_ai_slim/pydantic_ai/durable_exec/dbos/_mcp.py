@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Wraps the deprecated `MCPServer*` and `FastMCPToolset` for durable execution. Removed in v2.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

@@ -5020,26 +5020,36 @@ class TestMCPCapability:
         assert builtin_sse.id == 'server1.example.com-sse'
 
     def test_mcp_sse_transport(self):
-        """MCP with /sse URL uses MCPServerSSE for local."""
-        from pydantic_ai.mcp import MCPServerSSE
+        """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
+        from fastmcp.client.transports import SSETransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/sse')
-        assert isinstance(cap.local, MCPServerSSE)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_streamable_transport(self):
-        """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP with non-/sse URL routes to an MCPToolset using FastMCP's Streamable HTTP transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api')
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_authorization_token_in_local_headers(self):
-        """MCP passes authorization_token as Authorization header to local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP passes authorization_token as Authorization header through to the transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
 
         cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz')
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
-        assert cap.local.headers == {'Authorization': 'Bearer xyz'}
+        assert isinstance(cap.local, MCPToolset)
+        transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'Authorization': 'Bearer xyz'}
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""

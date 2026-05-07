@@ -13,11 +13,12 @@ from pydantic_ai.toolsets import AbstractToolset
 from .builtin_or_local import BuiltinOrLocalTool
 
 try:
-    from pydantic_ai.mcp import MCPServer
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+    from pydantic_ai.mcp import MCPServer, MCPToolset
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     if not TYPE_CHECKING:
         MCPServer = Any  # type: ignore[assignment,misc]
+        MCPToolset = Any  # type: ignore[assignment,misc]
         FastMCPToolset = Any  # type: ignore[assignment,misc]
 
 
@@ -54,7 +55,12 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         builtin: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
         | bool = True,
-        local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        local: MCPToolset[AgentDepsT]
+        | MCPServer
+        | FastMCPToolset[AgentDepsT]  # pyright: ignore[reportDeprecated]
+        | Callable[..., Any]
+        | Literal[False]
+        | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
@@ -96,20 +102,15 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         return f'mcp_server:{self._resolved_id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        # Merge authorization_token into headers for local connection
+        # Merge authorization_token into headers for local connection.
         local_headers = dict(self.headers or {})
         if self.authorization_token:
             local_headers['Authorization'] = self.authorization_token
 
-        # Transport detection matching _mcp_server_discriminator() in pydantic_ai.mcp
-        if self.url.endswith('/sse'):
-            from pydantic_ai.mcp import MCPServerSSE
+        # `MCPToolset` infers SSE vs Streamable HTTP from the URL.
+        from pydantic_ai.mcp import MCPToolset
 
-            return MCPServerSSE(self.url, headers=local_headers or None, include_instructions=True)
-
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
-
-        return MCPServerStreamableHTTP(self.url, headers=local_headers or None, include_instructions=True)
+        return MCPToolset(self.url, headers=local_headers or None, include_instructions=True)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         toolset = super().get_toolset()

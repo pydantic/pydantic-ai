@@ -6903,6 +6903,7 @@ logfire = [
     { name = "logfire", extra = ["httpx"] },
 ]
 mcp = [
+    { name = "fastmcp" },
     { name = "mcp" },
 ]
 mistral = [
@@ -6991,6 +6992,7 @@ requires-dist = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=3.2.4" },
+    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=3.2.4" },
     { name = "genai-prices", specifier = ">=0.0.48" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },

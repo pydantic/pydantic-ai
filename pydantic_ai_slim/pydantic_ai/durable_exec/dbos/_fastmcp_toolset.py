@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Wraps the deprecated `FastMCPToolset` for durable execution. Will be removed in v2.
 from __future__ import annotations
 
 from pydantic_ai import ToolsetTool
