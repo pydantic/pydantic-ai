@@ -15,7 +15,6 @@ import httpx
 import pytest
 
 from pydantic_ai import models
-from pydantic_ai.mcp import MCPError, ResourceAnnotations, ResourceTemplate
 
 from .conftest import try_import
 
@@ -27,7 +26,7 @@ with try_import() as imports_successful:
     )
     from mcp import types as mcp_types
 
-    from pydantic_ai.mcp import MCPToolset
+    from pydantic_ai.mcp import MCPError, MCPToolset, ResourceAnnotations, ResourceTemplate
 
 
 pytestmark = [
