@@ -6,9 +6,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from uuid import uuid4
 
-from typing_extensions import Self
-
 from pydantic import ValidationError
+from typing_extensions import Self
 
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
@@ -186,13 +185,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         instance = super().__new__(cls)
         instance.id = str(uuid4())
         return instance
-
-    def __post_init__(self) -> None:
-        if self.defer_loading:
-            if not self.id:
-                raise ValueError('Capabilities with defer_loading=True must have an id.')
-            if not self.get_description(None):
-                raise ValueError('Capabilities with defer_loading=True must have a description.')
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
