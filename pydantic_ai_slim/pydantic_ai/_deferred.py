@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
-from pydantic_ai.tools import AgentDepsT, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
-    from pydantic_ai._run_context import RunContext
     from pydantic_ai.messages import ModelMessage
 
 
@@ -50,19 +47,3 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
                         loaded.add(parsed['capability_id'])
 
     return loaded
-
-
-def prepare_capability_tool_definitions(
-    *,
-    capability_id: str | None,
-) -> ToolsPrepareFunc[AgentDepsT]:
-    def prepare(_ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return [
-            replace(
-                tool_def,
-                capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
-            )
-            for tool_def in tool_defs
-        ]
-
-    return prepare

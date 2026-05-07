@@ -14,9 +14,10 @@ from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolReturn
+from pydantic_ai.messages import InstructionPart, ToolReturn
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 
@@ -91,11 +92,9 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         if capability_id not in ctx.capabilities:
             return f'No capability found with id {capability_id!r}.'
 
-        instructions = normalize_instructions(ctx.capabilities[capability_id].get_instructions())
-
         parts: list[str] = []
 
-        for instruction in instructions:
+        for instruction in normalize_instructions(ctx.capabilities[capability_id].get_instructions()):
             if isinstance(instruction, str):
                 parts.append(instruction)
             else:
@@ -103,7 +102,38 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
                 if resolved is not None:
                     parts.append(resolved)
 
+        for resolved in await self._collect_scoped_toolset_instructions(capability_id, ctx):
+            parts.append(resolved)
+
         instructions_text = '\n\n'.join(parts) or None
         return ToolReturn(
             return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
         )
+
+    async def _collect_scoped_toolset_instructions(
+        self, capability_id: str, ctx: RunContext[AgentDepsT]
+    ) -> list[str]:
+        """Pull instructions from `CapabilityScopedToolset`s tagged with this cap_id.
+
+        Bypasses each wrapper's own gate (still closed because the cap isn't yet
+        in `loaded_capability_ids` — its tool return hasn't been appended to
+        history) by calling `get_instructions` on `ts.wrapped` directly.
+        """
+        scoped: list[CapabilityScopedToolset[AgentDepsT]] = []
+
+        def collect(ts: AbstractToolset[AgentDepsT]) -> None:
+            if isinstance(ts, CapabilityScopedToolset) and ts.capability_id == capability_id:
+                scoped.append(ts)
+
+        self.apply(collect)
+
+        out: list[str] = []
+        for ts in scoped:
+            result = await ts.wrapped.get_instructions(ctx)
+            if result is None:
+                continue
+            for item in [result] if isinstance(result, (str, InstructionPart)) else result:
+                content = item.content if isinstance(item, InstructionPart) else item
+                if content and content.strip():
+                    out.append(content)
+        return out

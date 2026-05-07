@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import ValidationError
 
 from pydantic_ai import _system_prompt
-from pydantic_ai._deferred import prepare_capability_tool_definitions
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -22,8 +21,8 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
+from pydantic_ai.toolsets._capability_scoped import CapabilityScopedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._ordering import collect_leaves, sort_capabilities
 from .abstract import AbstractCapability, RawOutput, WrapOutputProcessHandler, WrapOutputValidateHandler
@@ -124,16 +123,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 cap_toolset = DynamicToolset[AgentDepsT](toolset_func=toolset)
 
             toolsets.append(
-                PreparedToolset(
-                    cap_toolset,
-                    prepare_capability_tool_definitions(
-                        capability_id=capability.id,
-                    ),
-                )
+                CapabilityScopedToolset(wrapped=cap_toolset, capability_id=capability.id)
             )
-        # TODO: Decide how toolset-level instructions should interact with deferred
-        # capabilities. They are owned by toolsets rather than individual tools, so
-        # they remain available even when capability tools start hidden.
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
