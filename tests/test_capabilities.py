@@ -2049,19 +2049,15 @@ async def test_toolset_capability_in_agent():
     assert tool_returns[0].content.startswith('Hello, ')
 
 
-def test_deferred_capability_catalog_entries_require_id_and_description() -> None:
+def test_deferred_capability_catalog_entries_require_description() -> None:
     """Deferred capabilities must be discoverable before the model can load them."""
-    with pytest.raises(ValueError) as missing_id:
-        Capability[None](description='Needs a stable id.', defer_loading=True)
 
-    with pytest.raises(ValueError) as missing_description:
-        Capability[None](id='billing', defer_loading=True)
+    with pytest.raises(UserError) as missing_description:
+        agent = Agent(TestModel(), capabilities=[Capability[None](id='billing', defer_loading=True)])
+        _ = agent.run_sync('Go.')
 
-    assert [str(missing_id.value), str(missing_description.value)] == snapshot(
-        [
-            'Capabilities with defer_loading=True must have an id.',
-            'Capabilities with defer_loading=True must have a description.',
-        ]
+    assert str(missing_description.value) == snapshot(
+        "Capability 'billing' has defer_loading=True but no description. Capabilities with defer_loading=True must provide a description (via the `description` field or by overriding `get_description`) so the model can decide whether to load them from the `load_capability` catalog."
     )
 
 
