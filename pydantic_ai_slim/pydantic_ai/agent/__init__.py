@@ -1170,7 +1170,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        # Build initial RunContext for for_run lifecycle hooks
+        # Build initial RunContext for for_run lifecycle hooks. Includes every
+        # field that's already known here — `tool_manager` and `validation_context`
+        # are populated later by `build_run_context` once the run is iterating.
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
@@ -1179,8 +1181,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prompt=user_prompt,
             messages=state.message_history,
             tracer=tracer,
+            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
+            instrumentation_version=instrumentation_settings.version
+            if instrumentation_settings
+            else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
+            run_id=state.run_id,
+            conversation_id=state.conversation_id,
         )
+
+        # Resolve run metadata up front so capability and toolset `for_run` hooks
+        # can see it on `RunContext.metadata`. Metadata factories receive the
+        # `initial_ctx` above (no `tool_manager` / `validation_context` yet); they
+        # will be invoked again at the end of the run with the full final state,
+        # so any field that becomes available later still ends up reflected in
+        # `agent_run.metadata`. Factories should be pure mappings over the run
+        # context, not perform IO or have side effects.
+        state.metadata = self._get_metadata(initial_ctx, metadata)
+        initial_ctx.metadata = state.metadata
 
         # Determine root capability: override > agent default
         override_cap = self._override_root_capability.get()
@@ -1337,7 +1355,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         )
-        run_metadata: dict[str, Any] | None = None
+        # `state.metadata` was resolved above (before `for_run`); reuse it here so
+        # `_run_span_end_attributes` has a value even on early exits. The finally
+        # block below re-resolves with the full final state once the run completes.
+        run_metadata: dict[str, Any] | None = state.metadata
         try:
             async with AsyncExitStack() as stack:
                 if run_span.is_recording():
@@ -1360,7 +1381,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
                 await stack.enter_async_context(toolset)
                 agent_run = AgentRun(graph_run)
-                run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
                 # Build RunContext for run lifecycle hooks
                 run_ctx = _agent_graph.build_run_context(agent_run.ctx)
