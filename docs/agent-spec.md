@@ -129,7 +129,7 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `capabilities` | `list` | [Capabilities](capabilities.md) (see [spec syntax](#capability-spec-syntax)) |
 | `deps_schema` | `dict \| None` | JSON Schema for [template string](#template-strings) validation (see below) |
 | `output_schema` | `dict \| None` | JSON Schema for [structured output](output.md) (see below) |
-| `retries` | `int \| None` | Default [tool retries](tools-advanced.md#tool-retries); also cascades to `output_retries` when the latter is unset (default: `None`, treated as `1`) |
+| `tool_retries` | `int \| None` | Default [tool retries](tools-advanced.md#tool-retries) (default: `None`, treated as `1`) |
 | `output_retries` | `int \| None` | [Output validation retries](output.md#output-validator-functions) |
 | `end_strategy` | `EndStrategy` | When to stop (`'early'` or `'exhaustive'`) |
 | `tool_timeout` | `float \| None` | Default [tool](tools.md) timeout in seconds |

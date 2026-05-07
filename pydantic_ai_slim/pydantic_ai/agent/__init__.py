@@ -738,7 +738,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 cast(ModelSettings, validated_spec.model_settings) if validated_spec.model_settings else None,
                 model_settings,
             ),
-            retries=retries if retries is not None else validated_spec.retries,
+            retries=retries
+            if retries is not None
+            else (validated_spec.retries if 'retries' in validated_spec.model_fields_set else None),
+            tool_retries=validated_spec.tool_retries,
             validation_context=validation_context,
             output_retries=output_retries if output_retries is not None else validated_spec.output_retries,
             tools=tools,
@@ -1725,10 +1728,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = list(_capabilities_from_spec(validated_spec, custom_capability_types, template_context))
         combined = CombinedCapability(capabilities) if capabilities else None
 
-        # Warn for unsupported fields with non-default values
+        # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
+        # triggering the pydantic deprecation warning on the deprecated `retries` field.
         for field_name in _UNSUPPORTED_SPEC_FIELDS:
             field_info = type(validated_spec).model_fields[field_name]
-            if getattr(validated_spec, field_name) != field_info.default:
+            if validated_spec.__dict__[field_name] != field_info.default:
                 warnings.warn(
                     f'AgentSpec field {field_name!r} is not supported at run/override time and will be ignored',
                     UserWarning,
@@ -2814,6 +2818,7 @@ _UNSUPPORTED_SPEC_FIELDS: tuple[str, ...] = (
     'description',
     'end_strategy',
     'retries',
+    'tool_retries',
     'tool_timeout',
     'instrument',
     'output_schema',

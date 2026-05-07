@@ -414,6 +414,31 @@ def test_agent_from_spec_explicit_retries_warns():
     assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
+def test_agent_from_spec_tool_retries():
+    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
+
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_spec_retries_deprecated_getter():
+    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+    spec = AgentSpec(model='test', retries=5)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        assert spec.retries == 5
+
+
+def test_agent_spec_tool_retries_field():
+    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
+    spec = AgentSpec(model='test', tool_retries=5)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        assert spec.tool_retries == 5
+
+
 def test_agent_from_spec_end_strategy():
     agent = Agent.from_spec({'model': 'test', 'end_strategy': 'exhaustive'})
     assert agent.end_strategy == 'exhaustive'
@@ -1541,7 +1566,17 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'retries': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'default': None, 'title': 'Retries'},
+                'tool_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Tool Retries',
+                },
+                'retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'deprecated': True,
+                    'title': 'Retries',
+                },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
@@ -1861,14 +1896,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.retries == 3
+    assert loaded.tool_retries == 3
 
 
 @dataclass
