@@ -26,6 +26,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -54,7 +55,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
@@ -1317,6 +1318,192 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_adaptive(allow_model_requests: None):
+    """Multi-turn thinking on Sonnet 4.6 via the unified `thinking` setting.
+
+    Reproduces the regression from https://github.com/pydantic/pydantic-ai/issues/5304:
+    pre-fix the legacy `{'type': 'enabled', 'budget_tokens': N}` shape silently disabled
+    thinking on turn 2. With adaptive support wired in, both turns must emit a
+    `ThinkingPart`.
+
+    Routed via the Pydantic AI Gateway (rather than direct AWS) because Anthropic's
+    Bedrock use-case approval is per-account; the gateway's account is approved.
+    """
+    from pydantic_ai.providers.gateway import gateway_provider
+
+    provider = gateway_provider(
+        'bedrock',
+        api_key=os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-api-key'),
+        # Pin base_url so cassette replay matches recording — `_infer_base_url` derives
+        # a region-specific URL from the api key, which diverges with a fake replay key.
+        base_url='https://gateway-us.pydantic.dev/proxy',
+    )
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-6',
+        provider=provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking a simple, practical question about how to cross the street safely.',
+                        signature='Ev8BCkgIDRABGAIqQA94zfb4uEVoCu7iX9s3XhxDSQeO+T4eEebWFazipXUbG6UnmE4yM4RHrXY1hCjki6b6oNT0RlcBph7RbqHHGEUSDPYZ51rMvqLhfyOBwhoMOJoutnDrBSjsVrKJIjDDKzEIg5ehbDml3SpQx5G9rl0bdfUxN6SB+Ha+VwIKaMEr84u/q/NXhF0Ev9FM5XoqZdkS5S3W/TrYQPcMj5Gci4Q5mPdMdN1KvJua3pC6q8F3uDxczAd5NLdAHhQNye3OOlYs+ZS4AWEGQrN/X9BDDll2Vo8oPU0SHq+Ec9/WMDu20Hyr7Iu430/e0YF//XwEPWAoImgaGAE=',
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the basic steps for safely crossing the street:
+
+1. **Find a safe place to cross**
+   - Use a crosswalk or intersection when possible
+   - Avoid crossing between parked cars or on curves
+
+2. **Stop at the curb or edge**
+   - Don't stand in the road while waiting
+
+3. **Look both ways**
+   - Look left, then right, then left again
+   - In some countries, the order may differ based on traffic direction
+
+4. **Wait for a safe gap in traffic**
+   - At a traffic light, wait for the walk signal (green light or "WALK" sign)
+   - Make sure cars have actually stopped before stepping out
+
+5. **Make eye contact with drivers** (when possible)
+   - Ensure they see you before crossing
+
+6. **Walk, don't run**
+   - Walk briskly and directly across
+   - Keep watching for traffic as you cross
+
+7. **Stay alert**
+   - Avoid looking at your phone while crossing
+   - Watch for turning vehicles, cyclists, and other hazards
+
+**Additional tips:**
+- Be extra cautious at night or in bad weather
+- Make yourself visible (wear bright clothing if possible)
+- Never assume a driver sees you
+
+Would you like more specific advice for a particular situation?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=322),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://gateway-us.pydantic.dev/proxy/bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to analogously apply the principles of crossing a street to crossing a river. This is a fun and interesting question. Let me think about how the steps for crossing a street map to crossing a river.
+
+Let me map the concepts:
+- Finding a safe place to cross → finding a safe crossing point (shallow ford, bridge, etc.)
+- Looking both ways → assessing the river conditions (current, depth, width)
+- Waiting for a safe gap → waiting for safe conditions (water level, weather)
+- Making eye contact with drivers → being aware of hazards
+- Walking, not running → moving carefully and steadily
+- Staying alert → watching for hazards like slippery rocks, currents, etc.
+
+
+- Now I'm considering how these principles apply differently depending on the crossing method--whether I'm using a bridge, wading through a ford, taking a boat, or swimming across.\
+""",
+                        signature='EqQICkgIDRABGAIqQEovsWt4+ZD8NIcyiJTeMreRI6UH9Iq+k2yYfU4eQ9MjovVJNWuQc6noK4ihZcQo8JHjs+hV7AKWCgRWk8Q0AFMSDLi6CJ9HE8vCHijVJRoML/dhvRC6t6seTzggIjCRgiAGoknwZwPvJ3949hpWQSqk1Vxaa1NZGJd+OIRRWzoGKNKj9N5q/PioM2X/RWQqiQeJA1+a4VJzm5zQKODwPLx3BXzKt22Q/alYB4rLIr6hf/OuzwViUAc+u2EtD71ZHrW1CkCOJN+KQD2LuHyRQI8yg3uSaLpWu3VYU8ZCLNuzNL8WAi/EWX4g/3G+qQJTB/4giMWxeHMAhC3+z3t42kBf35DWXO9ElULp50OYyFR3/8CUPuKPfNV0FnmNazycy7JSBzycKFT+DZhARjvodiSygbxc73g7t4XKowR+Tv523yjdbgMoy0Vd5uMQkDksiG2E/NRtfS4v1KvPsgjjWN8/jRkofrgtZM7Si9l3dix7ZcC8gEBrbnWOxDsI3tGCOV7ChWuQIIxki+lOgrYlNidbLOqdWmIYnsQ2Vr7vScEK1qNjQJ9QfXAcsnASBrp5xnY7rxojn/dXlqZKSZCj2iI37ox6Qlx0sqQnWU4DYwRh8bGCvT0cLDcrQMrJx0fWSn3S/0NBQzaUqR+O6MNxBAmGg8uKQH1g7fjG4RoTjCLsdUiUCDEKnr3+1xO0j3Xp5nwSoRu/tfqvEOTdKUsr/7IAVNRjGIwLyViUeiK4ZV9+GUB1bc+b4CA4CCA8nBc01z8gRFh5GHIK48Iq8RMe823XdxrmrRY9tqeWNdi4wslrhCWOYTXopxBId6/qxyZvQs3CSXxWvS8RkBlvcOX8163ewBuD7N1K5UzOTUbpbPg3xmxiEYTWEPgmGE0OE+1ac8X6IXyZJ8RHloywpbvBzOCl2x7Oj4y4wBpIKYrz6dTidjtFW6RZ5ZC2ncl/2lTRp8ZjhJvvCbbI6fQoRegE/HbHq3aogl6krGevSRatl3ylnxwsadV9bPsMZ1HUXaB99TXUNhVW4OFIubkypN3qzStrMeWHkckC47c6RLc72uw94VxHDD1uJ8sop0/X/60TncgzGZJMX3xRMJdueMvbiRUHOmQgQZqq/CXl6mDUMvy0gsdH6kNxQhnNzv9RU6j5bj9kvtFY8gNz44qNdCP1aMZYTelf4DGbhfYgB8XvFgpO5H1U3Vh8NIlXiNrBN4IvmSIRJkXyegwehwoGrd9KmzwbxUNGMI3zqxteuryARbq2ZGpsj9rmqSOweNZZYpRXCJfyZUQ4QpNMEAHmHdbSnJS2YnU15vORD1Mj/d0xkH+/BC2cwWWfdNhFG1JZWQNcIndrq9CZ+zfhpmyuawHUn+NclmpHbdy+3fez2xQBX8veA92r025UXSLJ/RgB',
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Great analogy! Here's how crossing a street maps to crossing a river:
+
+## 1. Find a Safe Place to Cross
+- Look for a **bridge** (like using a crosswalk)
+- Or find a **shallow ford** -- avoid deep, wide, or fast-moving sections
+- Avoid crossing near rapids, waterfalls, or steep banks
+
+## 2. Stop and Assess Before Entering
+- Check the **water depth and width**
+- Look for **hazards** (rocks, debris, strong current)
+- Check **upstream and downstream** (like looking left and right)
+
+## 3. Wait for Safe Conditions
+- Like waiting for a walk signal, wait if water levels are **high or rising**
+- Avoid crossing after heavy rain or during flooding
+
+## 4. "Make Eye Contact" -- Know Your Hazards
+- Identify slippery rocks, hidden drop-offs, and current strength
+
+## 5. Cross Carefully and Directly
+- Use a **walking stick** for stability (like walking briskly and steadily)
+- Face slightly **upstream**
+- Unbuckle your pack (if carrying one) for safety
+
+## 6. Stay Alert Throughout
+- Keep watching conditions as you cross
+- Don't look at your phone 😄
+
+## Bonus Options (like different types of crosswalks):
+- **Bridge** = safest
+- **Stepping stones** = moderate
+- **Wading/fording** = requires more caution
+- **Swimming** = last resort
+
+Would you like detail on any specific method?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=358, output_tokens=574),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://gateway-us.pydantic.dev/proxy/bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
