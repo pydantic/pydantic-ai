@@ -957,6 +957,6 @@ The complete API for the `pydantic_evals.online` module is documented in the [AP
 ## Next Steps
 
 - **[Custom Evaluators](evaluators/custom.md)** — Write evaluators for your domain
-- **[Built-in Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
+- **[Native Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
 - **[Logfire Integration](how-to/logfire-integration.md)** — Visualize evaluation results in Logfire
 - **[Quick Start](quick-start.md)** — Offline evaluation with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate]

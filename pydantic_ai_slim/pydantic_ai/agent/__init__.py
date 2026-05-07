@@ -48,6 +48,7 @@ from .._agent_graph import (
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
+from .._warnings import PydanticAIDeprecationWarning  # imported here to avoid a circular import
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
@@ -415,8 +416,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = wrap_capability_funcs(capabilities)
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
-        for builtin_tool in builtin_tools:
-            capabilities.append(NativeToolCap(builtin_tool))
+        if builtin_tools:
+            warnings.warn(
+                '`Agent(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
+                'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
+                '`WebFetch()`, `MCP()`, or `ImageGeneration()` for native-or-local fallback.',
+                PydanticAIDeprecationWarning,
+                stacklevel=3,
+            )
+            for builtin_tool in builtin_tools:
+                capabilities.append(NativeToolCap(builtin_tool))
         if prepare_tools is not None:
             capabilities.append(PrepareTools(prepare_tools))
         if prepare_output_tools is not None:

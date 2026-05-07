@@ -62,13 +62,13 @@ app = agent.to_web(
 )
 ```
 
-## Builtin Tool Support
+## Native Tool Support
 
-You can specify a list of [builtin tools](builtin-tools.md) that will be shown as options to the user, if the selected model supports them:
+You can specify a list of [native tools](native-tools.md) that will be shown as options to the user, if the selected model supports them:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
 agent = Agent('openai:gpt-5.2')
 
@@ -79,7 +79,7 @@ app = agent.to_web(
 ```
 
 !!! note "Memory Tool"
-    The `memory` builtin tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent at construction time.
+    The `memory` native tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] directly on the agent at construction time.
 
 ## Extra Instructions
 
