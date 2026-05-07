@@ -2335,10 +2335,10 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     for name, server in config.mcp_servers.items():
         toolset: MCPToolset[Any]
         if isinstance(server, MCPServerStdio):  # pyright: ignore[reportDeprecated]
-            toolset = MCPToolset(
-                {'mcpServers': {name: {'command': server.command, 'args': list(server.args), 'env': server.env}}},
-                id=name,
-            )
+            stdio_entry: dict[str, Any] = {'command': server.command, 'args': list(server.args)}
+            if server.env is not None:
+                stdio_entry['env'] = server.env
+            toolset = MCPToolset({'mcpServers': {name: stdio_entry}}, id=name)
         elif isinstance(server, _MCPServerHTTP):
             toolset = MCPToolset(server.url, id=name, headers=server.headers)
         else:  # pragma: no cover
