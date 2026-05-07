@@ -287,12 +287,19 @@ class TestMCPToolsetIntegration:
             assert toolset.instructions == 'You are an MCP test server.'
         assert toolset.is_running is False
 
-    async def test_aexit_extra_call_raises(self, fastmcp_server: FastMCP[None]):
+    async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
+        """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
+        toolset = MCPToolset(fastmcp_server)
+        with pytest.raises(ValueError, match='called more times than'):
+            await toolset.__aexit__(None, None, None)
+
+    async def test_aexit_called_more_times_than_aenter(self, fastmcp_server: FastMCP[None]):
+        """Calling `__aexit__` more times than `__aenter__` should raise."""
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             pass
         with pytest.raises(ValueError, match='called more times than'):
-            await toolset.__aexit__()
+            await toolset.__aexit__(None, None, None)
 
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext[None]):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
