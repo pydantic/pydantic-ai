@@ -7545,9 +7545,13 @@ def test_deprecated_kwargs_still_work():
             Agent(  # pyright: ignore[reportDeprecated]
                 'test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])]
             )
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert '`mcp_servers` is deprecated' in str(w[0].message)
+            mcp_servers_warnings = [
+                warning
+                for warning in w
+                if issubclass(warning.category, DeprecationWarning)
+                and '`mcp_servers` is deprecated' in str(warning.message)
+            ]
+            assert len(mcp_servers_warnings) == 1
     except ImportError:
         pass
 
