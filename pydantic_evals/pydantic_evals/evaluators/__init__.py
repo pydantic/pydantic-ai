@@ -1,4 +1,4 @@
-from .agentic import ArgumentCorrectness, StepEfficiency, ToolCorrectness, TrajectoryMatch
+from .agentic import ArgumentCorrectness, RetryCount, StepEfficiency, ToolCorrectness, TrajectoryMatch
 from .common import (
     Contains,
     Equals,
@@ -34,6 +34,7 @@ __all__ = (
     'TrajectoryMatch',
     'ArgumentCorrectness',
     'StepEfficiency',
+    'RetryCount',
     # context
     'EvaluatorContext',
     # evaluator

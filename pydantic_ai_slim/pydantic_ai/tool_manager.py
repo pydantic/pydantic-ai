@@ -584,6 +584,12 @@ class ToolManager(Generic[AgentDepsT]):
                 raise
             except ToolRetryError as e:
                 part = e.tool_retry
+                if span.is_recording():
+                    # Mark the span as a retry so downstream evaluators can
+                    # distinguish "agent retried after this call" from "tool
+                    # finally failed". Set unconditionally - it does not
+                    # carry user content.
+                    span.set_attribute(instrumentation_names.tool_retry_attr, True)
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
                 span.record_exception(e, escaped=True)

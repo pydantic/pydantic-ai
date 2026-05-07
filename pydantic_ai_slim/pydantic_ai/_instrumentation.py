@@ -47,6 +47,14 @@ class InstrumentationNames:
     tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
     tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
 
+    # Retry span attribute. Set to True on a tool span that ended in a
+    # ToolRetryError - the model will see the retry prompt and try again
+    # (subject to the tool's `max_retries`). Distinct from `tool_deferral_*`
+    # (which marks a tool that was deferred to the user) and from a final
+    # tool failure that exhausts retries (the latter has no dedicated marker
+    # and is only visible via the span's OTel Status).
+    tool_retry_attr: ClassVar[str] = 'pydantic_ai.tool.retry'
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.

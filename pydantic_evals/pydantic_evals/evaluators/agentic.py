@@ -37,6 +37,7 @@ __all__ = (
     'TrajectoryMatch',
     'ArgumentCorrectness',
     'StepEfficiency',
+    'RetryCount',
 )
 
 
@@ -504,4 +505,93 @@ class StepEfficiency(Evaluator[object, object, object]):
                 reason=(f'{request_count} model request(s) (from {source}), budget={self.max_model_requests}'),
             )
 
+        return results
+
+
+# ---------------------------------------------------------------------------
+# RetryCount
+# ---------------------------------------------------------------------------
+
+# Stable keys for the mapping returned by `RetryCount`. Documented and
+# considered part of the evaluator's public contract.
+RETRY_COUNT_KEY = 'retries'
+RETRY_COUNT_UNDER_BUDGET_KEY = 'retries_under_budget'
+
+# Span attribute set by `pydantic_ai.tool_manager._CallToolsHandler` on a tool
+# span that ended in a `ToolRetryError` - the model gets a retry prompt and
+# tries again (subject to the tool's `max_retries`). Duplicated here rather
+# than imported because `pydantic_ai._instrumentation` is private.
+_TOOL_RETRY_ATTR = 'pydantic_ai.tool.retry'
+
+
+def _count_tool_retries(span_tree: SpanTree) -> int:
+    """Count tool-call spans marked as a retry by the pydantic-ai tool wrapper."""
+    return sum(1 for node in span_tree if node.attributes.get(_TOOL_RETRY_ATTR) is True)
+
+
+@dataclass(repr=False)
+class RetryCount(Evaluator[object, object, object]):
+    """Number of times a tool call had to be retried during the run.
+
+    Each retry is a `ToolRetryError` raised inside the tool wrapper - covering
+    pydantic-ai's tool argument-validation failures, tool-raised
+    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], missing tool names, and
+    structured-output validation errors. A non-zero count means the model did
+    not get its arguments right on the first try.
+
+    Reads `ctx.metrics['retries']` when available (populated by
+    `pydantic_evals.dataset._extract_span_tree_metrics` from the
+    `pydantic_ai.tool.retry` span attribute) and falls back to scanning the
+    span tree directly.
+
+    Returns a mapping with these stable keys:
+
+    - `'retries'`: always set, an `EvaluationReason` whose `value` is the
+      retry count (as an `int`). Surfaced as a metric so reports can chart
+      the distribution over time.
+    - `'retries_under_budget'`: only set when `max_retries` is configured -
+      an `EvaluationReason` whose `value` is `True` when the count is within
+      the budget.
+
+    Args:
+        max_retries: Maximum allowed retries before the run is considered
+            over budget. `None` disables the budget check; only the count
+            metric is returned.
+        evaluation_name: Unused - results are returned under stable keys.
+    """
+
+    max_retries: int | None = None
+    evaluation_name: str | None = field(default=None)
+
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> dict[str, EvaluationReason]:
+        # Prefer the pre-extracted metric (populated by Dataset.evaluate via
+        # `_extract_span_tree_metrics`). Fall back to walking the span tree
+        # directly so the evaluator also works when invoked outside of a
+        # Dataset run (e.g. from `OnlineEvaluation`).
+        metric = ctx.metrics.get(RETRY_COUNT_KEY)
+        if isinstance(metric, int | float):
+            count = int(metric)
+            source = "ctx.metrics['retries']"
+        else:
+            try:
+                span_tree = ctx.span_tree
+            except SpanTreeRecordingError:
+                results: dict[str, EvaluationReason] = {
+                    RETRY_COUNT_KEY: EvaluationReason(value=0, reason=_NO_SPAN_TREE_REASON),
+                }
+                if self.max_retries is not None:
+                    results[RETRY_COUNT_UNDER_BUDGET_KEY] = EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
+                return results
+            count = _count_tool_retries(span_tree)
+            source = 'span tree'
+
+        results = {
+            RETRY_COUNT_KEY: EvaluationReason(value=count, reason=f'{count} tool retry(ies) (from {source})'),
+        }
+        if self.max_retries is not None:
+            within = count <= self.max_retries
+            results[RETRY_COUNT_UNDER_BUDGET_KEY] = EvaluationReason(
+                value=within,
+                reason=f'{count} retry(ies) (from {source}), budget={self.max_retries}',
+            )
         return results
