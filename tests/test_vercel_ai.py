@@ -3879,6 +3879,22 @@ async def test_adapter_dump_messages_with_tools():
             ),
             id='list-data-and-image',
         ),
+        pytest.param(
+            'dict-with-nested-image',
+            snapshot(
+                {
+                    'caption': 'see image',
+                    'attachment': {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                }
+            ),
+            id='dict-with-nested-image',
+        ),
     ],
 )
 async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
@@ -3900,6 +3916,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
         'image-and-video': [tiny_image, tiny_video],
         'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
         'list-data-and-image': ['hello', 'world', tiny_image],
+        'dict-with-nested-image': {'caption': 'see image', 'attachment': tiny_image},
     }
     content = contents[case_id]
     messages: list[ModelMessage] = [

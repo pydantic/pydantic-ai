@@ -1254,21 +1254,6 @@ def test_tool_return_part_binary_content_serialization():
     assert tool_return.model_response_object() == snapshot({})
 
 
-def _extract_binary(content: object) -> BinaryContent | None:
-    """Pull the `BinaryContent` instance out of a `ToolReturnPart.content` value, regardless of shape."""
-    if isinstance(content, BinaryContent):
-        return content
-    if isinstance(content, list):
-        for item in content:  # pyright: ignore[reportUnknownVariableType]
-            if isinstance(item, BinaryContent):
-                return item
-    if isinstance(content, dict):
-        for value in content.values():  # pyright: ignore[reportUnknownVariableType]
-            if isinstance(value, BinaryContent):
-                return value
-    return None
-
-
 @pytest.mark.parametrize('case_id', ['scalar', 'list-with-binary', 'dict-with-nested-binary'])
 def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: BinaryContent):
     """`ToolReturnPart.content` containing `BinaryContent` (scalar, in a list, or in a dict)
@@ -1291,20 +1276,18 @@ def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: Bi
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
     ]
-    expected = _extract_binary(content)
-    assert expected is not None
 
-    json_serialized = ModelMessagesTypeAdapter.dump_json(messages)
-    json_loaded = ModelMessagesTypeAdapter.validate_json(json_serialized)
+    json_loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
     json_part = json_loaded[0].parts[0]
     assert isinstance(json_part, ToolReturnPart)
-    assert _extract_binary(json_part.content) == expected
+    assert json_part.content == content
 
-    python_serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
-    python_loaded = ModelMessagesTypeAdapter.validate_python(python_serialized)
+    python_loaded = ModelMessagesTypeAdapter.validate_python(
+        ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    )
     python_part = python_loaded[0].parts[0]
     assert isinstance(python_part, ToolReturnPart)
-    assert _extract_binary(python_part.content) == expected
+    assert python_part.content == content
 
 
 def test_tool_return_part_list_structure_preserved():
