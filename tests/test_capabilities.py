@@ -2111,6 +2111,33 @@ async def test_duplicate_capability_ids_raise() -> None:
     )
 
 
+async def test_unknown_loaded_capability_id_in_message_history_raises() -> None:
+    """Loaded capability ids restored from history must exist in the current run registry."""
+    agent = Agent(
+        TestModel(),
+        capabilities=[Capability[None](id='known', description='Known capability.', instructions='Known.')],
+    )
+
+    message_history = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    content={'capability_id': 'missing', 'instructions': None},
+                    tool_call_id='load-missing',
+                )
+            ]
+        )
+    ]
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi', message_history=message_history)
+
+    assert str(exc_info.value) == snapshot(
+        "Message history contains loaded capability ids that are not available for this run: 'missing'."
+    )
+
+
 async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
     toolset = FunctionToolset[None]()

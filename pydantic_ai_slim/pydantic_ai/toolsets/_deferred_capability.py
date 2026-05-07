@@ -92,8 +92,6 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         if capability_id not in ctx.capabilities:
             return f'No capability found with id {capability_id!r}.'
 
-        ctx.loaded_capability_ids.add(capability_id)
-
         parts: list[str] = []
 
         for instruction in normalize_instructions(ctx.capabilities[capability_id].get_instructions()):
@@ -108,6 +106,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
             parts.append(resolved)
 
         instructions_text = '\n\n'.join(parts) or None
+        ctx.loaded_capability_ids.add(capability_id)
         return ToolReturn(
             return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
         )

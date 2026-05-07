@@ -119,8 +119,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     loaded_capability_ids: set[str] = field(default_factory=set[str])
     """The capabilities that have been loaded so far."""
 
-    loaded: bool = False
-    """Whether the capability for this hook has been loaded."""
+    capability_loaded: bool | None = None
+    """Whether the capability whose hook is currently running is loaded.
+
+    This is `None` outside capability hook dispatch, where there is no current capability.
+    """
 
     @property
     def last_attempt(self) -> bool:
