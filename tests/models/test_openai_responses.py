@@ -225,6 +225,57 @@ def test_openai_responses_image_generation_tool_unsupported_size_raises_error() 
         _resolve_openai_image_generation_size(tool)
 
 
+async def test_openai_responses_image_generation_tool_options(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        builtin_tools=[
+            ImageGenerationTool(
+                action='generate',
+                model='gpt-image-2',
+                background='opaque',
+                output_format='jpeg',
+                size='1536x1024',
+            )
+        ],
+    )
+
+    result = await agent.run('Generate an image.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'generate',
+                'background': 'opaque',
+                'input_fidelity': None,
+                'moderation': 'auto',
+                'output_compression': 100,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'auto',
+                'size': '1536x1024',
+                'model': 'gpt-image-2',
+            }
+        ]
+    )
+
+
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -8546,6 +8597,65 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
     assert len(web_search_items) == 1
     web_search_item = cast(dict[str, Any], web_search_items[0])
     assert web_search_item['id'] == long_id
+
+
+async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcp_123',
+                    args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcp_123',
+                    content={'output': '2026-05-06T00:00:00Z', 'error': None},
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did you call?')]),
+    ]
+
+    await model.request(
+        messages,
+        cast(OpenAIResponsesModelSettings, {'openai_send_reasoning_ids': True}),
+        ModelRequestParameters(
+            builtin_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+        ),
+    )
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert response_kwargs['input'][1] == snapshot(
+        {
+            'id': 'mcp_123',
+            'server_label': 'clock',
+            'name': 'current_time',
+            'arguments': '{}',
+            'error': None,
+            'output': None,
+            'type': 'mcp_call',
+        }
+    )
 
 
 async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):

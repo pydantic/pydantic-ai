@@ -3920,6 +3920,70 @@ async def test_text_response(allow_model_requests: None):
     )
 
 
+async def test_empty_response_skipped_in_history(allow_model_requests: None):
+    """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
+    message with `content=None`, which the Chat Completions API rejects with a 400 error.
+
+    The agent graph (see `_agent_graph.py`) intentionally retries empty responses by emitting an
+    empty `ModelRequest` as well, relying on the model adapter to omit both from the API payload.
+    """
+    responses = [
+        completion_message(ChatCompletionMessage(content=None, role='assistant')),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
+
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assert second_call_messages == [{'content': 'hello', 'role': 'user'}]
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(parts=[], timestamp=IsDatetime(), run_id=IsStr(), conversation_id=IsStr()),
+            ModelResponse(
+                parts=[TextPart(content='hello back')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                },
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
