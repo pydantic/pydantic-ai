@@ -881,6 +881,7 @@ Sometimes you need to stop a streaming response before it completes: a user clic
 
 !!! note "Model support"
     [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] and the deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] do not currently support stream cancellation.
+    The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, which limits when [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] can interrupt an in-flight chunk read. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider docs for the recommended pattern.
 
 #### Cleaning up `run_stream_events`
 
