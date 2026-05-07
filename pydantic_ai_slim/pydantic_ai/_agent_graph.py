@@ -176,6 +176,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     root_capability: AbstractCapability[DepsT]
 
     capabilities: dict[str, AbstractCapability[DepsT]]
+    loaded_capability_ids: set[str]
 
     builtin_tools: list[AgentBuiltinTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -1352,6 +1353,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
+        loaded_capability_ids=ctx.deps.loaded_capability_ids,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)

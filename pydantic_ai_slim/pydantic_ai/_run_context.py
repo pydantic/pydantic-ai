@@ -116,17 +116,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """The capabilities that are available for the current run."""
 
+    loaded_capability_ids: set[str] = field(default_factory=set[str])
+    """The capabilities that have been loaded so far."""
+
+    loaded: bool = False
+    """Whether the capability for this hook has been loaded."""
+
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
-
-    @property
-    def loaded_capability_ids(self) -> set[str]:
-        """The capabilities that have been loaded so far."""
-        from pydantic_ai._deferred import parse_loaded_capabilities
-
-        return parse_loaded_capabilities(self.messages)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

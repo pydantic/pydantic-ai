@@ -21,6 +21,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
+from pydantic_ai._deferred import parse_loaded_capabilities
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, InstrumentationNames
 from pydantic_ai._spec import load_from_registry
 from pydantic_ai.capabilities.deferred import DeferredLoadingCapability
@@ -1304,6 +1305,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_capability.apply(collect)
             return capabilities
 
+        capabilities_dict = collect_capabilities()
+
+        loaded_capability_ids = {cap.id for cap in capabilities_dict.values() if cap.defer_loading is not True}
+
+        loaded_capability_ids.update(parse_loaded_capabilities(state.message_history))
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1319,7 +1326,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
-            capabilities=collect_capabilities(),
+            capabilities=capabilities_dict,
+            loaded_capability_ids=loaded_capability_ids,
             builtin_tools=[*cap_builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,

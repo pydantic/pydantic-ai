@@ -92,6 +92,8 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
         if capability_id not in ctx.capabilities:
             return f'No capability found with id {capability_id!r}.'
 
+        ctx.loaded_capability_ids.add(capability_id)
+
         parts: list[str] = []
 
         for instruction in normalize_instructions(ctx.capabilities[capability_id].get_instructions()):
@@ -110,9 +112,7 @@ class DeferredCapabilityToolset(WrapperToolset[AgentDepsT]):
             return_value=LoadCapabilityReturn(capability_id=capability_id, instructions=instructions_text)
         )
 
-    async def _collect_scoped_toolset_instructions(
-        self, capability_id: str, ctx: RunContext[AgentDepsT]
-    ) -> list[str]:
+    async def _collect_scoped_toolset_instructions(self, capability_id: str, ctx: RunContext[AgentDepsT]) -> list[str]:
         """Pull instructions from `CapabilityScopedToolset`s tagged with this cap_id.
 
         Bypasses each wrapper's own gate (still closed because the cap isn't yet
