@@ -44,7 +44,7 @@ class AgentSpec(BaseModel):
     retries: int | None = Field(
         default=None,
         deprecated=(
-            '`retries` is deprecated. Use `tool_retries` instead. '
+            '`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead. '
             'In 1.x, setting `retries` on a spec still cascades to `output_retries` '
             'when the latter is unset, matching `Agent(retries=...)` behavior.'
         ),
@@ -207,7 +207,7 @@ class AgentSpec(BaseModel):
             tool_retries: int | None = None
             retries: int | None = Field(
                 default=None,
-                deprecated='`retries` is deprecated. Use `tool_retries` instead.',
+                deprecated='`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead.',
             )
             output_retries: int | None = None
             end_strategy: EndStrategy = 'early'
