@@ -53,7 +53,7 @@ from ..capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.prepare_tools import PrepareOutputTools, PrepareTools
 from ..capabilities.process_history import ProcessHistory
-from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
+from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -1168,12 +1168,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
+        # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
+        # to `Agent(model=...)`) wins, then `self.instrument`/`Agent.instrument_all()`.
+        # When detected, unwrap so the rest of the run uses the plain model — the
+        # `Instrumentation` capability now provides the spans.
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.instrumentation_settings
-            tracer = model_used.instrumentation_settings.tracer
+            instrumentation_settings: InstrumentationSettings | None = model_used.instrumentation_settings
+            model_used = model_used.wrapped
+        else:
+            instrumentation_settings = self._resolve_instrumentation_settings()
+
+        if instrumentation_settings is not None:
+            tracer = instrumentation_settings.tracer
             instrumentation_cap: InstrumentationCap | None = InstrumentationCap(settings=instrumentation_settings)
         else:
-            instrumentation_settings = None
             tracer = NoOpTracer()
             instrumentation_cap = None
 
@@ -2282,11 +2290,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
 
-        instrument = self.instrument
-        if instrument is None:
-            instrument = self._instrument_default
+        return model_
 
-        return instrument_model(model_, instrument)
+    def _resolve_instrumentation_settings(self) -> InstrumentationSettings | None:
+        """Resolve the effective `InstrumentationSettings` for this agent, or `None` if disabled."""
+        instrument = self.instrument if self.instrument is not None else self._instrument_default
+        if not instrument:
+            return None
+        return InstrumentationSettings() if instrument is True else instrument
 
     def _get_deps(self: Agent[T, OutputDataT], deps: T) -> T:
         """Get deps for a run.

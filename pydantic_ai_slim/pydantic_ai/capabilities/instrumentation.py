@@ -231,11 +231,6 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         model = request_context.model
 
-        # Unwrap InstrumentedModel to prevent double-spanning
-        if isinstance(model, InstrumentedModel):
-            model = model.wrapped
-            request_context = replace(request_context, model=model)
-
         # Track the latest messages so _run_span_end_attributes has them on error paths
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages

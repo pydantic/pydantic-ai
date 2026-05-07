@@ -13,7 +13,7 @@ from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPa
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.tools import DeferredToolRequests, RunContext
@@ -1099,30 +1099,25 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
 
 
 def test_instrument_all():
-    model = TestModel()
     agent = Agent()
 
-    def get_model():
-        return agent._get_model(model)  # type: ignore
+    def resolve():
+        return agent._resolve_instrumentation_settings()  # type: ignore[reportPrivateUsage]
 
     Agent.instrument_all(False)
-    assert get_model() is model
+    assert resolve() is None
 
     Agent.instrument_all()
-    m = get_model()
-    assert isinstance(m, InstrumentedModel)
-    assert m.wrapped is model
-    assert m.instrumentation_settings.event_mode == InstrumentationSettings().event_mode
+    settings = resolve()
+    assert settings is not None
+    assert settings.event_mode == InstrumentationSettings().event_mode
 
     options = InstrumentationSettings(version=1, event_mode='logs')
     Agent.instrument_all(options)
-    m = get_model()
-    assert isinstance(m, InstrumentedModel)
-    assert m.wrapped is model
-    assert m.instrumentation_settings is options
+    assert resolve() is options
 
     Agent.instrument_all(False)
-    assert get_model() is model
+    assert resolve() is None
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3861,10 +3856,7 @@ def test_instrumentation_capability_serialization_name() -> None:
 def test_instrumentation_capability_explicit(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:
-    """Test using Instrumentation as an explicit capability (not via instrument=True).
-
-    This covers the code path where the model is NOT wrapped in InstrumentedModel.
-    """
+    """Test using Instrumentation as an explicit capability (not via instrument=True)."""
     from pydantic_ai.capabilities.instrumentation import Instrumentation
 
     instrumentation = Instrumentation(settings=InstrumentationSettings())
