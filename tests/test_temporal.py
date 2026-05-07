@@ -4332,6 +4332,21 @@ def test_durability_image_output_rejected():
         )
 
 
+async def test_durability_runtime_capability_with_mixed_position_root():
+    """Per-run capabilities can be added to a TemporalDurability agent without ordering conflicts.
+
+    The agent's `_root_capability` mixes outermost (auto-injected `ToolSearch`) and innermost
+    (`TemporalDurability`) leaves. Wrapping that root in another `CombinedCapability` to inject
+    per-run capabilities used to trigger "Conflicting positions in nested CombinedCapability"
+    because the outer sort merged orderings across the inner combined's leaves.
+    """
+    from pydantic_ai.capabilities import Hooks
+
+    agent = Agent(_durability_fn_model, name='test_runtime_cap', capabilities=[TemporalDurability()])
+    result = await agent.run('hi', capabilities=[Hooks()])
+    assert result.output == 'Echo: hi'
+
+
 # --- Model registry ---
 
 

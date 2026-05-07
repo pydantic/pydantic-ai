@@ -1198,13 +1198,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_cap = self._override_root_capability.get()
         base_capability = override_cap.value if override_cap is not None else self._root_capability
 
-        # Merge spec and run-time capabilities additively with the base capability
+        # Merge spec and run-time capabilities additively with the base capability.
+        # Splat `base_capability`'s capabilities (it's an organizational `CombinedCapability`
+        # built from the agent's `capabilities=[...]` list, not a deliberate user-grouped
+        # subtree) so each leaf participates as a sibling in the outer ordering pass. Without
+        # this, an agent that mixes outermost (e.g. auto-injected `ToolSearch`) and innermost
+        # (e.g. `TemporalDurability`) capabilities would raise "Conflicting positions in nested
+        # CombinedCapability" as soon as a per-run capability gets added.
+        base_capabilities: list[AbstractCapability[AgentDepsT]] = (
+            list(base_capability.capabilities) if isinstance(base_capability, CombinedCapability) else [base_capability]
+        )
         extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         if extra_capabilities:
-            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
+            effective_capability = CombinedCapability([*base_capabilities, *extra_capabilities])
         else:
             effective_capability = base_capability
 
