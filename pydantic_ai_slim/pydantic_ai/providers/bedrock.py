@@ -10,7 +10,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -53,6 +53,36 @@ class BedrockModelProfile(ModelProfile):
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
     """
+
+    bedrock_supports_adaptive_thinking: bool = False
+    """Whether Bedrock Converse accepts `{'type': 'adaptive'}` for this model's thinking field.
+
+    Mirrors `AnthropicModelProfile.anthropic_supports_adaptive_thinking` but tracks Bedrock's separate
+    API surface (`additionalModelRequestFields.thinking` on Converse). When True, unified `thinking`
+    translates to `{'type': 'adaptive'}` and `thinking=False` omits the field entirely, matching
+    direct-API adaptive semantics. Bedrock rejects the `effort` sub-parameter, so all truthy effort
+    levels collapse to the same plain `{'type': 'adaptive'}` request (depth defaults to 'high').
+    """
+
+
+def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model used via Bedrock."""
+    downstream = anthropic_model_profile(model_name)
+    supports_adaptive = (
+        isinstance(downstream, AnthropicModelProfile) and downstream.anthropic_supports_adaptive_thinking
+    )
+    profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_send_back_thinking_parts=True,
+        bedrock_supports_prompt_caching=True,
+        bedrock_supports_tool_caching=True,
+        bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+        bedrock_thinking_variant='anthropic',
+        bedrock_supports_adaptive_thinking=supports_adaptive,
+    ).update(_without_builtin_tools(downstream))
+    # We don't currently support native structured output with Bedrock.
+    # See https://github.com/pydantic/pydantic-ai/issues/4209.
+    return replace(profile, supports_json_schema_output=False)
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
@@ -120,19 +150,7 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
-                BedrockModelProfile(
-                    bedrock_supports_tool_choice=True,
-                    bedrock_send_back_thinking_parts=True,
-                    bedrock_supports_prompt_caching=True,
-                    bedrock_supports_tool_caching=True,
-                    bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
-                    bedrock_thinking_variant='anthropic',
-                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-                # We don't currently support native structured output with Bedrock.
-                # See https://github.com/pydantic/pydantic-ai/issues/4209.
-                supports_json_schema_output=False,
-            ),
+            'anthropic': bedrock_anthropic_model_profile,
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
             ),

@@ -48,7 +48,8 @@ The unified `thinking` setting maps to each provider's native format:
 | OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
 | xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
-| Bedrock (Claude) | `thinking.type='enabled'` | `budget_tokens=16384` | No adaptive support |
+| Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `thinking.type='adaptive'` | Bedrock rejects the `effort` sub-parameter, so all truthy effort levels collapse to plain adaptive (depth defaults to `'high'`) |
+| Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 
 ## OpenAI
@@ -174,7 +175,9 @@ agent = Agent(model, model_settings=settings)
 
 ## Bedrock
 
-Although Bedrock Converse doesn't provide a unified API to enable thinking, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agent.md#model-run-settings) to pass provider-specific configuration:
+For Claude Sonnet 4.6+ and Opus 4.6+, Pydantic AI's unified `thinking` setting translates to AWS's required [adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html) shape automatically — set [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] and you're done.
+
+For older Claude models or to pin a specific `budget_tokens`, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](agent.md#model-run-settings) to pass provider-specific configuration directly:
 
 === "Claude"
 
@@ -191,6 +194,9 @@ Although Bedrock Converse doesn't provide a unified API to enable thinking, you 
     agent = Agent(model=model, model_settings=model_settings)
 
     ```
+
+    !!! note "Effort levels on Bedrock"
+        Unlike the direct Anthropic provider, Bedrock Converse rejects the `effort` sub-parameter on adaptive thinking with a `ValidationException`. As a result, `thinking='low'`, `thinking='medium'`, and `thinking='high'` all produce identical Bedrock requests on Claude 4.6+ models — the underlying request is plain `{'type': 'adaptive'}` and depth defaults to `'high'`. To control depth on these models today, use the manual `bedrock_additional_model_requests_fields` override above.
 === "OpenAI"
 
 

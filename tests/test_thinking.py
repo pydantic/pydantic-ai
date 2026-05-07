@@ -748,6 +748,57 @@ class TestBedrockThinkingTranslation:
         result = model._translate_thinking(settings, params)
         assert result is None
 
+    def test_anthropic_variant_adaptive_thinking_true(self):
+        """Adaptive-capable Claude (Sonnet 4.6+, Opus 4.6+) on Bedrock -> {'type': 'adaptive'}."""
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='anthropic',
+            bedrock_supports_adaptive_thinking=True,
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = model._translate_thinking(settings, params)
+        assert result == {'thinking': {'type': 'adaptive'}}
+
+    def test_anthropic_variant_adaptive_thinking_high_drops_effort(self):
+        """Bedrock rejects 'effort' inside adaptive — all truthy efforts collapse to plain adaptive."""
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='anthropic',
+            bedrock_supports_adaptive_thinking=True,
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking='high')
+        result = model._translate_thinking(settings, params)
+        assert result == {'thinking': {'type': 'adaptive'}}
+
+    def test_anthropic_variant_adaptive_thinking_false_omits(self):
+        """thinking=False on adaptive model omits the field — matches direct Anthropic OMIT behavior."""
+        from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+        from pydantic_ai.providers.bedrock import BedrockModelProfile
+
+        model = BedrockConverseModel.__new__(BedrockConverseModel)
+        model._profile = BedrockModelProfile(
+            bedrock_thinking_variant='anthropic',
+            bedrock_supports_adaptive_thinking=True,
+            supports_thinking=True,
+        )
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = model._translate_thinking(settings, params)
+        assert result is None
+
 
 class TestOpenRouterThinkingTranslation:
     """Test OpenRouter unified thinking fallback in _openrouter_settings_to_openai_settings."""

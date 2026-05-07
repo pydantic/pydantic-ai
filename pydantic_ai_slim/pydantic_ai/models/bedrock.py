@@ -611,7 +611,14 @@ class BedrockConverseModel(Model[BaseClient]):
         variant = profile.bedrock_thinking_variant
 
         if variant == 'anthropic' and 'thinking' not in existing:
-            if thinking is False:
+            if profile.bedrock_supports_adaptive_thinking:
+                # Bedrock rejects 'effort' inside adaptive (ValidationException), so all truthy
+                # effort levels collapse to plain {'type': 'adaptive'} — depth defaults to 'high'.
+                # thinking=False omits the field entirely, matching direct Anthropic behavior;
+                # adaptive models have no documented `disabled` shape.
+                if thinking is not False:
+                    existing['thinking'] = {'type': 'adaptive'}
+            elif thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:
                 existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
