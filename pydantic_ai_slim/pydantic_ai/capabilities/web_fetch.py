@@ -8,7 +8,7 @@ from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool
+from .native_or_local import NativeOrLocalTool, _pop_deprecated_native_kwarg
 
 
 @dataclass(init=False)
@@ -50,7 +50,11 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
+        **deprecated_kwargs: Any,
     ) -> None:
+        native = _pop_deprecated_native_kwarg(deprecated_kwargs, native, class_name=type(self).__name__)
+        if deprecated_kwargs:
+            raise TypeError(f'Unexpected keyword arguments: {sorted(deprecated_kwargs)}')
         self.native = native
         self.local = local
         self.allowed_domains = allowed_domains

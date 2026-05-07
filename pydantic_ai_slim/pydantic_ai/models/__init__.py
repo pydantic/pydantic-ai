@@ -16,9 +16,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
+import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
@@ -26,6 +27,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -501,7 +503,12 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    native_tools: Annotated[
+        list[AbstractNativeTool],
+        # Accept the pre-rename `builtin_tools` key when validating from a dict (e.g. through
+        # `pydantic.TypeAdapter`). The dump uses the new name only.
+        pydantic.Field(validation_alias=pydantic.AliasChoices('native_tools', 'builtin_tools')),
+    ] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -551,6 +558,29 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+# Wrap the dataclass-generated `__init__` so direct construction still accepts a
+# deprecated `builtin_tools=` kwarg. (Pydantic deserialization is handled by the
+# `validation_alias` on the `native_tools` field above.)
+_ModelRequestParameters_orig_init = ModelRequestParameters.__init__
+
+
+def _model_request_parameters_init(self: ModelRequestParameters, **kwargs: Any) -> None:
+    if 'builtin_tools' in kwargs:
+        warnings.warn(
+            '`ModelRequestParameters(builtin_tools=...)` is deprecated, use `native_tools=` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        if 'native_tools' not in kwargs:
+            kwargs['native_tools'] = kwargs.pop('builtin_tools')
+        else:
+            kwargs.pop('builtin_tools')
+    _ModelRequestParameters_orig_init(self, **kwargs)
+
+
+ModelRequestParameters.__init__ = _model_request_parameters_init
 
 
 @dataclass(kw_only=True)
