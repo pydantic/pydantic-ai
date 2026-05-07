@@ -495,9 +495,13 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
         self._validate_model_request_parameters(request_context.model_request_parameters)
 
-        model_id = self._find_model_id(ctx.model)
+        # Use `request_context.model` (which an outer instrumentation capability may have
+        # already unwrapped) so `_find_model_id`'s identity match against
+        # `_models_by_id['default']` succeeds for the agent's default model. `ctx.model`
+        # is set once at `iter()` time and may still reference the wrapped model.
+        model_id = self._find_model_id(request_context.model)
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        model_name = model_id or ctx.model.model_id
+        model_name = model_id or request_context.model.model_id
 
         # Use the streaming activity when either the agent loop expects an event
         # stream (per-run/instance handler, or a chain capability that overrides
