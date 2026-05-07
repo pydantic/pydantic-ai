@@ -412,6 +412,13 @@ class TestMCPToolsetIntegration:
             content = await toolset.read_resource(greeting)
         assert content == 'Hello, world!'
 
+    async def test_read_resource_template_instance(self, fastmcp_server: FastMCP[None]):
+        """Reading a resource produced from a template (`resource://{name}/profile.json`)."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            content = await toolset.read_resource('resource://alice/profile.json')
+        assert content == '{"name": "alice"}'
+
     async def test_resource_methods_without_capability(self, fastmcp_server: FastMCP[None]):
         """When the server's `capabilities.resources` is `False`, the methods return empty lists
         without round-tripping to the server."""
@@ -577,8 +584,6 @@ class TestToolResultMapping:
 class TestSamplingHandler:
     async def test_sampling_handler_round_trip(self):
         """Drive the sampling handler built from `sampling_model=` to cover its body."""
-        import inspect
-
         from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
 
         model = TestModel()
@@ -589,9 +594,7 @@ class TestSamplingHandler:
             temperature=0.5,
             stopSequences=['STOP'],
         )
-        result = handler([], params, None)  # type: ignore[arg-type]
-        if inspect.isawaitable(result):
-            result = await result
+        result = await handler([], params, None)  # type: ignore[arg-type, misc]
         assert isinstance(result, mcp_types.CreateMessageResult)
         assert result.model == model.model_name
 
