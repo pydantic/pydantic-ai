@@ -12,6 +12,7 @@ import pytest
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -141,7 +142,7 @@ def test_build_run_input_allows_regenerate_without_message_id():
 @pytest.mark.skipif(not openai_import_successful(), reason='OpenAI not installed')
 async def test_run(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     data = SubmitMessage(
         trigger='submit-message',

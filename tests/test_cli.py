@@ -11,6 +11,7 @@ from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -674,7 +675,7 @@ def test_run_web_command_agent_builtin_tools_not_duplicated(
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     # Create agent with web_search tool already configured
-    test_agent = Agent(TestModel(custom_output_text='test'), builtin_tools=[WebSearchTool()])
+    test_agent = Agent(TestModel(custom_output_text='test'), capabilities=[NativeTool(WebSearchTool())])
     create_test_module(custom_agent=test_agent)
 
     # Add code_execution via CLI

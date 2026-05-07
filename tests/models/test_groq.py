@@ -42,6 +42,7 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -865,7 +866,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
 
 async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.output == snapshot("""\
@@ -1140,7 +1141,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
 
 async def test_groq_model_web_search_tool_stream(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:

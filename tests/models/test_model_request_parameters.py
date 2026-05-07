@@ -31,7 +31,7 @@ def test_model_request_parameters_are_serializable():
     assert dumped == snapshot(
         {
             'function_tools': [],
-            'builtin_tools': [],
+            'native_tools': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -80,7 +80,7 @@ def test_model_request_parameters_are_serializable():
                     'include_return_schema': None,
                 }
             ],
-            'builtin_tools': [
+            'native_tools': [
                 {
                     'kind': 'web_search',
                     'search_context_size': 'medium',

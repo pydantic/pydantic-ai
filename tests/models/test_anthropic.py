@@ -46,6 +46,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -1149,7 +1150,7 @@ async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_req
 
     agent = Agent(
         model,
-        builtin_tools=[MemoryTool()],
+        capabilities=[NativeTool(MemoryTool())],
         output_type=NativeOutput(CityLocation),
     )
 
@@ -4005,7 +4006,7 @@ What specific information about potatoes would be most helpful to you?\
 async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
@@ -4420,7 +4421,7 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
 async def test_anthropic_model_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebSearchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -5454,7 +5455,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 async def test_anthropic_web_fetch_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -5700,7 +5701,7 @@ async def test_anthropic_web_fetch_tool_stream(
 
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[WebFetchTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
     # Iterate through the stream to ensure streaming code paths are covered
     event_parts: list[Any] = []
@@ -6854,7 +6855,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=settings,
         instructions='Always use the code execution tool for math.',
     )
@@ -7001,7 +7002,7 @@ print(f"4 * 12390 = {result}")\
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()], model_settings=settings)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())], model_settings=settings)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='what is 65465-6544 * 65464-6+1.02255') as agent_run:
@@ -7583,7 +7584,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()])
+    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot('Today is November 19, 2025.')
@@ -7630,7 +7631,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
 
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
     anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(builtin_tools=[CodeExecutionTool()])
+    agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -8147,7 +8148,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     # First run to get server tool history
     result = await agent.run('What day is today?')
@@ -8207,7 +8208,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # First run to get server tool history
     result = await agent.run('What is 2 + 2?')
@@ -8228,7 +8229,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Give me the top 3 news in the world today.') as agent_run:
@@ -8938,7 +8939,7 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requ
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
+    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())], instructions='Be very concise.')
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
     assert result.output == snapshot("""\
@@ -9112,7 +9113,7 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
         provider=AnthropicProvider(api_key=anthropic_api_key),
         settings=AnthropicModelSettings(extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
     )
-    agent = Agent(anthropic_model, builtin_tools=[MemoryTool()])
+    agent = Agent(anthropic_model, capabilities=[NativeTool(MemoryTool())])
 
     with pytest.raises(UserError, match="Built-in `MemoryTool` requires a 'memory' tool to be defined."):
         await agent.run('Where do I live?')
@@ -9594,7 +9595,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     )
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         instructions='Always use the code execution tool for math.',
     )
 

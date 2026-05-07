@@ -44,6 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
 from pydantic_ai.models import ModelRequestParameters
@@ -3063,7 +3064,9 @@ async def test_openai_instructions_with_responses_logprobs_streaming(allow_model
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[NativeTool(WebSearchTool(search_context_size='low'))],
     )
 
     with pytest.raises(
@@ -3076,7 +3079,9 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
-        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[NativeTool(WebSearchTool(search_context_size='low'))],
     )
 
     result = await agent.run('What day is today?')
@@ -3088,7 +3093,7 @@ async def test_openai_web_search_tool_with_user_location(allow_model_requests: N
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'}))],
     )
 
     result = await agent.run('What is the current temperature?')

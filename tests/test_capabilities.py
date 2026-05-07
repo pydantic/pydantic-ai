@@ -22,11 +22,11 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
-    BuiltinTool,
     CapabilityOrdering,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
+    NativeTool,
     PrefixTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
@@ -39,9 +39,9 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -102,7 +102,7 @@ pytestmark = [
 def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
-            'BuiltinTool': BuiltinTool,
+            'NativeTool': NativeTool,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'MCP': MCP,
@@ -1151,10 +1151,10 @@ Supported by:
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
-                'short_spec_BuiltinTool': {
+                'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
-                        'BuiltinTool': {
+                        'NativeTool': {
                             'anyOf': [
                                 {
                                     'oneOf': [
@@ -1171,10 +1171,10 @@ Supported by:
                                 },
                                 {'type': 'null'},
                             ],
-                            'title': 'Builtintool',
+                            'title': 'Nativetool',
                         }
                     },
-                    'title': 'short_spec_BuiltinTool',
+                    'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
                 'short_spec_IncludeToolReturnSchemas': {
@@ -1272,12 +1272,9 @@ Supported by:
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/ImageGenerationTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'fallback_model': {
@@ -1336,9 +1333,9 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
-                        'builtin': {
+                        'native': {
                             'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
-                            'title': 'Builtin',
+                            'title': 'Native',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
@@ -1366,8 +1363,8 @@ Supported by:
                         'prefix': {'title': 'Prefix', 'type': 'string'},
                         'capability': {
                             'anyOf': [
-                                {'const': 'BuiltinTool', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'NativeTool', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -1395,13 +1392,7 @@ Supported by:
                 'spec_params_WebFetch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/WebFetchTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
-                        },
+                        'native': {'anyOf': [{'$ref': '#/$defs/WebFetchTool'}, {'type': 'boolean'}], 'title': 'Native'},
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'allowed_domains': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
@@ -1427,12 +1418,9 @@ Supported by:
                 'spec_params_WebSearch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/WebSearchTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'search_context_size': {
@@ -1510,8 +1498,8 @@ Supported by:
                     'default': [],
                     'items': {
                         'anyOf': [
-                            {'const': 'BuiltinTool', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'NativeTool', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -1608,45 +1596,45 @@ def test_agent_spec_schema_field_parity():
 
 
 def test_builtin_tools_param_wrapped_as_capabilities():
-    """The builtin_tools parameter items are wrapped in BuiltinTool capabilities."""
+    """The builtin_tools parameter items are wrapped in NativeTool capabilities."""
     agent = Agent('test', builtin_tools=[WebSearchTool(), CodeExecutionTool()])
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 2
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
     assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
-    # Also available via _cap_builtin_tools
-    assert len(agent._cap_builtin_tools) == 2  # pyright: ignore[reportPrivateUsage]
+    # Also available via _cap_native_tools
+    assert len(agent._cap_native_tools) == 2  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_builtin_tool():
-    """BuiltinTool capability can be constructed from spec."""
+    """NativeTool capability can be constructed from spec."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'kind': 'web_search'}},
+                {'NativeTool': {'kind': 'web_search'}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
 
 
 def test_agent_from_spec_builtin_tool_with_options():
-    """BuiltinTool spec supports builtin tool configuration options."""
+    """NativeTool spec supports builtin tool configuration options."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'kind': 'web_search', 'search_context_size': 'high'}},
+                {'NativeTool': {'kind': 'web_search', 'search_context_size': 'high'}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     tool = builtin_caps[0].tool
     assert isinstance(tool, WebSearchTool)
@@ -1654,17 +1642,17 @@ def test_agent_from_spec_builtin_tool_with_options():
 
 
 def test_agent_from_spec_builtin_tool_explicit_form():
-    """BuiltinTool spec supports the explicit {tool: ...} form."""
+    """NativeTool spec supports the explicit {tool: ...} form."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'tool': {'kind': 'code_execution'}}},
+                {'NativeTool': {'tool': {'kind': 'code_execution'}}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
 
@@ -4250,7 +4238,7 @@ class TestWebSearchCapability:
     def test_websearch_default_with_supporting_model(self):
         """WebSearch() with a model that supports builtin web search → builtin used, local removed."""
         cap = WebSearch()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
 
@@ -4291,12 +4279,12 @@ class TestWebSearchCapability:
     def test_websearch_builtin_false(self):
         """WebSearch(builtin=False) → only local, no builtin registered."""
         cap = WebSearch(builtin=False)
-        assert cap.get_builtin_tools() == []
+        assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         # Should have a plain toolset (no PreparedToolset wrapping)
         assert toolset is not None
 
-    def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
+    def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
@@ -4305,12 +4293,12 @@ class TestWebSearchCapability:
 
     def test_websearch_both_false_raises(self):
         """WebSearch(builtin=False, local=False) → UserError at construction."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
             WebSearch(builtin=False, local=False)
 
     def test_websearch_builtin_false_with_constraints_raises(self):
         """WebSearch(builtin=False, allowed_domains=...) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
             WebSearch(builtin=False, allowed_domains=['example.com'])
 
     def test_websearch_local_callable(self):
@@ -4329,7 +4317,7 @@ class TestXSearchCapability:
     def test_xsearch_default(self):
         """XSearch() with defaults → builtin XSearchTool, no local."""
         cap = XSearch()
-        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_native_tools() == snapshot([XSearchTool()])
         assert cap.get_toolset() is None
 
     def test_xsearch_with_all_constraints(self):
@@ -4342,7 +4330,7 @@ class TestXSearchCapability:
             enable_video_understanding=True,
             include_output=True,
         )
-        assert cap.get_builtin_tools() == snapshot(
+        assert cap.get_native_tools() == snapshot(
             [
                 XSearchTool(
                     allowed_x_handles=['handle1'],
@@ -4355,21 +4343,19 @@ class TestXSearchCapability:
             ]
         )
 
-    def test_xsearch_requires_builtin_with_handles(self):
+    def test_xsearch_requires_native_with_handles(self):
         """XSearch with handle constraints requires builtin."""
-        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
-        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
-            [XSearchTool(excluded_x_handles=['h'])]
-        )
+        assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
 
     def test_xsearch_builtin_false_local_false_raises(self):
         """XSearch(builtin=False, local=False) → UserError."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
             XSearch(builtin=False, local=False)
 
     def test_xsearch_builtin_false_with_constraints_raises(self):
         """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
             XSearch(builtin=False, allowed_x_handles=['handle1'])
 
 
@@ -4377,7 +4363,7 @@ class TestWebFetchCapability:
     def test_webfetch_default(self):
         """WebFetch() provides builtin and default local fallback."""
         cap = WebFetch()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
         # Default local fallback is auto-detected (markdownify-based)
@@ -4441,11 +4427,11 @@ class TestWebFetchCapability:
     def test_webfetch_builtin_false(self):
         """WebFetch(builtin=False) → only local, no builtin registered."""
         cap = WebFetch(builtin=False)
-        assert cap.get_builtin_tools() == []
+        assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         assert toolset is not None
 
-    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+    def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
@@ -4501,12 +4487,12 @@ class TestWebFetchCapability:
 
     def test_webfetch_both_false_raises(self):
         """WebFetch(builtin=False, local=False) → UserError at construction."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
             WebFetch(builtin=False, local=False)
 
     def test_webfetch_builtin_false_with_max_uses_raises(self):
         """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
             WebFetch(builtin=False, max_uses=5)
 
     def test_webfetch_local_callable(self):
@@ -4541,7 +4527,7 @@ class TestImageGenerationCapability:
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
         # No default local
@@ -4566,7 +4552,7 @@ class TestImageGenerationCapability:
         cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
 
@@ -4582,7 +4568,7 @@ class TestImageGenerationCapability:
             size='1024x1024',
             aspect_ratio='16:9',
         )
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
@@ -4958,7 +4944,7 @@ class TestMCPCapability:
     def test_mcp_default(self):
         """MCP(url=...) provides builtin + local fallback."""
         cap = MCP(url='https://mcp.example.com/api')
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], MCPServerTool)
         assert builtins[0].url == 'https://mcp.example.com/api'
@@ -4967,13 +4953,13 @@ class TestMCPCapability:
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
         cap = MCP(url='https://mcp.example.com/api')
-        builtin = cap.get_builtin_tools()[0]
+        builtin = cap.get_native_tools()[0]
         assert isinstance(builtin, MCPServerTool)
         assert builtin.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
         cap_sse = MCP(url='https://server1.example.com/sse')
-        builtin_sse = cap_sse.get_builtin_tools()[0]
+        builtin_sse = cap_sse.get_native_tools()[0]
         assert isinstance(builtin_sse, MCPServerTool)
         assert builtin_sse.id == 'server1.example.com-sse'
 
@@ -6106,7 +6092,7 @@ def test_web_fetch_with_constraints():
         enable_citations=True,
         max_content_tokens=1000,
     )
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, WebFetchTool)
@@ -6116,7 +6102,7 @@ def test_web_fetch_with_constraints():
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
     # Only max_uses requires builtin (domains are handled locally)
-    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+    assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_fetch_unique_id():
@@ -6143,7 +6129,7 @@ def test_web_search_with_constraints():
         allowed_domains=['good.com'],
         max_uses=3,
     )
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, WebSearchTool)
@@ -6152,7 +6138,7 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
-    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+    assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
@@ -6195,7 +6181,7 @@ def test_mcp_default_builtin():
     """MCP capability constructs the default builtin MCPServerTool."""
     pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp', id='my-mcp')
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, MCPServerTool)
@@ -6206,24 +6192,24 @@ def test_mcp_default_builtin():
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_base_no_default_builtin():
     """NativeOrLocalTool base class with builtin=True raises (no _default_builtin)."""
-    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
-    with pytest.raises(UserError, match='builtin=True requires a subclass'):
+    with pytest.raises(UserError, match='native=True requires a subclass'):
         NativeOrLocalTool()
 
 
-def test_builtin_tool_from_spec_no_args():
-    """BuiltinTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCapDirect
+def test_native_tool_from_spec_no_args():
+    """NativeTool.from_spec() with no arguments raises TypeError."""
+    from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCapDirect
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
-        BuiltinToolCapDirect.from_spec()
+        NativeToolCapDirect.from_spec()
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_no_default_local():
     """NativeOrLocalTool base class _default_local() returns None."""
-    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     cap = NativeOrLocalTool(builtin=WebSearchTool())
     # Base class _default_local() returns None — no local fallback
@@ -6234,16 +6220,16 @@ def test_builtin_or_local_no_default_local():
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_with_explicit_builtin():
     """NativeOrLocalTool used directly with an explicit builtin and local tool."""
-    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     def my_local_tool() -> str:
         """A local fallback tool."""
         return 'local result'  # pragma: no cover
 
     cap = NativeOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
-    # get_builtin_tools returns the explicit builtin
-    assert len(cap.get_builtin_tools()) == 1
-    assert isinstance(cap.get_builtin_tools()[0], WebSearchTool)
+    # get_native_tools returns the explicit builtin
+    assert len(cap.get_native_tools()) == 1
+    assert isinstance(cap.get_native_tools()[0], WebSearchTool)
     # get_toolset wraps local with prefer_native from _native_unique_id()
     toolset = cap.get_toolset()
     assert toolset is not None
@@ -6252,13 +6238,13 @@ def test_builtin_or_local_with_explicit_builtin():
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_builtin_or_local_native_unique_id_non_abstract():
     """_native_unique_id() raises when builtin is callable (not AbstractNativeTool)."""
-    from pydantic_ai.capabilities.builtin_or_local import NativeOrLocalTool
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     cap = NativeOrLocalTool.__new__(NativeOrLocalTool)
     cap.builtin = lambda ctx: WebSearchTool()
     cap.local = False
 
-    with pytest.raises(UserError, match='cannot derive builtin_unique_id'):
+    with pytest.raises(UserError, match='cannot derive native unique_id'):
         cap._native_unique_id()  # pyright: ignore[reportPrivateUsage]
 
 
@@ -7683,7 +7669,7 @@ async def test_prefix_tools_from_spec():
                 {
                     'PrefixTools': {
                         'prefix': 'search',
-                        'capability': {'BuiltinTool': {'kind': 'web_search'}},
+                        'capability': {'NativeTool': {'kind': 'web_search'}},
                     }
                 },
             ],

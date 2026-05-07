@@ -16,6 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, TextContent, UnexpectedModelBehavior
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -594,7 +595,7 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable
 @skip_if_llama_cpp_imports_unsuccessful
 def test_tool_definition(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
     # builtin tools
-    agent = Agent(llamacpp_model, builtin_tools=[WebSearchTool()])
+    agent = Agent(llamacpp_model, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 

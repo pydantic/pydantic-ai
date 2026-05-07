@@ -19,6 +19,7 @@ from pydantic_ai import (
     UserPromptPart,
     XSearchTool,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
 from pydantic_ai.usage import RunUsage
@@ -167,7 +168,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[XSearchTool()],
+        capabilities=[NativeTool(XSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,
             xai_include_x_search_output=True,
@@ -263,7 +264,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[XSearchTool()],
+        capabilities=[NativeTool(XSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,
             xai_include_x_search_output=True,
@@ -445,7 +446,7 @@ async def test_xai_x_search_streaming_citations_no_duplicate_part_start_event(al
 
     mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(XSearchTool())])
 
     events: list[Any] = []
     async with agent.iter(user_prompt='find PydanticAI posts') as agent_run:
@@ -488,7 +489,7 @@ async def test_xai_builtin_x_search_tool_with_handles(allow_model_requests: None
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[XSearchTool(allowed_x_handles=['OpenAI', 'AnthropicAI'])],
+        capabilities=[NativeTool(XSearchTool(allowed_x_handles=['OpenAI', 'AnthropicAI']))],
     )
 
     await agent.run('What are OpenAI and Anthropic tweeting about?')
@@ -621,7 +622,7 @@ async def test_xai_x_search_builtin_tool_call_in_history(allow_model_requests: N
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(XSearchTool())])
 
     result1 = await agent.run('Search for pydantic updates')
     result2 = await agent.run('What were the posts about?', message_history=result1.new_messages())
@@ -683,7 +684,7 @@ async def test_xai_x_search_function_name_round_trip(allow_model_requests: None)
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[XSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(XSearchTool())])
 
     result1 = await agent.run('Search for something')
 
@@ -820,7 +821,7 @@ async def test_xai_builtin_file_search_tool(
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(
             m,
-            builtin_tools=[FileSearchTool(file_store_ids=[collection.collection_id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[collection.collection_id]))],
             model_settings=XaiModelSettings(xai_include_collections_search_output=True),
         )
 
@@ -889,7 +890,7 @@ async def test_xai_file_search_sends_collection_ids(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[FileSearchTool(file_store_ids=['col-1', 'col-2'])],
+        capabilities=[NativeTool(FileSearchTool(file_store_ids=['col-1', 'col-2']))],
     )
 
     await agent.run('Search my docs')
@@ -926,7 +927,7 @@ async def test_xai_file_search_builtin_tool_call_in_history(allow_model_requests
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[FileSearchTool(file_store_ids=['col-abc'])])
+    agent = Agent(m, capabilities=[NativeTool(FileSearchTool(file_store_ids=['col-abc']))])
 
     result1 = await agent.run('Search my documents for quarterly report')
     result2 = await agent.run('What did it say?', message_history=result1.new_messages())

@@ -52,6 +52,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -350,7 +351,7 @@ async def test_google_model_builtin_code_execution_stream(
     agent = Agent(
         model=model,
         instructions='Be concise and always use Python to do calculations no matter how small.',
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
     )
 
     event_parts: list[Any] = []
@@ -1171,7 +1172,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
 async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
@@ -1341,7 +1342,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -1828,7 +1829,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
 
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('What day is today in Utrecht?')
     assert result.all_messages() == snapshot(
@@ -1970,7 +1971,7 @@ async def test_google_model_server_tool_receive_history_from_another_provider(
 
     anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    agent = Agent(builtin_tools=[CodeExecutionTool()])
+    agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -1995,7 +1996,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    anthropic_agent = Agent(model=anthropic_model, builtin_tools=[WebSearchTool()])
+    anthropic_agent = Agent(model=anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await anthropic_agent.run('What are the latest news in the Netherlands?')
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -3492,7 +3493,7 @@ def test_map_usage():
 async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
-    agent = Agent(m, builtin_tools=[WebFetchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebFetchTool())])
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -3508,7 +3509,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
         city: str
         country: str
 
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebFetchTool()])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebFetchTool())])
 
     with pytest.raises(
         UserError,
@@ -3519,7 +3520,7 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
         await agent.run('What is the largest city in Mexico?')
 
     # Will default to prompted output
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
+    agent = Agent(m, output_type=CityLocation, capabilities=[NativeTool(WebFetchTool())])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
@@ -3534,7 +3535,7 @@ async def test_google_native_output_with_builtin_tools_gemini_3(
         city: str
         country: str
 
-    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebFetchTool()])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebFetchTool())])
 
     with pytest.raises(
         UserError,
@@ -3544,13 +3545,13 @@ async def test_google_native_output_with_builtin_tools_gemini_3(
     ):
         await agent.run('What is the largest city in Mexico?')
 
-    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebFetchTool()])
+    agent = Agent(m, output_type=NativeOutput(CityLocation), capabilities=[NativeTool(WebFetchTool())])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
 
     # Will default to native output
-    agent = Agent(m, output_type=CityLocation, builtin_tools=[WebFetchTool()])
+    agent = Agent(m, output_type=CityLocation, capabilities=[NativeTool(WebFetchTool())])
 
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
@@ -3781,7 +3782,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
 async def test_google_image_or_text_output(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     # ImageGenerationTool is listed here to indicate just that it doesn't cause any issues, even though it's not necessary with an image model.
-    agent = Agent(m, output_type=str | BinaryImage, builtin_tools=[ImageGenerationTool(size='1K')])
+    agent = Agent(m, output_type=str | BinaryImage, capabilities=[NativeTool(ImageGenerationTool(size='1K'))])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl, no image please.')
     assert result.output == snapshot(
@@ -3939,7 +3940,7 @@ async def test_google_image_generation_with_tools(allow_model_requests: None, go
 
 async def test_google_image_generation_with_web_search(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    agent = Agent(model=model, output_type=BinaryImage, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, output_type=BinaryImage, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run(
         'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
@@ -4016,7 +4017,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
 
 async def test_google_image_generation_tool(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     with pytest.raises(
         UserError,
@@ -4172,7 +4173,7 @@ async def test_google_vertexai_image_generation_with_output_format(
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
     agent = Agent(
         model,
-        builtin_tools=[ImageGenerationTool(output_format='jpeg', output_compression=85)],
+        capabilities=[NativeTool(ImageGenerationTool(output_format='jpeg', output_compression=85))],
         output_type=BinaryImage,
     )
 
@@ -4702,7 +4703,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
         agent = Agent(
             m,
             system_prompt='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[store.name]))],
         )
 
         result = await agent.run('What is the capital of France?')
@@ -4871,7 +4872,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         agent = Agent(
             m,
             system_prompt='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[store.name])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[store.name]))],
         )
 
         event_parts: list[Any] = []

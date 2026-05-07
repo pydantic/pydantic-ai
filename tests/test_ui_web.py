@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
@@ -139,7 +140,7 @@ def test_chat_app_configure_endpoint():
     app = create_web_app(
         agent,
         models=['test'],
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
     )
 
     with TestClient(app) as client:
@@ -362,7 +363,7 @@ def test_post_chat_invalid_model():
 def test_post_chat_invalid_builtin_tool():
     """Test POST /api/chat returns 400 when builtin tool is not in allowed list."""
     agent = Agent(TestModel(custom_output_text='Hello'))
-    app = create_web_app(agent, builtin_tools=[WebSearchTool()])
+    app = create_web_app(agent, capabilities=[NativeTool(WebSearchTool())])
 
     with TestClient(app) as client:
         response = client.post(

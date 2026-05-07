@@ -59,6 +59,7 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -1684,7 +1685,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,  # Encrypted reasoning and tool calls
             xai_include_web_search_output=True,
@@ -1770,7 +1771,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
     # Create an agent that includes encrypted content and web search output
     agent = Agent(
         m,
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,  # Encrypted tool calls
             xai_include_web_search_output=True,
@@ -2043,7 +2044,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
     m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=False,
             xai_include_code_execution_output=True,
@@ -2124,7 +2125,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
     agent = Agent(
         m,
-        builtin_tools=[CodeExecutionTool()],
+        capabilities=[NativeTool(CodeExecutionTool())],
         model_settings=XaiModelSettings(xai_include_code_execution_output=True),
     )
 
@@ -2359,7 +2360,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
         instructions=(
             'Use tools to get the users city and then use the web search tool to find a famous landmark in that city.'
         ),
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,  # Encrypted tool calls
             xai_include_web_search_output=True,
@@ -3477,7 +3478,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
     response = create_code_execution_response(code='print(2+2)', assistant_text='Tool completed successfully.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('Calculate 2+2')
     messages = result.all_messages()
@@ -3526,7 +3527,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
     response = create_web_search_response(query='test query', assistant_text='Tool completed successfully.')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('Search for test')
     messages = result.all_messages()
@@ -3579,7 +3580,9 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[MCPServerTool(id='linear', url='https://mcp.linear.app/mcp', description='Linear MCP server')],
+        capabilities=[
+            NativeTool(MCPServerTool(id='linear', url='https://mcp.linear.app/mcp', description='Linear MCP server'))
+        ],
     )
 
     result = await agent.run('List issues')
@@ -4040,7 +4043,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Run once, then continue with history
     result1 = await agent.run('Calculate 2+2')
@@ -4206,7 +4209,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
     response = create_response(content='I understand the tool failed')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Manually construct a message history with:
     # 1. NativeToolCallPart (populates builtin_calls dict in _map_response_parts)
@@ -4992,7 +4995,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     # Run once, then continue with history
     result1 = await agent.run('Search for test')
@@ -5110,7 +5113,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
 
     mock_client = MockXai.create_mock([response1, response2])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[MCPServerTool(id='my-server', url='https://example.com/mcp')])
+    agent = Agent(m, capabilities=[NativeTool(MCPServerTool(id='my-server', url='https://example.com/mcp'))])
 
     # Run once, then continue with history
     result1 = await agent.run('Get MCP data')
@@ -5219,7 +5222,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
     response = create_response(content='Done')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Manually construct message history with NativeToolCallPart that has empty tool_call_id
     # This directly tests the case when tool_call_id is empty
@@ -5352,7 +5355,7 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
     response = create_response(content='I see it failed')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Construct history with failed builtin tool but NO 'error' key in provider_details
     # This triggers the branch where error_msg is falsy

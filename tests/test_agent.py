@@ -60,6 +60,7 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -9464,7 +9465,7 @@ def test_agent_builtin_tools_runtime_vs_agent_level():
 def test_agent_override_builtin_tools_empty_runs_with_test_model():
     """Test that agent-level builtin tools can be removed when overriding the model."""
     model = TestModel()
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     with agent.override(model=model, builtin_tools=[]):
         result = agent.run_sync('Hello')
@@ -9477,10 +9478,10 @@ def test_agent_override_builtin_tools_empty_runs_with_test_model():
 def test_agent_override_builtin_tools_replaces_agent_level_tools():
     """Test that override builtin_tools replace, rather than append to, agent-level builtin tools."""
     model = TestModel()
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     with (
-        agent.override(builtin_tools=[CodeExecutionTool()]),
+        agent.override(capabilities=[NativeTool(CodeExecutionTool())]),
         pytest.raises(UserError, match='TestModel does not support built-in tools'),
     ):
         agent.run_sync('Hello')
@@ -9492,15 +9493,15 @@ def test_agent_override_builtin_tools_replaces_agent_level_tools():
 def test_agent_override_builtin_tools_preserves_runtime_additive_tools():
     """Test that runtime builtin_tools are still added to overridden builtin tools."""
     model = TestModel()
-    agent = Agent(model=model, builtin_tools=[WebSearchTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(WebSearchTool())])
 
     with (
-        agent.override(builtin_tools=[CodeExecutionTool()]),
+        agent.override(capabilities=[NativeTool(CodeExecutionTool())]),
         pytest.raises(UserError, match='TestModel does not support built-in tools'),
     ):
         agent.run_sync(
             'Hello',
-            builtin_tools=[MCPServerTool(id='example', url='https://mcp.example.com/mcp')],
+            capabilities=[NativeTool(MCPServerTool(id='example', url='https://mcp.example.com/mcp'))],
         )
 
     assert model.last_model_request_parameters is not None

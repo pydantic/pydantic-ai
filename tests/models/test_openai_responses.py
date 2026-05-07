@@ -43,6 +43,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -545,7 +546,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     instructions = 'Use web search and include citations in your answer.'
 
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent = Agent(model, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
@@ -573,7 +574,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     )
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     events2 = [event async for event in agent2.run_stream_events(prompt)]
     assert not any(
         (
@@ -846,7 +847,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
 
 async def test_openai_responses_model_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+    agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.all_messages() == snapshot(
@@ -993,7 +994,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'region': 'NL'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Utrecht', 'region': 'NL'}))],
     )
 
     result = await agent.run('What is the weather?')
@@ -1073,7 +1074,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(allowed_domains=['wikipedia.org'])],
+        capabilities=[NativeTool(WebSearchTool(allowed_domains=['wikipedia.org']))],
     )
 
     result = await agent.run('Search Google for the current population of Tokyo prefecture. Give me just the number.')
@@ -1222,7 +1223,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Salvador', 'region': 'BRLO'})],
+        capabilities=[NativeTool(WebSearchTool(user_location={'city': 'Salvador', 'region': 'BRLO'}))],
     )
 
     result = await agent.run('What is the weather?')
@@ -1299,7 +1300,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool()],
+        capabilities=[NativeTool(WebSearchTool())],
         model_settings=OpenAIResponsesModelSettings(openai_include_web_search_sources=True),
     )
 
@@ -3837,7 +3838,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
             openai_include_code_execution_outputs=True,
         ),
     )
-    agent = Agent(model=m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(model=m, capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run(user_prompt='what is 65465-6544 * 65464-6+1.02255')
     assert result.all_messages() == snapshot(
@@ -3971,7 +3972,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
         provider=provider,
         settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
     )
-    agent = Agent(model=m, builtin_tools=[CodeExecutionTool()])
+    agent = Agent(model=m, capabilities=[NativeTool(CodeExecutionTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt="what's 123456 to the power of 123?") as agent_run:
@@ -5568,7 +5569,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())], output_type=BinaryImage)
 
     result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
     assert result.output == snapshot(IsInstance(BinaryImage))
@@ -5825,7 +5826,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=BinaryImage)
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())], output_type=BinaryImage)
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Create a chart of y=x^2 for x=-5 to 5') as agent_run:
@@ -7649,7 +7650,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
 ):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
 
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     with capture_run_messages() as messages:
         with pytest.raises(
@@ -7799,7 +7800,7 @@ async def test_openai_responses_image_or_text_output(allow_model_requests: None,
 
 async def test_openai_responses_image_and_text_output(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
     assert result.output == snapshot(IsStr())
@@ -7812,7 +7813,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
         name: str
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=Animal)
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=Animal)
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(Animal(species='Axolotl', name='Axie'))
@@ -7942,7 +7943,7 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
         name: str
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=NativeOutput(Animal))
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=NativeOutput(Animal))
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(Animal(species='Ambystoma mexicanum', name='Axolotl'))
@@ -8019,7 +8020,7 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
         name: str
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=PromptedOutput(Animal))
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=PromptedOutput(Animal))
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(Animal(species='axolotl', name='Axel'))
@@ -8302,7 +8303,9 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
 
 async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool(output_format='jpeg')], output_type=BinaryImage)
+    agent = Agent(
+        model=model, capabilities=[NativeTool(ImageGenerationTool(output_format='jpeg'))], output_type=BinaryImage
+    )
 
     result = await agent.run('Generate an image of axolotl.')
 
@@ -10075,7 +10078,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
         )
 
         result = await agent.run('What is the capital of France?')
@@ -10259,7 +10262,7 @@ async def test_openai_responses_model_file_search_tool_stream(
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
         )
 
         event_parts: list[Any] = []
@@ -10422,7 +10425,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
         agent = Agent(
             m,
             instructions='You are a helpful assistant.',
-            builtin_tools=[FileSearchTool(file_store_ids=[vector_store.id])],
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
         )
 
         # Use the openai_include_file_search_results setting to include search results
@@ -10650,7 +10653,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     instructions = 'Use web search and include citations in your answer.'
 
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent = Agent(model, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
 
     # Test with annotations enabled
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
@@ -10680,7 +10683,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
 
     # Test with annotations disabled (default)
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
-    agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
+    agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     result2 = await agent2.run(prompt)
 
     messages2 = result2.all_messages()

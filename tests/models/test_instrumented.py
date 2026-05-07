@@ -191,7 +191,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -436,7 +436,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -539,7 +539,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -664,7 +664,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                         'server.port': 8000,
                         'model_request_parameters': {
                             'function_tools': [],
-                            'builtin_tools': [],
+                            'native_tools': [],
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
@@ -803,7 +803,7 @@ Fix the errors and try again.\
                         'server.port': 8000,
                         'model_request_parameters': {
                             'function_tools': [],
-                            'builtin_tools': [],
+                            'native_tools': [],
                             'output_mode': 'text',
                             'output_object': None,
                             'output_tools': [],
@@ -1825,7 +1825,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'server.port': 8000,
                     'model_request_parameters': {
                         'function_tools': [],
-                        'builtin_tools': [],
+                        'native_tools': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],

@@ -49,6 +49,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -1877,7 +1878,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
 class SimpleAgentWorkflowWithOverrideBuiltinTools:
     @workflow.run
     async def run(self, prompt: str) -> None:
-        with simple_temporal_agent.override(builtin_tools=[WebSearchTool()]):
+        with simple_temporal_agent.override(capabilities=[NativeTool(WebSearchTool())]):
             pass
 
 
@@ -3280,7 +3281,7 @@ web_search_builtin_override_model = _WebSearchOnlyModel(
 # Agent initialized with model that doesn't support builtins, but has builtin tools configured
 builtins_in_workflow_agent = Agent(
     no_builtin_support_model,
-    builtin_tools=[WebSearchTool()],
+    capabilities=[NativeTool(WebSearchTool())],
     instrument=True,
     name='builtins_in_workflow',
 )
