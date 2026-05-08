@@ -155,19 +155,5 @@ class ToolSearchTool(AbstractBuiltinTool):
       callable; users don't pass `'custom'` directly.
     """
 
-    optional: bool = False
-    """Whether this instance is a best-effort upgrade rather than a hard requirement.
-
-    When `True`, the instance is silently dropped from the request on a model that doesn't
-    support native tool search, instead of raising when no local fallback is provided.
-
-    Defaults to `False` (the user explicitly asked for native tool search; fail loudly if
-    we can't honor it). [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] sets it to
-    `True` for the auto-injected default and callable strategies so models that don't
-    support native tool search transparently fall back to the local `search_tools`
-    function. The named native strategies `'bm25'` / `'regex'` keep `optional=False` —
-    silently substituting a different algorithm would ignore the user's choice.
-    """
-
     kind: str = 'tool_search'
     """The kind of tool."""

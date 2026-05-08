@@ -53,6 +53,21 @@ class AbstractBuiltinTool(ABC):
     kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
 
+    optional: bool = False
+    """Whether this instance is a best-effort upgrade rather than a hard requirement.
+
+    When `True`, the instance is silently dropped from the request on a model that doesn't
+    support it natively, instead of raising when no local fallback is provided. Defaults
+    to `False` (the user explicitly asked for this builtin; fail loudly if we can't honor it).
+
+    Set to `True` for capabilities that should opportunistically use a native surface but
+    don't *require* it — e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]'s default
+    auto-injected mode falls back to the local `search_tools` function tool when native
+    isn't supported. Named native strategies (`'bm25'` / `'regex'` for tool search) keep
+    `optional=False` because silently substituting a different algorithm would ignore the
+    user's explicit choice.
+    """
+
     @property
     def unique_id(self) -> str:
         """A unique identifier for the builtin tool.

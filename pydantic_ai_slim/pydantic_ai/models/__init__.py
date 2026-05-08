@@ -797,8 +797,19 @@ class Model(ABC, Generic[InterfaceClient]):
            no way to call it on this provider).
         4. Otherwise → keep.
 
-        Optional unsupported builtins (currently only [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]
-        carries the flag) with no remaining corpus are silently dropped instead of raising.
+        On top of the four-rule filter, two narrower drops apply, kept independent:
+
+        * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
+          optional builtin is silently dropped (no error raised). It does NOT govern the
+          corpus-empty drop below.
+        * The corpus-empty drop is specific to
+          [`ToolSearchTool`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool]'s
+          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
+          corpus ends up empty after filtering, since sending it with no deferred tools
+          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
+          the user asked explicitly. Other builtins don't have a corpus and aren't subject
+          to this drop, so making `optional` a base-class field doesn't accidentally cause
+          e.g. `WebSearchTool(optional=True)` to be dropped here.
         """
         supported_types = self.profile.supported_builtin_tools
 
@@ -807,9 +818,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
         supported_ids = {t.unique_id for t in supported_builtins}
         unsupported_ids = {t.unique_id for t in unsupported_builtins}
-        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
-        # isinstance narrowing.
-        optional_ids = {t.unique_id for t in unsupported_builtins if isinstance(t, ToolSearchTool) and t.optional}
+        optional_ids = {t.unique_id for t in unsupported_builtins if t.optional}
         fallback_ids = {t.unless_builtin for t in params.function_tools if t.unless_builtin}
 
         without_fallback = unsupported_ids - fallback_ids - optional_ids
@@ -835,10 +844,11 @@ class Model(ABC, Generic[InterfaceClient]):
             # Rules 2 + 4: keep.
             function_tools.append(t)
 
-        # Drop optional builtins whose managed corpus is empty after filtering —
-        # they have nothing to do, so sending them would waste a tool slot.
-        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
-        # isinstance narrowing.
+        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
+        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
+        # confines this to ToolSearchTool specifically: other builtins don't carry a corpus,
+        # so making `optional` a base-class field doesn't accidentally drop e.g.
+        # `WebSearchTool(optional=True)` here on absence of dependents.
         remaining_corpus_ids = {t.with_builtin for t in function_tools if t.with_builtin}
         supported_builtins = [
             t
