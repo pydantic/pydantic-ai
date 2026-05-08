@@ -103,7 +103,6 @@ try:
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
-        BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -239,9 +238,6 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
     'text_editor_code_execution',
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
-_ANTHROPIC_CODE_EXECUTION_BETA_FEATURE_BY_VERSION: dict[AnthropicCodeExecutionToolVersion, str] = {
-    '20250522': 'code-execution-2025-05-22',
-}
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
@@ -1009,9 +1005,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
-                # Only the original code execution tool still requires an explicit beta header.
-                if beta_feature := _ANTHROPIC_CODE_EXECUTION_BETA_FEATURE_BY_VERSION.get(tool_version):
-                    beta_features.add(beta_feature)
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
@@ -2166,8 +2159,6 @@ def _get_anthropic_code_execution_tool_name(
 
 def _map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> BetaToolUnionParam:
     match version:
-        case '20250522':
-            return BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522')
         case '20250825':
             return BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825')
         case '20260120':

@@ -7680,18 +7680,16 @@ async def test_anthropic_code_execution_tool_version_auto(
 
 
 @pytest.mark.parametrize(
-    ('tool_version', 'expected_tool_type', 'expected_betas'),
+    ('tool_version', 'expected_tool_type'),
     [
-        ('20250522', 'code_execution_20250522', ['code-execution-2025-05-22']),
-        ('20250825', 'code_execution_20250825', []),
-        ('20260120', 'code_execution_20260120', []),
+        ('20250825', 'code_execution_20250825'),
+        ('20260120', 'code_execution_20260120'),
     ],
 )
 async def test_anthropic_code_execution_tool_version_setting(
     allow_model_requests: None,
     tool_version: AnthropicCodeExecutionToolVersion,
     expected_tool_type: str,
-    expected_betas: list[str],
 ):
     c = completion_message(
         [BetaTextBlock(text='ok', type='text')],
@@ -7709,10 +7707,7 @@ async def test_anthropic_code_execution_tool_version_setting(
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
-    if expected_betas:
-        assert completion_kwargs['betas'] == expected_betas
-    else:
-        assert completion_kwargs['betas'] is OMIT
+    assert completion_kwargs['betas'] is OMIT
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
@@ -10613,7 +10608,6 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
     agent = Agent(
         m,
         builtin_tools=[CodeExecutionTool()],
-        model_settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20250522'),
         instructions='Always use the code execution tool for math.',
     )
 

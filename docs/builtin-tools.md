@@ -255,11 +255,10 @@ print(result.response.builtin_tool_calls)
     (
         BuiltinToolCallPart(
             tool_name='code_execution',
-            args={
-                'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-            },
+            args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
         BuiltinToolReturnPart(
             tool_name='code_execution',
@@ -267,12 +266,13 @@ print(result.response.builtin_tool_calls)
                 'content': [],
                 'return_code': 0,
                 'stderr': '',
-                'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                'type': 'code_execution_result',
+                'stdout': '1307674368000\n',
+                'type': 'bash_code_execution_result',
             },
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             timestamp=datetime.datetime(...),
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
     )
 ]

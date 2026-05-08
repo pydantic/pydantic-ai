@@ -6,7 +6,7 @@ from typing import Literal, TypeAlias
 from ..settings import ThinkingLevel
 from . import ModelProfile
 
-AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250522', '20250825', '20260120']
+AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
@@ -16,7 +16,6 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-sonnet-4-5',
     'claude-sonnet-4-6',
 )
-_ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250522', '20250825')
 
 
 @dataclass(kw_only=True)
@@ -68,9 +67,7 @@ class AnthropicModelProfile(ModelProfile):
     anthropic_default_code_execution_tool_version: AnthropicCodeExecutionToolVersion = '20250825'
     """The Anthropic code execution tool version used when `anthropic_code_execution_tool_version='auto'`."""
 
-    anthropic_supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = (
-        _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS
-    )
+    anthropic_supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
     """The Anthropic code execution tool versions supported by the model."""
 
     anthropic_supports_task_budgets: bool = False
@@ -143,7 +140,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 def _code_execution_tool_versions(
     model_name: str,
 ) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
-    versions = _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS
+    versions: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250825',)
     default_version: AnthropicCodeExecutionToolVersion = '20250825'
     if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
         default_version = '20260120'
