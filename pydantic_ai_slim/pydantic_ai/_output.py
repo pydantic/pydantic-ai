@@ -1544,7 +1544,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return '<output>'  # pragma: no cover
+        return '<output>'
 
     @property
     def label(self) -> str:

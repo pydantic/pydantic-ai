@@ -4929,8 +4929,8 @@ complex_durable_logfire_agent = Agent(
 class ComplexDurableAgentLogfireWorkflow:
     @workflow.run
     async def run(self, prompt: str, deps: Deps) -> Response:
-        result = await complex_durable_logfire_agent.run(prompt, deps=deps)  # pragma: no cover - xfailed test
-        return result.output  # pragma: no cover - xfailed test
+        result = await complex_durable_logfire_agent.run(prompt, deps=deps)
+        return result.output  # pragma: no cover - xfailed test (call above raises before reaching return)
 
 
 @pytest.mark.xfail(
