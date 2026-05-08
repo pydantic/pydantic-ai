@@ -28,7 +28,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import cast
 
-from .builtin_tools.tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 from .messages import (
     BuiltinToolSearchCallPart,
     BuiltinToolSearchReturnPart,
@@ -167,21 +166,24 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
             else:
                 out.append(msg)
         elif isinstance(msg, ModelRequest):
-            # Also translate any direct `ToolReturnPart('search_tools', ...)` on requests —
-            # covers fresh code paths that constructed a base `ToolReturnPart` with the local
-            # typed args/content. (Pydantic deserialization auto-promotes via the
-            # discriminated-union dispatch.)
+            # Also translate any framework-emitted `ToolReturnPart` with
+            # `tool_kind='tool_search'` on requests — covers fresh code paths that
+            # constructed a base `ToolReturnPart` directly while still flagging it as
+            # framework-emitted via `tool_kind`. (Pydantic deserialization auto-promotes
+            # via the discriminated-union dispatch.) Dispatching on `tool_kind` rather
+            # than `tool_name` means a user tool literally named `search_tools` is left
+            # alone as a base `ToolReturnPart`, no spurious narrow_type call.
             request_changed = False
             new_request_parts: list[ModelRequestPart] = []
             for part in msg.parts:
                 if (
                     isinstance(part, ToolReturnPart)
                     and not isinstance(part, ToolSearchReturnPart)
-                    and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+                    and part.tool_kind == 'tool_search'
                 ):
                     promoted = ToolReturnPart.narrow_type(part)
-                    # The registered narrower for `search_tools` always returns a
-                    # `ToolSearchReturnPart`; the isinstance guard is defensive in case
+                    # The registered narrower for `tool_kind='tool_search'` always returns
+                    # a `ToolSearchReturnPart`; the isinstance guard is defensive in case
                     # the registry is mutated at runtime.
                     if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
                         new_request_parts.append(promoted)
