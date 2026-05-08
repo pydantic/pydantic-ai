@@ -817,8 +817,8 @@ class StreamAuditor(AbstractCapability[Any]):
 
 Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently.
 
-!!! note "Output tool failure paths during the v2 transition"
-    For backward compatibility, output tool calls that fail (validation/execution failure or skipping) still emit the legacy `FunctionToolCallEvent` / `FunctionToolResultEvent` alongside the new `OutputToolCallEvent` / `OutputToolResultEvent`. The legacy emission will stop in v2 — switch to `OutputToolCallEvent` / `OutputToolResultEvent` (or dedupe `ToolCallEvent` matches by `tool_call_id`) before then.
+!!! note "Migration from `FunctionToolCallEvent` / `FunctionToolResultEvent`"
+    For output tool calls, match `OutputToolCallEvent` / `OutputToolResultEvent` (or the shared `ToolCallEvent` / `ToolResultEvent` bases). `FunctionToolCallEvent` / `FunctionToolResultEvent` will stop firing for output tool calls in v2.
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
