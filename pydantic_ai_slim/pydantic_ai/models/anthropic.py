@@ -960,7 +960,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return version
 
-
     def _add_builtin_tools(
         self,
         tools: list[BetaToolUnionParam],
