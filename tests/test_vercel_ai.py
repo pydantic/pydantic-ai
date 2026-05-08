@@ -3573,14 +3573,12 @@ async def test_adapter_load_messages():
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
-                        tool_kind='web_search',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='openai_return',
                     ),
@@ -3588,14 +3586,12 @@ async def test_adapter_load_messages():
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
-                        tool_kind='web_search',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content="Can't do that",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         outcome='failed',
@@ -3611,7 +3607,6 @@ async def test_adapter_load_messages():
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4s',
-                        tool_kind='web_search',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -5772,7 +5767,6 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     args={'query': 'test'},
                     tool_call_id='bt_123',
                     id='call_456',
-                    tool_kind='web_search',
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
@@ -5780,7 +5774,6 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                     tool_name='web_search',
                     content='{"results":[]}',  # JSON string for roundtrip compatibility
                     tool_call_id='bt_123',
-                    tool_kind='web_search',
                     provider_name='openai',
                     provider_details={'execution_time_ms': 150},
                 ),
@@ -5849,7 +5842,6 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     args={'query': 'test'},
                     tool_call_id='bt_err_123',
                     id='call_err_456',
-                    tool_kind='web_search',
                     provider_name='openai',
                     provider_details={'tool_type': 'web_search_preview'},
                 ),
@@ -5857,7 +5849,6 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     tool_name='web_search',
                     content='Search failed: rate limit exceeded',
                     tool_call_id='bt_err_123',
-                    tool_kind='web_search',
                     provider_name='openai',
                     provider_details={'error_code': 'RATE_LIMIT'},
                     outcome='failed',
@@ -5958,7 +5949,6 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_load',
-                        tool_kind='web_search',
                         id='call_456',
                         provider_details={'tool_type': 'web_search_preview'},
                         provider_name='openai',
@@ -5967,7 +5957,6 @@ async def test_adapter_load_messages_builtin_tool_with_provider_details():
                         tool_name='web_search',
                         content='{"results": []}',
                         tool_call_id='bt_load',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'execution_time_ms': 150},
@@ -6020,7 +6009,6 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         tool_name='web_search',
                         args={'query': 'test'},
                         tool_call_id='bt_error',
-                        tool_kind='web_search',
                         id='call_789',
                         provider_name='openai',
                         provider_details={'tool_type': 'web_search_preview'},
@@ -6029,7 +6017,6 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         tool_name='web_search',
                         content='Search failed: rate limit exceeded',
                         tool_call_id='bt_error',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'error_code': 'RATE_LIMIT'},
@@ -7466,16 +7453,12 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
             ModelResponse(
                 parts=[
                     BuiltinToolCallPart(
-                        tool_name='web_search',
-                        args={'query': 'secret data'},
-                        tool_call_id='tc_builtin_denied',
-                        tool_kind='web_search',
+                        tool_name='web_search', args={'query': 'secret data'}, tool_call_id='tc_builtin_denied'
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content='Blocked by policy',
                         tool_call_id='tc_builtin_denied',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         outcome='denied',
                     ),
@@ -7566,14 +7549,11 @@ async def test_denied_builtin_tool_round_trip():
         [
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
-                        tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2', tool_kind='web_search'
-                    ),
+                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
                         content='Blocked by policy',
                         tool_call_id='tc2',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         outcome='denied',
                     ),

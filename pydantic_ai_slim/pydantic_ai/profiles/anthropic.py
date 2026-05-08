@@ -30,6 +30,7 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-sonnet-4-6',
 )
 
+
 @dataclass(kw_only=True)
 class AnthropicModelProfile(ModelProfile):
     """Profile for models used with `AnthropicModel`.

@@ -1641,14 +1641,12 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
                     tool_name='web_search',
                     tool_call_id='call_123',
                     args='{"query": "test"}',
-                    tool_kind='web_search',
                     provider_name='anthropic',
                 ),
                 BuiltinToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     content='Search results here',
-                    tool_kind='web_search',
                     provider_name='anthropic',
                 ),
             ]
@@ -2645,7 +2643,6 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         tool_name='web_search',
                         args='{"query": "Hello, world!"}',
                         tool_call_id='search_1',
-                        tool_kind='web_search',
                         provider_name='function',
                     ),
                     BuiltinToolReturnPart(
@@ -2656,7 +2653,6 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                             ]
                         },
                         tool_call_id='search_1',
-                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='function',
                     ),

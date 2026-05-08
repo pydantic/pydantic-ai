@@ -1377,7 +1377,6 @@ class GeminiStreamedResponse(StreamedResponse):
                 tool_name=FileSearchTool.kind,
                 tool_call_id=self._file_search_tool_call_id,
                 content=retrieved_contexts,
-                tool_kind=FileSearchTool.kind,
             )
             self._file_search_tool_call_id = None
             return part
@@ -1406,7 +1405,6 @@ class GeminiStreamedResponse(StreamedResponse):
                 tool_name=FileSearchTool.kind,
                 tool_call_id=self._file_search_tool_call_id,
                 args={'query': file_search_query},
-                tool_kind=FileSearchTool.kind,
             )
 
         self._code_execution_tool_call_id = _utils.generate_tool_call_id()
@@ -1673,7 +1671,6 @@ def _map_executable_code(executable_code: ExecutableCode, provider_name: str, to
         tool_name=CodeExecutionTool.kind,
         args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
-        tool_kind=CodeExecutionTool.kind,
     )
     part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
     return part
@@ -1687,7 +1684,6 @@ def _map_code_execution_result(
         tool_name=CodeExecutionTool.kind,
         content=code_execution_result.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
-        tool_kind=CodeExecutionTool.kind,
     )
 
 
@@ -1702,7 +1698,6 @@ def _map_grounding_metadata(
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
                 args={'queries': web_search_queries},
-                tool_kind=WebSearchTool.kind,
             ),
             BuiltinToolReturnPart(
                 provider_name=provider_name,
@@ -1711,7 +1706,6 @@ def _map_grounding_metadata(
                 content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
                 if (grounding_chunks := grounding_metadata.grounding_chunks)
                 else None,
-                tool_kind=WebSearchTool.kind,
             ),
         )
     else:
@@ -1766,14 +1760,12 @@ def _map_file_search_grounding_metadata(
             tool_name=FileSearchTool.kind,
             tool_call_id=tool_call_id,
             args={},
-            tool_kind=FileSearchTool.kind,
         ),
         BuiltinToolReturnPart(
             provider_name=provider_name,
             tool_name=FileSearchTool.kind,
             tool_call_id=tool_call_id,
             content=retrieved_contexts,
-            tool_kind=FileSearchTool.kind,
         ),
     )
 
@@ -1791,14 +1783,12 @@ def _map_url_context_metadata(
                 tool_name=WebFetchTool.kind,
                 tool_call_id=tool_call_id,
                 args={'urls': urls} if urls else None,
-                tool_kind=WebFetchTool.kind,
             ),
             BuiltinToolReturnPart(
                 provider_name=provider_name,
                 tool_name=WebFetchTool.kind,
                 tool_call_id=tool_call_id,
                 content=[meta.model_dump(mode='json') for meta in url_metadata],
-                tool_kind=WebFetchTool.kind,
             ),
         )
     else:

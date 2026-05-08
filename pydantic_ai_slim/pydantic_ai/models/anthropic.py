@@ -2450,7 +2450,6 @@ def _map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> Beta
             assert_never(version)
 
 
-
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
     tool_args = cast(dict[str, Any], item.input) or None
     if item.name in ('web_search', 'code_execution', 'web_fetch'):
@@ -2460,7 +2459,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_name=kind,
             args=tool_args,
             tool_call_id=item.id,
-            tool_kind=kind,
         )
         if item.name == 'code_execution':
             part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
@@ -2598,7 +2596,6 @@ def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provid
         tool_name=WebSearchTool.kind,
         content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
-        tool_kind=WebSearchTool.kind,
     )
 
 
@@ -2615,7 +2612,6 @@ def _map_code_execution_tool_result_block(
         tool_name=CodeExecutionTool.kind,
         content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
-        tool_kind=CodeExecutionTool.kind,
     )
 
 
@@ -2660,7 +2656,6 @@ def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider
         # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
-        tool_kind=WebFetchTool.kind,
     )
 
 
@@ -2674,7 +2669,6 @@ def _map_mcp_server_use_block(item: BetaMCPToolUseBlock, provider_name: str) -> 
             'tool_args': cast(dict[str, Any], item.input),
         },
         tool_call_id=item.id,
-        tool_kind=MCPServerTool.kind,
     )
 
 
@@ -2686,7 +2680,6 @@ def _map_mcp_server_result_block(
         tool_name=call_part.tool_name if call_part else MCPServerTool.kind,
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
-        tool_kind=MCPServerTool.kind,
     )
 
 

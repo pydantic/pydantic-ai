@@ -1060,17 +1060,14 @@ class XaiStreamedResponse(StreamedResponse):
 
             if builtin_tool_name.startswith(MCPServerTool.kind):
                 parsed_args = _build_mcp_tool_call_args(tool_call)
-                tool_kind = MCPServerTool.kind
             else:
                 parsed_args = _parse_tool_args(tool_call.function.arguments)
-                tool_kind = builtin_tool_name
             call_part = BuiltinToolCallPart(
                 tool_name=builtin_tool_name,
                 args=parsed_args,
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
                 provider_details={'function_name': tool_call.function.name},
-                tool_kind=tool_kind,
             )
             if builtin_tool_name == CodeExecutionTool.kind:
                 call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
@@ -1087,15 +1084,11 @@ class XaiStreamedResponse(StreamedResponse):
                 return
             seen_tool_return_ids.add(return_vendor_id)
             last_tool_return_content[return_vendor_id] = tool_result_content
-            return_tool_kind = (
-                MCPServerTool.kind if builtin_tool_name.startswith(MCPServerTool.kind) else builtin_tool_name
-            )
             return_part = BuiltinToolReturnPart(
                 tool_name=builtin_tool_name,
                 content=tool_result_content,
                 tool_call_id=tool_call.id,
                 provider_name=self.system,
-                tool_kind=return_tool_kind,
             )
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part
@@ -1520,7 +1513,6 @@ def _create_tool_call_part(
         # If we know the message role (non-streamed responses), use it to decide call vs return.
         # Note: FAILED is always a return part (it may be emitted on an assistant message without a separate ROLE_TOOL
         # message).
-        tool_kind = MCPServerTool.kind if builtin_tool_name.startswith(MCPServerTool.kind) else builtin_tool_name
         if status == chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_FAILED or message_role == chat_pb2.MessageRole.ROLE_TOOL:
             return (
                 f'{tool_call.id}_return',
@@ -1530,7 +1522,6 @@ def _create_tool_call_part(
                     tool_call_id=tool_call.id,
                     provider_name=provider_name,
                     provider_details=provider_details,
-                    tool_kind=tool_kind,
                 ),
             )
         else:
@@ -1544,7 +1535,6 @@ def _create_tool_call_part(
                 tool_call_id=tool_call.id,
                 provider_name=provider_name,
                 provider_details={'function_name': tool_call.function.name},
-                tool_kind=tool_kind,
             )
             if builtin_tool_name == CodeExecutionTool.kind:
                 call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}

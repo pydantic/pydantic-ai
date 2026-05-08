@@ -378,16 +378,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if has_tool_output:
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
-                            # MCP tool names are `mcp_server:<label>`; everything else is the
-                            # builtin's `kind` directly. Recover `tool_kind` from the prefix.
-                            tool_kind = tool_name.split(':', 1)[0] if ':' in tool_name else tool_name
                             builder.add(
                                 BuiltinToolCallPart(
                                     tool_name=tool_name,
                                     tool_call_id=tool_call_id,
                                     args=args,
                                     id=call_meta.get('id') or part_id,
-                                    tool_kind=tool_kind,
                                     provider_name=call_meta.get('provider_name') or provider_name,
                                     provider_details=call_meta.get('provider_details') or provider_details,
                                 )
@@ -408,7 +404,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=output,
-                                        tool_kind=tool_kind,
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
                                         outcome=outcome,
