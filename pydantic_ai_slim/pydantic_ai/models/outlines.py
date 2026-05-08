@@ -105,6 +105,7 @@ class OutlinesModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
 
