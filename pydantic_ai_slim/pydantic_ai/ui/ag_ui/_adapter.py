@@ -371,11 +371,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, original_id = tool_call_id.split('|', 2)
+                                # MCP tool names are `mcp_server:<label>`; everything else is the
+                                # builtin's `kind` directly. Recover `tool_kind` from the prefix.
+                                tool_kind = tool_name.split(':', 1)[0] if ':' in tool_name else tool_name
                                 builder.add(
                                     BuiltinToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
                                         tool_call_id=original_id,
+                                        tool_kind=tool_kind,
                                         provider_name=provider_name,
                                     )
                                 )
@@ -401,11 +405,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content = json.loads(content)
                             except json.JSONDecodeError:
                                 pass
+                        tool_kind = tool_name.split(':', 1)[0] if ':' in tool_name else tool_name
                         builder.add(
                             BuiltinToolReturnPart(
                                 tool_name=tool_name,
                                 content=content,
                                 tool_call_id=original_id,
+                                tool_kind=tool_kind,
                                 provider_name=provider_name,
                             )
                         )

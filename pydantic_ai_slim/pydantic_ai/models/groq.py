@@ -797,12 +797,14 @@ def _map_executed_tool(
             args=from_json(tool.arguments),
             provider_name=provider_name,
             tool_call_id=tool_call_id,
+            tool_kind=WebSearchTool.kind,
         )
         return_part = BuiltinToolReturnPart(
             tool_name=WebSearchTool.kind,
             content=results,
             provider_name=provider_name,
             tool_call_id=tool_call_id,
+            tool_kind=WebSearchTool.kind,
         )
 
         if streaming:

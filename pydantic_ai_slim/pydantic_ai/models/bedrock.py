@@ -547,6 +547,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 tool_name=CodeExecutionTool.kind,
                                 args=tool_use['input'],
                                 tool_call_id=tool_use['toolUseId'],
+                                tool_kind=CodeExecutionTool.kind,
                             )
                             call_part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
                             items.append(call_part)
@@ -566,6 +567,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 tool_name=CodeExecutionTool.kind,
                                 content=tool_result['content'][0].get('json') if tool_result['content'] else None,
                                 tool_call_id=tool_result.get('toolUseId'),
+                                tool_kind=CodeExecutionTool.kind,
                                 provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
                             )
                         )
@@ -1256,6 +1258,7 @@ class BedrockStreamedResponse(StreamedResponse):
                                         tool_name=CodeExecutionTool.kind,
                                         tool_call_id=tool_id,
                                         provider_name=self.provider_name,
+                                        tool_kind=CodeExecutionTool.kind,
                                     )
                                     part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
                                     yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
@@ -1276,6 +1279,7 @@ class BedrockStreamedResponse(StreamedResponse):
                                     tool_name=CodeExecutionTool.kind,
                                     content=None,
                                     tool_call_id=tool_id,
+                                    tool_kind=CodeExecutionTool.kind,
                                     provider_details={'status': tool_result_start['status']}
                                     if 'status' in tool_result_start
                                     else {},
