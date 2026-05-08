@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
+from dirty_equals import IsDatetime, IsStr
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -34,6 +35,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     RunContext,
     RunUsage,
@@ -60,7 +62,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.usage import RequestUsage
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.join import reduce_list_append
 
@@ -2610,7 +2611,8 @@ async def test_image_agent(allow_model_requests: None, client: Client):
             )
 
 
-# =====================================================================# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
+# ============================================================================
+# DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
 # ============================================================================
 
@@ -4332,21 +4334,6 @@ def test_durability_image_output_rejected():
         )
 
 
-async def test_durability_runtime_capability_with_mixed_position_root():
-    """Per-run capabilities can be added to a TemporalDurability agent without ordering conflicts.
-
-    The agent's `_root_capability` mixes outermost (auto-injected `ToolSearch`) and innermost
-    (`TemporalDurability`) leaves. Wrapping that root in another `CombinedCapability` to inject
-    per-run capabilities used to trigger "Conflicting positions in nested CombinedCapability"
-    because the outer sort merged orderings across the inner combined's leaves.
-    """
-    from pydantic_ai.capabilities import Hooks
-
-    agent = Agent(_durability_fn_model, name='test_runtime_cap', capabilities=[TemporalDurability()])
-    result = await agent.run('hi', capabilities=[Hooks()])
-    assert result.output == 'Echo: hi'
-
-
 # --- Model registry ---
 
 
@@ -4538,6 +4525,44 @@ def test_durability_rejects_runtime_added_capabilities():
 
     # Sanity: the bound chain alone passes validation.
     bound._validate_per_run_capabilities(make_ctx(bound_chain))  # pyright: ignore[reportPrivateUsage]
+
+
+def test_durability_skips_per_run_check_when_dynamic_capability_bound():
+    """Per-run validation is skipped when the bound chain contains a `DynamicCapability`.
+
+    A `DynamicCapability` resolves to a different capability instance per run, so the
+    static-class check would falsely reject any class produced by the factory. Issue
+    #5253 tracks proper end-to-end durable support; until then, the check is relaxed.
+    """
+    from pydantic_ai._run_context import RunContext
+    from pydantic_ai.capabilities import DynamicCapability
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.result import RunUsage
+
+    @dataclass
+    class _UnregisteredCap(AbstractCapability[None]):
+        pass
+
+    durability = TemporalDurability()
+
+    def _capability_factory(ctx: RunContext[None]) -> AbstractCapability[None] | None:
+        return None
+
+    agent = Agent(
+        _durability_fn_model,
+        name='dynamic_cap_test',
+        capabilities=[durability, _capability_factory],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert any(issubclass(cls, DynamicCapability) for cls in bound._bound_capability_classes)  # pyright: ignore[reportPrivateUsage]
+
+    # Even with an unregistered class in the runtime chain, validation passes
+    # because a `DynamicCapability` is in the bound chain.
+    runtime_chain = CombinedCapability([*agent.root_capability.capabilities, _UnregisteredCap()])
+    ctx = RunContext[None](deps=None, model=_durability_fn_model, usage=RunUsage(), root_capability=runtime_chain)
+    bound._validate_per_run_capabilities(ctx)  # pyright: ignore[reportPrivateUsage]
 
 
 # --- get_serialization_name returns None ---
@@ -5023,7 +5048,6 @@ class DurabilityModelRetryWorkflow:
         return result
 
 
-@pytest.mark.skip(reason='Capability-path parity test pending VCR cassette recording (record with --record-mode=once)')
 async def test_durability_agent_with_model_retry(allow_model_requests: None, client: Client):
     """Capability-path equivalent of `test_temporal_agent_with_model_retry`.
 
@@ -5043,8 +5067,121 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
             task_queue=TASK_QUEUE,
         )
         result = await wf.result()
-        assert result.output == snapshot()
-        assert result.all_messages() == snapshot()
+        assert result.output == snapshot('The weather in Mexico City is currently sunny.')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='What is the weather in CDMX?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='durability_get_weather_in_city',
+                            args='{"city":"CDMX"}',
+                            tool_call_id='call_TtLEMpCeAhnG48btCDrw8lhl',
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=48,
+                        output_tokens=20,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:16Z'},
+                    provider_response_id='chatcmpl-DdNAiT49qrYrZOaeeAd39RynAa1g7',
+                    finish_reason='tool_call',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Did you mean Mexico City?',
+                            tool_name='durability_get_weather_in_city',
+                            tool_call_id='call_TtLEMpCeAhnG48btCDrw8lhl',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='durability_get_weather_in_city',
+                            args='{"city":"Mexico City"}',
+                            tool_call_id='call_d8k0Vk8dw6eWKFWF8Dj0rCL6',
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=93,
+                        output_tokens=20,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:17Z'},
+                    provider_response_id='chatcmpl-DdNAjt5pJt1nYbeCdbHGbo4ntTKy8',
+                    finish_reason='tool_call',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='durability_get_weather_in_city',
+                            content='sunny',
+                            tool_call_id='call_d8k0Vk8dw6eWKFWF8Dj0rCL6',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
+                    usage=RequestUsage(
+                        input_tokens=127,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={'finish_reason': 'stop', 'timestamp': '2026-05-08T21:37:18Z'},
+                    provider_response_id='chatcmpl-DdNAkzvAFU1knSut20EiutyMs7PZy',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
 
 
 # --- Multi-model selection by ID ---
@@ -5181,7 +5318,6 @@ class DurabilityWebSearchAgentWorkflow:
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
 )
-@pytest.mark.skip(reason='Capability-path parity test pending VCR cassette recording (record with --record-mode=once)')
 async def test_durability_web_search_in_workflow(allow_model_requests: None, client: Client):
     """Capability-path equivalent of `test_web_search_agent_run_in_workflow`.
 
@@ -5200,7 +5336,9 @@ async def test_durability_web_search_in_workflow(allow_model_requests: None, cli
             id=DurabilityWebSearchAgentWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot()
+        assert output == snapshot(
+            "Mexico's central bank cut its benchmark interest rate by 25 basis points to 6.50%--effective today, May 8, 2026--signaling the end of its rate‐cut cycle. ([banxico.org.mx](https://www.banxico.org.mx/publicaciones-y-prensa/anuncios-de-las-decisiones-de-politica-monetaria/%7B8A05C722-0A97-4527-2166-0CE802CE6838%7D.pdf?utm_source=openai))"
+        )
 
 
 # --- Dynamic builtin tools select-by-model ---
@@ -5282,7 +5420,12 @@ class DurabilityMCPDynamicToolsetAgentWorkflow:
         return result.output
 
 
-@pytest.mark.skip(reason='Capability-path parity test pending VCR cassette recording (record with --record-mode=once)')
+@pytest.mark.skip(
+    reason=(
+        'Pending: replays of this MCP toolset workflow trip the Temporal sandbox with '
+        '`Module certifi was imported after initial workflow load`. Issue tracked.'
+    )
+)
 async def test_durability_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
     """Capability-path equivalent of `test_mcp_dynamic_toolset_in_workflow`.
 
@@ -5323,7 +5466,12 @@ class DurabilityFastMCPAgentWorkflow:
         return result.output
 
 
-@pytest.mark.skip(reason='Capability-path parity test pending VCR cassette recording (record with --record-mode=once)')
+@pytest.mark.skip(
+    reason=(
+        'Pending: replays of this FastMCP toolset workflow trip the Temporal sandbox with '
+        '`Module certifi was imported after initial workflow load`. Issue tracked.'
+    )
+)
 async def test_durability_fastmcp_toolset_in_workflow(allow_model_requests: None, client: Client):
     """Capability-path equivalent of `test_fastmcp_toolset`.
 

@@ -120,8 +120,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Capability implementations can use this to validate per-run additions
     (e.g. detect runtime-added capabilities that require worker registration).
 
-    Not available in `TemporalRunContext` — capabilities cannot be serialized
-    across Temporal activity boundaries.
+    Not part of the Temporal activity-boundary serialization (capabilities
+    don't round-trip), but populated on the activity side from the bound
+    agent's `root_capability`.
     """
 
     @property

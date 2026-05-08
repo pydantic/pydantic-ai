@@ -10277,6 +10277,22 @@ def test_ordering_mixed_type_and_instance_refs():
     assert combined.capabilities[0].__class__ is MixedRefs
 
 
+async def test_runtime_capability_with_mixed_position_root():
+    """Per-run capabilities can be added to an agent whose root mixes outermost and innermost.
+
+    `Agent.iter()` builds the effective capability by merging per-run capabilities into the
+    agent's `_root_capability`. If `_root_capability` is a `CombinedCapability` whose leaves
+    span tiers (e.g. an outermost-tier cap and an innermost-tier cap), wrapping it in another
+    `CombinedCapability` used to trigger "Conflicting positions in nested CombinedCapability"
+    because the outer sort tried to compute a single effective ordering for the inner group.
+    The fix splats the root container so each leaf participates as a sibling in the outer
+    ordering pass.
+    """
+    agent = Agent(TestModel(), capabilities=[OutermostCap(), InnermostCap()])
+    result = await agent.run('hi', capabilities=[Hooks()])
+    assert result.output == snapshot('success (no tool calls)')
+
+
 # --- Hook recovery tests (after_node_run End→node, ErrorMarker in next_node) ---
 
 
