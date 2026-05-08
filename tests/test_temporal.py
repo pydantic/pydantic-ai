@@ -4545,13 +4545,10 @@ def test_durability_skips_per_run_check_when_dynamic_capability_bound():
 
     durability = TemporalDurability()
 
-    def _capability_factory(ctx: RunContext[None]) -> AbstractCapability[None] | None:
-        return None
-
     agent = Agent(
         _durability_fn_model,
         name='dynamic_cap_test',
-        capabilities=[durability, _capability_factory],
+        capabilities=[durability, lambda ctx: None],
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
