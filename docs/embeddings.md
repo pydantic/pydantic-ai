@@ -226,7 +226,7 @@ You can then use the model:
 ```python {title="google_embeddings.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('google-gla:gemini-embedding-001')
+embedder = Embedder('google:gemini-embedding-001')
 
 
 async def main():
@@ -241,20 +241,20 @@ See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/
 
 ##### Vertex AI
 
-To use Google's embedding models via Vertex AI instead of the Gemini API, use the `google-vertex` provider prefix:
+To use Google's embedding models via Vertex AI instead of the Gemini Developer API, use the `gcp` provider prefix:
 
 ```python {title="google_vertex_embeddings.py"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.google import GoogleEmbeddingModel
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.gcp import GCPProvider
 
 # Using provider prefix
-embedder = Embedder('google-vertex:gemini-embedding-001')
+embedder = Embedder('gcp:gemini-embedding-001')
 
 # Or with explicit provider configuration
 model = GoogleEmbeddingModel(
     'gemini-embedding-001',
-    provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
+    provider=GCPProvider(project='my-project', location='us-central1'),
 )
 embedder = Embedder(model)
 ```
@@ -270,7 +270,7 @@ from pydantic_ai import Embedder
 from pydantic_ai.embeddings import EmbeddingSettings
 
 embedder = Embedder(
-    'google-gla:gemini-embedding-001',
+    'google:gemini-embedding-001',
     settings=EmbeddingSettings(dimensions=768),
 )
 
@@ -292,7 +292,7 @@ from pydantic_ai import Embedder
 from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
 
 embedder = Embedder(
-    'google-gla:gemini-embedding-001',
+    'google:gemini-embedding-001',
     settings=GoogleEmbeddingSettings(
         dimensions=768,
         google_task_type='SEMANTIC_SIMILARITY',  # Optimize for similarity comparison

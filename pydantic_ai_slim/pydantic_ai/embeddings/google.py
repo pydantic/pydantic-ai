@@ -88,15 +88,16 @@ class GoogleEmbeddingModel(EmbeddingModel):
     Example:
     ```python
     from pydantic_ai.embeddings.google import GoogleEmbeddingModel
+    from pydantic_ai.providers.gcp import GCPProvider
     from pydantic_ai.providers.google import GoogleProvider
 
     # Using Gemini API (requires GOOGLE_API_KEY env var)
-    model = GoogleEmbeddingModel('gemini-embedding-001')
+    model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider())
 
-    # Using Vertex AI
+    # Using Vertex AI via the GCP provider
     model = GoogleEmbeddingModel(
         'gemini-embedding-001',
-        provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
+        provider=GCPProvider(project='my-project', location='us-central1'),
     )
     ```
     """
@@ -108,7 +109,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
         self,
         model_name: GoogleEmbeddingModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
+        provider: Literal['google', 'gcp', 'google-gla', 'google-vertex'] | Provider[Client] = 'google',
         settings: EmbeddingSettings | None = None,
     ):
         """Initialize a Google embedding model.
@@ -119,9 +120,10 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 for available models.
             provider: The provider to use for authentication and API access. Can be:
 
-                - `'google-gla'` (default): Uses the Gemini API (Google AI Studio)
-                - `'google-vertex'`: Uses Vertex AI
-                - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] instance
+                - `'google'` (default): Uses the Gemini API (Google AI Studio)
+                - `'gcp'`: Uses Vertex AI
+                - A [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] or
+                  [`GCPProvider`][pydantic_ai.providers.gcp.GCPProvider] instance
                   for custom configuration
             settings: Model-specific [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings]
                 to use as defaults for this model.

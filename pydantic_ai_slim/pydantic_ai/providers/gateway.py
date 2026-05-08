@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
@@ -200,9 +201,12 @@ def gateway_provider(
     elif upstream_provider in ('google-vertex', 'gemini'):
         from .google import GoogleProvider
 
-        return _with_http_client(
-            GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
-        )
+        with warnings.catch_warnings():
+            # Internal forward; the gateway-vertex path is reworked in v2.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            return _with_http_client(
+                GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
+            )
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 

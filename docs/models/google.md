@@ -3,6 +3,14 @@
 The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to
 access Google's Gemini models via both the Generative Language API and Vertex AI.
 
+Two providers wrap those endpoints:
+
+- [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini Developer API (Google AI Studio), surfaced under the `'google:'` prefix.
+- [`GCPProvider`][pydantic_ai.providers.gcp.GCPProvider] — Vertex AI on Google Cloud Platform, surfaced under the `'gcp:'` prefix.
+
+!!! note "Renamed prefixes (1.x → v2)"
+    The `'google-gla:'` and `'google-vertex:'` prefixes still work in 1.x but emit a `DeprecationWarning`. Use `'google:'` and `'gcp:'` instead. Likewise `GoogleProvider(vertexai=True, ...)` is deprecated in favor of `GCPProvider(...)`.
+
 ## Install
 
 To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
@@ -26,12 +34,12 @@ Once you have the API key, set it as an environment variable:
 export GOOGLE_API_KEY=your-api-key
 ```
 
-You can then use `GoogleModel` by name (where GLA stands for Generative Language API):
+You can then use `GoogleModel` by name:
 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('google-gla:gemini-3-pro-preview')
+agent = Agent('google:gemini-3-pro-preview')
 ...
 ```
 
@@ -65,12 +73,12 @@ Whichever way you authenticate, you'll need to have Vertex AI enabled in your GC
 
 #### Application Default Credentials
 
-If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you can use `GoogleProvider` in Vertex AI mode by name:
+If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you can use the `GCPProvider` by name:
 
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 
-agent = Agent('google-vertex:gemini-3-pro-preview')
+agent = Agent('gcp:gemini-3-pro-preview')
 ...
 ```
 
@@ -79,9 +87,9 @@ Or you can explicitly create the provider and model:
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.gcp import GCPProvider
 
-provider = GoogleProvider(vertexai=True)
+provider = GCPProvider()
 model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...
@@ -96,13 +104,13 @@ from google.oauth2 import service_account
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.gcp import GCPProvider
 
 credentials = service_account.Credentials.from_service_account_file(
     'path/to/service-account.json',
     scopes=['https://www.googleapis.com/auth/cloud-platform'],
 )
-provider = GoogleProvider(credentials=credentials, project='your-project-id')
+provider = GCPProvider(credentials=credentials, project='your-project-id')
 model = GoogleModel('gemini-3-flash-preview', provider=provider)
 agent = Agent(model)
 ...
@@ -116,23 +124,26 @@ To use Vertex AI with an API key, [create a key](https://cloud.google.com/vertex
 export GOOGLE_API_KEY=your-api-key
 ```
 
-You can then use `GoogleModel` in Vertex AI mode by name:
+You can then use `GoogleModel` via the `GCPProvider` by name:
 
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 
-agent = Agent('google-vertex:gemini-3-pro-preview')
+agent = Agent('gcp:gemini-3-pro-preview')
 ...
 ```
 
 Or you can explicitly create the provider and model:
 
 ```python {test="skip"}
+import os
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.gcp import GCPProvider
 
-provider = GoogleProvider(vertexai=True, api_key='your-api-key')
+os.environ['GOOGLE_API_KEY'] = 'your-api-key'
+provider = GCPProvider()
 model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...
@@ -145,9 +156,9 @@ You can specify the location and/or project when using Vertex AI:
 ```python {title="google_model_location.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.gcp import GCPProvider
 
-provider = GoogleProvider(vertexai=True, location='asia-east1', project='your-gcp-project-id')
+provider = GCPProvider(location='asia-east1', project='your-gcp-project-id')
 model = GoogleModel('gemini-3-pro-preview', provider=provider)
 agent = Agent(model)
 ...
@@ -388,7 +399,7 @@ This feature is only supported for non-streaming requests and Vertex AI.
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.gcp import GCPProvider
 
 model_settings = GoogleModelSettings(
     google_logprobs=True, google_top_logprobs=2,
@@ -396,7 +407,7 @@ model_settings = GoogleModelSettings(
 
 model = GoogleModel(
     model_name='gemini-2.5-flash',
-    provider=GoogleProvider(location='europe-west1', vertexai=True),
+    provider=GCPProvider(location='europe-west1'),
 )
 agent = Agent(model, model_settings=model_settings)
 
