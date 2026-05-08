@@ -778,7 +778,7 @@ class Model(ABC, Generic[InterfaceClient]):
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
         if ToolSearchTool not in self.profile.supported_builtin_tools:
-            from .._tool_search_synthetic import synthesize_local_tool_search_messages
+            from .._tool_search import synthesize_local_tool_search_messages
 
             return synthesize_local_tool_search_messages(messages)
         return messages

@@ -21,7 +21,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+from pydantic_ai._tool_search import synthesize_local_tool_search_messages
 from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
@@ -954,8 +954,9 @@ async def test_tool_search_toolset_ignores_malformed_content_history():
     searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
-        # content is not a dict (string fall-through)
-        ModelRequest(parts=[ToolSearchReturnPart(content='not a dict')]),
+        # content is not a dict (string fall-through — possible via direct user construction
+        # bypassing the typed shape)
+        ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, 'not a dict'))]),
         # content is a dict but `discovered_tools` is missing
         ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, {'message': 'hi'}))]),
         # `discovered_tools` is not a list
@@ -3258,7 +3259,7 @@ def test_pydantic_validation_accepts_search_tools_string_content_collision() -> 
 
 def test_synthesize_local_from_builtin_call_str_args_passthrough() -> None:
     """Streaming partial-args (`str`) are passed through unchanged when translating."""
-    from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_call
+    from pydantic_ai._tool_search import synthesize_local_from_builtin_call
     from pydantic_ai.messages import BuiltinToolSearchCallPart
 
     part = BuiltinToolSearchCallPart(args='{"queries":', tool_call_id='c1')
@@ -3269,7 +3270,7 @@ def test_synthesize_local_from_builtin_call_str_args_passthrough() -> None:
 
 def test_synthesize_local_from_builtin_call_none_args_falls_through() -> None:
     """`None` args remain `None` after translation."""
-    from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_call
+    from pydantic_ai._tool_search import synthesize_local_from_builtin_call
     from pydantic_ai.messages import BuiltinToolSearchCallPart
 
     part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1')
@@ -3281,7 +3282,7 @@ def test_synthesize_local_from_builtin_return_none_content_defaults() -> None:
     """A return part with `content=None` (legal per the typed signature) gets a
     sensible empty-discoveries default. Covers the `else` branch in
     `synthesize_local_from_builtin_return`."""
-    from pydantic_ai._tool_search_synthetic import synthesize_local_from_builtin_return
+    from pydantic_ai._tool_search import synthesize_local_from_builtin_return
     from pydantic_ai.messages import BuiltinToolSearchReturnPart
 
     part = BuiltinToolSearchReturnPart(content=None, tool_call_id='c1')
@@ -3292,7 +3293,7 @@ def test_synthesize_local_from_builtin_return_none_content_defaults() -> None:
 def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
     """A response with only a `BuiltinToolSearchCallPart` (no return — streaming case)
     translates the call but doesn't synthesize a trailing `ModelRequest`."""
-    from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+    from pydantic_ai._tool_search import synthesize_local_tool_search_messages
     from pydantic_ai.messages import BuiltinToolSearchCallPart
 
     history: list[ModelMessage] = [
@@ -3309,7 +3310,7 @@ def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
 def test_synthesize_messages_response_with_only_return_part_no_response_kept() -> None:
     """A response with only a `BuiltinToolSearchReturnPart` (no remaining parts) — the
     response is dropped since it'd be empty, and the return is lifted onto a fresh request."""
-    from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+    from pydantic_ai._tool_search import synthesize_local_tool_search_messages
     from pydantic_ai.messages import BuiltinToolSearchReturnPart
 
     history: list[ModelMessage] = [
@@ -3334,7 +3335,7 @@ def test_synthesize_messages_response_with_only_return_part_no_response_kept() -
 def test_synthesize_messages_request_with_unrelated_tool_return_passthrough() -> None:
     """A `ToolReturnPart` with `tool_name != 'search_tools'` doesn't get promoted —
     the request is returned unchanged."""
-    from pydantic_ai._tool_search_synthetic import synthesize_local_tool_search_messages
+    from pydantic_ai._tool_search import synthesize_local_tool_search_messages
 
     request = ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='c1')])
     result = synthesize_local_tool_search_messages([request])
@@ -3870,8 +3871,9 @@ def test_anthropic_build_tool_search_replay_block_skips_malformed_content_shapes
     from pydantic_ai.messages import BuiltinToolSearchReturnPart
     from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
 
-    # Non-dict content — falls through with empty `tool_references`.
-    part_str_content = BuiltinToolSearchReturnPart(content='not a dict', tool_call_id='c1')
+    # Non-dict content (e.g. direct user construction bypassing the typed shape) —
+    # falls through with empty `tool_references`.
+    part_str_content = BuiltinToolSearchReturnPart(content=cast(Any, 'not a dict'), tool_call_id='c1')
     block_str = _build_tool_search_replay_block(part_str_content, 'srv_1')
     assert block_str['content'] == {'type': 'tool_search_tool_search_result', 'tool_references': []}
 
