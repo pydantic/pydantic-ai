@@ -12,11 +12,11 @@ from .. import (
     usage as _usage,
 )
 from .._json_schema import JsonSchema
-from .._template import TemplateStr
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
 from ..settings import ModelSettings
+from ..template import TemplateStr
 from ..tools import (
     AgentBuiltinTool,
     AgentDepsT,

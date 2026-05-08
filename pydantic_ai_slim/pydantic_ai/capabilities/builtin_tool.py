@@ -22,7 +22,7 @@ class BuiltinTool(AbstractCapability[AgentDepsT]):
     [`AbstractBuiltinTool`][pydantic_ai.builtin_tools.AbstractBuiltinTool] instance or a callable
     that dynamically produces one.
 
-    When `builtin_tools` is passed to [`Agent.__init__`][pydantic_ai.Agent.__init__], each item is
+    When `builtin_tools` is passed to [`Agent.__init__`][pydantic_ai.agent.Agent.__init__], each item is
     automatically wrapped in a `BuiltinTool` capability.
     """
 

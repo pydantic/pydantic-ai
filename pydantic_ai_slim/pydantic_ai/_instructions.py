@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from pydantic_ai._template import TemplateStr
+from pydantic_ai.template import TemplateStr
 from pydantic_ai.tools import AgentDepsT
 
 from . import _system_prompt

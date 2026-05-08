@@ -5,6 +5,7 @@
       members:
         - KnownModelName
         - ModelRequestParameters
+        - ModelRequestContext
         - Model
         - AbstractToolDefinition
         - StreamedResponse
