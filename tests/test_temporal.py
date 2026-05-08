@@ -217,10 +217,10 @@ def _kill_leaked_temporal_server(port: int) -> None:
             check=False,
             timeout=2,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: lax no cover - no `ss` or unresponsive
         return
 
-    for line in result.stdout.splitlines():
+    for line in result.stdout.splitlines():  # pragma: lax no cover - body fires only on a real leak
         if 'temporal-sdk-py' not in line:
             continue
         match = re.search(r'pid=(\d+)', line)
