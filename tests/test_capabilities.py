@@ -507,7 +507,14 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                        'files': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/UploadedFile'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Files',
+                        },
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
@@ -1071,6 +1078,55 @@ though not all of these settings are supported by all models.\
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'UploadedFile': {
+                    'description': """\
+A reference to a file uploaded to a provider's file storage by ID.
+
+This allows referencing files that have been uploaded via provider-specific file APIs
+rather than providing the file content directly.
+
+Supported by:
+
+- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
+- [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
+- [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
+- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
+- [`XaiModel`][pydantic_ai.models.xai.XaiModel]\
+""",
+                    'properties': {
+                        'file_id': {'title': 'File Id', 'type': 'string'},
+                        'provider_name': {
+                            'enum': ['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai'],
+                            'title': 'Provider Name',
+                            'type': 'string',
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {
+                            'const': 'uploaded-file',
+                            'default': 'uploaded-file',
+                            'title': 'Kind',
+                            'type': 'string',
+                        },
+                    },
+                    'required': ['file_id', 'provider_name'],
+                    'title': 'UploadedFile',
                     'type': 'object',
                 },
                 'UrlContextTool': {
