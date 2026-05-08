@@ -144,6 +144,8 @@ The [`anthropic_effort`][pydantic_ai.models.anthropic.AnthropicModelSettings.ant
 !!! note
     Older models (`claude-sonnet-4-5`, `claude-opus-4-5`, etc.) do not support adaptive thinking and require `{'type': 'enabled', 'budget_tokens': N}` as shown [above](#anthropic).
 
+Thinking tokens count against Anthropic's loop-wide [task budgets](models/anthropic.md#task-budgets-beta), so adaptive thinking naturally scales down as the budget depletes.
+
 ## Google
 
 To enable thinking, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](agent.md#model-run-settings).

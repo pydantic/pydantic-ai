@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationTool
+from pydantic_ai.builtin_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -48,6 +48,12 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
 
     # Keep these fields in sync with ImageGenerationTool in builtin_tools.py.
 
+    action: Literal['generate', 'edit', 'auto'] | None
+    """Whether to generate a new image or edit an existing image.
+
+    Supported by: OpenAI Responses. Default: `'auto'`.
+    """
+
     background: Literal['transparent', 'opaque', 'auto'] | None
     """Background type for the generated image.
 
@@ -62,6 +68,12 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
 
     moderation: Literal['auto', 'low'] | None
     """Moderation level for the generated image.
+
+    Supported by: OpenAI Responses.
+    """
+
+    image_model: ImageGenerationModelName | None
+    """The image generation model to use.
 
     Supported by: OpenAI Responses.
     """
@@ -109,9 +121,11 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         | str
         | Callable[[RunContext[AgentDepsT]], Awaitable[Model] | Model]
         | None = None,
+        action: Literal['generate', 'edit', 'auto'] | None = None,
         background: Literal['transparent', 'opaque', 'auto'] | None = None,
         input_fidelity: Literal['high', 'low'] | None = None,
         moderation: Literal['auto', 'low'] | None = None,
+        image_model: ImageGenerationModelName | None = None,
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
@@ -126,9 +140,11 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
         self.builtin = builtin
         self.local = local
         self.fallback_model = fallback_model
+        self.action = action
         self.background = background
         self.input_fidelity = input_fidelity
         self.moderation = moderation
+        self.image_model = image_model
         self.output_compression = output_compression
         self.output_format = output_format
         self.quality = quality
@@ -139,12 +155,16 @@ class ImageGeneration(BuiltinOrLocalTool[AgentDepsT]):
     def _image_gen_kwargs(self) -> dict[str, Any]:
         """Collect non-None ImageGenerationTool config fields."""
         kwargs: dict[str, Any] = {}
+        if self.action is not None:
+            kwargs['action'] = self.action
         if self.background is not None:
             kwargs['background'] = self.background
         if self.input_fidelity is not None:
             kwargs['input_fidelity'] = self.input_fidelity
         if self.moderation is not None:
             kwargs['moderation'] = self.moderation
+        if self.image_model is not None:
+            kwargs['model'] = self.image_model
         if self.output_compression is not None:
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:

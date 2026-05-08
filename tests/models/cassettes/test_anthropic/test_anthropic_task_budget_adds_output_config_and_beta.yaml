@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '440'
+      - '240'
       content-type:
       - application/json
       host:
@@ -18,27 +18,15 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Give me facts about Berlin
+        - text: What is 2+2?
           type: text
         role: user
-      model: claude-sonnet-4-5
+      model: claude-opus-4-7
       output_config:
-        format:
-          schema:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-              country:
-                type: string
-              population:
-                type: integer
-            required:
-            - city
-            - country
-            - population
-            type: object
-          type: json_schema
+        task_budget:
+          remaining: 500
+          total: 20000
+          type: tokens
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -46,13 +34,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '563'
+      - '711'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=1463
+      - x-originResponse;dur=1127
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -61,10 +49,10 @@ interactions:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: '{"city":"Berlin","country":"Germany","population":3850809}'
+      - text: 2 + 2 = 4
         type: text
-      id: msg_0114Wmc3eEygTHm4c67eQB8P
-      model: claude-sonnet-4-5-20250929
+      id: msg_01Em9Rj3nCCZJA34rZap3uvf
+      model: claude-opus-4-7
       role: assistant
       stop_details: null
       stop_reason: end_turn
@@ -76,9 +64,18 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 197
-        output_tokens: 18
+        inference_geo: global
+        input_tokens: 53
+        iterations:
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 53
+          output_tokens: 14
+          type: message
+        output_tokens: 14
         service_tier: standard
     status:
       code: 200
