@@ -322,7 +322,7 @@ class XaiModel(Model[AsyncClient]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> 'AsyncClient':
@@ -499,7 +499,7 @@ class XaiModel(Model[AsyncClient]):
                 msg.encrypted_content = item.signature
             return msg
         elif item.content:
-            start_tag, end_tag = self.profile.thinking_tags
+            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
             return None
@@ -691,10 +691,10 @@ class XaiModel(Model[AsyncClient]):
         tools_param = tools if tools else None
 
         # Set tool_choice based on whether tools are available and text output is allowed
-        profile = GrokModelProfile.from_profile(self.profile)
+        profile = cast(GrokModelProfile, self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.grok_supports_tool_choice_required:
+        elif not model_request_parameters.allow_text_output and profile.get('grok_supports_tool_choice_required', True):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -706,7 +706,9 @@ class XaiModel(Model[AsyncClient]):
             assert output_object is not None
             response_format = _map_json_schema(output_object)
         elif (
-            model_request_parameters.output_mode == 'prompted' and not tools and profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted'
+            and not tools
+            and profile.get('supports_json_object_output', False)
         ):  # pragma: no branch
             response_format = _map_json_object()
 

@@ -49,7 +49,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
@@ -3238,7 +3238,7 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
 
 
 def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
-    if WebSearchTool in ctx.model.profile.supported_builtin_tools:
+    if WebSearchTool in ctx.model.profile.get('supported_builtin_tools', SUPPORTED_BUILTIN_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()
 

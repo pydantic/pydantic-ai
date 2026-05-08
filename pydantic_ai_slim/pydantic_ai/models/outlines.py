@@ -106,7 +106,7 @@ class OutlinesModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @classmethod
     def from_transformers(
@@ -517,7 +517,10 @@ class OutlinesModel(Model):
         """Turn the Outlines text response into a Pydantic AI model response instance."""
         return ModelResponse(
             parts=cast(
-                list[ModelResponsePart], split_content_into_text_and_thinking(response, self.profile.thinking_tags)
+                list[ModelResponsePart],
+                split_content_into_text_and_thinking(
+                    response, self.profile.get('thinking_tags', ('<think>', '</think>'))
+                ),
             ),
         )
 
@@ -555,8 +558,8 @@ class OutlinesStreamedResponse(StreamedResponse):
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=content,
-                thinking_tags=self._model_profile.thinking_tags,
-                ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
                 yield event
 

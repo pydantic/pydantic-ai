@@ -1,53 +1,50 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
-
 from ..settings import ThinkingLevel
 from . import ModelProfile
 
 
-@dataclass(kw_only=True)
-class AnthropicModelProfile(ModelProfile):
+class AnthropicModelProfile(ModelProfile, total=False):
     """Profile for models used with `AnthropicModel`.
 
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    anthropic_supports_fast_speed: bool = False
-    """Whether the model supports fast inference speed (`anthropic_speed='fast'`).
+    anthropic_supports_fast_speed: bool
+    """Whether the model supports fast inference speed (`anthropic_speed='fast'`). Default: `False`.
 
     Currently only Claude Opus 4.6 supports fast mode. See the Anthropic docs for the latest list.
     """
 
-    anthropic_supports_adaptive_thinking: bool = False
-    """Whether the model supports adaptive thinking (Sonnet 4.6+, Opus 4.6+).
+    anthropic_supports_adaptive_thinking: bool
+    """Whether the model supports adaptive thinking (Sonnet 4.6+, Opus 4.6+). Default: `False`.
 
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
     """
 
-    anthropic_supports_effort: bool = False
-    """Whether the model supports the `effort` parameter in `output_config` (Opus 4.5+, Sonnet 4.6+).
+    anthropic_supports_effort: bool
+    """Whether the model supports the `effort` parameter in `output_config` (Opus 4.5+, Sonnet 4.6+). Default: `False`.
 
     When True and the unified thinking level is a string (e.g. 'high'), it is also
     mapped to `output_config.effort`.
     """
 
-    anthropic_supports_xhigh_effort: bool = False
-    """Whether the model supports the `xhigh` effort value in `output_config`.
+    anthropic_supports_xhigh_effort: bool
+    """Whether the model supports the `xhigh` effort value in `output_config`. Default: `False`.
 
     Claude Opus 4.7 adds `xhigh`; older Anthropic models should use `max` instead.
     """
 
-    anthropic_disallows_budget_thinking: bool = False
-    """Whether the model rejects budget-based thinking settings.
+    anthropic_disallows_budget_thinking: bool
+    """Whether the model rejects budget-based thinking settings. Default: `False`.
 
     Claude Opus 4.7+ requires adaptive thinking and returns a 400 for
     `{'type': 'enabled', 'budget_tokens': ...}`.
     """
 
-    anthropic_disallows_sampling_settings: bool = False
-    """Whether the model rejects sampling settings like `temperature` and `top_p`.
+    anthropic_disallows_sampling_settings: bool
+    """Whether the model rejects sampling settings like `temperature` and `top_p`. Default: `False`.
 
     Claude Opus 4.7+ requires these settings to be omitted from request payloads.
     """

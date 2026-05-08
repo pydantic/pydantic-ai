@@ -147,7 +147,7 @@ class GeminiModel(Model[httpx.AsyncClient]):
                 provider = GoogleVertexProvider()  # type: ignore[reportDeprecated]
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> httpx.AsyncClient:

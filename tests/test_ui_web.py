@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
-from pydantic_ai.builtin_tools import AbstractBuiltinTool, MCPServerTool
+from pydantic_ai.builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool, MCPServerTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
@@ -316,7 +316,7 @@ def test_model_profile():
 
 @pytest.mark.parametrize('profile_name', ['base', 'openai', 'google', 'groq'])
 def test_supported_builtin_tools(profile_name: str):
-    """Test profile.supported_builtin_tools returns proper tool types."""
+    """Test profile.get('supported_builtin_tools', SUPPORTED_BUILTIN_TOOLS) returns proper tool types."""
     if profile_name == 'base':
         profile: ModelProfile = ModelProfile()
     elif profile_name == 'openai':
@@ -326,7 +326,7 @@ def test_supported_builtin_tools(profile_name: str):
     else:
         profile = GroqModelProfile()
 
-    result = profile.supported_builtin_tools
+    result = profile.get('supported_builtin_tools', SUPPORTED_BUILTIN_TOOLS)
     assert isinstance(result, frozenset)
     assert all(issubclass(t, AbstractBuiltinTool) for t in result)
 

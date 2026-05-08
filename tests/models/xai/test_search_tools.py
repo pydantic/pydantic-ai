@@ -20,7 +20,7 @@ from pydantic_ai import (
     XSearchTool,
 )
 from pydantic_ai.messages import PartStartEvent, RequestUsage
-from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.usage import RunUsage
 
 from ..._inline_snapshot import snapshot
@@ -90,8 +90,8 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -> None:
     profile = grok_model_profile(model_name)
     assert profile is not None
-    assert profile.supports_thinking == expected_thinking
-    assert profile.thinking_always_enabled is False
+    assert profile.get('supports_thinking', False) == expected_thinking
+    assert profile.get('thinking_always_enabled', False) is False
 
 
 async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:
@@ -115,13 +115,13 @@ async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_mo
 def test_grok_model_profile_builtin_tools() -> None:
     grok4_profile = grok_model_profile('grok-4-fast-non-reasoning')
     assert grok4_profile is not None
-    assert isinstance(grok4_profile, GrokModelProfile)
-    assert grok4_profile.grok_supports_builtin_tools is True
+    assert isinstance(grok4_profile, dict)
+    assert grok4_profile.get('grok_supports_builtin_tools', False) is True
 
     grok3_profile = grok_model_profile('grok-3')
     assert grok3_profile is not None
-    assert isinstance(grok3_profile, GrokModelProfile)
-    assert grok3_profile.grok_supports_builtin_tools is False
+    assert isinstance(grok3_profile, dict)
+    assert grok3_profile.get('grok_supports_builtin_tools', False) is False
 
 
 # =============================================================================

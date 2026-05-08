@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -125,7 +125,7 @@ def create_api_app(
             continue
         seen_model_ids.add(model_id)
         display_name = label or model.label
-        model_supported_tools = model.profile.supported_builtin_tools
+        model_supported_tools = model.profile.get('supported_builtin_tools', SUPPORTED_BUILTIN_TOOLS)
         supported_tool_ids = [t.unique_id for t in ui_builtin_tools if type(t) in model_supported_tools]
 
         model_id_to_ref[model_id] = model_ref

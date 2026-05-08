@@ -46,7 +46,6 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -174,7 +173,7 @@ class GroqModel(Model[AsyncGroq]):
             provider = infer_provider('gateway/groq' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncGroq:
@@ -320,7 +319,7 @@ class GroqModel(Model[AsyncGroq]):
         elif (
             model_request_parameters.output_mode == 'prompted'
             and not tools
-            and self.profile.supports_json_object_output
+            and self.profile.get('supports_json_object_output', False)
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
@@ -365,7 +364,11 @@ class GroqModel(Model[AsyncGroq]):
                     items.append(return_part)
         if choice.message.content:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
-            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
+            items.extend(
+                split_content_into_text_and_thinking(
+                    choice.message.content, self.profile.get('thinking_tags', ('<think>', '</think>'))
+                )
+            )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
@@ -417,7 +420,7 @@ class GroqModel(Model[AsyncGroq]):
         tools: list[chat.ChatCompletionToolParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
-                if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
+                if not self.profile.get('groq_always_has_web_search_builtin_tool', False):
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
             else:  # pragma: no cover
                 raise UserError(
@@ -443,7 +446,7 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.thinking_tags
+                        start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
@@ -643,8 +646,10 @@ class GroqStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
                             content=content,
-                            thinking_tags=self._model_profile.thinking_tags,
-                            ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                            thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                            ignore_leading_whitespace=self._model_profile.get(
+                                'ignore_streamed_leading_whitespace', False
+                            ),
                         ):
                             yield event
 
@@ -675,8 +680,10 @@ class GroqStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id='tool_use_failed',
                             content=failed_generation,
-                            thinking_tags=self._model_profile.thinking_tags,
-                            ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                            thinking_tags=self._model_profile.get('thinking_tags', ('<think>', '</think>')),
+                            ignore_leading_whitespace=self._model_profile.get(
+                                'ignore_streamed_leading_whitespace', False
+                            ),
                         ):
                             yield event
                     return

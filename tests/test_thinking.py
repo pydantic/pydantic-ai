@@ -1138,84 +1138,84 @@ class TestProfileThinkingCapabilities:
     """Model profiles correctly detect thinking-capable models."""
 
     def test_anthropic_profile_thinking_support(self):
-        from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+        from pydantic_ai.profiles.anthropic import anthropic_model_profile
 
         # All Anthropic models support thinking in our implementation
         profile = anthropic_model_profile('claude-3-7-sonnet')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
         profile = anthropic_model_profile('claude-sonnet-4-5')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
         # Newer models support adaptive thinking
         profile = anthropic_model_profile('claude-sonnet-4-6')
         assert profile is not None
-        assert isinstance(profile, AnthropicModelProfile)
-        assert profile.anthropic_supports_adaptive_thinking is True
+        assert isinstance(profile, dict)
+        assert profile.get('anthropic_supports_adaptive_thinking', False) is True
 
         profile = anthropic_model_profile('claude-opus-4-7')
         assert profile is not None
-        assert isinstance(profile, AnthropicModelProfile)
-        assert profile.anthropic_supports_adaptive_thinking is True
-        assert profile.anthropic_supports_xhigh_effort is True
-        assert profile.anthropic_disallows_budget_thinking is True
+        assert isinstance(profile, dict)
+        assert profile.get('anthropic_supports_adaptive_thinking', False) is True
+        assert profile.get('anthropic_supports_xhigh_effort', False) is True
+        assert profile.get('anthropic_disallows_budget_thinking', False) is True
 
     def test_google_profile_thinking_support(self):
         from pydantic_ai.profiles.google import google_model_profile
 
         profile = google_model_profile('gemini-2.5-flash')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is False
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is False
 
         profile = google_model_profile('gemini-2.5-pro')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
         profile = google_model_profile('gemini-2.0-flash')
         assert profile is not None
-        assert profile.supports_thinking is False
+        assert profile.get('supports_thinking', False) is False
 
     def test_openai_profile_thinking_support(self):
         from pydantic_ai.profiles.openai import openai_model_profile
 
         profile = openai_model_profile('o3')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
         profile = openai_model_profile('gpt-4o')
         assert profile is not None
-        assert profile.supports_thinking is False
+        assert profile.get('supports_thinking', False) is False
 
     def test_groq_profile_thinking_support(self):
         from pydantic_ai.profiles.groq import groq_model_profile
 
         profile = groq_model_profile('deepseek-r1-distill-llama-70b')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
         profile = groq_model_profile('llama-3.1-8b-instant')
         assert profile is not None
-        assert profile.supports_thinking is False
+        assert profile.get('supports_thinking', False) is False
 
     def test_cohere_profile_thinking_support(self):
         from pydantic_ai.profiles.cohere import cohere_model_profile
 
         profile = cohere_model_profile('command-a-reasoning')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
     def test_mistral_profile_thinking_support(self):
         from pydantic_ai.profiles.mistral import mistral_model_profile
 
         profile = mistral_model_profile('magistral-medium')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
 
 class TestCrossProviderPortability:

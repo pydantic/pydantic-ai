@@ -413,7 +413,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> BedrockRuntimeClient:
@@ -607,8 +607,8 @@ class BedrockConverseModel(Model[BaseClient]):
         if thinking is None:
             return existing or None
 
-        profile = BedrockModelProfile.from_profile(self.profile)
-        variant = profile.bedrock_thinking_variant
+        profile = cast(BedrockModelProfile, self.profile)
+        variant = profile.get('bedrock_thinking_variant', None)
 
         if variant == 'anthropic' and 'thinking' not in existing:
             if thinking is False:
@@ -744,9 +744,9 @@ class BedrockConverseModel(Model[BaseClient]):
         if not tools:
             return None
 
-        profile = BedrockModelProfile.from_profile(self.profile)
+        profile = cast(BedrockModelProfile, self.profile)
         if cache_tool_definitions := (model_settings or {}).get('bedrock_cache_tool_definitions'):
-            if profile.bedrock_supports_tool_caching:
+            if profile.get('bedrock_supports_tool_caching', False):
                 tools.append(cast('ToolTypeDef', self._get_cache_point(cache_tool_definitions)))
 
         tool_choice: ToolChoiceTypeDef
@@ -756,7 +756,7 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_choice = {'auto': {}}
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
-        if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
+        if tool_choice and self.profile.get('bedrock_supports_tool_choice', False):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
@@ -772,7 +772,7 @@ class BedrockConverseModel(Model[BaseClient]):
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
         settings = model_settings or BedrockModelSettings()
-        profile = BedrockModelProfile.from_profile(self.profile)
+        profile = cast(BedrockModelProfile, self.profile)
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
@@ -785,7 +785,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(
                             await self._map_user_prompt(
-                                part, document_count, supports_prompt_caching=profile.bedrock_supports_prompt_caching
+                                part,
+                                document_count,
+                                supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                             )
                         )
                     elif isinstance(part, ToolReturnPart):
@@ -794,7 +796,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         sibling_content: list[ContentBlockUnionTypeDef] = []
 
                         content_mode: Literal['str', 'jsonable'] = (
-                            'str' if profile.bedrock_tool_result_format == 'text' else 'jsonable'
+                            'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
                         for item in part.content_items(mode=content_mode):
                             if isinstance(item, UploadedFile):
@@ -829,7 +831,9 @@ class BedrockConverseModel(Model[BaseClient]):
                                     raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                                 file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
-                                if kind in profile.bedrock_supported_media_kinds_in_tool_returns:
+                                if kind in profile.get(
+                                    'bedrock_supported_media_kinds_in_tool_returns', frozenset({'image'})
+                                ):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
@@ -881,7 +885,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         if (
                             item.provider_name == self.system
                             and item.signature
-                            and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
+                            and self.profile.get('bedrock_send_back_thinking_parts', False)
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
@@ -897,7 +901,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = self.profile.thinking_tags
+                            start_tag, end_tag = self.profile.get('thinking_tags', ('<think>', '</think>'))
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system:
@@ -960,7 +964,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if (
             system_prompt
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
-            and profile.bedrock_supports_prompt_caching
+            and profile.get('bedrock_supports_prompt_caching', False)
         ):
             cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
             if instruction_parts and any(p.dynamic for p in instruction_parts):
@@ -975,7 +979,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 system_prompt.append(cache_point)
 
         if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
-            if profile.bedrock_supports_prompt_caching:
+            if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
                     # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
