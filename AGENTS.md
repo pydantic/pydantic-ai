@@ -99,6 +99,23 @@ The project uses:
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
+# v2 work in progress
+
+The repo is currently driving toward a v2 release with breaking changes. PRs that contribute to v2 follow these conventions — read them before starting a v2 PR.
+
+**Card-driven design.** Per-change "cards" in [pydantic-ai-notes/david/v2-cards](https://github.com/pydantic/pydantic-ai-notes/tree/main/david/v2-cards) describe the rationale, scope, and migration target for each breaking change. The [`00-index.md`](https://github.com/pydantic/pydantic-ai-notes/blob/main/david/v2-cards/00-index.md) is the master tracker; [`00-pr-tracker.md`](https://github.com/pydantic/pydantic-ai-notes/blob/main/david/v2-cards/00-pr-tracker.md) lists active and queued PRs with their branches and owners. Read the relevant card before drafting; append non-obvious implementation decisions to the card's `## Implementation log` section.
+
+**Two PR shapes:**
+
+- **`v2:prep`** PRs target `main` and add `DeprecationWarning`s. Title prefix `v2 prep:`, label `v2:prep`. They ship to users on the next 1.x minor release so warnings appear before v2 removes anything.
+- **`v2:exec`** PRs target a future v2 integration branch (not yet created on upstream). Title prefix `v2-exec:`, label `v2:exec`. They do the actual breaking changes / removals / default flips.
+
+**Branch naming:** `v2-prep-<theme>` for `v2:prep`, `v2-exec-<theme>` for `v2:exec`. `<theme>` is `card-NN-slug` for single-card PRs or a descriptive theme word for bundles (e.g. `agent-ctor-kwargs`).
+
+**Tests for v2 deprecations** live in `tests/v2/test_<theme>.py`, not at the top level of `tests/`. The folder is the v2-specific bucket — when v2 is cut, the entire folder is reviewed and pruned together. Existing tests that exercise the now-deprecated path stay where they are with `# pyright: ignore[reportDeprecated]` annotations as needed; a corresponding `pyproject.toml` filterwarnings entry suppresses the new `DeprecationWarning` so the existing suite still passes under `filterwarnings = ['error']`.
+
+**Deprecation warning copy** must explicitly mention v2.0 and name the concrete migration target — never just `'X is deprecated'`. Example shape: `'`X` is deprecated and will be removed in v2.0; use `Y` instead.'`
+
 # Coding Guidelines
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
