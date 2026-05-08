@@ -4145,8 +4145,8 @@ async def test_text_content_serialization_in_workflow(client: Client):
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests that echoes the last user prompt."""
-    for msg in reversed(messages):
-        for part in msg.parts:
+    for msg in reversed(messages):  # pragma: no branch - first message always carries the prompt
+        for part in msg.parts:  # pragma: no branch - first part is always the UserPromptPart
             if isinstance(part, UserPromptPart):
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
@@ -4806,7 +4806,7 @@ def test_durability_tool_metadata_disables_activity():
     """Tool metadata={'temporal': False} disables activity wrapping for that tool."""
 
     async def slow_tool() -> str:
-        return 'slow'
+        return 'slow'  # pragma: no cover - registered with toolset; test only verifies wrapping
 
     toolset = FunctionToolset[None](id='meta_toolset')
     toolset.add_function(slow_tool, metadata={'temporal': False})
@@ -4836,7 +4836,7 @@ def test_resolve_tool_activity_config_reads_metadata():
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
     async def fn_tool() -> str:
-        return 'ok'
+        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
 
     fn_toolset.add_function(fn_tool, metadata={'temporal': metadata_config})
     tool_def = ToolDefinition(name='fn_tool', metadata={'temporal': metadata_config})
@@ -4929,8 +4929,8 @@ complex_durable_logfire_agent = Agent(
 class ComplexDurableAgentLogfireWorkflow:
     @workflow.run
     async def run(self, prompt: str, deps: Deps) -> Response:
-        result = await complex_durable_logfire_agent.run(prompt, deps=deps)
-        return result.output
+        result = await complex_durable_logfire_agent.run(prompt, deps=deps)  # pragma: no cover - xfailed test
+        return result.output  # pragma: no cover - xfailed test
 
 
 @pytest.mark.xfail(
@@ -5405,15 +5405,17 @@ _durability_mcp_dynamic_toolset_agent = Agent(
 
 @_durability_mcp_dynamic_toolset_agent.toolset(id='durability_mcp_toolset')
 def _durability_my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
-    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+    return MCPServerStreamableHTTP(
+        'https://mcp.deepwiki.com/mcp'
+    )  # pragma: no cover - exercised only by the skipped test below
 
 
 @workflow.defn
 class DurabilityMCPDynamicToolsetAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)
-        return result.output
+        result = await _durability_mcp_dynamic_toolset_agent.run(prompt)  # pragma: no cover - skipped test
+        return result.output  # pragma: no cover - skipped test
 
 
 @pytest.mark.skip(
@@ -5458,8 +5460,8 @@ _durability_fastmcp_agent = Agent(
 class DurabilityFastMCPAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await _durability_fastmcp_agent.run(prompt)
-        return result.output
+        result = await _durability_fastmcp_agent.run(prompt)  # pragma: no cover - skipped test
+        return result.output  # pragma: no cover - skipped test
 
 
 @pytest.mark.skip(
