@@ -98,7 +98,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     * `None` (default): let Pydantic AI pick the best strategy for the current provider
       — native on supporting models (Anthropic BM25, OpenAI server-executed tool search),
       local keyword matching elsewhere. The choice may change in future versions.
-    * `'keywords'`: always use the local keyword-overlap algorithm.
+    * `'keywords'`: always use the local keyword-overlap algorithm. Still prompt-cache
+      compatible on providers that expose a "client-executed" native surface (Anthropic,
+      OpenAI): the algorithm rides the same `defer_loading` wire as a custom callable,
+      so the tool list stays stable across discovery rounds and the cached prefix is
+      preserved.
     * `'bm25'` / `'regex'`: force a specific Anthropic native strategy. Raises on
       providers that can't honor the choice (including OpenAI, which has no named
       native strategies).

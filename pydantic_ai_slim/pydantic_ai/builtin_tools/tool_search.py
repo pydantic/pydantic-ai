@@ -39,6 +39,7 @@ __all__ = [
     'ToolSearchLocalStrategy',
     'ToolSearchFunc',
     'ToolSearchStrategy',
+    'ToolSearchToolStrategy',
     'TOOL_SEARCH_FUNCTION_TOOL_NAME',
     'ToolSearchTool',
 ]
@@ -99,8 +100,8 @@ route to for provider-side "client-executed" custom callable modes (Anthropic to
 blocks; OpenAI `execution='client'`)."""
 
 
-_ToolSearchToolStrategy = Literal['bm25', 'regex', 'custom']
-"""Internal strategy literal carried on [`ToolSearchTool.strategy`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool.strategy].
+ToolSearchToolStrategy = Literal['bm25', 'regex', 'custom']
+"""Strategy literal carried on [`ToolSearchTool.strategy`][pydantic_ai.builtin_tools.tool_search.ToolSearchTool.strategy].
 
 Extends [`ToolSearchNativeStrategy`][pydantic_ai.builtin_tools.tool_search.ToolSearchNativeStrategy]
 with `'custom'`, which marks an instance whose discovery is performed by a callable on our
@@ -141,7 +142,7 @@ class ToolSearchTool(AbstractBuiltinTool):
       (named strategies `'bm25'`/`'regex'` are not supported).
     """
 
-    strategy: _ToolSearchToolStrategy | None = None
+    strategy: ToolSearchToolStrategy | None = None
     """The search strategy to use.
 
     * `None` (default): use the provider's default native search. On Anthropic this is
