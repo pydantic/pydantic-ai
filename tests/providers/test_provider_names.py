@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.gcp import GCPProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
@@ -46,7 +47,9 @@ with try_import() as imports_successful:
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
-        ('google-vertex', GoogleProvider, 'Your default credentials were not found'),
+        ('google', GoogleProvider, 'GOOGLE_API_KEY'),
+        ('gcp', GCPProvider, 'Your default credentials were not found'),
+        ('google-vertex', GCPProvider, 'Your default credentials were not found'),
         ('google-gla', GoogleProvider, 'GOOGLE_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
@@ -66,7 +69,7 @@ with try_import() as imports_successful:
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('outlines', OutlinesProvider, None),
-        ('vertexai', GoogleProvider, 'Your default credentials were not found'),
+        ('vertexai', GCPProvider, 'Your default credentials were not found'),
     ]
 
 if not imports_successful():
@@ -86,7 +89,7 @@ def empty_env():
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
 @pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
-    if provider in ('google-vertex', 'vertexai'):
+    if provider in ('google-vertex', 'vertexai', 'gcp'):
         try:
             infer_provider(provider)
         except (GoogleAuthError, UserError, ValueError):  # pragma: no branch

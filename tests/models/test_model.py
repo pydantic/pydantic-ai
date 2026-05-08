@@ -278,7 +278,7 @@ def test_infer_str_unknown():
         pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
         pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
         pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
-        pytest.param('gemini-1.5-flash', ('google-gla', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('gemini-1.5-flash', ('google', 'gemini-1.5-flash'), id='legacy-gemini'),
         pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
         pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
         pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
