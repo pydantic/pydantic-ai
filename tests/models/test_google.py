@@ -2044,16 +2044,16 @@ async def test_google_model_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart],
         ]
     )
 
