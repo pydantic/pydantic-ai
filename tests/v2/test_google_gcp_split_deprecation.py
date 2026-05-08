@@ -20,7 +20,7 @@ import warnings
 
 import pytest
 
-from .conftest import try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import infer_provider, infer_provider_class
