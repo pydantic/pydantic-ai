@@ -4625,10 +4625,18 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='both builtin and local cannot be False'):
             XSearch(builtin=False, local=False)
 
-    def test_xsearch_builtin_false_with_constraints_raises(self):
-        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            XSearch(builtin=False, allowed_x_handles=['handle1'])
+    def test_xsearch_resolved_builtin_merges_overrides(self):
+        """Capability-level kwargs override fields on a passed builtin instance."""
+        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
+        cap = XSearch(builtin=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
+        resolved = cap._resolved_builtin()  # pyright: ignore[reportPrivateUsage]
+        assert resolved == snapshot(
+            XSearchTool(
+                allowed_x_handles=['a'],
+                from_date=datetime(2024, 1, 1),
+                enable_image_understanding=False,
+            )
+        )
 
     def test_xsearch_fallback_model_and_local_conflict(self):
         """XSearch(fallback_model=..., local=func) raises UserError."""

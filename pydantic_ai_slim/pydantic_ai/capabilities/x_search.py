@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -53,13 +53,13 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
     to_date: datetime | None
     """If provided, only posts created on or before this datetime will be included."""
 
-    enable_image_understanding: bool
+    enable_image_understanding: bool | None
     """Enable image analysis from X posts. Defaults to `False`."""
 
-    enable_video_understanding: bool
+    enable_video_understanding: bool | None
     """Enable video analysis from X content. Defaults to `False`."""
 
-    include_output: bool
+    include_output: bool | None
     """Include raw X search results in the response as
     [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart]. Defaults to `False`.
     """
@@ -80,9 +80,9 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
         excluded_x_handles: list[str] | None = None,
         from_date: datetime | None = None,
         to_date: datetime | None = None,
-        enable_image_understanding: bool = False,
-        enable_video_understanding: bool = False,
-        include_output: bool = False,
+        enable_image_understanding: bool | None = None,
+        enable_video_understanding: bool | None = None,
+        include_output: bool | None = None,
     ) -> None:
         if fallback_model is not None and local is not None:
             raise UserError(
@@ -101,16 +101,27 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
         self.include_output = include_output
         self.__post_init__()
 
+    def _xsearch_kwargs(self) -> dict[str, Any]:
+        """Collect non-None XSearchTool config fields."""
+        kwargs: dict[str, Any] = {}
+        if self.allowed_x_handles is not None:
+            kwargs['allowed_x_handles'] = self.allowed_x_handles
+        if self.excluded_x_handles is not None:
+            kwargs['excluded_x_handles'] = self.excluded_x_handles
+        if self.from_date is not None:
+            kwargs['from_date'] = self.from_date
+        if self.to_date is not None:
+            kwargs['to_date'] = self.to_date
+        if self.enable_image_understanding is not None:
+            kwargs['enable_image_understanding'] = self.enable_image_understanding
+        if self.enable_video_understanding is not None:
+            kwargs['enable_video_understanding'] = self.enable_video_understanding
+        if self.include_output is not None:
+            kwargs['include_output'] = self.include_output
+        return kwargs
+
     def _default_builtin(self) -> XSearchTool:
-        return XSearchTool(
-            allowed_x_handles=self.allowed_x_handles,
-            excluded_x_handles=self.excluded_x_handles,
-            from_date=self.from_date,
-            to_date=self.to_date,
-            enable_image_understanding=self.enable_image_understanding,
-            enable_video_understanding=self.enable_video_understanding,
-            include_output=self.include_output,
-        )
+        return XSearchTool(**self._xsearch_kwargs())
 
     def _builtin_unique_id(self) -> str:
         return XSearchTool.kind
@@ -123,13 +134,9 @@ class XSearch(BuiltinOrLocalTool[AgentDepsT]):
         return x_search_tool(model=self.fallback_model, builtin_tool=self._resolved_builtin())
 
     def _resolved_builtin(self) -> XSearchTool:
-        """Get the XSearchTool for the fallback, with capability-level settings applied."""
-        if isinstance(self.builtin, XSearchTool):
-            return self.builtin
-        return self._default_builtin()
-
-    def _requires_builtin(self) -> bool:
-        if self.fallback_model is not None:
-            # Subagent's xAI model enforces handle constraints via its native builtin
-            return False
-        return self.allowed_x_handles is not None or self.excluded_x_handles is not None
+        """Get the XSearchTool for the fallback, with capability-level overrides applied."""
+        base = self.builtin if isinstance(self.builtin, XSearchTool) else XSearchTool()
+        overrides = self._xsearch_kwargs()
+        if not overrides:
+            return base
+        return replace(base, **overrides)
