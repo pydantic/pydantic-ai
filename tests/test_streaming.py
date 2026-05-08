@@ -4580,7 +4580,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     """
     cleanup_finished = asyncio.Event()
     started = asyncio.Event()
-    unblock = asyncio.Event()
+    never_finishes = asyncio.Future[ModelResponse]()
 
     class WrapModelRequestCapability(AbstractCapability[None]):
         async def wrap_model_request(
@@ -4592,10 +4592,9 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
         ) -> ModelResponse:
             try:
                 started.set()
-                # Block before calling handler() so we sit inside the readiness wait at
+                # Suspend before calling handler() so we sit inside the readiness wait at
                 # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
-                await unblock.wait()
-                return await handler(request_context)
+                return await never_finishes
             finally:
                 # Without the drain on the readiness wait, this finally never runs.
                 cleanup_finished.set()

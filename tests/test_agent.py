@@ -8131,14 +8131,13 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
 
     cleanup_finished = asyncio.Event()
     started = asyncio.Event()
-    unblock = asyncio.Event()
+    never_finishes = asyncio.Future[AgentRunResult[Any]]()
 
     class WrapRunCapability(AbstractCapability[None]):
         async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
             try:
                 started.set()
-                await unblock.wait()
-                return await handler()
+                return await never_finishes
             finally:
                 cleanup_finished.set()
 
