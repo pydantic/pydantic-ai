@@ -200,7 +200,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         every model and toolset task recorded inside it is observable in the Prefect
         UI. When already inside a flow, the wrapper passes through to avoid a
         redundant nested flow.
+
+        Idempotent: if `for_agent` is called twice (e.g. an agent is bound to two
+        ``PrefectDurability`` instances by mistake), the second call is a no-op
+        rather than stacking wrappers.
         """
+        if getattr(agent.run, '_pydantic_ai_prefect_wrapped', False):
+            return
         original_run = agent.run
         original_run_sync = agent.run_sync
 
@@ -224,6 +230,7 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
                 return original_run_sync(*args, **kwargs)
             return cast(Any, _auto_run_sync_flow(*args, **kwargs))
 
+        patched_run._pydantic_ai_prefect_wrapped = True  # pyright: ignore[reportFunctionMemberAccess]
         agent.run = patched_run
         agent.run_sync = patched_run_sync
 

@@ -193,7 +193,13 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
 
         ``agent.iter`` is wrapped in-place by `wrap_run` instead — its async-generator
         signature can't be cleanly forwarded through ``@DBOS.workflow``.
+
+        Idempotent: if `for_agent` is called twice (e.g. an agent is bound to two
+        ``DBOSDurability`` instances by mistake), the second call is a no-op rather
+        than stacking wrappers.
         """
+        if getattr(agent.run, '_pydantic_ai_dbos_wrapped', False):
+            return
         original_run = agent.run
         original_run_sync = agent.run_sync
         parallel_mode = self._parallel_execution_mode
@@ -224,6 +230,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
                     return original_run_sync(*args, **kwargs)
             return _auto_run_sync_workflow(*args, **kwargs)
 
+        patched_run._pydantic_ai_dbos_wrapped = True  # pyright: ignore[reportFunctionMemberAccess]
         agent.run = patched_run
         agent.run_sync = patched_run_sync
 
