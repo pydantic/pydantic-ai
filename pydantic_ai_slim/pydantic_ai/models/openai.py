@@ -92,6 +92,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, Omit, omit
@@ -115,6 +116,7 @@ try:
         ChatCompletionMessageFunctionToolCallParam,
     )
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
+    from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
         WebSearchOptionsUserLocation,
@@ -128,7 +130,7 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
-    from openai.types.responses.response_create_params import ContextManagement
+    from openai.types.responses.response_create_params import ContextManagement, ToolChoice as ResponsesToolChoice
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
     from openai.types.responses.response_input_image_content_param import ResponseInputImageContentParam
     from openai.types.responses.response_input_item_param import ToolSearchCall as ToolSearchCallParam
@@ -143,6 +145,8 @@ try:
     from openai.types.responses.response_tool_search_output_item_param_param import (
         ResponseToolSearchOutputItemParamParam,
     )
+    from openai.types.responses.tool_choice_allowed_param import ToolChoiceAllowedParam
+    from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -873,16 +877,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
-        tools = self._get_tools(model_request_parameters)
-        web_search_options = self._get_web_search_options(model_request_parameters)
+        tool_choice: ChatCompletionToolChoiceOptionParam | None
 
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
         profile = OpenAIModelProfile.from_profile(self.profile)
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -1086,7 +1085,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: OpenAIChatModelSettings | None = None,
     ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]] = (
+            _utils.PeekableAsyncStream(response)
+        )
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -1120,6 +1121,51 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
         return _map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
 
+    def _get_tool_choice(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
+
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: ChatCompletionToolChoiceOptionParam
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if supports else 'auto'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+                else:
+                    # Forcing not supported: filter so the model can only see the requested tool.
+                    # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg.
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = 'auto'
+            else:
+                # Breaks caching, but OpenAI Chat doesn't support limiting tools via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+        else:
+            assert_never(resolved_tool_choice)
+
+        tools: list[chat.ChatCompletionToolParam] = [self._map_tool_definition(t) for t in tool_defs.values()]
+        if not tools:
+            return tools, None
+
+        return tools, tool_choice
+
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
 
@@ -1129,9 +1175,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if model_settings.get('openai_continuous_usage_stats'):
             options['continuous_usage_stats'] = True
         return cast(chat.ChatCompletionStreamOptionsParam, options)
-
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
@@ -1978,7 +2021,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
@@ -2022,18 +2067,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        tools = (
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        tools: list[responses.ToolParam] = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
-            + self._get_tools(model_request_parameters)
+            + function_tools
         )
-        profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+            tool_choice = None
+        profile = OpenAIModelProfile.from_profile(self.profile)
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
@@ -2163,7 +2205,45 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
+    def _get_responses_tool_choice(
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_function_tools, tool_choice).
+            Note: builtin tools are handled separately and should be added to this list.
+        """
+        openai_profile = OpenAIModelProfile.from_profile(self.profile)
+
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+
+        tool_choice: ResponsesToolChoice | None
+        if resolved_tool_choice in ('auto', 'none'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'required':
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            tool_choice = 'required' if supports else 'auto'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings)
+            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+                tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
+            else:
+                # `allowed_tools` filters via the API rather than the tools list,
+                # so caching is preserved. Used for the multi-tool case and as the
+                # cache-preserving fallback when forcing isn't supported.
+                effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+                tool_choice = ToolChoiceAllowedParam(
+                    type='allowed_tools',
+                    mode=effective_mode,
+                    tools=[{'type': 'function', 'name': n} for n in tool_names],
+                )
+        else:
+            assert_never(resolved_tool_choice)
+
         # In client-executed tool search mode the `search_tools` function tool is
         # represented on the wire by `ToolSearchToolParam(execution='client')` — sending
         # it as a regular function tool too makes OpenAI emit `function_call` items
@@ -2171,11 +2251,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # function tool via `ModelRequestParameters.function_tools` (unaffected by this
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
-        return [
-            self._map_tool_definition(r)
-            for r in model_request_parameters.tool_defs.values()
-            if not (client_tool_search and r.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+        tools: list[responses.FunctionToolParam] = [
+            self._map_tool_definition(t)
+            for t in model_request_parameters.tool_defs.values()
+            if not (client_tool_search and t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
         ]
+        return tools, tool_choice
 
     def _get_builtin_tools(  # noqa: C901
         self, model_request_parameters: ModelRequestParameters
@@ -2901,7 +2982,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_profile: ModelProfile
-    _response: AsyncIterable[ChatCompletionChunk]
+    _response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -2909,6 +2990,9 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
@@ -3099,13 +3183,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: AsyncIterable[responses.ResponseStreamEvent]
+    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+
+    async def close_stream(self) -> None:
+        await self._response.source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
@@ -3867,6 +3954,25 @@ def _map_logprobs(
         }
         for lp in logprobs
     ]
+
+
+def _support_tool_forcing(
+    model_name: str,
+    openai_profile: OpenAIModelProfile,
+    model_settings: ModelSettings | None,
+) -> bool:
+    """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
+    if not openai_profile.openai_supports_tool_choice_required:
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
+                f'This model does not support forcing tool use.'
+            )
+        else:
+            return False
+    else:
+        return True
 
 
 def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:

@@ -1,0 +1,147 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '553'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the text editor to create /tmp/hello.txt with the text: Hello, world! Then use the text editor to view
+            the file and tell me what it contains.'
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      system:
+      - text: Use only the text editor `create` and `view` commands from the code execution sandbox. Do not run any shell
+          commands.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3128'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=16807
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-04-24T11:14:17.825248Z'
+        id: container_011CaNRHVR8X8ny5XjueVygS
+      content:
+      - text: Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!
+        type: text
+      - id: srvtoolu_016pLxxM63EiNXuNu4xif3v6
+        input:
+          command: create
+          file_text: Hello, world!
+          path: /tmp/hello.txt
+        name: text_editor_code_execution
+        type: server_tool_use
+      - id: srvtoolu_01PZq4iFAcL7tePiLnstxaXh
+        input:
+          command: view
+          path: /tmp/hello.txt
+        name: text_editor_code_execution
+        type: server_tool_use
+      - content:
+          error_code: unavailable
+          error_message: 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length,
+            empty document: line 1 column 1 (char 0)'
+          type: text_editor_code_execution_tool_result_error
+        tool_use_id: srvtoolu_016pLxxM63EiNXuNu4xif3v6
+        type: text_editor_code_execution_tool_result
+      - content:
+          error_code: unavailable
+          error_message: 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character:
+            line 1 column 1 (char 0)'
+          type: text_editor_code_execution_tool_result_error
+        tool_use_id: srvtoolu_01PZq4iFAcL7tePiLnstxaXh
+        type: text_editor_code_execution_tool_result
+      - text: Let me try again, this time sequentially -- first creating, then viewing.
+        type: text
+      - id: srvtoolu_01R4E6F3kJy4AHsq9D956u2Q
+        input:
+          command: create
+          file_text: Hello, world!
+          path: /tmp/hello.txt
+        name: text_editor_code_execution
+        type: server_tool_use
+      - content:
+          is_file_update: false
+          type: text_editor_code_execution_create_result
+        tool_use_id: srvtoolu_01R4E6F3kJy4AHsq9D956u2Q
+        type: text_editor_code_execution_tool_result
+      - text: File created! Now let's view it.
+        type: text
+      - id: srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw
+        input:
+          command: view
+          path: /tmp/hello.txt
+        name: text_editor_code_execution
+        type: server_tool_use
+      - content:
+          content: Hello, world!
+          file_type: text
+          num_lines: 1
+          start_line: 1
+          total_lines: 1
+          type: text_editor_code_execution_view_result
+        tool_use_id: srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw
+        type: text_editor_code_execution_tool_result
+      - text: "Here's a summary of what happened:\n\n1. **Created** `/tmp/hello.txt` with the text `Hello, world!` -- the
+          tool confirmed the file was created successfully.\n2. **Viewed** `/tmp/hello.txt` -- the file contains exactly:\n\n>
+          `Hello, world!`\n\nEverything looks perfect! \U0001F389"
+        type: text
+      id: msg_015ZT9schxByyYqpexx5ir4o
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 10490
+        output_tokens: 469
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

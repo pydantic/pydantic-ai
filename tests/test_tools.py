@@ -631,14 +631,14 @@ def test_init_tool_plain():
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], tool_retries=7, output_retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
     assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
-    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    agent_infer = Agent('test', tools=[plain_tool], tool_retries=7, output_retries=7)
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
@@ -652,7 +652,9 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent(
+        'test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, tool_retries=7, output_retries=7
+    )
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
@@ -1335,7 +1337,7 @@ def test_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1364,7 +1366,7 @@ def test_function_tool_from_schema_with_ctx():
     assert pydantic_tool.takes_ctx is True
     assert pydantic_tool.function_schema.takes_ctx is True
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0, deps_type=str)
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
@@ -1386,7 +1388,7 @@ def test_function_tool_inconsistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0)
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
@@ -1411,7 +1413,7 @@ def test_async_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], tool_retries=0, output_retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1433,7 +1435,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), tool_retries=3, output_retries=3, prepare_tools=prepare_tool_defs)
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
@@ -2610,7 +2612,7 @@ def test_tool_metadata():
 
 def test_retry_tool_until_last_attempt():
     model = TestModel()
-    agent = Agent(model, retries=2)
+    agent = Agent(model, tool_retries=2, output_retries=2)
 
     @agent.tool
     def always_fail(ctx: RunContext[None]) -> str:
@@ -2812,7 +2814,7 @@ async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
 
-    agent = Agent(TestModel(), retries=2)
+    agent = Agent(TestModel(), tool_retries=2, output_retries=2)
 
     call_count = 0
 
@@ -2906,7 +2908,7 @@ async def test_tool_timeout_exceeds_retry_limit():
         # Always try to call the slow tool
         return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
 
-    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+    agent = Agent(FunctionModel(model_logic), tool_retries=1, output_retries=1)  # Only 1 retry allowed
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
