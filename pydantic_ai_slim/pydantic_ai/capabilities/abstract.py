@@ -291,7 +291,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Receives only [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry` and
         `ctx.max_retries` reflect the **output** retry budget (agent-level
-        `max_result_retries`), matching the output hook lifecycle.
+        `max_output_retries`), matching the output hook lifecycle.
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
@@ -471,7 +471,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
-        so the model can see what it said. Retries count against `max_result_retries`.
+        so the model can see what it said. Retries count against `output_retries`.
         """
         return response
 

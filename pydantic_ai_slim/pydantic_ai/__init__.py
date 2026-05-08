@@ -75,6 +75,7 @@ from .messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
+    ModelResponseState,
     ModelResponseStreamEvent,
     MultiModalContent,
     NativeToolCallPart,
@@ -122,8 +123,9 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .settings import ModelSettings
+from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -228,6 +230,7 @@ __all__ = (
     'ModelResponse',
     'ModelResponsePart',
     'ModelResponsePartDelta',
+    'ModelResponseState',
     'ModelResponseStreamEvent',
     'MultiModalContent',
     'PartDeltaEvent',
@@ -310,6 +313,8 @@ __all__ = (
     'ModelRequestContext',
     # settings
     'ModelSettings',
+    'ToolChoice',
+    'ToolOrOutput',
     # usage
     'RunUsage',
     'RequestUsage',
@@ -318,5 +323,7 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    # result
+    'AgentEventStream',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

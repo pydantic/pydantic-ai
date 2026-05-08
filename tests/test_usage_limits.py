@@ -2,6 +2,7 @@ import asyncio
 import functools
 import operator
 import re
+from collections.abc import AsyncIterator
 from datetime import timezone
 from decimal import Decimal
 
@@ -144,8 +145,31 @@ async def test_streamed_text_limits() -> None:
                 )
             )
             succeeded = True
+            async for _ in result.stream_text(debounce_by=None):
+                pass
 
     assert succeeded
+
+
+async def test_stream_text_enforces_output_token_limit_mid_stream() -> None:
+    # Regression: `_stream_response_text` previously iterated `self._raw_stream_response`
+    # directly, bypassing the usage-checking wrapper in `AgentStream.__aiter__`, so
+    # `UsageLimitExceeded` would not raise during `stream_text()` even when the output
+    # token limit was exceeded mid-stream.
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'one'
+        yield 'two'
+        yield 'three'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    collected: list[str] = []
+    with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the output_tokens_limit of 2')):
+        async with agent.run_stream('hi', usage_limits=UsageLimits(output_tokens_limit=2)) as result:
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                collected.append(text)
+
+    assert 0 < len(collected) < 3
 
 
 def test_usage_so_far() -> None:

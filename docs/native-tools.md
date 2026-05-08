@@ -235,7 +235,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Anthropic | ✅ | |
+| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -261,11 +261,10 @@ print(result.response.native_tool_calls)
     (
         NativeToolCallPart(
             tool_name='code_execution',
-            args={
-                'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-            },
+            args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
         NativeToolReturnPart(
             tool_name='code_execution',
@@ -273,12 +272,13 @@ print(result.response.native_tool_calls)
                 'content': [],
                 'return_code': 0,
                 'stderr': '',
-                'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                'type': 'code_execution_result',
+                'stdout': '1307674368000\n',
+                'type': 'bash_code_execution_result',
             },
             tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
             timestamp=datetime.datetime(...),
             provider_name='anthropic',
+            provider_details={'anthropic_tool_name': 'bash_code_execution'},
         ),
     )
 ]
@@ -392,8 +392,10 @@ agent = Agent(
     'openai-responses:gpt-5.2',
     builtin_tools=[
         ImageGenerationTool(
+            action='generate',
             background='transparent',
             input_fidelity='high',
+            model='gpt-image-2',
             moderation='low',
             output_compression=100,
             output_format='png',
@@ -414,6 +416,11 @@ _(This example is complete, it can be run "as is")_
 OpenAI Responses models also respect the `aspect_ratio` parameter. Because the OpenAI API only exposes discrete image sizes,
 Pydantic AI maps `'1:1'` -> `1024x1024`, `'2:3'` -> `1024x1536`, and `'3:2'` -> `1536x1024`. Providing any other aspect ratio
 results in an error, and if you also set `size` it must match the computed value.
+
+The OpenAI Responses image generation tool defaults to `action='auto'`, where the model decides whether to generate a new
+image or edit one already in context. Use `action='generate'` or `action='edit'` to force either behavior. You can also set
+`model` to select the underlying image generation model used by the tool, for example `model='gpt-image-2'`; this does not
+change the agent's conversational model.
 
 To control the aspect ratio when using Gemini image models, include the `ImageGenerationTool` explicitly:
 
@@ -457,9 +464,11 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 
 | Parameter | OpenAI | Google |
 |-----------|--------|--------|
+| `action` | ✅ (auto (default), generate, edit) | ❌ |
 | `background` | ✅ | ❌ |
 | `input_fidelity` | ✅ | ❌ |
 | `moderation` | ✅ | ❌ |
+| `model` | ✅ (gpt-image-2, gpt-image-1.5, gpt-image-1, gpt-image-1-mini, or another OpenAI image model ID) | ❌ |
 | `output_compression` | ✅ (100 (default), jpeg or webp only) | ✅ (75 (default), jpeg only, Vertex AI only) |
 | `output_format` | ✅ | ✅ (Vertex AI only) |
 | `partial_images` | ✅ | ❌ |

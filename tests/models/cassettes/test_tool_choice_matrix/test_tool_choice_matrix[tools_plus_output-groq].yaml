@@ -1,0 +1,111 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '732'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Paris and summarize
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '917'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris"}'
+              name: get_weather
+            id: rew01jq49
+            type: function
+          - function:
+              arguments: '{"city":"Paris","summary":"Current weather in Paris"}'
+              name: final_result
+            id: gbpypqxpx
+            type: function
+      created: 1769718281
+      id: chatcmpl-c81361e1-83d7-49c2-9d1c-11e8fa4134fe
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_37da608fc1
+      usage:
+        completion_time: 0.147338258
+        completion_tokens: 65
+        prompt_time: 0.020499329
+        prompt_tokens: 779
+        queue_time: 0.284442697
+        total_time: 0.167837587
+        total_tokens: 844
+      usage_breakdown: null
+      x_groq:
+        id: req_01kg5pvwrfe1j88r5774zvr5f1
+        seed: 1961333153
+    status:
+      code: 200
+      message: OK
+version: 1
