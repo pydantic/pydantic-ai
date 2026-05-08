@@ -1,10 +1,10 @@
-"""Card 23: deprecation of the bare ``'openai:'`` prefix default.
+"""Card 23: deprecation of the bare `'openai:'` prefix default.
 
-In 1.x, ``infer_model('openai:gpt-5')`` resolves to ``OpenAIChatModel`` and emits
-a ``DeprecationWarning`` because v2 will flip the default routing to the OpenAI
-Responses API. The new ``'openai-chat:'`` prefix routes to ``OpenAIChatModel``
-without any warning, and the existing ``'openai-responses:'`` prefix continues
-to route to ``OpenAIResponsesModel`` without any warning.
+In 1.x, `infer_model('openai:gpt-5')` resolves to `OpenAIChatModel` and emits
+a `DeprecationWarning` because v2 will flip the default routing to the OpenAI
+Responses API. The new `'openai-chat:'` prefix routes to `OpenAIChatModel`
+without any warning, and the existing `'openai-responses:'` prefix continues
+to route to `OpenAIResponsesModel` without any warning.
 """
 
 from __future__ import annotations
