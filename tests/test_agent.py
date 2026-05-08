@@ -67,6 +67,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -8117,6 +8118,93 @@ async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks(
         await task
 
     assert pending_tool_cancelled.is_set()
+
+
+async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
+    """Outer cancellation while waiting for `wrap_run` readiness should clean up the wrapper task.
+
+    Target boundary: `Agent.iter()` creates `_wrap_task` and `_ready_waiter`, then waits for
+    `asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)`.
+    The test should cancel the parent task while that wait is pending, then assert the
+    capability's `wrap_run` cleanup has completed before cancellation returns.
+    """
+
+    cleanup_finished = asyncio.Event()
+    started = asyncio.Event()
+    never_finishes = asyncio.Future[AgentRunResult[Any]]()
+
+    class WrapRunCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            try:
+                started.set()
+                return await never_finishes
+            finally:
+                cleanup_finished.set()
+
+    agent = Agent(TestModel(), capabilities=[WrapRunCapability()])
+
+    task = asyncio.create_task(agent.run('test'))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
+    """Outer cancellation during parallel tool execution should await cancelled tool cleanup.
+
+    Target boundary: parallel tool execution creates one task per tool call and waits with
+    `asyncio.wait(...)`. The cancel handler must drain those tasks so each tool's `finally`
+    runs before the parent function exits; otherwise cleanup races against the parent
+    unwinding.
+    """
+    started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    cleanup_can_finish = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def call_two_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='slow_tool_a'),
+                ToolCallPart(tool_name='slow_tool_b'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_two_tools))
+
+    @agent.tool_plain
+    async def slow_tool_a() -> str:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cleanup_started.set()
+            await cleanup_can_finish.wait()
+            cleanup_finished.set()
+        return 'done'  # pragma: no cover
+
+    @agent.tool_plain
+    async def slow_tool_b() -> str:
+        await asyncio.sleep(10)
+        return 'done'  # pragma: no cover
+
+    task = asyncio.create_task(agent.run('call tools'))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    assert not task.done()
+    cleanup_can_finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
 
 
 @pytest.mark.parametrize('mode', ['argument', 'contextmanager'])

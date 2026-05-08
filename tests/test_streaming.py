@@ -30,6 +30,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestContext,
     ModelResponse,
     PartDeltaEvent,
     PartEndEvent,
@@ -49,7 +50,7 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
-from pydantic_ai.capabilities import CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
@@ -4563,6 +4564,52 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
     await first_event_seen.wait()
     task.cancel()
 
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
+    """Outer cancellation while waiting for streaming model wrapper readiness should clean up the wrapper task.
+
+    Target boundary: `ModelRequestNode.stream()` creates `wrap_task` and `ready_waiter`, then waits for
+    `asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
+    cancelled while parked on that wait, the wrapper task must be drained; otherwise the user's
+    `wrap_model_request` cleanup never runs.
+    """
+    cleanup_finished = asyncio.Event()
+    started = asyncio.Event()
+    never_finishes = asyncio.Future[ModelResponse]()
+
+    class WrapModelRequestCapability(AbstractCapability[None]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[None],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            try:
+                started.set()
+                # Suspend before calling handler() so we sit inside the readiness wait at
+                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                return await never_finishes
+            finally:
+                # Without the drain on the readiness wait, this finally never runs.
+                cleanup_finished.set()
+
+    agent = Agent(TestModel(), capabilities=[WrapModelRequestCapability()])
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
