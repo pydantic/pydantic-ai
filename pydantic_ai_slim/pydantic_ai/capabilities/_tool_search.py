@@ -39,24 +39,54 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     on the wire and the provider exposes them once they've been discovered. Otherwise,
     discovery happens locally via a `search_tools` function that the model can call.
 
-    ```python
-    from pydantic_ai import Agent
-    from pydantic_ai.capabilities import ToolSearch
+    On providers that support a native "client-executed" surface (Anthropic, OpenAI),
+    the discovery message is delivered append-only — prompt cache is preserved across
+    discovery turns, so growing the message history with discovered-tool results does
+    not invalidate the cached prefix.
 
-    # Default: native search on supporting providers, local token matching elsewhere.
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch()])
+    ```python
+    from collections.abc import Sequence
+
+    from pydantic_ai import Agent, RunContext, Tool
+    from pydantic_ai.capabilities import ToolSearch
+    from pydantic_ai.tools import ToolDefinition
+
+    # Tools become deferred via `defer_loading=True`. They stay hidden from the model
+    # until tool search discovers them.
+    def get_weather(city: str) -> str:
+        ...
+
+    weather_tool = Tool(get_weather, defer_loading=True)
+
+    # Default: native search on supporting providers, local keyword matching elsewhere.
+    agent = Agent('anthropic:claude-sonnet-4-6', tools=[weather_tool], capabilities=[ToolSearch()])
 
     # Force a specific Anthropic native strategy; errors on providers that can't honor it.
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='regex')])
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        tools=[weather_tool],
+        capabilities=[ToolSearch(strategy='regex')],
+    )
 
     # Always run the local keyword-overlap algorithm, regardless of provider.
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='keywords')])
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        tools=[weather_tool],
+        capabilities=[ToolSearch(strategy='keywords')],
+    )
 
-    # Custom search function — used locally, and by provider-native "client-executed" modes when supported.
-    def my_search(ctx, query, tools):
+    # Custom search function — used locally, and by provider-native "client-executed"
+    # modes when supported.
+    def my_search(
+        ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]
+    ) -> list[str]:
         return [t.name for t in tools if query.lower() in (t.description or '').lower()]
 
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy=my_search)])
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        tools=[weather_tool],
+        capabilities=[ToolSearch(strategy=my_search)],
+    )
     ```
     """
 
@@ -103,10 +133,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return 'ToolSearch'
-
     def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
         # `'keywords'` and a callable strategy both register the `'custom'` builtin so
         # the provider's "client-executed" native mode engages where supported (cache
@@ -115,13 +141,11 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # path differs only in *which* algorithm runs as `_search_fn`.
         if self.strategy == 'keywords' or callable(self.strategy):
             return [ToolSearchTool(strategy='custom', optional=True)]
-
         # `None` means "pick the best native option available, otherwise fall back
         # locally" — `optional=True` so the swap silently falls back on unsupported
         # models.
-        if self.strategy is None:
+        elif self.strategy is None:
             return [ToolSearchTool(optional=True)]
-
         # Explicit named native strategy (`'bm25'` / `'regex'`). The user committed
         # to a specific algorithm, so `optional=False`: if the model can't honor it,
         # the request must error rather than silently substitute a different algorithm.
@@ -129,8 +153,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # Assumes no local implementation of bm25/regex exists — if we ever port either
         # to Python, the strategy should join the `'keywords'` branch above so models
         # without native support can still honor the choice via the local path.
-        named: ToolSearchNativeStrategy = self.strategy
-        return [ToolSearchTool(strategy=named, optional=False)]
+        else:
+            named: ToolSearchNativeStrategy = self.strategy
+            return [ToolSearchTool(strategy=named, optional=False)]
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         # For explicit named native strategies (`'bm25'` / `'regex'`) the

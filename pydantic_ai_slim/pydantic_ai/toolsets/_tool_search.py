@@ -28,7 +28,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from pydantic import Field, TypeAdapter
 from typing_extensions import TypedDict
@@ -284,12 +284,16 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                     if isinstance(part, ToolSearchReturnPart):
                         self._collect_discovered_from_typed_content(part.content, discovered)
                     elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                        promoted = ToolReturnPart.narrow_type(part)
-                        # Defensive: registered narrower for `search_tools` always returns
-                        # the typed subclass.
-                        if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
-                            self._collect_discovered_from_typed_content(promoted.content, discovered)
-                        self._collect_discovered_from_legacy_metadata(part.metadata, discovered)
+                        # Legacy `main`-shape replay: pre-typed-content histories carry the
+                        # discoveries on `metadata['discovered_tools']`. Narrowing the
+                        # tool_name + metadata key together avoids surfacing a user-defined
+                        # tool that happens to be named `search_tools` whose metadata has no
+                        # legacy shape.
+                        metadata: Any = part.metadata
+                        if isinstance(metadata, dict) and _LEGACY_DISCOVERED_TOOLS_METADATA_KEY in cast(
+                            dict[Any, Any], metadata
+                        ):
+                            self._collect_discovered_from_legacy_metadata(metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolSearchReturnPart):

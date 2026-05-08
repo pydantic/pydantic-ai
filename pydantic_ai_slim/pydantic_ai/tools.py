@@ -742,13 +742,24 @@ class ToolDefinition:
     """
 
     defer_loading: bool = False
-    """Whether this tool should currently be hidden from the model.
+    """Whether this tool should be hidden from the model until something explicitly surfaces it.
 
-    Both a user-facing input flag (set on `Tool(defer_loading=True)`) and the
-    visibility state computed from message history by a toolset like
-    [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] (which sets
-    `defer_loading=False` once the tool is discovered). The dual meaning is acknowledged
-    tech debt; a future `RunContext.loaded` will cleanly separate config from state.
+    Carries two meanings depending on where in the pipeline you observe it:
+
+    1. **User-input intent** — set on `Tool(defer_loading=True)` (or via a custom toolset)
+       to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
+       pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
+    2. **Current visibility state** — after a toolset like
+       [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] processes
+       the corpus, it flips this field to `False` for tools whose discovery shows up in
+       message history, so downstream `Model.prepare_request` filtering and adapter wire
+       formatting can read "should this be on the wire?" off a single boolean.
+
+    The dual meaning is acknowledged tech debt: a future `RunContext.loaded_tools` /
+    equivalent will surface (2) as a derived view so this field cleanly stays a user-input
+    flag. Until then, the toolset-set value flows through agent-graph plumbing on a per-step
+    `ToolDefinition` instance built via `replace(...)`; user-persisted definitions are not
+    mutated.
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """

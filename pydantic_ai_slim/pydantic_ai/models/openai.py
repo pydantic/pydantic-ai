@@ -2240,19 +2240,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # explicit choice or fail loudly; do not silently run a different algorithm.
                 # `'custom'` is the internal marker for callable strategies and is handled
                 # below — only named native strategies (`'bm25'`/`'regex'`) raise here.
-                if tool.strategy is not None and tool.strategy != 'custom':
-                    raise UserError(
-                        f'`ToolSearch(strategy={tool.strategy!r})` is an Anthropic-native strategy '
-                        'and is not supported by OpenAI Responses. Use `strategy=None` (default, '
-                        "provider-managed), `strategy='keywords'` (local keyword matching), or "
-                        'a callable strategy.'
-                    )
-                # With `strategy='custom'`, the search runs client-side via our local
-                # `search_tools` function tool: the provider surfaces the search as a
-                # `tool_search_call` with `execution='client'`, we dispatch it through the
-                # normal function-call path, and reply with a `tool_search_output` that
-                # carries the discovered tool definitions.
-                if tool.strategy == 'custom':
+                if tool.strategy is None:
+                    tools.append(ToolSearchToolParam(type='tool_search'))
+                elif tool.strategy == 'custom':
+                    # With `strategy='custom'`, the search runs client-side via our local
+                    # `search_tools` function tool: the provider surfaces the search as a
+                    # `tool_search_call` with `execution='client'`, we dispatch it through the
+                    # normal function-call path, and reply with a `tool_search_output` that
+                    # carries the discovered tool definitions.
                     search_tool_def = _find_search_tool_definition(model_request_parameters)
                     parameters = dict(search_tool_def.parameters_json_schema) if search_tool_def else {}
                     # OpenAI's strict JSON schema mode is opt-in for client tool search — the
@@ -2266,7 +2261,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     }
                     tools.append(tool_search_param)
                 else:
-                    tools.append(ToolSearchToolParam(type='tool_search'))
+                    raise UserError(
+                        f'`ToolSearch(strategy={tool.strategy!r})` is an Anthropic-native strategy '
+                        'and is not supported by OpenAI Responses. Use `strategy=None` (default, '
+                        "provider-managed), `strategy='keywords'` (local keyword matching), or "
+                        'a callable strategy.'
+                    )
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -4067,11 +4067,11 @@ def _build_client_tool_search_output_param(
     call_id: str,
     model_request_parameters: ModelRequestParameters,
 ) -> ResponseToolSearchOutputItemParamParam:
-    """Build a ``tool_search_output`` replay param for a local ``search_tools`` return.
+    """Build a `tool_search_output` replay param for a local `search_tools` return.
 
-    Looks up each discovered tool name in ``function_tools`` and emits a
-    ``FunctionToolParam`` so OpenAI sees the same ``Tool`` definitions it originally
-    loaded in the prior turn — the shape of :class:`ResponseToolSearchOutputItemParamParam`.
+    Looks up each discovered tool name in `function_tools` and emits a
+    `FunctionToolParam` so OpenAI sees the same `Tool` definitions it originally
+    loaded in the prior turn — the shape of `ResponseToolSearchOutputItemParamParam`.
     Reads the typed
     [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
     off of ``part.content`` rather than the sideband metadata; the tool-return value

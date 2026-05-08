@@ -6,12 +6,12 @@ import mimetypes
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, fields, replace
 from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, Union, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -2036,32 +2036,42 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     """Discriminator for the typed subclass (cross-provider tool-search return)."""
 
 
+_TOOL_SEARCH_CALL_ARGS_TA: pydantic.TypeAdapter[str | ToolSearchArgs | None] = pydantic.TypeAdapter(
+    Union[str, ToolSearchArgs, None]  # noqa: UP007
+)
+_TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent | str | None] = pydantic.TypeAdapter(
+    Union[ToolSearchReturnContent, str, None]  # noqa: UP007
+)
+
+
+def _copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
+    """Construct a new dataclass instance from `src`'s fields, overriding selected ones.
+
+    Lets typed-part narrowers stay maintainable when fields are added to the base
+    class — `BaseToolCallPart` / `BaseToolReturnPart` field changes flow through automatically
+    instead of needing every narrower to be updated by hand.
+    """
+    field_values: dict[str, Any] = {f.name: getattr(src, f.name) for f in fields(src)}
+    field_values.update(overrides)
+    return dst_cls(**field_values)
+
+
 def _narrow_builtin_tool_search_call(part: BuiltinToolCallPart) -> BuiltinToolSearchCallPart:
     if isinstance(part, BuiltinToolSearchCallPart):
         return part
-    return BuiltinToolSearchCallPart(
-        tool_name='tool_search',
-        args=cast('str | ToolSearchArgs | None', part.args),
-        tool_call_id=part.tool_call_id,
-        id=part.id,
-        provider_name=part.provider_name,
-        provider_details=part.provider_details,
-    )
+    # Validate `args` matches the typed shape before constructing the typed view —
+    # `cast` would lie to the type checker without runtime safety. Promotion failures
+    # should raise so callers see the bad data rather than silently storing an invalid
+    # typed instance.
+    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    return _copy_dataclass_fields(part, BuiltinToolSearchCallPart, args=validated_args, tool_kind='tool_search')
 
 
 def _narrow_builtin_tool_search_return(part: BuiltinToolReturnPart) -> BuiltinToolSearchReturnPart:
     if isinstance(part, BuiltinToolSearchReturnPart):
         return part
-    return BuiltinToolSearchReturnPart(
-        tool_name='tool_search',
-        content=cast('ToolSearchReturnContent | str | None', part.content),
-        tool_call_id=part.tool_call_id,
-        metadata=part.metadata,
-        timestamp=part.timestamp,
-        outcome=part.outcome,
-        provider_name=part.provider_name,
-        provider_details=part.provider_details,
-    )
+    validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
+    return _copy_dataclass_fields(part, BuiltinToolSearchReturnPart, content=validated_content, tool_kind='tool_search')
 
 
 # Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
@@ -2141,25 +2151,15 @@ class ToolSearchReturnPart(ToolReturnPart):
 def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
     if isinstance(part, ToolSearchCallPart):
         return part
-    return ToolSearchCallPart(
-        args=cast('str | ToolSearchArgs | None', part.args),
-        tool_call_id=part.tool_call_id,
-        id=part.id,
-        provider_name=part.provider_name,
-        provider_details=part.provider_details,
-    )
+    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    return _copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool_search')
 
 
 def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
     if isinstance(part, ToolSearchReturnPart):
         return part
-    return ToolSearchReturnPart(
-        content=cast('ToolSearchReturnContent | str | None', part.content),
-        tool_call_id=part.tool_call_id,
-        metadata=part.metadata,
-        timestamp=part.timestamp,
-        outcome=part.outcome,
-    )
+    validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
+    return _copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool_search')
 
 
 # Narrowers dispatch on `tool_kind`, not `tool_name`, so user tools that happen to share

@@ -2218,8 +2218,8 @@ def _build_tool_search_replay_block(
 
     Reads the cross-provider
     [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-    off ``content`` and any error fields the parse-time mapper stashed on
-    ``provider_details``. The SDK type
+    off `content` and any error fields the parse-time mapper stashed on
+    `provider_details`. The SDK type
     [`BetaToolSearchToolResultBlockParam`][anthropic.types.beta.BetaToolSearchToolResultBlockParam]
     is in `BetaContentBlockParam` so no `cast(Any, ...)` is needed.
     """
