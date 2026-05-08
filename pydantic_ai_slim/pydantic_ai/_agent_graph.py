@@ -17,7 +17,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -68,6 +68,17 @@ NoneType = type(None)
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+
+
+async def _cancel_task(task: Task[Any]) -> None:
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except BaseException:
+        # Called while another stream error is already propagating; await only
+        # to finish cleanup and retrieve the task exception, not replace it.
+        pass
 
 
 NEW_CONVERSATION: Literal['new'] = 'new'
@@ -530,6 +541,11 @@ class _SkipStreamedResponse(models.StreamedResponse):
     def timestamp(self) -> datetime:  # pragma: no cover
         return self._response.timestamp
 
+    async def close_stream(self) -> None:  # pragma: no cover
+        # _SkipStreamedResponse is produced by short-circuit paths that never
+        # open a connection; there is nothing to close.
+        pass
+
     async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
         return
         yield  # pragma: no cover
@@ -636,10 +652,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         )
 
-        # Wait for handler to start or wrap to complete (short-circuit)
+        # Wait for handler to start or wrap to complete (short-circuit).
+        # If outer cancellation arrives during this wait, drain both tasks before re-raising
+        # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
-        await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-        ready_waiter.cancel()
+        try:
+            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        except BaseException:
+            # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
+            # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            await cancel_and_drain(ready_waiter, wrap_task)
+            raise
+        else:
+            # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
+            # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
+            await cancel_and_drain(ready_waiter)
 
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
@@ -676,9 +703,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
-            # Ensure stream is fully consumed for proper usage counting
-            async for _ in agent_stream_holder[0]:
-                pass
         except BaseException as exc:
             stream_error = exc
             raise
@@ -686,11 +710,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream_done.set()
 
             if stream_error is not None:
-                wrap_task.cancel()
-                try:
-                    await wrap_task
-                except (asyncio.CancelledError, BaseException):
-                    pass
+                await _cancel_task(wrap_task)
             else:
                 try:
                     try:
@@ -1806,16 +1826,14 @@ async def _call_tools(  # noqa: C901
                             yield event
 
         except asyncio.CancelledError as e:
-            for task in tasks:
-                task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
             raise
         except BaseException:
             # Cancel any still-running sibling tasks so they don't become
             # orphaned asyncio tasks when a non-CancelledError exception
             # (e.g. RuntimeError, ConnectionError) propagates out of
             # handle_call_or_result().
-            for task in tasks:
-                task.cancel()
+            await cancel_and_drain(*tasks)
             raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
@@ -2040,7 +2058,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by merging consecutive messages of the same type."""
+    """Clean the message history by merging consecutive messages."""
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
@@ -2070,6 +2088,9 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
         elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            # Interrupted responses are preserved as-is. Stream cancellation can
+            # leave incomplete tool calls, but filtering or synthesizing tool
+            # returns is a separate run-resumption semantics decision.
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)

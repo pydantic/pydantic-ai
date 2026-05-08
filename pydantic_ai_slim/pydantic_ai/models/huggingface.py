@@ -49,14 +49,17 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
         ChatCompletionInputTool,
         ChatCompletionInputToolCall,
+        ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
@@ -217,7 +220,12 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         response = await self._completions_create(
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
-        yield await self._process_streamed_response(response, model_request_parameters)
+        try:
+            yield await self._process_streamed_response(response, model_request_parameters)
+        finally:
+            aclose = getattr(response, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     @overload
     async def _completions_create(
@@ -244,14 +252,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ChatCompletionOutput | AsyncIterable[ChatCompletionStreamOutput]:
-        tools = self._get_tools(model_request_parameters)
-
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
@@ -310,13 +311,18 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         self, response: AsyncIterable[ChatCompletionStreamOutput], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Streamed response ended without content or tool calls'
             )
+
+        # huggingface_hub types streaming responses as AsyncIterable, but the stream=True
+        # response is an async generator at runtime.
 
         return HuggingFaceStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -328,8 +334,45 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    @staticmethod
+    def _get_tool_choice(
+        model_settings: HuggingFaceModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[
+        list[ChatCompletionInputTool],
+        Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None,
+    ]:
+        """Get tools and tool choice for the model.
+
+        Returns a tuple of (tools, tool_choice).
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
+        if resolved_tool_choice in ('auto', 'required'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'none':
+            # Use native 'none' mode to keep tool definitions cached while disabling tool calls
+            tool_choice = 'none'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                tool_choice = ChatCompletionInputToolChoiceClass(
+                    function=ChatCompletionInputFunctionName(name=next(iter(tool_names)))
+                )
+            else:
+                # Breaks caching, but HuggingFace doesn't support limiting tools via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = tool_choice_mode
+        else:
+            assert_never(resolved_tool_choice)
+
+        if not tool_defs:
+            return [], None
+
+        tools = [HuggingFaceModel._map_tool_definition(r) for r in tool_defs.values()]
+        return tools, tool_choice
 
     async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -482,11 +525,20 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
     _model_name: str
     _model_profile: ModelProfile
-    _response: AsyncIterable[ChatCompletionStreamOutput]
+    _response: _utils.PeekableAsyncStream[ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+
+    async def close_stream(self) -> None:
+        try:
+            # huggingface_hub types this as AsyncIterable, but at runtime it's an
+            # async generator that exposes aclose().
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
