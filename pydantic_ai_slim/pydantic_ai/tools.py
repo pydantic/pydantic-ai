@@ -134,6 +134,7 @@ Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -144,7 +145,7 @@ def turn_on_strict_if_openai(
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
-agent = Agent('openai:gpt-5.2', prepare_tools=turn_on_strict_if_openai)
+agent = Agent('openai:gpt-5.2', capabilities=[Hooks(prepare_tools=turn_on_strict_if_openai)])
 ```
 
 Usage `ToolsPrepareFunc[AgentDepsT]`.
