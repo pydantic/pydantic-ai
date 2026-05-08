@@ -70,7 +70,13 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
-from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
+from ..profiles.openai import (
+    OPENAI_REASONING_EFFORT_MAP,
+    SAMPLING_PARAMS,
+    OpenAIModelProfile,
+    OpenAISystemPromptRole,
+    validate_openai_profile,
+)
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
@@ -723,6 +729,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         if system_prompt_role is not None:
             self.profile = merge_profile(self.profile, OpenAIModelProfile(openai_system_prompt_role=system_prompt_role))
+
+        validate_openai_profile(self.profile)
 
     @property
     def client(self) -> AsyncOpenAI:
