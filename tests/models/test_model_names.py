@@ -64,6 +64,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'cohere': CohereModelName,
     'deepseek': DeepSeekModelName,
+    'gcp': GoogleModelName,
     'google-gla': GoogleModelName,
     'google-vertex': GoogleModelName,
     'grok': GrokModelName,
