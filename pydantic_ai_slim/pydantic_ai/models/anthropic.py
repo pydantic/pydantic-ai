@@ -824,7 +824,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_body=model_settings.get('extra_body'),
             )
 
-    def _process_response(self, response: BetaMessage) -> ModelResponse:
+    def _process_response(self, response: BetaMessage) -> ModelResponse:  # noqa: C901
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
