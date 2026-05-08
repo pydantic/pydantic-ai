@@ -1803,6 +1803,20 @@ def test_dbos_durability_get_serialization_name() -> None:
     assert DBOSDurability.get_serialization_name() is None
 
 
+def test_dbos_durability_idempotent_for_agent() -> None:
+    """Binding a second `DBOSDurability` to the same agent doesn't re-wrap `agent.run`.
+
+    Without the idempotency guard, re-binding would stack workflow decorators
+    on top of each other.
+    """
+    agent = Agent(_durability_fn_model, name='dbos_idempotent_test', capabilities=[DBOSDurability()])
+    first_run = agent.run
+
+    # Re-binding another DBOSDurability should leave agent.run untouched.
+    DBOSDurability().for_agent(agent)
+    assert agent.run is first_run
+
+
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     for msg in reversed(messages):
         for part in msg.parts:

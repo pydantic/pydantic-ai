@@ -1307,3 +1307,17 @@ async def test_prefect_durability_auto_wraps_run_as_flow(prefect_harness: None) 
 
     result = await agent.run('Auto-wrapped')
     assert result.output == 'Echo: Auto-wrapped'
+
+
+def test_prefect_durability_idempotent_for_agent() -> None:
+    """Binding a second `PrefectDurability` to the same agent doesn't re-wrap `agent.run`.
+
+    Without the idempotency guard, re-binding would stack flow decorators on top
+    of each other.
+    """
+    agent = Agent(_durability_fn_model, name='prefect_idempotent_test', capabilities=[PrefectDurability()])
+    first_run = agent.run
+
+    # Re-binding another PrefectDurability should leave agent.run untouched.
+    PrefectDurability().for_agent(agent)
+    assert agent.run is first_run
