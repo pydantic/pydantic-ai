@@ -213,6 +213,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         for name, tool in wrapped_tools.items():
             if name == _SEARCH_TOOLS_NAME:
                 native_tools[name] = tool
+            elif tool.tool_def.prefer_builtin:
+                # Defer to `Model.prepare_request`'s `prefer_builtin` filtering: keep the local
+                # fallback native so it can be dropped when the provider supports the builtin.
+                native_tools[name] = tool
             elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool
             else:

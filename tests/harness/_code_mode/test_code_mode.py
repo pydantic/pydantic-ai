@@ -688,6 +688,71 @@ class TestCodeMode:
         # The deferred-loading tool should NOT be exposed as a native tool
         assert 'later' not in tools
 
+    async def test_prefer_builtin_tool_not_sandboxed(self) -> None:
+        """Tools annotated with `prefer_builtin` stay native so `Model.prepare_request` can filter them."""
+        td_fallback = ToolDefinition(
+            name='duckduckgo_search',
+            description='DDG fallback.',
+            parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            return_schema={'type': 'string'},
+            prefer_builtin='web_search',
+        )
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_fallback])
+        wrapper = CodeMode[None]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        ctx = build_run_context(None)
+        tools = await wrapper.get_tools(ctx)
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        # Other tools are sandboxed as usual.
+        assert 'async def get_user' in description
+        # The prefer_builtin tool's signature must NOT appear inside run_code's description.
+        assert 'duckduckgo_search' not in description
+
+    async def test_prefer_builtin_tool_exposed_as_native(self) -> None:
+        """`prefer_builtin` tools remain in the toolset's native tools so `Model.prepare_request` can drop them when the provider supports the builtin."""
+        td_fallback = ToolDefinition(
+            name='duckduckgo_search',
+            description='DDG fallback.',
+            parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            return_schema={'type': 'string'},
+            prefer_builtin='web_search',
+        )
+        static = _StaticToolset([td_fallback])
+        wrapper = CodeMode[None]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        ctx = build_run_context(None)
+        tools = await wrapper.get_tools(ctx)
+
+        # The fallback tool is exposed as a native tool, with its prefer_builtin annotation
+        # preserved so Model.prepare_request can filter it when the builtin is supported.
+        assert 'duckduckgo_search' in tools
+        assert tools['duckduckgo_search'].tool_def.prefer_builtin == 'web_search'
+
+    async def test_no_prefer_builtin_tool_is_sandboxed(self) -> None:
+        """Tools without a `prefer_builtin` annotation are sandboxed as usual (confirms the guard only diverts truthy values)."""
+        td_plain = ToolDefinition(
+            name='duckduckgo_search',
+            description='DDG (no fallback annotation).',
+            parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
+            return_schema={'type': 'string'},
+        )
+        static = _StaticToolset([td_plain])
+        wrapper = CodeMode[None]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        ctx = build_run_context(None)
+        tools = await wrapper.get_tools(ctx)
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        # Without prefer_builtin, the tool is sandboxed normally.
+        assert 'async def duckduckgo_search' in description
+        assert 'duckduckgo_search' not in tools
+
     async def test_deferred_execution_tools_sandboxed(self) -> None:
         """Tools with `kind='external'`/`'unapproved'` are sandboxed like any other tool; resolution happens via a `HandleDeferredToolCalls` capability."""
         td_external = ToolDefinition(
