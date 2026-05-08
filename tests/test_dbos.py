@@ -1662,9 +1662,9 @@ def test_dbos_mcp_wrapper_visit_and_replace():
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests."""
-    for msg in reversed(messages):
-        for part in msg.parts:
-            if isinstance(part, UserPromptPart):
+    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
+        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
+            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -1818,9 +1818,9 @@ def test_dbos_durability_idempotent_for_agent() -> None:
 
 
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    for msg in reversed(messages):
-        for part in msg.parts:
-            if isinstance(part, UserPromptPart):
+    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
+        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
+            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
                 yield f'Echo: {part.content}'
                 return
     yield 'no prompt'  # pragma: no cover
