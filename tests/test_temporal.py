@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
-from dirty_equals import IsDatetime, IsStr
 from pydantic import BaseModel
 
 from pydantic_ai import (
