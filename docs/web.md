@@ -114,7 +114,7 @@ For offline usage, download the html file once while you have internet access:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)  # Use this URL to download the UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.2.0/dist/index.html
 ```
 
 You can then download the file using the URL printed above:
