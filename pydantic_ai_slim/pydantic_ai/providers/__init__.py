@@ -6,6 +6,7 @@ The providers are in charge of providing an authenticated client to the API.
 from __future__ import annotations as _annotations
 
 import functools
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
@@ -114,8 +115,21 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     # Normalize deprecated/alias provider names
     if provider == 'vertexai':
         provider = 'google-vertex'
-    elif provider == 'google':
-        provider = 'google-gla'
+
+    if provider == 'google-gla':
+        warnings.warn(
+            "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        provider = 'google'
+    elif provider == 'google-vertex':
+        warnings.warn(
+            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'gcp:' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        provider = 'gcp'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
@@ -137,10 +151,14 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .azure import AzureProvider
 
         return AzureProvider
-    elif provider in ('google-vertex', 'google-gla'):
+    elif provider == 'google':
         from .google import GoogleProvider
 
         return GoogleProvider
+    elif provider == 'gcp':
+        from .gcp import GCPProvider
+
+        return GCPProvider
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
@@ -244,10 +262,28 @@ def infer_provider(provider: str) -> Provider[Any]:
 
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
-    elif provider in ('google-vertex', 'google-gla', 'vertexai'):
+
+    if provider == 'vertexai':
+        provider = 'google-vertex'
+
+    if provider == 'google-gla':
+        warnings.warn(
+            "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from .google import GoogleProvider
 
-        return GoogleProvider(vertexai=provider in ('google-vertex', 'vertexai'))
-    else:
-        provider_class = infer_provider_class(provider)
-        return provider_class()
+        return GoogleProvider()
+    elif provider == 'google-vertex':
+        warnings.warn(
+            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'gcp:' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .gcp import GCPProvider
+
+        return GCPProvider()
+
+    provider_class = infer_provider_class(provider)
+    return provider_class()

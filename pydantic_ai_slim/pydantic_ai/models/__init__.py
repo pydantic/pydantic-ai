@@ -246,6 +246,22 @@ KnownModelName = TypeAliasType(
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
         'gateway/openai:o4-mini',
+        'gcp:gemini-2.0-flash-lite',
+        'gcp:gemini-2.0-flash',
+        'gcp:gemini-2.5-flash-image',
+        'gcp:gemini-2.5-flash-lite-preview-09-2025',
+        'gcp:gemini-2.5-flash-lite',
+        'gcp:gemini-2.5-flash-preview-09-2025',
+        'gcp:gemini-2.5-flash',
+        'gcp:gemini-2.5-pro',
+        'gcp:gemini-3-flash-preview',
+        'gcp:gemini-3-pro-image-preview',
+        'gcp:gemini-3-pro-preview',
+        'gcp:gemini-3.1-flash-image-preview',
+        'gcp:gemini-3.1-flash-lite-preview',
+        'gcp:gemini-3.1-pro-preview',
+        'gcp:gemini-flash-latest',
+        'gcp:gemini-flash-lite-latest',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.5-flash-image',
@@ -1164,7 +1180,7 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'o1': 'openai',
     'o3': 'openai',
     'claude': 'anthropic',
-    'gemini': 'google-gla',
+    'gemini': 'google',
 }
 """Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
 
@@ -1296,7 +1312,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-gla', 'google-vertex', 'gcp'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)

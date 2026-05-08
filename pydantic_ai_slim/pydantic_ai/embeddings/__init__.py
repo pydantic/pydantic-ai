@@ -36,6 +36,12 @@ __all__ = [
 KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
+        'gcp:gemini-embedding-001',
+        'gcp:gemini-embedding-2-preview',
+        'gcp:text-embedding-005',
+        'gcp:text-multilingual-embedding-002',
+        'google:gemini-embedding-001',
+        'google:gemini-embedding-2-preview',
         'google-gla:gemini-embedding-001',
         'google-gla:gemini-embedding-2-preview',
         'google-vertex:gemini-embedding-001',
@@ -118,7 +124,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-gla', 'google-vertex', 'gcp'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)
