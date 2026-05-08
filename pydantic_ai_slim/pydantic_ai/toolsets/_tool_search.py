@@ -28,9 +28,9 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
-from pydantic import Field, TypeAdapter
+from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
@@ -43,7 +43,6 @@ from ..builtin_tools.tool_search import (
 )
 from ..exceptions import ModelRetry, UserError
 from ..messages import (
-    BuiltinToolReturnPart,
     BuiltinToolSearchReturnPart,
     ModelRequest,
     ToolReturn,
@@ -58,13 +57,21 @@ _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
-"""Legacy metadata key for previously-discovered tool names.
 
-Pre-typed-content versions of this toolset wrote discovered tool names to
-`ToolReturnPart.metadata['discovered_tools']` instead of the typed
-[`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-on `content`. Read-only — kept for backward-compat parsing of persisted histories. New
-writes go to the typed content."""
+
+class _LegacyDiscoveryMetadata(TypedDict):
+    """Pre-typed-content metadata sideband shape.
+
+    Earlier versions stashed discovered tool names on
+    `ToolReturnPart.metadata['discovered_tools']` instead of on the typed `content`.
+    Validating against this shape via Pydantic keeps the legacy reader honest about
+    what it accepts; new writes always go through the typed content.
+    """
+
+    discovered_tools: list[str]
+
+
+_LEGACY_METADATA_TA = TypeAdapter(_LegacyDiscoveryMetadata)
 
 
 _MAX_SEARCH_RESULTS = 10
@@ -258,88 +265,50 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     def _parse_discovered_tools(self, ctx: RunContext[AgentDepsT]) -> set[str]:
         """Scan message history for previously-discovered tool names.
 
-        Reads the typed
-        [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-        off of `content` for both the local `search_tools` return (on
-        [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] in a
-        `ModelRequest`) and the provider-native return (on
+        Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
         [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart]
-        / [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] in a
-        `ModelResponse` — each adapter normalizes its provider's wire format into the
-        same shape).
+        in the history has a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]:
+        Pydantic's discriminator dispatch promotes from base parts on deserialization,
+        and direct construction goes through the typed-class `__init__` (which Pydantic
+        validates). No defensive isinstance walks needed.
 
-        Also reads the legacy `metadata['discovered_tools']` sideband on
-        `ToolReturnPart` so message histories serialized on `main` (before the
-        typed-content migration) continue to surface previously-discovered tools.
+        Also reads the legacy `metadata['discovered_tools']` sideband (validated against
+        a TypedDict) so histories serialized before the typed-content migration continue
+        to surface previously-discovered tools.
         """
         discovered: set[str] = set()
         for msg in ctx.messages:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
-                    # The local-fallback path produces `ToolSearchReturnPart` (a typed
-                    # `ToolReturnPart` subclass), reached via the `isinstance` check.
-                    # Direct `ToolReturnPart('search_tools', ...)` constructions
-                    # (legacy fixtures, fresh user code) fall through to the legacy
-                    # metadata reader on `ToolReturnPart`.
                     if isinstance(part, ToolSearchReturnPart):
-                        self._collect_discovered_from_typed_content(part.content, discovered)
+                        self._collect_typed(part.content, discovered)
                     elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
-                        # Legacy `main`-shape replay: pre-typed-content histories carry the
-                        # discoveries on `metadata['discovered_tools']`. Narrowing the
-                        # tool_name + metadata key together avoids surfacing a user-defined
-                        # tool that happens to be named `search_tools` whose metadata has no
-                        # legacy shape.
-                        metadata: Any = part.metadata
-                        if isinstance(metadata, dict) and _LEGACY_DISCOVERED_TOOLS_METADATA_KEY in cast(
-                            dict[Any, Any], metadata
-                        ):
-                            self._collect_discovered_from_legacy_metadata(metadata, discovered)
+                        # Legacy histories carry discoveries on `metadata['discovered_tools']`
+                        # rather than typed content. Narrowing tool_name + metadata shape avoids
+                        # surfacing a user-defined `search_tools` whose metadata has no legacy
+                        # shape.
+                        self._collect_legacy(part.metadata, discovered)
             else:  # ModelResponse — the only other variant of ModelMessage.
                 for part in msg.parts:
                     if isinstance(part, BuiltinToolSearchReturnPart):
-                        self._collect_discovered_from_typed_content(part.content, discovered)
-                    elif isinstance(part, BuiltinToolReturnPart) and part.tool_name == _TOOL_SEARCH_BUILTIN_ID:
-                        # Base `BuiltinToolReturnPart` instances reach this branch when
-                        # constructed directly (e.g. legacy test fixtures) — promote and
-                        # read off the typed view.
-                        promoted = BuiltinToolReturnPart.narrow_type(part)
-                        # Defensive: registered narrower for `tool_search` always returns
-                        # the typed subclass.
-                        if isinstance(promoted, BuiltinToolSearchReturnPart):  # pragma: no branch
-                            self._collect_discovered_from_typed_content(promoted.content, discovered)
+                        self._collect_typed(part.content, discovered)
         return discovered
 
     @staticmethod
-    def _collect_discovered_from_typed_content(
-        content: ToolSearchReturnContent | str | None, discovered: set[str]
-    ) -> None:
-        if not isinstance(content, dict):
+    def _collect_typed(content: ToolSearchReturnContent | None, discovered: set[str]) -> None:
+        """Add discovered tool names from a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
+        if content is None:
             return
-        matches = content.get('discovered_tools')
-        if not isinstance(matches, list):
-            return
-        for match in matches:
-            if not isinstance(match, dict):
-                continue
-            name = match.get('name')
-            if isinstance(name, str):
-                discovered.add(name)
+        discovered.update(match['name'] for match in content['discovered_tools'])
 
     @staticmethod
-    def _collect_discovered_from_legacy_metadata(metadata: Any, discovered: set[str]) -> None:
-        """Backward-compat reader for the pre-typed-content metadata sideband.
-
-        Earlier versions stashed discovered tool names on
-        `ToolReturnPart.metadata['discovered_tools']` instead of on the typed
-        `content`. Persisted histories from those versions still need to surface
-        their discoveries on resume.
-        """
-        if not isinstance(metadata, dict):
+    def _collect_legacy(metadata: Any, discovered: set[str]) -> None:
+        """Backward-compat reader for the pre-typed-content metadata sideband."""
+        try:
+            validated = _LEGACY_METADATA_TA.validate_python(metadata)
+        except ValidationError:
             return
-        names = metadata.get(_LEGACY_DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if not isinstance(names, list):
-            return
-        discovered.update(name for name in names if isinstance(name, str))  # pyright: ignore[reportUnknownVariableType]
+        discovered.update(validated['discovered_tools'])
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

@@ -946,66 +946,6 @@ async def test_function_toolset_all_deferred():
     assert tool_names == snapshot(['deferred_tool1', 'deferred_tool2', 'search_tools'])
 
 
-async def test_tool_search_toolset_ignores_malformed_content_history():
-    """Discovery reads `discovered_tools` off the typed return content; malformed
-    shapes (non-dict content, missing list, entries missing a string `name`) are
-    ignored, and only well-formed entries are picked up."""
-    toolset = _create_function_toolset()
-    searchable = ToolSearchToolset(wrapped=toolset)
-
-    messages: list[ModelMessage] = [
-        # content is not a dict (string fall-through — possible via direct user construction
-        # bypassing the typed shape)
-        ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, 'not a dict'))]),
-        # content is a dict but `discovered_tools` is missing
-        ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, {'message': 'hi'}))]),
-        # `discovered_tools` is not a list
-        ModelRequest(parts=[ToolSearchReturnPart(content=cast(Any, {'discovered_tools': 'not a list'}))]),
-        # `discovered_tools` contains malformed entries (non-dict, missing/non-string name)
-        ModelRequest(
-            parts=[
-                ToolSearchReturnPart(
-                    content=cast(
-                        Any,
-                        {
-                            'discovered_tools': [
-                                'not a dict',
-                                {'name': 123},
-                                {'description': 'no name'},
-                            ],
-                        },
-                    ),
-                ),
-            ]
-        ),
-        # valid content
-        ModelRequest(
-            parts=[
-                ToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
-                ),
-            ]
-        ),
-        # Legacy shape (pre-typed-parts): discoveries on `metadata`, content as plain text.
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
-                    content='legacy text return',
-                    metadata={'discovered_tools': ['stock_price']},
-                ),
-            ]
-        ),
-    ]
-    ctx = _build_run_context(None, messages=messages)
-
-    tools = await searchable.get_tools(ctx)
-    # Only the well-formed entries flip `defer_loading` off; malformed history is ignored.
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
-    assert tools['stock_price'].tool_def.defer_loading is False
-    assert tools['crypto_price'].tool_def.defer_loading is True
-
-
 async def test_tool_search_toolset_reads_legacy_metadata_discovered_tools():
     """Pre-typed-content versions of this toolset wrote discovered tool names to
     ``ToolReturnPart.metadata['discovered_tools']`` instead of the typed
@@ -2952,25 +2892,24 @@ def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
     assert isinstance(revalidated.parts[2], BuiltinToolCallPart)
 
 
-async def test_tool_search_toolset_promotes_base_builtin_return_part() -> None:
-    """A `BuiltinToolReturnPart` carrying `tool_kind='tool_search'` is promoted by
-    the toolset's parser via `narrow_type` so its discoveries surface — covers the
-    fall-through promotion branch. A part without `tool_kind` (user collision on
-    `tool_name='tool_search'`) is left alone."""
+async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name() -> None:
+    """A user-emitted `BuiltinToolReturnPart` with `tool_name='tool_search'` (no typed
+    subclass, no `tool_kind`) is left alone — discoveries are only surfaced from typed
+    `BuiltinToolSearchReturnPart` instances. This is the typed-trust contract: the
+    framework constructs typed subclasses; user collisions on names alone don't get
+    treated as our search payload."""
     base_toolset = FunctionToolset[None]()
 
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                # Framework-emitted: `tool_kind='tool_search'` triggers promotion.
-                BuiltinToolReturnPart(
-                    tool_name='tool_search',
+                # Framework-emitted: typed subclass surfaces discoveries.
+                BuiltinToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                     tool_call_id='c1',
-                    tool_kind='tool_search',
                 ),
-                # User collision: `tool_kind=None`. Discoveries here are NOT surfaced — protects
-                # against accidentally treating a user's tool result as our search payload.
+                # User collision on the name with a base part — `tool_kind=None`, not a typed
+                # subclass: NOT surfaced.
                 BuiltinToolReturnPart(
                     tool_name='tool_search',
                     content={'discovered_tools': [{'name': 'should_not_surface', 'description': None}]},
@@ -3665,13 +3604,12 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
     helper returns `([], message)`. The `_map_message` flow then renders the message
     as a single text block (Anthropic rejects empty `tool_result.content`)."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai.messages import ToolSearchReturnPart
     from pydantic_ai.models.anthropic import (
         _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
     )
 
-    empty = ToolReturnPart(
-        tool_name='search_tools',
+    empty = ToolSearchReturnPart(
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
         tool_call_id='c1',
     )
@@ -3680,48 +3618,23 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
     assert message == 'No matches; try other keywords.'
 
 
-def test_anthropic_custom_replay_blocks_matches_not_a_list() -> None:
-    """When `content['discovered_tools']` is the wrong type, fall through to text formatting."""
+def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
+    """A base `ToolReturnPart` (not a typed `ToolSearchReturnPart`) is left alone:
+    helper returns `(None, None)` so the caller falls through to default text formatting.
+    This is the typed-trust contract — the framework only re-shapes typed parts."""
     pytest.importorskip('anthropic')
     from pydantic_ai.messages import ToolReturnPart
     from pydantic_ai.models.anthropic import (
         _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
     )
 
-    malformed = ToolReturnPart(
+    base_part = ToolReturnPart(
         tool_name='search_tools',
-        content={'discovered_tools': 'not-a-list'},
+        content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(malformed, tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(base_part, tool_search_active=True)
     assert refs is None and message is None
-
-
-def test_anthropic_custom_replay_blocks_skips_non_dict_match_entries() -> None:
-    """Match entries that aren't dicts are silently skipped (defensive parsing)."""
-    pytest.importorskip('anthropic')
-    from pydantic_ai.messages import ToolReturnPart
-    from pydantic_ai.models.anthropic import (
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    mixed = ToolReturnPart(
-        tool_name='search_tools',
-        content={
-            'discovered_tools': [
-                'not-a-dict',
-                {'name': 'foo'},
-                {'name': 123},  # name not a string — skipped
-                {'description': 'no name key'},  # no name — skipped
-                {'name': 'bar'},
-            ],
-        },
-        tool_call_id='c1',
-    )
-    refs, _msg = _build_custom_tool_search_replay_blocks(mixed, tool_search_active=True)
-    assert refs is not None
-    tool_names = [r['tool_name'] for r in refs]
-    assert tool_names == ['foo', 'bar']
 
 
 def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_args() -> None:
@@ -3779,8 +3692,7 @@ async def test_anthropic_map_message_empty_search_renders_message_text_block():
         ),
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name='search_tools',
+                ToolSearchReturnPart(
                     content={
                         'discovered_tools': [],
                         'message': 'No matching tools found. Try other keywords.',
@@ -3863,49 +3775,6 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
     assert server_tool_use['input'] == {}
 
 
-def test_anthropic_build_tool_search_replay_block_skips_malformed_content_shapes() -> None:
-    """`_build_tool_search_replay_block` defensively handles malformed content:
-    non-dict content, non-list `discovered_tools`, non-dict entries, and entries
-    with missing/non-string names all get skipped without crashing."""
-    pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart
-    from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
-
-    # Non-dict content (e.g. direct user construction bypassing the typed shape) —
-    # falls through with empty `tool_references`.
-    part_str_content = BuiltinToolSearchReturnPart(content=cast(Any, 'not a dict'), tool_call_id='c1')
-    block_str = _build_tool_search_replay_block(part_str_content, 'srv_1')
-    assert block_str['content'] == {'type': 'tool_search_tool_search_result', 'tool_references': []}
-
-    # Dict content with non-list `discovered_tools` — same fall-through.
-    part_bad_list = BuiltinToolSearchReturnPart(
-        content=cast(Any, {'discovered_tools': 'not a list'}),
-        tool_call_id='c2',
-    )
-    block_bad_list = _build_tool_search_replay_block(part_bad_list, 'srv_2')
-    assert block_bad_list['content'] == {'type': 'tool_search_tool_search_result', 'tool_references': []}
-
-    # Mixed entries: non-dict, missing name, non-string name, valid — only valids surface.
-    part_mixed = BuiltinToolSearchReturnPart(
-        content=cast(
-            Any,
-            {
-                'discovered_tools': [
-                    'not a dict',
-                    {'description': 'no name'},
-                    {'name': 123},
-                    {'name': 'ok_tool'},
-                ],
-            },
-        ),
-        tool_call_id='c3',
-    )
-    block_mixed = _build_tool_search_replay_block(part_mixed, 'srv_3')
-    inner = cast(dict[str, Any], block_mixed['content'])
-    refs = cast(list[dict[str, Any]], inner['tool_references'])
-    assert [r['tool_name'] for r in refs] == ['ok_tool']
-
-
 def test_openai_normalize_tool_search_args_handles_non_dict_input() -> None:
     """OpenAI's `_normalize_tool_search_args` falls through to an empty `queries` list
     for any non-dict input (e.g. raw `None` from an empty server tool-search call)."""
@@ -3918,48 +3787,6 @@ def test_openai_normalize_tool_search_args_handles_non_dict_input() -> None:
     assert _normalize_tool_search_args({'something_else': 'x'}) == {'queries': []}
     # Dict with non-list `paths` — also empty.
     assert _normalize_tool_search_args({'paths': 'not a list'}) == {'queries': []}
-
-
-def test_openai_build_client_tool_search_output_param_handles_malformed_content() -> None:
-    """`_build_client_tool_search_output_param` defensively handles malformed
-    `discovered_tools` shapes — non-dict content, non-list matches, non-dict entries,
-    non-string names — without crashing."""
-    pytest.importorskip('openai')
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.openai import _build_client_tool_search_output_param  # pyright: ignore[reportPrivateUsage]
-
-    params = ModelRequestParameters(function_tools=[], builtin_tools=[], allow_text_output=True)
-
-    # Non-dict content — no tools surface.
-    part_none = ToolReturnPart(tool_name='search_tools', content='not a dict', tool_call_id='c1')
-    out_none = _build_client_tool_search_output_param(part_none, 'c1', params)
-    assert out_none['tools'] == []
-
-    # Dict content with non-list `discovered_tools` — same fall-through.
-    part_bad_list = ToolReturnPart(
-        tool_name='search_tools',
-        content={'discovered_tools': 'not a list'},
-        tool_call_id='c2',
-    )
-    out_bad_list = _build_client_tool_search_output_param(part_bad_list, 'c2', params)
-    assert out_bad_list['tools'] == []
-
-    # Mixed entries: non-dict, missing name, non-string name — all skipped.
-    part_mixed = ToolReturnPart(
-        tool_name='search_tools',
-        content={
-            'discovered_tools': [
-                'not a dict',
-                {'description': 'no name'},
-                {'name': 123},
-                # No matching `function_tools` for any valid name; output stays empty
-                # because `_build_client_tool_search_output_param` looks up by name.
-            ],
-        },
-        tool_call_id='c3',
-    )
-    out_mixed = _build_client_tool_search_output_param(part_mixed, 'c3', params)
-    assert out_mixed['tools'] == []
 
 
 # --- Cross-provider local→native promotion ---

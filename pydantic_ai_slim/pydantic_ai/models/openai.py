@@ -70,6 +70,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -2537,12 +2538,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        if call_id in client_replay_call_ids:
+                        if call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
                             # discovered-tool state tied to the `tool_search_call`.
                             openai_messages.append(
-                                _build_client_tool_search_output_param(part, call_id, model_request_parameters)
+                                _build_client_tool_search_output_param(
+                                    part, call_id, model_request_parameters, self._map_tool_definition
+                                )
                             )
                         else:
                             output = await self._map_tool_return_output(part)
@@ -4167,9 +4170,10 @@ def _map_tool_search_call(
 
 
 def _build_client_tool_search_output_param(
-    part: ToolReturnPart,
+    part: ToolSearchReturnPart,
     call_id: str,
     model_request_parameters: ModelRequestParameters,
+    map_tool_definition: Callable[[ToolDefinition], responses.FunctionToolParam],
 ) -> ResponseToolSearchOutputItemParamParam:
     """Build a `tool_search_output` replay param for a local `search_tools` return.
 
@@ -4177,47 +4181,25 @@ def _build_client_tool_search_output_param(
     `FunctionToolParam` so OpenAI sees the same `Tool` definitions it originally
     loaded in the prior turn — the shape of `ResponseToolSearchOutputItemParamParam`.
     Reads the typed
-    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-    off of ``part.content`` rather than the sideband metadata; the tool-return value
-    is the contract.
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
+    off of `part.content`; the tool-return value is the contract. Uses the same
+    `map_tool_definition` the model used at initial send-time, so `strict` honors
+    the user's preference and the model profile rather than a replay-only override.
     """
-    discovered: list[str] = []
-    if isinstance(part.content, dict):
-        matches = part.content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if isinstance(matches, list):
-            for entry in matches:  # pyright: ignore[reportUnknownVariableType]
-                if isinstance(entry, dict):
-                    name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                    if isinstance(name, str):
-                        discovered.append(name)
-
+    discovered = [match['name'] for match in part.content['discovered_tools']] if part.content else []
     tool_defs_by_name = {t.name: t for t in model_request_parameters.function_tools}
-    # `strict` is profile-dependent at initial send-time (`_map_tool_definition`
-    # consults the model profile). For replay, pass `False` so OpenAI doesn't
-    # attempt to re-validate the schema it already accepted in the prior turn.
     tool_params: list[responses.tool_param.ToolParam] = [
-        cast(
-            'responses.tool_param.ToolParam',
-            {
-                'name': tool_def.name,
-                'parameters': tool_def.parameters_json_schema,
-                'type': 'function',
-                'description': tool_def.description,
-                'strict': False,
-            },
-        )
+        cast('responses.tool_param.ToolParam', map_tool_definition(tool_def))
         for name in discovered
         if (tool_def := tool_defs_by_name.get(name)) is not None
     ]
-
-    output: ResponseToolSearchOutputItemParamParam = {
+    return {
         'type': 'tool_search_output',
         'execution': 'client',
         'tools': tool_params,
         'call_id': call_id,
         'status': 'completed',
     }
-    return output
 
 
 def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolCallPart:

@@ -24,7 +24,6 @@ from ..builtin_tools import (
     WebSearchTool,
 )
 from ..builtin_tools.tool_search import (
-    TOOL_SEARCH_FUNCTION_TOOL_NAME,
     ToolSearchArgs,
     ToolSearchMatch,
     ToolSearchTool,
@@ -56,6 +55,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -1464,9 +1464,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == ToolSearchTool.kind and isinstance(
-                                response_part.content, dict
-                            ):
+                            elif isinstance(response_part, BuiltinToolSearchReturnPart):
                                 assistant_content_params.append(
                                     _build_tool_search_replay_block(response_part, tool_use_id)
                                 )
@@ -2324,8 +2322,7 @@ def _build_custom_tool_search_replay_blocks(
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
     """Tool-search replay payload for the Anthropic `tool_result` block.
 
-    Reads the typed
-    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
+    Reads the typed [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
     off `part.content` (the local `search_tools` return shape) and unpacks it into:
 
     * `tool_references`: matched tools, ready to be wrapped in `BetaToolReferenceBlockParam`s.
@@ -2333,7 +2330,7 @@ def _build_custom_tool_search_replay_blocks(
       rejects an empty `tool_result` content list).
 
     Returns `(None, None)` when the current request has no tool search active or this
-    isn't a `search_tools` return — the caller then falls through to the default
+    isn't a typed `search_tools` return — the caller then falls through to the default
     text-formatting path. Fires for any active tool-search strategy (default native,
     named native, or custom callable), so cross-provider history (e.g. a prior local
     turn on Google) gets re-shaped into Anthropic's "client-side" tool_search wire
@@ -2341,37 +2338,25 @@ def _build_custom_tool_search_replay_blocks(
     the wire shape is the same: `tool_use` + `tool_result` with `tool_reference`
     content blocks.
     """
-    if not tool_search_active or request_part.tool_name != TOOL_SEARCH_FUNCTION_TOOL_NAME:
+    if not tool_search_active:
         return None, None
-    content = request_part.content
-    if not isinstance(content, dict):
+    if not isinstance(request_part, ToolSearchReturnPart) or request_part.content is None:
         return None, None
-    matches = content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    if not isinstance(matches, list):
-        return None, None
-    refs: list[BetaToolReferenceBlockParam] = []
-    for entry in matches:  # pyright: ignore[reportUnknownVariableType]
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if isinstance(name, str):
-            refs.append(BetaToolReferenceBlockParam(tool_name=name, type='tool_reference'))
-    raw_message = content.get('message')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    message = raw_message if isinstance(raw_message, str) else None
-    return refs, message
+    refs = [
+        BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
+        for match in request_part.content['discovered_tools']
+    ]
+    return refs, request_part.content.get('message')
 
 
 def _build_tool_search_replay_block(
-    response_part: BuiltinToolReturnPart, tool_use_id: str
+    response_part: BuiltinToolSearchReturnPart, tool_use_id: str
 ) -> BetaToolSearchToolResultBlockParam:
     """Reconstruct an Anthropic tool-search result block for history replay.
 
     Reads the cross-provider
-    [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-    off `content` and any error fields the parse-time mapper stashed on
-    `provider_details`. The SDK type
-    [`BetaToolSearchToolResultBlockParam`][anthropic.types.beta.BetaToolSearchToolResultBlockParam]
-    is in `BetaContentBlockParam` so no `cast(Any, ...)` is needed.
+    [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] off
+    `content` and any error fields the parse-time mapper stashed on `provider_details`.
     """
     err = response_part.provider_details or {}
     inner: BetaToolSearchToolResultErrorParam | BetaToolSearchToolSearchResultBlockParam
@@ -2384,15 +2369,7 @@ def _build_tool_search_replay_block(
             error_code=err['error_code'],
         )
     else:
-        matches: list[ToolSearchMatch] = []
-        if isinstance(response_part.content, dict):
-            content_matches = response_part.content.get('discovered_tools')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-            if isinstance(content_matches, list):
-                for entry in content_matches:  # pyright: ignore[reportUnknownVariableType]
-                    if isinstance(entry, dict):
-                        name = entry.get('name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                        if isinstance(name, str):
-                            matches.append({'name': name, 'description': None})
+        matches = response_part.content['discovered_tools'] if response_part.content else []
         tool_refs = [BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference') for match in matches]
         inner = BetaToolSearchToolSearchResultBlockParam(
             type='tool_search_tool_search_result',
