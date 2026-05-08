@@ -1511,9 +1511,7 @@ async def process_tool_calls(  # noqa: C901
                     continue
 
                 output_parts.append(validated.validation_error.tool_retry)
-                for event in _emit_output_tool_events(
-                    call, validated.validation_error.tool_retry, args_valid=False
-                ):
+                for event in _emit_output_tool_events(call, validated.validation_error.tool_retry, args_valid=False):
                     yield event
                 for event in _emit_legacy_output_tool_function_events(
                     call, validated.validation_error.tool_retry, args_valid=False
