@@ -24,6 +24,7 @@ from .builtin_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
+from .capabilities import AgentCapability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -88,6 +89,7 @@ from .messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
+    ModelResponseState,
     ModelResponseStreamEvent,
     MultiModalContent,
     PartDeltaEvent,
@@ -121,8 +123,9 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .settings import ModelSettings
+from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .tools import (
     AgentBuiltinTool,
     DeferredToolRequests,
@@ -227,6 +230,7 @@ __all__ = (
     'ModelResponse',
     'ModelResponsePart',
     'ModelResponsePartDelta',
+    'ModelResponseState',
     'ModelResponseStreamEvent',
     'MultiModalContent',
     'PartDeltaEvent',
@@ -292,6 +296,9 @@ __all__ = (
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
+    # capabilities
+    'AgentCapability',
+    'CapabilityFunc',
     # output
     'ToolOutput',
     'NativeOutput',
@@ -306,6 +313,8 @@ __all__ = (
     'ModelRequestContext',
     # settings
     'ModelSettings',
+    'ToolChoice',
+    'ToolOrOutput',
     # usage
     'RunUsage',
     'RequestUsage',
@@ -314,5 +323,7 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    # result
+    'AgentEventStream',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

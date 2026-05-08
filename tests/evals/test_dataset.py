@@ -875,6 +875,25 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
 
+async def test_serialization_to_yaml_preserves_unicode(tmp_path: Path):
+    dataset = Dataset[TaskInput, TaskOutput](
+        name='unicode',
+        cases=[
+            Case(
+                inputs=TaskInput(query='Привет'),
+                expected_output=TaskOutput(answer='Здравствуйте'),
+            )
+        ],
+    )
+    yaml_path = tmp_path / 'test_cases.yaml'
+
+    dataset.to_file(yaml_path)
+
+    content = yaml_path.read_text(encoding='utf-8')
+    assert 'Привет' in content
+    assert 'Здравствуйте' in content
+
+
 async def test_deserializing_without_name(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
 ):
@@ -2095,9 +2114,10 @@ async def test_lifecycle_setup_and_teardown(example_dataset: Dataset[TaskInput, 
         async def teardown(
             self,
             result: ReportCase[TaskInput, TaskOutput, TaskMetadata]
-            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata],
+            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata]
+            | None,
         ) -> None:
-            events.append(f'teardown:{self.case.name}:{type(result).__name__}')
+            events.append(f'teardown:{self.case.name}:{type(result).__name__ if result is not None else "NoneType"}')
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer='test')
@@ -2111,10 +2131,10 @@ async def test_lifecycle_teardown_on_task_failure():
     """Test that teardown runs even when the task fails, and receives ReportCaseFailure."""
     from pydantic_evals.lifecycle import CaseLifecycle
 
-    teardown_results: list[ReportCase | ReportCaseFailure] = []
+    teardown_results: list[ReportCase | ReportCaseFailure | None] = []
 
     class TeardownTracker(CaseLifecycle[str, str, None]):
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             teardown_results.append(result)
 
     dataset = Dataset[str, str, None](
@@ -2229,7 +2249,7 @@ async def test_lifecycle_teardown_exception_propagates():
     from pydantic_evals.lifecycle import CaseLifecycle
 
     class BrokenTeardown(CaseLifecycle[str, str, None]):
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             raise RuntimeError('teardown exploded')
 
     dataset = Dataset[str, str, None](name='teardown_exception', cases=[Case(name='case1', inputs='hello')])
@@ -2251,9 +2271,10 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
         async def setup(self) -> None:
             raise RuntimeError('setup failed')
 
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             nonlocal teardown_called
             teardown_called = True
+            assert result is not None
             assert isinstance(result, ReportCaseFailure)
             assert 'setup failed' in result.error_message
 
