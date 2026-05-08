@@ -50,7 +50,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
     Mirrors [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] for
     [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry`/`ctx.max_retries` reflect
-    the **output** retry budget (`max_result_retries`), matching the output hook lifecycle.
+    the **output** retry budget (`max_output_retries`), matching the output hook lifecycle.
 
     ```python
     from pydantic_ai import Agent, RunContext
