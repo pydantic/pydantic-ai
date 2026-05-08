@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai.agent import Agent
+from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
@@ -7998,6 +7999,31 @@ async def test_wrapper_capability_delegates_hooks():
     assert 'after_run' in hook_calls
 
 
+def test_wrapper_capability_for_agent_replaces():
+    """WrapperCapability.for_agent replaces wrapped when its for_agent rebinds.
+
+    Some capabilities (e.g. `TemporalDurability`) snapshot agent state in `for_agent`
+    and return a new instance. The wrapper must propagate that.
+    """
+
+    @dataclass
+    class RebindCap(AbstractCapability[None]):
+        bound_to: str = ''
+
+        def for_agent(self, agent: AbstractAgent[None, Any]) -> AbstractCapability[None]:
+            return RebindCap(bound_to=agent.name or '')
+
+    inner = RebindCap()
+    wrapper = WrapperCapability(wrapped=inner)
+
+    agent = Agent(FunctionModel(_resolve_dummy_model_fn), name='wrapper_for_agent_test')
+    bound = wrapper.for_agent(agent)
+    assert isinstance(bound, WrapperCapability)
+    assert bound is not wrapper
+    assert bound.wrapped is not inner
+    assert cast(RebindCap, bound.wrapped).bound_to == 'wrapper_for_agent_test'
+
+
 async def test_wrapper_capability_for_run_replaces():
     """WrapperCapability.for_run replaces wrapped when it changes."""
     toolset_a = FunctionToolset(id='a')
@@ -10480,6 +10506,13 @@ async def test_resolve_model_id_returns_none_falls_back_to_infer_model() -> None
     result = await agent.run('hi', model='test')
     assert result.output is not None
     assert cap.seen == ['test']
+
+
+def test_resolve_model_id_returns_none_for_unknown_string() -> None:
+    """A resolver that doesn't recognize the string returns None so the next layer can try."""
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='resolved')
+    cap = _StringResolver(target=target)
+    assert cap.resolve_model_id('different-string', agent=cast(Any, None)) is None
 
 
 def test_resolve_model_id_first_non_none_wins() -> None:

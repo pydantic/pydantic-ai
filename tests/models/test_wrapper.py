@@ -7,6 +7,7 @@ import pytest
 from pydantic_ai.messages import (
     FinalResultEvent,
     ModelResponse,
+    ModelResponseStreamEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -102,6 +103,17 @@ async def test_replay_streamed_response_events(
             ),
         ]
     )
+
+
+async def test_replay_streamed_response_buffered_aiter_idempotent(
+    model_request_parameters: ModelRequestParameters, model_response: ModelResponse
+) -> None:
+    """`__aiter__` is idempotent on the buffered path — second call returns the same iterator."""
+    buffered: list[ModelResponseStreamEvent] = [PartStartEvent(index=0, part=TextPart(content='hi'))]
+    stream = ReplayStreamedResponse(model_request_parameters, model_response, buffered_events=buffered)
+    first = stream.__aiter__()
+    second = stream.__aiter__()
+    assert first is second
 
 
 async def test_replay_streamed_response_get(
