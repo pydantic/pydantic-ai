@@ -138,7 +138,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Set the description of the agent."""
         raise NotImplementedError
 
-    def render_description(self, deps: AgentDepsT = None) -> str | None:  # pragma: no cover
+    def render_description(self, deps: AgentDepsT = None) -> str | None:
         """Return the agent description, rendering any TemplateStr with the given deps.
 
         Subclasses with template descriptions should override this method.

@@ -137,7 +137,7 @@ class Instrumentation(AbstractCapability[Any]):
                     # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
                     if result is not None:
                         message_history = result.all_messages()
-                        metadata = result._state.metadata  # pyright: ignore[reportPrivateUsage]
+                        metadata = result.metadata
                     else:
                         # On error, use the last messages seen during model requests.
                         message_history = self._last_messages or ctx.messages

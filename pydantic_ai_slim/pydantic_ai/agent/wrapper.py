@@ -61,7 +61,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
         self.wrapped.description = value
 
-    def render_description(self, deps: AgentDepsT = None) -> str | None:  # pragma: no cover
+    def render_description(self, deps: AgentDepsT = None) -> str | None:
         return self.wrapped.render_description(deps)
 
     @property
