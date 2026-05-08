@@ -25,4 +25,4 @@ async def current_time(timezone: str = 'UTC') -> str:
     return datetime.now(tz=tz).isoformat()
 
 
-app = AGUIApp(agent)
+app = AGUIApp(agent)  # pyright: ignore[reportDeprecated]

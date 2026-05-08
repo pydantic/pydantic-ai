@@ -119,4 +119,4 @@ async def update_plan_step(
     )
 
 
-app = AGUIApp(agent)
+app = AGUIApp(agent)  # pyright: ignore[reportDeprecated]

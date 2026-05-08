@@ -75,4 +75,4 @@ async def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     )
 
 
-app = AGUIApp(agent, deps=StateDeps(DocumentState()))
+app = AGUIApp(agent, deps=StateDeps(DocumentState()))  # pyright: ignore[reportDeprecated]

@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -1582,7 +1583,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
 
-    # TODO (v2): Remove in favor of using `AGUIApp` directly -- we don't have `to_temporal()` or `to_vercel_ai()` either.
+    @deprecated(
+        '`Agent.to_ag_ui()` is deprecated and will be removed in v2. '
+        'Compose `AGUIAdapter` directly instead — see `pydantic_ai.ui.ag_ui.AGUIAdapter`.'
+    )
     def to_ag_ui(
         self,
         *,
@@ -1671,29 +1675,33 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         from pydantic_ai.ui.ag_ui.app import AGUIApp
 
-        return AGUIApp(
-            agent=self,
-            # Agent.iter parameters
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            # Starlette
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            lifespan=lifespan,
-        )
+        # `AGUIApp` is itself `@deprecated`; suppress its warning here so users only see
+        # one warning from `to_ag_ui()` itself, not a second one from internal construction.
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message=r'`AGUIApp` is deprecated', category=DeprecationWarning)
+            return AGUIApp(  # pyright: ignore[reportDeprecated]
+                agent=self,
+                # Agent.iter parameters
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                # Starlette
+                debug=debug,
+                routes=routes,
+                middleware=middleware,
+                exception_handlers=exception_handlers,
+                on_startup=on_startup,
+                on_shutdown=on_shutdown,
+                lifespan=lifespan,
+            )
 
     def to_a2a(
         self,

@@ -136,4 +136,4 @@ async def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str
     )
 
 
-app = AGUIApp(agent, deps=StateDeps(RecipeSnapshot()))
+app = AGUIApp(agent, deps=StateDeps(RecipeSnapshot()))  # pyright: ignore[reportDeprecated]

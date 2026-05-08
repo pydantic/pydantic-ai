@@ -4,10 +4,9 @@ This package provides seamless integration between pydantic-ai agents and ag-ui
 for building interactive AI applications with streaming event-based communication.
 """
 
-# TODO (v2): Remove this module in favor of `pydantic_ai.ui.ag_ui`
-
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal
 
@@ -37,6 +36,14 @@ except ImportError as e:  # pragma: no cover
         'Please install the `ag-ui-protocol` and `starlette` packages to use `AGUIAdapter`, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
+
+
+warnings.warn(
+    'The `pydantic_ai.ag_ui` module is deprecated and will be removed in v2. '
+    'Import from `pydantic_ai.ui.ag_ui` instead.',
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 __all__ = [

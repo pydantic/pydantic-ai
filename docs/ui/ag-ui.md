@@ -124,6 +124,9 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
+!!! warning "Deprecated in 1.x, removed in v2"
+    [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] and [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] are deprecated and will be removed in v2. Compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly instead — see the examples above.
+
 This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agent into a stand-alone ASGI application:
 
 ```py {title="ag_ui_app.py" hl_lines="4"}

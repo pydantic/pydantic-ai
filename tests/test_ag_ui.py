@@ -2304,7 +2304,7 @@ async def test_to_ag_ui() -> None:
     agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
 
     deps = StateDeps(StateInt(value=0))
-    app = agent.to_ag_ui(deps=deps)
+    app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
         async with httpx.AsyncClient(transport=transport) as client:

@@ -24,4 +24,4 @@ agent = Agent(
     ),
 )
 
-app = AGUIApp(agent)
+app = AGUIApp(agent)  # pyright: ignore[reportDeprecated]

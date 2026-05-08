@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Generic
 
-from typing_extensions import Self
+from typing_extensions import Self, deprecated
 
 from pydantic_ai import DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
@@ -40,6 +40,10 @@ except ImportError as e:  # pragma: no cover
 class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     """ASGI application for running Pydantic AI agents with AG-UI protocol support."""
 
+    @deprecated(
+        '`AGUIApp` is deprecated and will be removed in v2. '
+        'Compose `AGUIAdapter` directly instead — see `pydantic_ai.ui.ag_ui.AGUIAdapter`.'
+    )
     def __init__(
         self,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
