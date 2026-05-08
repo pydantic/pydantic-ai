@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
 from typing import Literal, overload
 
 import httpx
@@ -100,6 +101,21 @@ class GoogleProvider(Provider[Client]):
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google API.
         """
+        if vertexai is True:
+            warnings.warn(
+                '`GoogleProvider(vertexai=True, ...)` is deprecated and will be removed in v2.0. '
+                'Use `GCPProvider(...)` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        elif vertexai is False:
+            warnings.warn(
+                '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
+                "drop the explicit `vertexai=False` (it's the default).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         if client is None:
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
