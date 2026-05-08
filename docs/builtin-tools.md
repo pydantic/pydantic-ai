@@ -306,7 +306,7 @@ You can upload files via the provider's Files API and make them available to the
 
 #### Anthropic
 
-```py {title="code_execution_with_files_anthropic.py" test="skip"}
+```py {title="code_execution_with_files_anthropic.py" test="skip" lint="skip"}
 import asyncio
 
 import anthropic
@@ -341,7 +341,7 @@ For details on file management, persistence, and container behavior, see the [An
 
 #### OpenAI
 
-```py {title="code_execution_with_files_openai.py" test="skip"}
+```py {title="code_execution_with_files_openai.py" test="skip" lint="skip"}
 import asyncio
 
 from openai import AsyncOpenAI

@@ -942,11 +942,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Extract file IDs from CodeExecutionTool instances in builtin_tools.
-        # container_upload blocks are prepended to the first ModelRequest with user content
+        # container_upload blocks are appended to the last ModelRequest with user content
         # on every API call. This is intentional: Anthropic's API is stateless and requires
-        # files to be declared in every request. We regenerate them from CodeExecutionTool.files
-        # rather than persisting them in ModelRequest/ModelResponse to keep message history
-        # provider-agnostic.
+        # files to be declared in every request. Appending to the last (rather than first)
+        # user message ensures files remain accessible to the code execution tool when
+        # `message_history` is used across multiple turns. We regenerate them from
+        # CodeExecutionTool.files rather than persisting them in ModelRequest/ModelResponse
+        # to keep message history provider-agnostic.
         pending_container_uploads: list[str] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, CodeExecutionTool) and tool.files:
@@ -1020,14 +1022,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             )
                         user_content_params.append(retry_param)
                 if len(user_content_params) > 0:
-                    # Prepend container_upload blocks to the first user message with content
-                    if pending_container_uploads:
-                        upload_blocks = [
-                            BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
-                            for file_id in pending_container_uploads
-                        ]
-                        user_content_params = upload_blocks + user_content_params
-                        pending_container_uploads.clear()
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
@@ -1230,6 +1224,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+
+        # Append container_upload blocks to the last user message with content so the code
+        # execution tool can access uploaded files when `message_history` is used.
+        if pending_container_uploads:
+            upload_blocks = [
+                BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
+                for file_id in pending_container_uploads
+            ]
+            for msg in reversed(anthropic_messages):
+                if msg['role'] == 'user':
+                    msg['content'] = list(msg['content']) + upload_blocks
+                    break
+
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 

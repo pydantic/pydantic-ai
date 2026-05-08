@@ -6296,7 +6296,7 @@ async def test_anthropic_code_execution_tool_without_file_ids():
 
 
 async def test_anthropic_container_upload_blocks_in_messages():
-    """Test that container_upload blocks are added to the first user message."""
+    """Test that container_upload blocks are appended to the last user message."""
     from pydantic_ai.messages import UploadedFile
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -6336,24 +6336,24 @@ async def test_anthropic_container_upload_blocks_in_messages():
     content = user_message['content']
     assert isinstance(content, list)
 
-    # Should have: 2 container_upload blocks + text block
+    # Should have: text block + 2 container_upload blocks
     assert len(content) == 3
 
-    # First two should be container_upload blocks (prepended before user content)
-    upload_block_1 = content[0]
-    assert isinstance(upload_block_1, dict)
-    assert upload_block_1['type'] == 'container_upload'
-    assert upload_block_1['file_id'] == 'file_abc'
-    upload_block_2 = content[1]
-    assert isinstance(upload_block_2, dict)
-    assert upload_block_2['type'] == 'container_upload'
-    assert upload_block_2['file_id'] == 'file_xyz'
-
-    # Last should be the text
-    text_block = content[2]
+    # First should be the text
+    text_block = content[0]
     assert isinstance(text_block, dict)
     assert text_block['type'] == 'text'
     assert text_block['text'] == 'Test message'
+
+    # Last two should be container_upload blocks (appended after user content)
+    upload_block_1 = content[1]
+    assert isinstance(upload_block_1, dict)
+    assert upload_block_1['type'] == 'container_upload'
+    assert upload_block_1['file_id'] == 'file_abc'
+    upload_block_2 = content[2]
+    assert isinstance(upload_block_2, dict)
+    assert upload_block_2['type'] == 'container_upload'
+    assert upload_block_2['file_id'] == 'file_xyz'
 
 
 async def test_anthropic_filters_files_from_other_providers():
@@ -6398,20 +6398,20 @@ async def test_anthropic_filters_files_from_other_providers():
     content = user_message['content']
     assert isinstance(content, list)
 
-    # Should have: 1 container_upload block (only anthropic file) + text block
+    # Should have: text block + 1 container_upload block (only anthropic file)
     assert len(content) == 2
 
-    # First should be the anthropic container_upload block
-    upload_block = content[0]
-    assert isinstance(upload_block, dict)
-    assert upload_block['type'] == 'container_upload'
-    assert upload_block['file_id'] == 'file_anthropic'
-
-    # Last should be the text
-    text_block = content[1]
+    # First should be the text
+    text_block = content[0]
     assert isinstance(text_block, dict)
     assert text_block['type'] == 'text'
     assert text_block['text'] == 'Test message'
+
+    # Last should be the anthropic container_upload block
+    upload_block = content[1]
+    assert isinstance(upload_block, dict)
+    assert upload_block['type'] == 'container_upload'
+    assert upload_block['file_id'] == 'file_anthropic'
 
 
 @pytest.mark.vcr()
