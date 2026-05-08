@@ -1989,7 +1989,9 @@ def test_anthropic_custom_replay_blocks_malformed_content():
     )
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
-    refs, message = _build_custom_tool_search_replay_blocks(malformed, tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(
+        malformed, tool_search_active=True, available_tool_names=set()
+    )
     assert refs is None and message is None
 
 
@@ -2014,7 +2016,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
         content={'discovered_tools': []},
         provider_details={'error_code': 'unavailable', 'error_message': 'temporary outage'},
     )
-    block = _build_tool_search_replay_block(return_part, 'srv_err')
+    block = _build_tool_search_replay_block(return_part, 'srv_err', available_tool_names=set())
     assert block == {
         'tool_use_id': 'srv_err',
         'type': 'tool_search_tool_result',
@@ -3017,6 +3019,76 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     assert discovered == {'calculate_mortgage'}
 
 
+def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() -> None:
+    """`synthesize_local_tool_search_messages` also reaches into existing `ModelRequest`
+    parts: a base `ToolReturnPart` carrying `tool_kind='tool_search'` (e.g. one
+    constructed manually before going through the discriminator) is promoted to its
+    typed `ToolSearchReturnPart` subclass in place. Mirrors the response-side
+    promotion so cross-provider history stays uniformly typed regardless of where
+    the parts originated."""
+    from pydantic_ai.messages import ToolCallPart
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'keywords': 'a'}, tool_call_id='c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_tools',
+                    content={'discovered_tools': [{'name': 'foo', 'description': None}]},
+                    tool_call_id='c1',
+                    tool_kind='tool_search',
+                ),
+            ],
+        ),
+    ]
+    translated = synthesize_local_tool_search_messages(history)
+    request = translated[1]
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, ToolSearchReturnPart)
+    assert part.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
+
+
+def test_tool_search_toolset_parses_discovery_with_none_content() -> None:
+    """A `BuiltinToolSearchReturnPart` with `content=None` (recoverable provider error
+    path) leaves the discovered set empty without raising — `_collect_typed`
+    short-circuits on missing content rather than dereferencing a `None` `discovered_tools`."""
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart as _BuiltinSearchReturn
+
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                _BuiltinSearchReturn(
+                    provider_name='anthropic',
+                    tool_call_id='srv_err',
+                    content=None,
+                ),
+            ],
+        ),
+    ]
+    base_toolset = FunctionToolset[None]()
+    ts = ToolSearchToolset(wrapped=base_toolset)
+    discovered = ts._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
+        cast(Any, type('_Ctx', (), {'messages': history})()),
+    )
+    assert discovered == set()
+
+
+async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
+    """`ToolSearch(parameter_description=...)` flows through to the local `search_tools`
+    function tool's `keywords` parameter description on the wire — verifies the
+    custom-description branch in `_build_search_args_schema` rebuilds the JSON
+    schema rather than reusing the default."""
+    cap = ToolSearch[None](parameter_description='custom keyword hint')
+    base_toolset = _create_function_toolset()
+    wrapped = cap.get_wrapper_toolset(base_toolset)
+    ctx = _build_run_context(None)
+    tools = await wrapped.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+    schema = search_tool.tool_def.parameters_json_schema
+    assert schema['properties']['keywords']['description'] == 'custom keyword hint'
+
+
 def test_prepare_messages_translates_on_non_native_model() -> None:
     """`Model.prepare_messages` is the centralized hook that runs before the adapter's
     message-prep on every request. On a model whose profile doesn't include
@@ -3163,6 +3235,33 @@ def test_pydantic_validation_accepts_search_tools_collision_when_tool_kind_unset
     assert type(part) is ToolReturnPart
     assert part.tool_kind is None
     assert part.content == {'unrelated': 'data', 'definitely_not_discovered_tools': 42}
+
+
+def test_pydantic_validation_promotes_local_tool_return_with_tool_kind_set() -> None:
+    """A serialized `tool-return` carrying `tool_kind='tool_search'` and a typed-shape
+    `discovered_tools` payload is promoted to `ToolSearchReturnPart` by Pydantic's
+    discriminated-union dispatch — the discriminator routes (part_kind, tool_kind)
+    to the typed tag so deserialization rebuilds the typed subclass directly."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    raw = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 'search_tools',
+                    'tool_kind': 'tool_search',
+                    'content': {'discovered_tools': [{'name': 'foo', 'description': None}]},
+                    'tool_call_id': 'c1',
+                },
+            ],
+        },
+    ]
+    [req] = ModelMessagesTypeAdapter.validate_python(raw)
+    [part] = req.parts
+    assert isinstance(part, ToolSearchReturnPart)
+    assert part.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
 
 
 def test_pydantic_validation_accepts_search_tools_string_content_collision() -> None:
@@ -3503,6 +3602,31 @@ def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
     assert ToolReturnPart.narrow_type(part) is part
 
 
+def test_narrow_type_local_return_promotes_with_tool_kind_set() -> None:
+    """A base `ToolReturnPart` with `tool_kind='tool_search'` and a valid typed-content
+    payload is promoted to `ToolSearchReturnPart` by `narrow_type`. Mirror of the
+    builtin-side promotion test, exercising the local (function-tool) variant."""
+    base = ToolReturnPart(
+        tool_name='search_tools',
+        content={'discovered_tools': [{'name': 'foo', 'description': None}]},
+        tool_call_id='c1',
+        tool_kind='tool_search',
+    )
+    narrowed = ToolReturnPart.narrow_type(base)
+    assert isinstance(narrowed, ToolSearchReturnPart)
+    assert narrowed.content == {'discovered_tools': [{'name': 'foo', 'description': None}]}
+
+
+def test_narrow_type_no_tool_kind_returns_input_unchanged_for_local_and_builtin_returns() -> None:
+    """`narrow_type` is a no-op when `tool_kind` is `None` — the user-tool default —
+    on both `ToolReturnPart` and `BuiltinToolReturnPart`. This is the early-exit
+    branch that keeps user tools untouched without consulting the registry."""
+    local = ToolReturnPart(tool_name='foo', content='bar', tool_call_id='c1')
+    assert ToolReturnPart.narrow_type(local) is local
+    builtin = BuiltinToolReturnPart(tool_name='foo', content='bar', tool_call_id='c1')
+    assert BuiltinToolReturnPart.narrow_type(builtin) is builtin
+
+
 def test_model_request_part_discriminator_recognizes_tool_search_return_instance() -> None:
     """The request-part discriminator returns the typed tag when called with a
     `ToolSearchReturnPart` instance.
@@ -3611,7 +3735,7 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(empty, tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(empty, tool_search_active=True, available_tool_names=set())
     assert refs == []
     assert message == 'No matches; try other keywords.'
 
@@ -3631,8 +3755,52 @@ def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(base_part, tool_search_active=True)
+    refs, message = _build_custom_tool_search_replay_blocks(
+        base_part, tool_search_active=True, available_tool_names={'foo'}
+    )
     assert refs is None and message is None
+
+
+def test_anthropic_replay_filters_stale_tool_references() -> None:
+    """Anthropic rejects `tool_reference` blocks pointing at tools not in the request's
+    `tools` list (e.g. an MCP whose connection failed this turn, dropping its tools
+    from the corpus). Both replay paths — custom-callable `tool_result.content` and
+    native `tool_search_tool_search_result.tool_references` — must filter against the
+    set of tools the current turn will actually send."""
+    pytest.importorskip('anthropic')
+    from pydantic_ai.builtin_tools.tool_search import ToolSearchMatch, ToolSearchReturnContent
+    from pydantic_ai.messages import BuiltinToolSearchReturnPart, ToolSearchReturnPart
+    from pydantic_ai.models.anthropic import (
+        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
+        _build_tool_search_replay_block,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    discovered: list[ToolSearchMatch] = [
+        {'name': 'still_here', 'description': 'a'},
+        {'name': 'gone_this_turn', 'description': 'b'},
+    ]
+    content: ToolSearchReturnContent = {'discovered_tools': discovered}
+
+    custom_part = ToolSearchReturnPart(content=content, tool_call_id='c1')
+    refs, _ = _build_custom_tool_search_replay_blocks(
+        custom_part, tool_search_active=True, available_tool_names={'still_here'}
+    )
+    assert refs == [{'tool_name': 'still_here', 'type': 'tool_reference'}]
+
+    native_part = BuiltinToolSearchReturnPart(
+        provider_name='anthropic',
+        tool_call_id='srv_ok',
+        content=content,
+    )
+    block = _build_tool_search_replay_block(native_part, 'srv_ok', available_tool_names={'still_here'})
+    assert block == {
+        'tool_use_id': 'srv_ok',
+        'type': 'tool_search_tool_result',
+        'content': {
+            'type': 'tool_search_tool_search_result',
+            'tool_references': [{'tool_name': 'still_here', 'type': 'tool_reference'}],
+        },
+    }
 
 
 def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_args() -> None:
@@ -3846,9 +4014,11 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
         ),
     ]
     # Default native strategy (NOT 'custom') — currently the gate that activates the
-    # tool_reference replay re-formatting only fires for `strategy='custom'`.
+    # tool_reference replay re-formatting only fires for `strategy='custom'`. The
+    # discovered tool ships on the wire with `defer_loading=True`; the replay
+    # reference unlocks its schema server-side.
     params = ModelRequestParameters(
-        function_tools=[],
+        function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
         builtin_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
@@ -3904,7 +4074,7 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
         ),
     ]
     params = ModelRequestParameters(
-        function_tools=[],
+        function_tools=[ToolDefinition(name='calculate', defer_loading=True)],
         builtin_tools=[ToolSearchTool(strategy='bm25')],
         allow_text_output=True,
     )

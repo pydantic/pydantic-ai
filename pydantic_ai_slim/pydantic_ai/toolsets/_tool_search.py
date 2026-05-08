@@ -26,6 +26,7 @@ from __future__ import annotations
 import inspect
 import re
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from functools import cache
 from typing import Annotated, Any
@@ -153,17 +154,19 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
     is the source of truth for both). A custom description gets a per-description rebuild
     whose result is memoized — the framework only pays schema-construction cost on the
     first run with a given override.
+
+    The custom path splices `parameter_description` into the existing JSON schema rather
+    than rebuilding from a closure-bound signature: `from __future__ import annotations`
+    stringifies the type expression, so a closure-captured `parameter_description` would
+    be unresolvable when `Tool` re-evaluates the string at schema-derivation time. The
+    validator is unaffected by description, so we can safely reuse the default one.
     """
     if parameter_description == _DEFAULT_PARAMETER_DESCRIPTION:
         return _SEARCH_TOOL_SCHEMA, _SEARCH_TOOL_VALIDATOR
 
-    def _custom_search_tools_signature(  # pragma: no cover - schema source only
-        keywords: Annotated[str, Field(description=parameter_description)],
-    ) -> str:
-        return keywords
-
-    fn_schema = Tool(_custom_search_tools_signature).function_schema
-    return fn_schema.json_schema, fn_schema.validator
+    schema = deepcopy(_SEARCH_TOOL_SCHEMA)
+    schema['properties']['keywords']['description'] = parameter_description
+    return schema, _SEARCH_TOOL_VALIDATOR
 
 
 @dataclass(kw_only=True)

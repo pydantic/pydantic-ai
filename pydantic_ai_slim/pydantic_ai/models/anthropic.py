@@ -1151,6 +1151,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # also covers the no-history single-turn custom callable case (where the local
         # `search_tools` exchange is created on this turn).
         tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.builtin_tools)
+        # Filter `tool_reference` entries during replay against the tools the current turn
+        # will actually send: Anthropic rejects references to tools not in the wire `tools`
+        # list (e.g. an MCP that failed to register this turn). The previously-discovered
+        # name still lives in history; it just isn't worth replaying as a tool reference.
+        available_tool_names = {t.name for t in model_request_parameters.function_tools}
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -1168,7 +1173,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
-                            request_part, tool_search_active
+                            request_part, tool_search_active, available_tool_names
                         )
                         if custom_tool_refs:
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
@@ -1466,7 +1471,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                             elif isinstance(response_part, BuiltinToolSearchReturnPart):
                                 assistant_content_params.append(
-                                    _build_tool_search_replay_block(response_part, tool_use_id)
+                                    _build_tool_search_replay_block(response_part, tool_use_id, available_tool_names)
                                 )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
@@ -2318,7 +2323,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 
 def _build_custom_tool_search_replay_blocks(
-    request_part: ToolReturnPart, tool_search_active: bool
+    request_part: ToolReturnPart, tool_search_active: bool, available_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
     """Tool-search replay payload for the Anthropic `tool_result` block.
 
@@ -2337,6 +2342,11 @@ def _build_custom_tool_search_replay_blocks(
     when the current turn runs on Anthropic. Both flavors live in one helper because
     the wire shape is the same: `tool_use` + `tool_result` with `tool_reference`
     content blocks.
+
+    `available_tool_names` filters the references against the tools currently in
+    `function_tools` on the wire — Anthropic rejects `tool_reference` entries for
+    tools not in the request's `tools` list (e.g. an MCP server that failed to
+    register this turn).
     """
     if not tool_search_active:
         return None, None
@@ -2345,18 +2355,24 @@ def _build_custom_tool_search_replay_blocks(
     refs = [
         BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
         for match in request_part.content['discovered_tools']
+        if match['name'] in available_tool_names
     ]
     return refs, request_part.content.get('message')
 
 
 def _build_tool_search_replay_block(
-    response_part: BuiltinToolSearchReturnPart, tool_use_id: str
+    response_part: BuiltinToolSearchReturnPart, tool_use_id: str, available_tool_names: set[str]
 ) -> BetaToolSearchToolResultBlockParam:
     """Reconstruct an Anthropic tool-search result block for history replay.
 
     Reads the cross-provider
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] off
     `content` and any error fields the parse-time mapper stashed on `provider_details`.
+
+    `available_tool_names` filters references against the tools currently in
+    `function_tools` on the wire — Anthropic rejects `tool_reference` entries for
+    tools not in the request's `tools` list (e.g. an MCP server that failed to
+    register this turn).
     """
     err = response_part.provider_details or {}
     inner: BetaToolSearchToolResultErrorParam | BetaToolSearchToolSearchResultBlockParam
@@ -2370,7 +2386,11 @@ def _build_tool_search_replay_block(
         )
     else:
         matches = response_part.content['discovered_tools'] if response_part.content else []
-        tool_refs = [BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference') for match in matches]
+        tool_refs = [
+            BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
+            for match in matches
+            if match['name'] in available_tool_names
+        ]
         inner = BetaToolSearchToolSearchResultBlockParam(
             type='tool_search_tool_search_result',
             tool_references=tool_refs,
