@@ -44,6 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -51,7 +52,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -186,6 +187,73 @@ async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: 
 
     await agent.run('Hello')
     assert 'parallel_tool_calls' not in get_mock_responses_kwargs(mock_client)[0]
+
+
+async def test_openai_responses_tool_choice_list_unsupported_raises_error(allow_model_requests: None) -> None:
+    """Tuple-resolved forcing must consult `_support_tool_forcing` in the Responses tuple branch too.
+
+    Same regression as the Chat-side test — a list[str] `tool_choice` resolved to `('required', {names})`
+    used to be sent without checking the model profile.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIResponsesModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    tools = [
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ToolDefinition(name='get_time', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ]
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape("tool_choice=['get_weather'] is not supported by model 'custom-model'"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest.user_text_prompt('What is the weather?')],
+            model_settings={'tool_choice': ['get_weather']},
+            model_request_parameters=mrp,
+        )
+
+
+async def test_responses_tool_choice_kept_when_only_builtin_tools(allow_model_requests: None) -> None:
+    """Regression: with builtin tools but no function/output tools and `allow_text_output=False`,
+    `_get_responses_tool_choice` previously returned `tool_choice=None` because `tool_defs` was empty,
+    which silently dropped the resolved `'required'` value. Builtin tools merged in by
+    `_responses_create` then went out with the API default `'auto'`.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    mrp = ModelRequestParameters(builtin_tools=[WebSearchTool()], allow_text_output=False)
+    await model.request([ModelRequest.user_text_prompt('search the web')], None, mrp)
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert kwargs.get('tool_choice') == 'required'
+    assert kwargs.get('tools')
 
 
 @pytest.mark.parametrize(
@@ -10912,6 +10980,95 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
 
 
+async def test_stream_cancel(allow_model_requests: None):
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello ',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='world',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=4,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='resp_001',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_null_text(allow_model_requests: None):
     """Test that ResponseOutputText with text=null (from gateways like Bifrost) is handled gracefully."""
     c = response_message(
@@ -10971,6 +11128,8 @@ async def test_openai_responses_null_text(allow_model_requests: None):
 
 async def test_openai_responses_null_text_stream(allow_model_requests: None):
     """Test that ResponseTextDeltaEvent with delta=null (from gateways like Bifrost) is handled gracefully."""
+    from openai.types import responses as resp
+
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',

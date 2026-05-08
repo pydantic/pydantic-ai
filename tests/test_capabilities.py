@@ -507,7 +507,9 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
@@ -1049,8 +1051,10 @@ def test_model_json_schema_with_capabilities():
                     'description': """\
 Settings to configure an LLM.
 
-Here we include only settings which apply to multiple models / model providers,
-though not all of these settings are supported by all models.\
+Includes only settings which apply to multiple models / model providers,
+though not all of these settings are supported by all models.
+
+All types must be serializable using Pydantic.\
 """,
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
@@ -1058,6 +1062,15 @@ though not all of these settings are supported by all models.\
                         'top_p': {'title': 'Top P', 'type': 'number'},
                         'timeout': {'title': 'Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'tool_choice': {
+                            'anyOf': [
+                                {'enum': ['none', 'required', 'auto'], 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'$ref': '#/$defs/ToolOrOutput'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tool Choice',
+                        },
                         'seed': {'title': 'Seed', 'type': 'integer'},
                         'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
                         'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
@@ -1087,6 +1100,14 @@ though not all of these settings are supported by all models.\
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'ToolOrOutput': {
+                    'properties': {
+                        'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
+                    },
+                    'required': ['function_tools'],
+                    'title': 'ToolOrOutput',
                     'type': 'object',
                 },
                 'UrlContextTool': {
@@ -2461,6 +2482,55 @@ async def test_concurrent_runs_capability_isolation():
     results = await asyncio.gather(agent.run('A'), agent.run('B'))
     assert results[0].output == 'Done'
     assert results[1].output == 'Done'
+
+
+@pytest.mark.parametrize(
+    'forced_choice',
+    [
+        pytest.param('required', id='required'),
+        pytest.param(['get_weather'], id='list'),
+    ],
+)
+async def test_capability_can_inject_forcing_tool_choice_per_step(forced_choice: Any):
+    """A capability returning a callable from get_model_settings() may inject `tool_choice='required'`
+    or `list[str]` per step without tripping the agent.run baseline validator.
+
+    Forces the tool on step 1, then steps aside so the agent can produce a final response.
+    """
+
+    class ForceFirstStep(AbstractCapability[None]):
+        def get_model_settings(self) -> Any:
+            def settings(ctx: RunContext[None]) -> _ModelSettings:
+                tool_called = any(
+                    isinstance(part, ToolReturnPart) and part.tool_name == 'get_weather'
+                    for message in ctx.messages
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                )
+                if tool_called:
+                    return _ModelSettings()
+                return _ModelSettings(tool_choice=forced_choice)
+
+            return settings
+
+    seen_tool_choices: list[Any] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_choices.append((info.model_settings or {}).get('tool_choice'))
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='sunny')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'})])
+
+    agent = Agent(FunctionModel(respond), capabilities=[ForceFirstStep()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run('Weather in Paris?')
+
+    assert result.output == 'sunny'
+    assert seen_tool_choices == [forced_choice, None]
 
 
 # --- Hooks test helpers ---
