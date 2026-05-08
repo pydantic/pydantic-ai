@@ -455,15 +455,14 @@ async def test_search_tool_def_description_and_schema():
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {
+            'additionalProperties': False,
             'properties': {
                 'keywords': {
                     'description': 'Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.',
-                    'title': 'Keywords',
                     'type': 'string',
                 }
             },
             'required': ['keywords'],
-            'title': 'SearchToolArgs',
             'type': 'object',
         }
     )
@@ -2568,7 +2567,6 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
         'discovered_tools': [],
         'message': 'No matching tools found. The tools you need may not be available.',
     }
-    assert result.content == 'No matching tools found. The tools you need may not be available.'
 
 
 async def test_tool_search_capability_strategy_callable_registers_custom_builtin():

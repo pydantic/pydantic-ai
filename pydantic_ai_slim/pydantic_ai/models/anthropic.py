@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import io
-import json
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -9,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, TypeAlias, cast, overload
 
+import pydantic_core
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -2525,8 +2525,8 @@ def _finalize_streamed_tool_search_call_part(part: BuiltinToolSearchCallPart) ->
         return part
     if isinstance(part.args, str):
         try:
-            parsed: dict[str, Any] | None = cast(dict[str, Any], json.loads(part.args))
-        except json.JSONDecodeError:  # pragma: no cover - malformed partial args
+            parsed: dict[str, Any] | None = cast(dict[str, Any], pydantic_core.from_json(part.args))
+        except ValueError:  # pragma: no cover - malformed partial args
             parsed = None
     else:
         parsed = None

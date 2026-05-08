@@ -1952,9 +1952,10 @@ def _model_request_part_discriminator(v: Any) -> str | None:
         if kind == 'tool-return' and tool_kind == 'tool_search':
             return 'tool-search-return'
         return kind if isinstance(kind, str) else None
-    if isinstance(v, ToolSearchReturnPart):
+    elif isinstance(v, ToolSearchReturnPart):
         return 'tool-search-return'
-    return getattr(v, 'part_kind', None)
+    else:
+        return getattr(v, 'part_kind', None)
 
 
 ModelRequestPart = Annotated[
@@ -1989,18 +1990,20 @@ def _model_response_part_discriminator(v: Any) -> str | None:
         tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if kind == 'builtin-tool-call' and tool_kind == 'tool_search':
             return 'builtin-tool-search-call'
-        if kind == 'builtin-tool-return' and tool_kind == 'tool_search':
+        elif kind == 'builtin-tool-return' and tool_kind == 'tool_search':
             return 'builtin-tool-search-return'
-        if kind == 'tool-call' and tool_kind == 'tool_search':
+        elif kind == 'tool-call' and tool_kind == 'tool_search':
             return 'tool-search-call'
-        return kind if isinstance(kind, str) else None
-    if isinstance(v, BuiltinToolSearchCallPart):
+        else:
+            return kind if isinstance(kind, str) else None
+    elif isinstance(v, BuiltinToolSearchCallPart):
         return 'builtin-tool-search-call'
-    if isinstance(v, BuiltinToolSearchReturnPart):
+    elif isinstance(v, BuiltinToolSearchReturnPart):
         return 'builtin-tool-search-return'
-    if isinstance(v, ToolSearchCallPart):
+    elif isinstance(v, ToolSearchCallPart):
         return 'tool-search-call'
-    return getattr(v, 'part_kind', None)
+    else:
+        return getattr(v, 'part_kind', None)
 
 
 ModelResponsePart = Annotated[

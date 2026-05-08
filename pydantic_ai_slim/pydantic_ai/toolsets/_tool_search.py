@@ -49,7 +49,7 @@ from ..messages import (
     ToolReturnPart,
     ToolSearchReturnPart,
 )
-from ..tools import ToolDefinition
+from ..tools import Tool, ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -120,23 +120,50 @@ _DEFAULT_TOOL_DESCRIPTION = (
 )
 
 
-@cache
-def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any], TypeAdapter[Any]]:
-    """Build the `search_tools` parameter schema for the given description.
+_DEFAULT_PARAMETER_DESCRIPTION = (
+    'Space-separated keywords to match against tool names and descriptions.'
+    ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
+)
 
-    Cached per-description: the default description is used for every agent step with
-    deferred tools, so we only pay for class and adapter construction once per distinct
-    description value.
+
+def _search_tools_signature(
+    keywords: Annotated[str, Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
+) -> str:  # pragma: no cover - schema source only, never invoked
+    """Source-of-truth signature for the `search_tools` function tool.
+
+    Used by [`Tool`][pydantic_ai.tools.Tool] to derive the JSON schema and validator
+    that go on the `ToolDefinition` we hand to the model. Wrapping the function in a
+    `Tool` (rather than hand-rolling a `TypedDict` + `TypeAdapter`) keeps schema
+    generation aligned with how every other tool in the framework is defined.
     """
+    return keywords
 
-    class _SearchToolArgs(TypedDict):
-        keywords: Annotated[str, Field(description=parameter_description)]
 
-    ta = TypeAdapter(_SearchToolArgs)
-    schema = ta.json_schema()
-    # TypeAdapter doesn't support config= for TypedDict; rename away from the private class.
-    schema['title'] = 'SearchToolArgs'
-    return schema, ta
+_SEARCH_TOOL_FN_SCHEMA = Tool(_search_tools_signature).function_schema
+_SEARCH_TOOL_SCHEMA: dict[str, Any] = _SEARCH_TOOL_FN_SCHEMA.json_schema
+_SEARCH_TOOL_VALIDATOR = _SEARCH_TOOL_FN_SCHEMA.validator
+
+
+@cache
+def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any], Any]:
+    """Reuse the default schema/validator or splice in a custom `keywords` description.
+
+    Cached per-description: with the default description the call is a constant-time
+    lookup that returns the module-level schema and validator (`Tool(fn).function_schema`
+    is the source of truth for both). A custom description gets a per-description rebuild
+    whose result is memoized — the framework only pays schema-construction cost on the
+    first run with a given override.
+    """
+    if parameter_description == _DEFAULT_PARAMETER_DESCRIPTION:
+        return _SEARCH_TOOL_SCHEMA, _SEARCH_TOOL_VALIDATOR
+
+    def _custom_search_tools_signature(  # pragma: no cover - schema source only
+        keywords: Annotated[str, Field(description=parameter_description)],
+    ) -> str:
+        return keywords
+
+    fn_schema = Tool(_custom_search_tools_signature).function_schema
+    return fn_schema.json_schema, fn_schema.validator
 
 
 @dataclass(kw_only=True)
@@ -234,8 +261,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         deferred: dict[str, ToolsetTool[AgentDepsT]],
         discovered: set[str],
     ) -> _SearchTool[AgentDepsT]:
-        parameter_description = self.parameter_description or self._DEFAULT_PARAMETER_DESCRIPTION
-        schema, args_ta = _build_search_args_schema(parameter_description)
+        parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
+        schema, args_validator = _build_search_args_schema(parameter_description)
 
         # Real `ToolDefinition`s for tools still pending discovery — what the user's
         # search function sees, and what the local keywords search indexes.
@@ -258,7 +285,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             toolset=self,
             tool_def=search_tool_def,
             max_retries=1,
-            args_validator=args_ta.validator,  # pyright: ignore[reportArgumentType]
+            args_validator=args_validator,
             corpus=corpus,
         )
 
@@ -336,14 +363,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             return await self._run_search_fn(keywords, ctx, search_tool)
         return self._run_keywords_search(keywords, search_tool)
 
-    # The `'keywords'` local strategy and its default parameter description live together —
-    # this sets up cleanly for a future strategy registry without doing the registry now.
-    # Future: extract a `_LOCAL_STRATEGIES` dict if/when a second local strategy lands.
-    _DEFAULT_PARAMETER_DESCRIPTION = (
-        'Space-separated keywords to match against tool names and descriptions.'
-        ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
-    )
-
     def _run_keywords_search(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
         """Score each tool by how many query keywords appear in its name/description.
 
@@ -395,23 +414,19 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     @classmethod
     def _empty_return(cls) -> ToolReturn:
-        """Shaped "no matches" return: empty `discovered_tools` list + a user-visible note.
+        """Shaped "no matches" return: empty discovered_tools list with a user-visible message.
 
-        The note is sent to the model as separate content (`ToolReturn.content`) so
-        the model doesn't retry searching with the same keywords, while
-        `return_value` stays as a typed
-        [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-        with the `message` slot mirroring the same text for adapters that need it
-        on the wire (Anthropic custom-callable empty-results path).
+        Sending only the typed
+        [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] is enough
+        — the JSON-serialized return value carries the message to the model, so it doesn't
+        retry searching with the same keywords; adapters that need the message on the wire
+        (Anthropic custom-callable empty-results path) read it from there too.
         """
         return_value: ToolSearchReturnContent = {
             'discovered_tools': [],
             'message': cls._NO_MATCHES_MESSAGE,
         }
-        return ToolReturn(
-            return_value=return_value,
-            content=cls._NO_MATCHES_MESSAGE,
-        )
+        return ToolReturn(return_value=return_value)
 
     @staticmethod
     def _build_return(matches: list[ToolSearchMatch]) -> ToolReturn:

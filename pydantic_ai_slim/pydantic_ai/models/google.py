@@ -23,7 +23,6 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ..builtin_tools.tool_search import ToolSearchTool
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -443,14 +442,8 @@ class GoogleModel(Model[Client]):
         ).google_supports_native_output_with_builtin_tools
         # Ignore optional infrastructure builtins (e.g. auto-injected `ToolSearchTool`) —
         # they're dropped by `Model.prepare_request` when inert and shouldn't trigger the
-        # "builtin + output tools" path. The `optional` flag lives on `ToolSearchTool`
-        # specifically (the only consumer today); other builtin types are always treated
-        # as user-requested.
-        # `optional` lives on `ToolSearchTool` only (not the base class), hence the
-        # isinstance narrowing.
-        user_builtin_tools = [
-            t for t in model_request_parameters.builtin_tools if not (isinstance(t, ToolSearchTool) and t.optional)
-        ]
+        # "builtin + output tools" path.
+        user_builtin_tools = [t for t in model_request_parameters.builtin_tools if not t.optional]
         if user_builtin_tools and model_request_parameters.output_tools:
             default_mode = 'native' if supports_native_output_with_builtin_tools else 'prompted'
             model_request_parameters = model_request_parameters.with_default_output_mode(default_mode)
