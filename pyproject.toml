@@ -241,6 +241,11 @@ testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
+    # v2 deprecations: Agent.__init__ kwargs covered by capabilities (card 40).
+    # The 1.x deprecation warning is the contract; new tests assert it via pytest.warns. Existing
+    # call-sites still use the kwargs and rely on these filters to keep filterwarnings=["error"] green.
+    "ignore:.Agent\\(event_stream_handler=...\\). is deprecated.*:DeprecationWarning",
+    "ignore:.Agent\\(prepare_tools=...\\). is deprecated.*:DeprecationWarning",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
     # boto3
