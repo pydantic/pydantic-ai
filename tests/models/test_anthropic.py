@@ -4246,6 +4246,7 @@ I should search for San Francisco weather today to get the most current informat
                         tool_name='web_search',
                         args={'query': 'San Francisco weather today'},
                         tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        tool_kind='web_search',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -4323,6 +4324,7 @@ I should search for San Francisco weather today to get the most current informat
                             },
                         ],
                         tool_call_id='srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -4454,6 +4456,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         tool_name='web_search',
                         args={'query': 'Mexico City weather today'},
                         tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        tool_kind='web_search',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -4531,6 +4534,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                             },
                         ],
                         tool_call_id='srvtoolu_01SnV7n4h3ZQtz14JriSp4xa',
+                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -4675,6 +4679,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         tool_name='web_search',
                         args='{"query": "San Francisco weather today"}',
                         tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        tool_kind='web_search',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -4752,6 +4757,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             },
                         ],
                         tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -4762,6 +4768,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         tool_name='web_search',
                         args='{"query": "San Francisco weather September 16 2025"}',
                         tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        tool_kind='web_search',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -4839,6 +4846,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                             },
                         ],
                         tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                        tool_kind='web_search',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -4987,7 +4995,10 @@ I should search for current weather in San Francisco. I'll include "today" in th
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_kind='web_search',
+                    provider_name='anthropic',
                 ),
                 previous_part_kind='thinking',
             ),
@@ -5026,6 +5037,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -5107,6 +5119,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         },
                     ],
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -5134,7 +5147,10 @@ I should search for current weather in San Francisco. I'll include "today" in th
             PartStartEvent(
                 index=4,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_kind='web_search',
+                    provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
@@ -5182,6 +5198,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -5263,6 +5280,7 @@ I should search for current weather in San Francisco. I'll include "today" in th
                         },
                     ],
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -5490,6 +5508,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 )
             ),
@@ -5569,6 +5588,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         },
                     ],
                     tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -5578,6 +5598,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 )
             ),
@@ -5657,6 +5678,7 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                         },
                     ],
                     tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -5707,6 +5729,7 @@ Let me fetch the page first.\
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
+                        tool_kind='web_fetch',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -5727,6 +5750,7 @@ Let me fetch the page first.\
                             'url': 'https://ai.pydantic.dev',
                         },
                         tool_call_id=IsStr(),
+                        tool_kind='web_fetch',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -5792,6 +5816,7 @@ Let me fetch the page first.\
                         tool_name='web_fetch',
                         args={'url': 'https://ai.pydantic.dev'},
                         tool_call_id=IsStr(),
+                        tool_kind='web_fetch',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -5812,6 +5837,7 @@ Let me fetch the page first.\
                             'url': 'https://ai.pydantic.dev',
                         },
                         tool_call_id=IsStr(),
+                        tool_kind='web_fetch',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -5961,6 +5987,7 @@ async def test_anthropic_web_fetch_tool_stream(
                         tool_name='web_fetch',
                         args='{"url": "https://ai.pydantic.dev"}',
                         tool_call_id=IsStr(),
+                        tool_kind='web_fetch',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -5981,6 +6008,7 @@ async def test_anthropic_web_fetch_tool_stream(
                             'url': 'https://ai.pydantic.dev',
                         },
                         tool_call_id=IsStr(),
+                        tool_kind='web_fetch',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -6036,7 +6064,9 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
+                part=BuiltinToolCallPart(
+                    tool_name='web_fetch', tool_call_id=IsStr(), tool_kind='web_fetch', provider_name='anthropic'
+                ),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
@@ -6361,6 +6391,7 @@ Join [ Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on
                         'url': 'https://ai.pydantic.dev',
                     },
                     tool_call_id=IsStr(),
+                    tool_kind='web_fetch',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -6618,6 +6649,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                             },
                         },
                         tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        tool_kind='mcp_server',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -6633,6 +6665,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                             'is_error': False,
                         },
                         tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        tool_kind='mcp_server',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -6708,6 +6741,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                             },
                         },
                         tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        tool_kind='mcp_server',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -6767,6 +6801,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-pydantic-and-w
                             'is_error': False,
                         },
                         tool_call_id='mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y',
+                        tool_kind='mcp_server',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -6870,6 +6905,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         tool_name='mcp_server:deepwiki',
                         args='{"action":"call_tool","tool_name":"ask_question","tool_args":{"repoName": "pydantic/pydantic-ai", "question": "What is this repository about? What are its main features and purpose?"}}',
                         tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                        tool_kind='mcp_server',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -6885,6 +6921,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                             'is_error': False,
                         },
                         tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                        tool_kind='mcp_server',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -6934,6 +6971,7 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 part=BuiltinToolCallPart(
                     tool_name='mcp_server:deepwiki',
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    tool_kind='mcp_server',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='thinking',
@@ -7096,6 +7134,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                         'is_error': False,
                     },
                     tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                    tool_kind='mcp_server',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -7142,6 +7181,7 @@ print(f"3 * 12390 = {result}")\
 """
                         },
                         tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        tool_kind='code_execution',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -7154,6 +7194,7 @@ print(f"3 * 12390 = {result}")\
                             'type': 'code_execution_result',
                         },
                         tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        tool_kind='code_execution',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -7213,6 +7254,7 @@ print(f"4 * 12390 = {result}")\
 """
                         },
                         tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_kind='code_execution',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -7225,6 +7267,7 @@ print(f"4 * 12390 = {result}")\
                             'type': 'code_execution_result',
                         },
                         tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_kind='code_execution',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -7307,6 +7350,7 @@ This is a computational task that requires precise calculations, so I should use
                         tool_name='code_execution',
                         args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
                         tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_kind='code_execution',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -7328,6 +7372,7 @@ Results match: True
                             'type': 'code_execution_result',
                         },
                         tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_kind='code_execution',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -7504,6 +7549,7 @@ This is a computational task that requires precise calculations, so I should use
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_kind='code_execution',
                     provider_name='anthropic',
                 ),
                 previous_part_kind='text',
@@ -7704,6 +7750,7 @@ This is a computational task that requires precise calculations, so I should use
                     tool_name='code_execution',
                     args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
                     tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_kind='code_execution',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -7729,6 +7776,7 @@ Results match: True
                         'type': 'code_execution_result',
                     },
                     tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_kind='code_execution',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -7800,6 +7848,7 @@ Here's how it breaks down following the order of operations:
                     tool_name='code_execution',
                     args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
                     tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_kind='code_execution',
                     provider_name='anthropic',
                 )
             ),
@@ -7823,6 +7872,7 @@ Results match: True
                         'type': 'code_execution_result',
                     },
                     tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_kind='code_execution',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -8499,7 +8549,10 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             PartStartEvent(
                 index=0,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_kind='web_search',
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
@@ -8531,6 +8584,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -8612,6 +8666,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                         },
                     ],
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -8634,7 +8689,10 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             PartStartEvent(
                 index=3,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_kind='web_search',
+                    provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
@@ -8671,6 +8729,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -8752,6 +8811,7 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                         },
                     ],
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 ),
@@ -9015,6 +9075,7 @@ These stories represent major international diplomatic developments, significant
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 )
             ),
@@ -9094,6 +9155,7 @@ These stories represent major international diplomatic developments, significant
                         },
                     ],
                     tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -9103,6 +9165,7 @@ These stories represent major international diplomatic developments, significant
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_kind='web_search',
                     provider_name='anthropic',
                 )
             ),
@@ -9182,6 +9245,7 @@ These stories represent major international diplomatic developments, significant
                         },
                     ],
                     tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    tool_kind='web_search',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
@@ -9888,6 +9952,7 @@ print(result)
 """
                         },
                         tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        tool_kind='code_execution',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -9901,6 +9966,7 @@ print(result)
                             'abort_reason': None,
                         },
                         tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        tool_kind='code_execution',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
@@ -9945,6 +10011,7 @@ print(result)
 """
                         },
                         tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        tool_kind='code_execution',
                         provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
@@ -9958,6 +10025,7 @@ print(result)
                             'abort_reason': None,
                         },
                         tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        tool_kind='code_execution',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),

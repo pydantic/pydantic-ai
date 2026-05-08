@@ -3977,6 +3977,7 @@ def _map_code_interpreter_tool_call(
             'container_id': item.container_id,
             'code': item.code or '',
         },
+        tool_kind=CodeExecutionTool.kind,
         provider_name=provider_name,
     )
     call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
@@ -3987,6 +3988,7 @@ def _map_code_interpreter_tool_call(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
             content=result,
+            tool_kind=CodeExecutionTool.kind,
             provider_name=provider_name,
         ),
         file_parts,
@@ -4193,6 +4195,7 @@ def _map_web_search_tool_call(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             args=args,
+            tool_kind=WebSearchTool.kind,
             provider_name=provider_name,
             id=item.id,
         ),
@@ -4200,6 +4203,7 @@ def _map_web_search_tool_call(
             tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             content=result,
+            tool_kind=WebSearchTool.kind,
             provider_name=provider_name,
         ),
     )
@@ -4222,6 +4226,7 @@ def _map_file_search_tool_call(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             args=args,
+            tool_kind=FileSearchTool.kind,
             provider_name=provider_name,
             id=item.id,
         ),
@@ -4229,6 +4234,7 @@ def _map_file_search_tool_call(
             tool_name=FileSearchTool.kind,
             tool_call_id=item.id,
             content=result,
+            tool_kind=FileSearchTool.kind,
             provider_name=provider_name,
         ),
     )
@@ -4270,12 +4276,14 @@ def _map_image_generation_tool_call(
         BuiltinToolCallPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
+            tool_kind=ImageGenerationTool.kind,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
             tool_name=ImageGenerationTool.kind,
             tool_call_id=item.id,
             content=result,
+            tool_kind=ImageGenerationTool.kind,
             provider_name=provider_name,
         ),
         file_part,
@@ -4290,6 +4298,7 @@ def _map_mcp_list_tools(
         BuiltinToolCallPart(
             tool_name=tool_name,
             tool_call_id=item.id,
+            tool_kind=MCPServerTool.kind,
             provider_name=provider_name,
             args={'action': 'list_tools'},
         ),
@@ -4297,6 +4306,7 @@ def _map_mcp_list_tools(
             tool_name=tool_name,
             tool_call_id=item.id,
             content=item.model_dump(mode='json', include={'tools', 'error'}),
+            tool_kind=MCPServerTool.kind,
             provider_name=provider_name,
         ),
     )
@@ -4315,6 +4325,7 @@ def _map_mcp_call(
                 'tool_name': item.name,
                 'tool_args': json.loads(item.arguments) if item.arguments else {},
             },
+            tool_kind=MCPServerTool.kind,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
@@ -4324,6 +4335,7 @@ def _map_mcp_call(
                 'output': item.output,
                 'error': item.error,
             },
+            tool_kind=MCPServerTool.kind,
             provider_name=provider_name,
         ),
     )

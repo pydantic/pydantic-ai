@@ -1079,6 +1079,25 @@ class BaseToolReturnPart:
 
     _: KW_ONLY
 
+    tool_kind: str | None = None
+    """Identifier for the framework or builtin that emitted this return.
+
+    `None` for parts emitted by user-defined tools — the safe default that prevents accidental
+    promotion to a typed subclass when a user tool happens to share a name with a framework-emitted
+    one (e.g. `search_tools`). Framework-emitted parts set this explicitly:
+
+    * Typed local-fallback subclasses (e.g.
+      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]) override with a
+      `Literal` default matching the emitter (e.g. `'tool_search'`).
+    * Builtin tools mirror their [`AbstractBuiltinTool.kind`][pydantic_ai.builtin_tools.AbstractBuiltinTool.kind]
+      (e.g. `'tool_search'`, `'web_search_preview'`).
+    * MCP server tools use `'mcp_server'` (the per-server label stays in `tool_name`).
+
+    Drives the [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] /
+    [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart] discriminator alongside
+    `part_kind` so dispatch is by emitter identity rather than tool name.
+    """
+
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
 
@@ -1280,15 +1299,16 @@ class ToolReturnPart(BaseToolReturnPart):
 
     @staticmethod
     def narrow_type(part: ToolReturnPart) -> ToolReturnPart:
-        """Promote a base `ToolReturnPart` to its typed subclass when registered.
+        """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Modeled after [`BinaryContent.narrow_type`][pydantic_ai.messages.BinaryContent.narrow_type].
-        Returns the input unchanged when no narrower is registered for `part.tool_name`.
-        Use this on direct construction; Pydantic deserialization promotes
-        automatically via the discriminated-union dispatch on
+        Returns the input unchanged when `part.tool_kind` is `None` (the user-tool default)
+        or doesn't match a registered subclass. Use this on direct construction;
+        Pydantic deserialization promotes automatically via the discriminated-union dispatch on
         [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
         """
-        narrower = _TOOL_RETURN_NARROWERS.get(part.tool_name)
+        if part.tool_kind is None:
+            return part
+        narrower = _TOOL_RETURN_NARROWERS.get(part.tool_kind)
         return narrower(part) if narrower else part
 
 
@@ -1321,15 +1341,16 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 
     @staticmethod
     def narrow_type(part: BuiltinToolReturnPart) -> BuiltinToolReturnPart:
-        """Promote a base `BuiltinToolReturnPart` to its typed subclass when registered.
+        """Promote a base `BuiltinToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Modeled after [`BinaryContent.narrow_type`][pydantic_ai.messages.BinaryContent.narrow_type].
-        Returns the input unchanged when no narrower is registered for `part.tool_name`.
-        Use this on direct construction; Pydantic deserialization promotes
+        Returns the input unchanged when `part.tool_kind` is `None` or doesn't match a
+        registered subclass. Use this on direct construction; Pydantic deserialization promotes
         automatically via the discriminated-union dispatch on
         [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
-        narrower = _BUILTIN_RETURN_NARROWERS.get(part.tool_name)
+        if part.tool_kind is None:
+            return part
+        narrower = _BUILTIN_RETURN_NARROWERS.get(part.tool_kind)
         return narrower(part) if narrower else part
 
 
@@ -1721,6 +1742,14 @@ class BaseToolCallPart:
 
     _: KW_ONLY
 
+    tool_kind: str | None = None
+    """Identifier for the framework or builtin that emitted this call.
+
+    See [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] for
+    the full semantics. Drives the [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart]
+    discriminator alongside `part_kind` so dispatch is by emitter identity rather than tool name.
+    """
+
     id: str | None = None
     """An optional identifier of the tool call part, separate from the tool call ID.
 
@@ -1804,15 +1833,16 @@ class ToolCallPart(BaseToolCallPart):
 
     @staticmethod
     def narrow_type(part: ToolCallPart) -> ToolCallPart:
-        """Promote a base `ToolCallPart` to its typed subclass when registered.
+        """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Modeled after [`BinaryContent.narrow_type`][pydantic_ai.messages.BinaryContent.narrow_type].
-        Returns the input unchanged when no narrower is registered for `part.tool_name`.
-        Use this on direct construction; Pydantic deserialization promotes
-        automatically via the discriminated-union dispatch on
+        Returns the input unchanged when `part.tool_kind` is `None` (the user-tool default)
+        or doesn't match a registered subclass. Use this on direct construction;
+        Pydantic deserialization promotes automatically via the discriminated-union dispatch on
         [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
-        narrower = _TOOL_CALL_NARROWERS.get(part.tool_name)
+        if part.tool_kind is None:
+            return part
+        narrower = _TOOL_CALL_NARROWERS.get(part.tool_kind)
         return narrower(part) if narrower else part
 
 
@@ -1830,21 +1860,27 @@ class BuiltinToolCallPart(BaseToolCallPart):
     1. Define an `Args` `TypedDict` next to the builtin (e.g. in
        `pydantic_ai/builtin_tools/<name>.py`) capturing the cross-provider shape.
     2. Subclass `BuiltinToolCallPart` (and `BuiltinToolReturnPart`) here in `messages.py`,
-       set `tool_name: Literal['<name>']` as a discriminator, and shadow `args` /
-       `content` with the narrower union (`str | <Args> | None` for `args`, since the
-       streaming/partial-args case still produces `str`).
-    3. Register a narrower in `_BUILTIN_CALL_NARROWERS` / `_BUILTIN_RETURN_NARROWERS`
-       so direct construction (`narrow_type`) promotes to the typed subclass.
-    4. Add the subclass to `ModelResponsePart`'s discriminated union so Pydantic
-       deserialization auto-promotes on `model_validate` / `model_validate_json`.
+       override `tool_kind: Literal['<emitter>']` (matching the emitting
+       [`AbstractBuiltinTool.kind`][pydantic_ai.builtin_tools.AbstractBuiltinTool.kind]),
+       and shadow `args` / `content` with the narrower union (`str | <Args> | None` for
+       `args`, since the streaming/partial-args case still produces `str`).
+    3. Register a narrower in `_BUILTIN_CALL_NARROWERS` / `_BUILTIN_RETURN_NARROWERS` keyed
+       by `tool_kind` so direct construction (`narrow_type`) promotes to the typed subclass.
+    4. Add the subclass to `ModelResponsePart`'s discriminated union (and the
+       `_model_response_part_discriminator` callable) so Pydantic deserialization auto-promotes
+       on `model_validate` / `model_validate_json`.
+
+    Dispatch is by `tool_kind`, not `tool_name`. This protects users whose tools happen to
+    share a name with one of ours from accidentally getting their parts promoted (and
+    failing shape validation against the typed `args`/`content`).
 
     The `provider_details` field carries genuinely non-portable provider extras
     (e.g. Anthropic's `strategy: 'bm25' | 'regex'` for tool search). Promote a field
     to a typed slot in `args` / `content` only when at least two of OpenAI, Anthropic,
     and Google support it (cf. [issue #3885](https://github.com/pydantic/pydantic-ai/issues/3885)).
 
-    MCP's `tool_name='mcp_server:<label>'` doesn't fit a `Literal` discriminator and
-    stays on the base class as known follow-up work tracked by
+    MCP server tools land here with `tool_kind='mcp_server'` (label stays in
+    `tool_name='mcp_server:<label>'`); typed-subclass work for MCP is tracked by
     [issue #3561](https://github.com/pydantic/pydantic-ai/issues/3561).
     """
 
@@ -1855,15 +1891,16 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
     @staticmethod
     def narrow_type(part: BuiltinToolCallPart) -> BuiltinToolCallPart:
-        """Promote a base `BuiltinToolCallPart` to its typed subclass when registered.
+        """Promote a base `BuiltinToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Modeled after [`BinaryContent.narrow_type`][pydantic_ai.messages.BinaryContent.narrow_type].
-        Returns the input unchanged when no narrower is registered for `part.tool_name`.
-        Use this on direct construction; Pydantic deserialization promotes
+        Returns the input unchanged when `part.tool_kind` is `None` or doesn't match a
+        registered subclass. Use this on direct construction; Pydantic deserialization promotes
         automatically via the discriminated-union dispatch on
         [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
-        narrower = _BUILTIN_CALL_NARROWERS.get(part.tool_name)
+        if part.tool_kind is None:
+            return part
+        narrower = _BUILTIN_CALL_NARROWERS.get(part.tool_kind)
         return narrower(part) if narrower else part
 
 
@@ -1955,7 +1992,7 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     """
 
     tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (cross-provider tool-search call)."""
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     args: str | ToolSearchArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
     """Tool-search query payload.
@@ -1964,6 +2001,9 @@ class BuiltinToolSearchCallPart(BuiltinToolCallPart):
     [`ToolSearchArgs`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs] when
     parsed. Streaming / partial-args still arrive as `str` until they're complete.
     """
+
+    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (cross-provider tool-search call)."""
 
 
 @dataclass(repr=False)
@@ -1981,7 +2021,7 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     """
 
     tool_name: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (cross-provider tool-search return)."""
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     content: ToolSearchReturnContent | str | None = None
     """Discovered-tools payload.
@@ -1991,6 +2031,9 @@ class BuiltinToolSearchReturnPart(BuiltinToolReturnPart):
     `str` covers the rare provider-fallback case where a plain text result block is
     surfaced (e.g. an Anthropic tool-search error block).
     """
+
+    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (cross-provider tool-search return)."""
 
 
 def _narrow_builtin_tool_search_call(part: BuiltinToolCallPart) -> BuiltinToolSearchCallPart:
@@ -2021,6 +2064,9 @@ def _narrow_builtin_tool_search_return(part: BuiltinToolReturnPart) -> BuiltinTo
     )
 
 
+# Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
+# so user-defined tools that happen to share `tool_name` with a typed subclass are not
+# accidentally promoted.
 _BUILTIN_CALL_NARROWERS['tool_search'] = _narrow_builtin_tool_search_call
 _BUILTIN_RETURN_NARROWERS['tool_search'] = _narrow_builtin_tool_search_return
 
@@ -2049,7 +2095,7 @@ class ToolSearchCallPart(ToolCallPart):
     """
 
     tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (local `search_tools` function call)."""
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     args: str | ToolSearchArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
     """Tool-search query payload.
@@ -2058,6 +2104,9 @@ class ToolSearchCallPart(ToolCallPart):
     [`ToolSearchArgs`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs] when
     parsed. Streaming / partial-args still arrive as `str` until they're complete.
     """
+
+    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (framework-emitted `search_tools` call)."""
 
 
 @dataclass(repr=False)
@@ -2076,7 +2125,7 @@ class ToolSearchReturnPart(ToolReturnPart):
     """
 
     tool_name: Literal['search_tools'] = 'search_tools'  # pyright: ignore[reportIncompatibleVariableOverride]
-    """Discriminator for the typed subclass (local `search_tools` function return)."""
+    """Default tool name for the typed subclass. Discrimination drives off `tool_kind`."""
 
     content: ToolSearchReturnContent | str | None = None
     """Discovered-tools payload.
@@ -2084,6 +2133,9 @@ class ToolSearchReturnPart(ToolReturnPart):
     Narrows the parent's `ToolReturnContent` to a typed
     [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent].
     """
+
+    tool_kind: Literal['tool_search'] = 'tool_search'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
 
 
 def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
@@ -2110,8 +2162,10 @@ def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
     )
 
 
-_TOOL_CALL_NARROWERS['search_tools'] = _narrow_tool_search_call
-_TOOL_RETURN_NARROWERS['search_tools'] = _narrow_tool_search_return
+# Narrowers dispatch on `tool_kind`, not `tool_name`, so user tools that happen to share
+# `tool_name='search_tools'` deserialize as base `ToolCallPart` / `ToolReturnPart`.
+_TOOL_CALL_NARROWERS['tool_search'] = _narrow_tool_search_call
+_TOOL_RETURN_NARROWERS['tool_search'] = _narrow_tool_search_return
 
 
 def _model_request_part_discriminator(v: Any) -> str | None:
@@ -2120,12 +2174,14 @@ def _model_request_part_discriminator(v: Any) -> str | None:
     `ToolReturnPart` and its typed subclass
     [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] (the local
     `search_tools` function return) share `part_kind='tool-return'`. Pick the narrower
-    subclass when `tool_name` is recognized; otherwise fall through to the base class.
+    subclass when the framework-emitter discriminator
+    [`tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] is set, so user-defined
+    tools that happen to share the framework's `tool_name` aren't accidentally promoted.
     """
     if isinstance(v, dict):
         kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        tool_name = v.get('tool_name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if kind == 'tool-return' and tool_name == 'search_tools':
+        tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if kind == 'tool-return' and tool_kind == 'tool_search':
             return 'tool-search-return'
         return kind if isinstance(kind, str) else None
     if isinstance(v, ToolSearchReturnPart):
@@ -2149,22 +2205,25 @@ def _model_response_part_discriminator(v: Any) -> str | None:
 
     Three pairs of part kinds share their `part_kind` with a typed subclass:
 
-    * `'tool-call'` → `ToolCallPart` *or* `ToolSearchCallPart` (local `search_tools`)
+    * `'tool-call'` → `ToolCallPart` *or* `ToolSearchCallPart` (framework-emitted local
+      `search_tools` call)
     * `'builtin-tool-call'` → `BuiltinToolCallPart` *or* `BuiltinToolSearchCallPart`
     * `'builtin-tool-return'` → `BuiltinToolReturnPart` *or* `BuiltinToolSearchReturnPart`
 
-    Pick the narrower subclass when `tool_name` is recognized; otherwise fall through
-    to the base class so unknown `tool_name` values (e.g. future builtins not yet
-    typed) deserialize cleanly.
+    Pick the narrower subclass when the framework-emitter discriminator
+    [`tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind] is set; otherwise fall
+    through to the base class. Dispatching by `tool_kind` rather than `tool_name` means a
+    user's regular tool that happens to be called e.g. `search_tools` deserializes safely
+    as a base `ToolCallPart` (no accidental promotion / shape-validation failure).
     """
     if isinstance(v, dict):
         kind = v.get('part_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        tool_name = v.get('tool_name')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        if kind == 'builtin-tool-call' and tool_name == 'tool_search':
+        tool_kind = v.get('tool_kind')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if kind == 'builtin-tool-call' and tool_kind == 'tool_search':
             return 'builtin-tool-search-call'
-        if kind == 'builtin-tool-return' and tool_name == 'tool_search':
+        if kind == 'builtin-tool-return' and tool_kind == 'tool_search':
             return 'builtin-tool-search-return'
-        if kind == 'tool-call' and tool_name == 'search_tools':
+        if kind == 'tool-call' and tool_kind == 'tool_search':
             return 'tool-search-call'
         return kind if isinstance(kind, str) else None
     if isinstance(v, BuiltinToolSearchCallPart):

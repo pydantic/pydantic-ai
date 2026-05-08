@@ -2817,12 +2817,13 @@ def test_optional_builtin_dropped_with_empty_corpus():
 
 
 def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
-    """Direct construction of `BuiltinToolCallPart` with `tool_name='tool_search'`
+    """Direct construction of `BuiltinToolCallPart` with `tool_kind='tool_search'`
     promotes to `BuiltinToolSearchCallPart` via the narrowing registry."""
     base = BuiltinToolCallPart(
         tool_name='tool_search',
         args={'queries': ['mortgage']},
         tool_call_id='c1',
+        tool_kind='tool_search',
         provider_name='anthropic',
         provider_details={'strategy': 'bm25'},
     )
@@ -2838,12 +2839,13 @@ def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
 
 
 def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
-    """Direct construction of `BuiltinToolReturnPart` with `tool_name='tool_search'`
+    """Direct construction of `BuiltinToolReturnPart` with `tool_kind='tool_search'`
     promotes to `BuiltinToolSearchReturnPart` via the narrowing registry."""
     base = BuiltinToolReturnPart(
         tool_name='tool_search',
         content={'discovered_tools': [{'name': 'foo', 'description': None}]},
         tool_call_id='c1',
+        tool_kind='tool_search',
         provider_name='anthropic',
     )
     narrowed = BuiltinToolReturnPart.narrow_type(base)
@@ -2854,10 +2856,26 @@ def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
     assert BuiltinToolReturnPart.narrow_type(already_narrowed) is already_narrowed
 
 
-def test_narrow_type_unknown_tool_name_returns_input_unchanged() -> None:
-    """Unknown `tool_name` values aren't promoted (future builtins not yet typed)."""
-    base = BuiltinToolCallPart(tool_name='something_unregistered', args={}, tool_call_id='c1')
+def test_narrow_type_unknown_tool_kind_returns_input_unchanged() -> None:
+    """Unknown `tool_kind` values aren't promoted (future builtins not yet typed)."""
+    base = BuiltinToolCallPart(tool_name='something_unregistered', args={}, tool_call_id='c1', tool_kind='custom_kind')
     assert BuiltinToolCallPart.narrow_type(base) is base
+
+
+def test_narrow_type_no_tool_kind_returns_input_unchanged() -> None:
+    """User-defined tools sharing a framework `tool_name` aren't promoted when `tool_kind` is unset.
+
+    Protects users whose own tool happens to be called `tool_search` / `search_tools` from
+    having their parts promoted to typed subclasses that would fail shape validation against
+    the typed `args` `TypedDict`.
+    """
+    builtin_collision = BuiltinToolCallPart(tool_name='tool_search', args={'foo': 'bar'}, tool_call_id='c1')
+    assert builtin_collision.tool_kind is None
+    assert BuiltinToolCallPart.narrow_type(builtin_collision) is builtin_collision
+
+    local_collision = ToolCallPart(tool_name='search_tools', args={'query': 'x'}, tool_call_id='c2')
+    assert local_collision.tool_kind is None
+    assert ToolCallPart.narrow_type(local_collision) is local_collision
 
 
 def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
@@ -2871,6 +2889,7 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
             {
                 'part_kind': 'builtin-tool-call',
                 'tool_name': 'tool_search',
+                'tool_kind': 'tool_search',
                 'args': {'queries': ['mortgage']},
                 'tool_call_id': 'c1',
                 'provider_name': 'anthropic',
@@ -2878,6 +2897,7 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
             {
                 'part_kind': 'builtin-tool-return',
                 'tool_name': 'tool_search',
+                'tool_kind': 'tool_search',
                 'content': {'discovered_tools': [{'name': 'foo', 'description': None}]},
                 'tool_call_id': 'c1',
                 'provider_name': 'anthropic',
@@ -2888,15 +2908,26 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
                 'args': {'query': 'x'},
                 'tool_call_id': 'c2',
             },
+            # User-defined builtin call colliding with a framework tool_name. Without
+            # `tool_kind`, dispatch should NOT promote — args don't match `ToolSearchArgs`.
+            {
+                'part_kind': 'builtin-tool-call',
+                'tool_name': 'tool_search',
+                'args': {'foo': 'bar'},
+                'tool_call_id': 'c3',
+            },
         ],
     }
     [resp] = ModelMessagesTypeAdapter.validate_python([raw])
     assert isinstance(resp, ModelResponse)
     assert isinstance(resp.parts[0], BuiltinToolSearchCallPart)
     assert isinstance(resp.parts[1], BuiltinToolSearchReturnPart)
-    # Unrecognized `tool_name` falls through to the base class.
+    # Unrecognized `tool_name` (and unset `tool_kind`) falls through to the base class.
     assert isinstance(resp.parts[2], BuiltinToolCallPart)
     assert not isinstance(resp.parts[2], BuiltinToolSearchCallPart)
+    # User-defined collision on `tool_name='tool_search'` without `tool_kind` stays base.
+    assert type(resp.parts[3]) is BuiltinToolCallPart
+    assert resp.parts[3].args == {'foo': 'bar'}
 
 
 def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
@@ -2921,18 +2952,28 @@ def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
 
 
 async def test_tool_search_toolset_promotes_base_builtin_return_part() -> None:
-    """A `BuiltinToolReturnPart` (base class) carrying `tool_name='tool_search'`
-    is promoted by the toolset's parser via `narrow_type` so its discoveries
-    surface — covers the fall-through promotion branch."""
+    """A `BuiltinToolReturnPart` carrying `tool_kind='tool_search'` is promoted by
+    the toolset's parser via `narrow_type` so its discoveries surface — covers the
+    fall-through promotion branch. A part without `tool_kind` (user collision on
+    `tool_name='tool_search'`) is left alone."""
     base_toolset = FunctionToolset[None]()
 
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
+                # Framework-emitted: `tool_kind='tool_search'` triggers promotion.
                 BuiltinToolReturnPart(
                     tool_name='tool_search',
                     content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
                     tool_call_id='c1',
+                    tool_kind='tool_search',
+                ),
+                # User collision: `tool_kind=None`. Discoveries here are NOT surfaced — protects
+                # against accidentally treating a user's tool result as our search payload.
+                BuiltinToolReturnPart(
+                    tool_name='tool_search',
+                    content={'discovered_tools': [{'name': 'should_not_surface', 'description': None}]},
+                    tool_call_id='c2',
                 ),
             ],
         ),
@@ -2942,6 +2983,7 @@ async def test_tool_search_toolset_promotes_base_builtin_return_part() -> None:
         cast(Any, type('_Ctx', (), {'messages': history})()),
     )
     assert 'calculate_mortgage' in discovered
+    assert 'should_not_surface' not in discovered
 
 
 async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
@@ -3128,12 +3170,20 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
     assert prepared is history
 
 
-def test_narrow_type_local_promotes_with_well_shaped_args() -> None:
-    """A `ToolCallPart` with `tool_name='search_tools'` and matching args promotes
-    to `ToolSearchCallPart` via the narrowing registry."""
+def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
+    """A `ToolCallPart` with `tool_kind='tool_search'` promotes to `ToolSearchCallPart`.
+
+    Promotion is keyed on `tool_kind`, not `tool_name` — a framework-emitted call carries
+    `tool_kind='tool_search'` so it round-trips as the typed subclass.
+    """
     from pydantic_ai.messages import ToolCallPart
 
-    part = ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}, tool_call_id='c1')
+    part = ToolCallPart(
+        tool_name='search_tools',
+        args={'queries': ['mortgage']},
+        tool_call_id='c1',
+        tool_kind='tool_search',
+    )
     narrowed = ToolCallPart.narrow_type(part)
     assert isinstance(narrowed, ToolSearchCallPart)
     assert narrowed.args == {'queries': ['mortgage']}
@@ -3147,14 +3197,14 @@ def test_narrow_type_local_passthrough_when_already_narrowed() -> None:
     assert ToolCallPart.narrow_type(part) is part
 
 
-def test_pydantic_validation_rejects_search_tools_collision_with_bad_args() -> None:
-    """A user-defined function tool that *happens* to be named `search_tools` but
-    carries the wrong args shape must fail Pydantic validation when deserialized
-    through `ModelRequestPart`. Auto-promotion via the typed-class discriminator
-    requires the args to match `ToolSearchArgs`."""
-    import pydantic
+def test_pydantic_validation_accepts_search_tools_collision_when_tool_kind_unset() -> None:
+    """A user-defined tool literally named `search_tools` with arbitrary args is safe.
 
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
+    Dispatch is by `tool_kind`, not `tool_name`, so the absence of `tool_kind` keeps
+    the part as a base `ToolReturnPart` regardless of args shape — no accidental
+    auto-promotion to `ToolSearchReturnPart`, no spurious shape-validation failure.
+    """
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
 
     raw = [
         {
@@ -3163,25 +3213,28 @@ def test_pydantic_validation_rejects_search_tools_collision_with_bad_args() -> N
                 {
                     'part_kind': 'tool-return',
                     'tool_name': 'search_tools',
-                    # Wrong shape: not `ToolSearchReturnContent`, not `str`, not `None`.
+                    # Arbitrary user-tool shape.
                     'content': {'unrelated': 'data', 'definitely_not_discovered_tools': 42},
                     'tool_call_id': 'c1',
                 },
             ],
         },
     ]
-    with pytest.raises(pydantic.ValidationError):
-        ModelMessagesTypeAdapter.validate_python(raw)
+    [req] = ModelMessagesTypeAdapter.validate_python(raw)
+    [part] = req.parts
+    assert type(part) is ToolReturnPart
+    assert part.tool_kind is None
+    assert part.content == {'unrelated': 'data', 'definitely_not_discovered_tools': 42}
 
 
 def test_pydantic_validation_accepts_search_tools_string_content_collision() -> None:
-    """The `str` variant on `ToolSearchReturnPart.content` covers the case where a
-    user-named tool returns plain text — they're collision-tolerant by design.
+    """A user tool literally named `search_tools` returning plain text deserializes cleanly.
 
-    Adapters that consume the typed view check `isinstance(content, dict)` before
-    keying into `discovered_tools`, so a string content surfaces as "not a real
-    tool-search return" and falls through cleanly."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
+    Without `tool_kind`, the part stays a base `ToolReturnPart` — the str content survives
+    intact. This is the user-tool-collision-tolerance contract: dispatch never promotes
+    based on `tool_name` alone.
+    """
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
 
     raw = [
         {
@@ -3198,7 +3251,8 @@ def test_pydantic_validation_accepts_search_tools_string_content_collision() -> 
     ]
     [request] = ModelMessagesTypeAdapter.validate_python(raw)
     [part] = request.parts
-    assert isinstance(part, ToolSearchReturnPart)
+    assert type(part) is ToolReturnPart
+    assert part.tool_kind is None
     assert part.content == 'hello world'
 
 
@@ -3526,7 +3580,7 @@ def test_model_request_part_discriminator_recognizes_tool_search_return_instance
 
 
 def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch() -> None:
-    """A dict-shaped `ToolCallPart` with `tool_name='search_tools'` gets dispatched to
+    """A dict-shaped `ToolCallPart` with `tool_kind='tool_search'` gets dispatched to
     `ToolSearchCallPart` via the discriminator (covers the `'tool-call'` branch)."""
     from pydantic_ai.messages import ModelMessagesTypeAdapter
 
@@ -3537,6 +3591,7 @@ def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch()
                 {
                     'part_kind': 'tool-call',
                     'tool_name': 'search_tools',
+                    'tool_kind': 'tool_search',
                     'args': {'queries': ['x']},
                     'tool_call_id': 'c1',
                 },
