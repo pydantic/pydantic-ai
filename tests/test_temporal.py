@@ -4448,10 +4448,10 @@ def test_durability_resolve_model_id_uses_provider_factory():
     """resolve_model_id with a provider_factory builds a Model from any provider:name string."""
 
     class _StubProvider:
-        def __init__(self, name: str) -> None:
+        def __init__(self, name: str) -> None:  # pragma: lax no cover - only reached when _factory fires
             self.name = name
 
-    def _factory(name: str) -> Any:  # pragma: lax no cover - exercised via resolve_model_id
+    def _factory(name: str) -> Any:  # pragma: lax no cover - infer_model('test') skips provider lookup
         return _StubProvider(name)
 
     primary = FunctionModel(_durability_model_fn, model_name='primary')
