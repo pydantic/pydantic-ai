@@ -22,6 +22,7 @@ from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.wrapper import ReplayStreamedResponse
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
@@ -761,8 +762,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return
             self._did_stream = True
             ctx.state.usage.requests += 1
-            from .models.wrapper import ReplayStreamedResponse
-
             replay_sr = ReplayStreamedResponse(
                 model_request_parameters,
                 model_response,
