@@ -827,7 +827,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_temperature',
                     content='30°C',
                     tool_call_id=IsStr(),
@@ -3862,7 +3862,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 args_valid=True,
             ),
             OutputToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',

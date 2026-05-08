@@ -2488,7 +2488,7 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False)
-class BaseToolCallEvent:
+class ToolCallEvent:
     """Base class for events emitted when a tool call is about to be invoked.
 
     Match against this in a `case` to handle [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]
@@ -2518,7 +2518,7 @@ class BaseToolCallEvent:
 
 
 @dataclass(repr=False)
-class FunctionToolCallEvent(BaseToolCallEvent):
+class FunctionToolCallEvent(ToolCallEvent):
     """An event indicating the start to a call to a function tool."""
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
@@ -2532,7 +2532,7 @@ class FunctionToolCallEvent(BaseToolCallEvent):
 
 
 @dataclass(repr=False)
-class OutputToolCallEvent(BaseToolCallEvent):
+class OutputToolCallEvent(ToolCallEvent):
     """An event indicating the start of a call to an output tool (the model's "submit final answer" call)."""
 
     event_kind: Literal['output_tool_call'] = 'output_tool_call'
@@ -2540,26 +2540,26 @@ class OutputToolCallEvent(BaseToolCallEvent):
 
 
 @dataclass(repr=False)
-class BaseToolResultEvent:
+class ToolResultEvent:
     """Base class for events emitted when a tool call has been completed.
 
     Match against this in a `case` to handle [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]
     and [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] together.
     """
 
-    result: ToolReturnPart | RetryPromptPart
-    """The result of the tool call."""
+    part: ToolReturnPart | RetryPromptPart
+    """The tool result part that will be sent back to the model."""
 
     @property
     def tool_call_id(self) -> str:
         """An ID used to match the result to its original call."""
-        return self.result.tool_call_id
+        return self.part.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False)
-class FunctionToolResultEvent(BaseToolResultEvent):
+class FunctionToolResultEvent(ToolResultEvent):
     """An event indicating the result of a function tool call."""
 
     _: KW_ONLY
@@ -2570,9 +2570,15 @@ class FunctionToolResultEvent(BaseToolResultEvent):
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
+    @property
+    @deprecated('`result` is deprecated, use `part` instead.')
+    def result(self) -> ToolReturnPart | RetryPromptPart:
+        """The tool result part that will be sent back to the model."""
+        return self.part
+
 
 @dataclass(repr=False)
-class OutputToolResultEvent(BaseToolResultEvent):
+class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
 
     event_kind: Literal['output_tool_result'] = 'output_tool_result'

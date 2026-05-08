@@ -13,8 +13,6 @@ from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
-    BaseToolCallEvent,
-    BaseToolResultEvent,
     BinaryContent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
@@ -36,8 +34,10 @@ from ..messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturnPart,
     UploadedFile,
 )
@@ -180,7 +180,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
-                elif isinstance(event, BaseToolCallEvent):
+                elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
                     if tool_call_id in self._handled_tool_calls:
                         # Dual emission for an output-tool failure path; the new event already handled it.
@@ -214,8 +214,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 
-                elif isinstance(event, BaseToolResultEvent):
-                    tool_call_id = event.result.tool_call_id
+                elif isinstance(event, ToolResultEvent):
+                    tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
                     if tool_call_id in self._handled_tool_results:
                         # Dual emission for an output-tool failure path; the new event already handled it.

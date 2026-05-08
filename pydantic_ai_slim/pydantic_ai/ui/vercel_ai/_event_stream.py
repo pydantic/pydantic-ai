@@ -274,11 +274,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
-        async for chunk in self._handle_tool_result(event.result):
+        async for chunk in self._handle_tool_result(event.part):
             yield chunk
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
-        async for chunk in self._handle_tool_result(event.result):
+        async for chunk in self._handle_tool_result(event.part):
             yield chunk
 
     async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:

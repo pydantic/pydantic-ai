@@ -939,7 +939,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
                     tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
@@ -947,7 +947,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 )
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_product_name',
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
@@ -989,7 +989,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_weather',
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
@@ -1177,7 +1177,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             OutputToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',

@@ -1427,7 +1427,7 @@ def _emit_legacy_output_tool_function_events(
     These keep firing on output-tool failure paths (skipped, validation/execution failure triggering
     a retry) for backward compatibility, so consumers matching the legacy event types still see them.
     They will stop firing in v2; users should match `OutputToolCallEvent` / `OutputToolResultEvent`
-    (or the shared `BaseToolCallEvent` / `BaseToolResultEvent`) instead. No runtime warning is fired
+    (or the shared `ToolCallEvent` / `ToolResultEvent` bases) instead. No runtime warning is fired
     so that already-migrated consumers don't see noise on every output-tool retry.
     """
     yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)

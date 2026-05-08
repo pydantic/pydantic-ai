@@ -3115,10 +3115,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+            part=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
+            part=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
         )
 
         yield PartStartEvent(
@@ -3159,10 +3159,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
+            part=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
+            part=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
         )
 
     run_input = create_input(
@@ -3328,7 +3328,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_status',
                 content='Status retrieved',
                 tool_call_id='call_1',
@@ -3559,7 +3559,7 @@ async def test_tool_return_with_files():
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_image',
                 content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
                 tool_call_id='call_1',
@@ -3567,7 +3567,7 @@ async def test_tool_return_with_files():
         )
         # Content with only a FileUrl - files property returns [ImageUrl]
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_url',
                 content=ImageUrl(url='https://example.com/image.jpg'),
                 tool_call_id='call_2',

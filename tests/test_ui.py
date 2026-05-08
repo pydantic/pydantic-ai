@@ -196,13 +196,13 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
         yield f'<function-tool-call name={event.part.tool_name!r}>{event.part.args}</function-tool-call>'
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
-        yield f'<function-tool-result name={event.result.tool_name!r}>{event.result.content}</function-tool-result>'
+        yield f'<function-tool-result name={event.part.tool_name!r}>{event.part.content}</function-tool-result>'
 
     async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[str]:
         yield f'<output-tool-call name={event.part.tool_name!r}>{event.part.args}</output-tool-call>'
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[str]:
-        yield f'<output-tool-result name={event.result.tool_name!r}>{event.result.content}</output-tool-result>'
+        yield f'<output-tool-result name={event.part.tool_name!r}>{event.part.content}</output-tool-result>'
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[str]:
         yield f'<run-result>{event.result.output}</run-result>'
@@ -656,10 +656,33 @@ async def test_run_stream_output_tool_validation_retry_dedupes_legacy_events():
     adapter = DummyUIAdapter(agent, request)
     events = [event async for event in adapter.run_stream()]
 
-    # The first (failed) tool call should produce ONE `<output-tool-result>`, not two — the legacy
-    # `FunctionToolResultEvent` for `out_1` is dedupped at the UI layer.
-    assert sum(1 for e in events if "<output-tool-result name='final_result'>" in e) == 2
-    assert sum(1 for e in events if "<function-tool-result name='final_result'>" in e) == 0
+    # Each output tool call should produce exactly one `<output-tool-result>` and zero `<function-tool-result>` —
+    # the legacy `FunctionToolResultEvent` emitted on the failure path for `out_1` is dedupped at the UI layer.
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"bad": "x"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            '<output-tool-call name=\'final_result\'>{"bad": "x"}</output-tool-call>',
+            "<output-tool-result name='final_result'>[{'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad': 'x'}}]</output-tool-result>",
+            '</request>',
+            '<response>',
+            '<tool-call name=\'final_result\'>{"value": "ok"}',
+            "<final-result tool_name='final_result' />",
+            "</tool-call name='final_result'>",
+            '</response>',
+            '<request>',
+            '<output-tool-call name=\'final_result\'>{"value": "ok"}</output-tool-call>',
+            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
+            '</request>',
+            "<run-result>value='ok'</run-result>",
+            '</stream>',
+        ]
+    )
 
 
 async def test_run_stream_on_complete_error():
