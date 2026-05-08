@@ -10637,15 +10637,10 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-
-result = 3 * 12390
-print(result)
-"""
-                        },
-                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        args={'command': 'echo $((3 * 12390))'},
+                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -10653,22 +10648,22 @@ print(result)
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '37170',
-                            'type': 'code_execution_result',
-                            'abort_reason': None,
+                            'stdout': '37170\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='3 × 12,390 = **37,170**'),
+                    TextPart(content='3 * 12390 = **37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1983,
-                    output_tokens=85,
+                    input_tokens=4612,
+                    output_tokens=80,
                     details={
-                        'input_tokens': 1983,
-                        'output_tokens': 85,
+                        'input_tokens': 4612,
+                        'output_tokens': 80,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -10677,8 +10672,8 @@ print(result)
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
-                provider_response_id='msg_01CSsc4t4e4ThJfJp8nsPxc5',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
+                provider_response_id='msg_01LZfXQfnKjDzM8MfBWwnVqV',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -10694,15 +10689,10 @@ print(result)
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-
-result = 4 * 12390
-print(result)
-"""
-                        },
-                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        args={'command': 'echo $((4 * 12390))'},
+                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -10710,22 +10700,22 @@ print(result)
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '49560',
-                            'type': 'code_execution_result',
-                            'abort_reason': None,
+                            'stdout': '49560\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='4 × 12,390 = **49,560**'),
+                    TextPart(content='4 * 12390 = **49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2219,
-                    output_tokens=85,
+                    input_tokens=4840,
+                    output_tokens=80,
                     details={
-                        'input_tokens': 2219,
-                        'output_tokens': 85,
+                        'input_tokens': 4840,
+                        'output_tokens': 80,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -10734,8 +10724,8 @@ print(result)
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
-                provider_response_id='msg_016hgHtSKi8fEDBmSkEtL364',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
+                provider_response_id='msg_016CCM7vKzHb1YyMDsVofT35',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
