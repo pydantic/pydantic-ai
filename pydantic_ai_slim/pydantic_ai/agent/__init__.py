@@ -431,9 +431,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for builtin_tool in builtin_tools:
             capabilities.append(BuiltinToolCap(builtin_tool))
         if prepare_tools is not None:
+            warnings.warn(
+                '`Agent(prepare_tools=...)` is deprecated and will be removed in v2.0. '
+                'Use `capabilities=[Hooks(prepare_tools=...)]` instead. '
+                'Note: in v2 `prepare_tools` runs only on function tools — if you need to prepare '
+                'output tools, also pass `Hooks(prepare_output_tools=...)`.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
             capabilities.append(PrepareTools(prepare_tools))
         if prepare_output_tools is not None:
             capabilities.append(PrepareOutputTools(prepare_output_tools))
+        if event_stream_handler is not None:
+            # Don't auto-remap to `ProcessEventStream(...)` capability: the legacy `_event_stream_handler`
+            # path in `abstract.py` invokes the handler directly via `_handler(run_ctx, wrapped)`.
+            # Appending a capability would call the handler a second time. The legacy path keeps working
+            # in 1.x; users see the warning and migrate manually to `capabilities=[ProcessEventStream(...)]`,
+            # which is the only path in v2.
+            warnings.warn(
+                '`Agent(event_stream_handler=...)` is deprecated and will be removed in v2.0. '
+                'Use `capabilities=[ProcessEventStream(handler)]` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         _inject_auto_capabilities(capabilities)
 
