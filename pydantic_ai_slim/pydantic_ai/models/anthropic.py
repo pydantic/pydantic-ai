@@ -1316,7 +1316,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
                 for file_id in pending_container_uploads
             ]
-            for msg in reversed(anthropic_messages):
+            for msg in reversed(anthropic_messages):  # pragma: no branch
                 if msg['role'] == 'user':
                     existing = msg['content']
                     # User messages produced above always have list content; this branch

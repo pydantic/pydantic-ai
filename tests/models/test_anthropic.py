@@ -6775,6 +6775,49 @@ async def test_anthropic_filters_files_from_other_providers():
     assert upload_block['file_id'] == 'file_anthropic'
 
 
+async def test_anthropic_container_upload_blocks_multi_turn():
+    """Container_upload blocks are appended to the last user message even when the
+    history ends on an assistant `ModelResponse` (multi-turn `message_history`)."""
+    from pydantic_ai.messages import UploadedFile
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    code_exec_tool = CodeExecutionTool(
+        files=[UploadedFile(file_id='file_abc', provider_name='anthropic')]
+    )
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+    model_settings = AnthropicModelSettings()
+
+    # History: user -> assistant. The reverse iteration must skip the assistant
+    # message before finding the user message to append uploads to.
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier turn')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters, model_settings
+    )
+
+    assert len(anthropic_messages) == 2
+    assert anthropic_messages[0]['role'] == 'user'
+    assert anthropic_messages[1]['role'] == 'assistant'
+
+    # Container_upload should be appended to the user message (index 0), not the assistant message
+    user_content = anthropic_messages[0]['content']
+    assert isinstance(user_content, list)
+    upload_block = user_content[-1]
+    assert isinstance(upload_block, dict)
+    assert upload_block['type'] == 'container_upload'
+    assert upload_block['file_id'] == 'file_abc'
+
+
 async def test_anthropic_mcp_call_replays_empty_tool_args(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     mock_client = MockAnthropic.create_mock(c)
