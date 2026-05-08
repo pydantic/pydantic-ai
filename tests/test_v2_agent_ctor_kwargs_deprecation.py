@@ -86,39 +86,36 @@ async def test_event_stream_handler_capability_equivalence():
 # --- prepare_tools= ----------------------------------------------------------------------
 
 
-async def test_prepare_tools_kwarg_emits_deprecation_warning():
-    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return tool_defs
+async def _noop_prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    return tool_defs
 
+
+async def test_prepare_tools_kwarg_emits_deprecation_warning():
     with pytest.warns(
         DeprecationWarning,
         match=r'`Agent\(prepare_tools=\.\.\.\)` is deprecated and will be removed in v2\.0',
     ):
-        Agent(_make_model(), prepare_tools=prep)
+        Agent(_make_model(), prepare_tools=_noop_prep)
 
 
 async def test_prepare_tools_kwarg_warning_mentions_function_tools_only_rescoping():
     """PR #4859 narrowed `prepare_tools` from all-tools to function-tools-only.
     The deprecation warning has to surface that rescoping so users know they may
     also need `Hooks(prepare_output_tools=...)` to preserve old behavior."""
-
-    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return tool_defs
-
     with pytest.warns(DeprecationWarning, match=r'prepare_tools` runs only on function tools'):
-        Agent(_make_model(), prepare_tools=prep)
+        Agent(_make_model(), prepare_tools=_noop_prep)
 
 
 async def test_prepare_tools_kwarg_remaps_to_capability():
-    """The kwarg auto-injects a `PrepareTools` capability into the agent's capability list."""
-
-    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return tool_defs
-
+    """The kwarg auto-injects a `PrepareTools` capability into the agent's capability list,
+    and the prepare callback fires once during a run."""
     with pytest.warns(DeprecationWarning, match=r'prepare_tools'):
-        agent = Agent(_make_model(), prepare_tools=prep)
+        agent = Agent(_make_model(), prepare_tools=_noop_prep)
 
     assert any(isinstance(cap, PrepareTools) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
+    # Run the agent to exercise the registered capability — this is what makes `_noop_prep` fire
+    # and lets us assert the remap actually wires through to the prepare-tools chain.
+    await agent.run('hello')
 
 
 async def test_prepare_tools_kwarg_vs_hooks_capability_equivalence():
