@@ -4603,7 +4603,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
 
     async def consume() -> None:
         async with agent.run_stream_events('Hello') as stream:
-            async for _ in stream:  # pragma: no cover - cancelled before any event
+            async for _ in stream:
                 pass
 
     task = asyncio.create_task(consume())
