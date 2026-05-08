@@ -84,7 +84,7 @@ packages = ['pydantic_ai_harness']
 [tool.ruff]
 line-length = 120
 target-version = 'py310'
-exclude = ['template', 'legacy']
+exclude = ['template']
 
 [tool.ruff.lint]
 extend-select = ['Q', 'RUF100', 'C90', 'UP', 'I', 'D', 'TID251']
@@ -107,7 +107,7 @@ quote-style = 'single'
 [tool.pyright]
 pythonVersion = '3.10'
 typeCheckingMode = 'strict'
-exclude = ['template', '.venv', 'legacy']
+exclude = ['template', '.venv']
 executionEnvironments = [
     { root = 'tests', reportPrivateUsage = false },
 ]
