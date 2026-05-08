@@ -788,11 +788,11 @@ class Model(ABC, Generic[InterfaceClient]):
 
         Four rules drive the per-tool filter:
 
-        1. ``unless_builtin`` matches a supported builtin → drop from wire.
-        2. ``with_builtin`` matches a supported builtin → keep on wire; the adapter
+        1. `unless_builtin` matches a supported builtin → drop from wire.
+        2. `with_builtin` matches a supported builtin → keep on wire; the adapter
            applies any builtin-specific format (e.g. Anthropic / OpenAI's wire-side
-           ``defer_loading`` flag for ``ToolSearchTool``).
-        3. ``with_builtin`` matches an *unsupported* builtin AND ``defer_loading=True``
+           `defer_loading` flag for `ToolSearchTool`).
+        3. `with_builtin` matches an *unsupported* builtin AND `defer_loading=True`
            → drop from wire (the corpus member is currently undiscovered, so the model has
            no way to call it on this provider).
         4. Otherwise → keep.

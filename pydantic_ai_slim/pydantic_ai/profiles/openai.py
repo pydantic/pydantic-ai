@@ -22,8 +22,8 @@ from . import ModelProfile
 _OPENAI_BASE_BUILTINS = frozenset(
     {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
 )
-"""Builtin tool types OpenAI supports — the union of what ``OpenAIChatModel`` and
-``OpenAIResponsesModel`` can handle. ``ToolSearchTool`` is gated per-model in the
+"""Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
+`OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
 profile below."""
 
 OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {

@@ -2543,9 +2543,9 @@ def _map_tool_search_tool_result_block(
 ) -> BuiltinToolSearchReturnPart:
     """Map a tool-search result block into a typed :class:`BuiltinToolSearchReturnPart`.
 
-    Writes a cross-provider :class:`ToolSearchReturnContent` to ``content`` (no
+    Writes a cross-provider :class:`ToolSearchReturnContent` to `content` (no
     provider-shape smuggling) and stashes the Anthropic-specific error fields on
-    ``provider_details`` so we can faithfully reconstruct the original block on replay.
+    `provider_details` so we can faithfully reconstruct the original block on replay.
     """
     block = item.content
     provider_details: dict[str, Any] | None = None

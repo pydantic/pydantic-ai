@@ -911,13 +911,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
         )
 
-        # Translate any cross-provider history shapes the active model can't ship on the wire
-        # (currently: typed `BuiltinToolSearch*Part` instances become local-shape `ToolSearch*Part`
-        # when the profile doesn't support `ToolSearchTool`). Centralized here so per-adapter
-        # message-prep code sees a homogeneous shape regardless of which provider produced the prior turn.
-        # Run *before* `_clean_message_history` so structural quirks introduced by the synthesis
-        # (e.g. a bare `[SearchCall, SearchReturn]` response splitting into `Response + Request`
-        # adjacent to an existing `Request`) get merged into a single `ModelRequest` below.
+        # Hand off to the model class for any history shapes the active provider can't
+        # ship on the wire — currently typed `BuiltinToolSearch*Part` instances translated
+        # to local-shape `ToolSearch*Part` when the profile doesn't support `ToolSearchTool`.
+        #
+        # Lives on `Model.prepare_messages` rather than inline here for two reasons:
+        # 1. The translation depends on `self.profile`, which is per-model state.
+        # 2. `FallbackModel` defers the decision until it's picked an underlying model — so
+        #    each candidate runs `prepare_messages` itself with its own profile when chosen.
+        #
+        # Runs *before* `_clean_message_history` so structural quirks introduced by the
+        # translation (e.g. splitting a single `ModelResponse(call+return)` into
+        # `ModelResponse(call) + ModelRequest(return)`) merge cleanly with neighbouring
+        # `ModelRequest`s below.
         messages = model.prepare_messages(messages)
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,

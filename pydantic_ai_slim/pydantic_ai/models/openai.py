@@ -262,7 +262,7 @@ class _ChatCompletion(chat.ChatCompletion):
     model_config = {'title': 'ChatCompletion'}
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
-    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+    """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
 
 
 class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
@@ -271,7 +271,7 @@ class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnused
     model_config = {'title': 'ChatCompletionChunk'}
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
-    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+    """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
 
 
 class _AzureContentFilterResultDetail(BaseModel):
@@ -3979,7 +3979,7 @@ def _support_tool_forcing(
 
 
 def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
-    """Convert an OpenAI ``ResponseCompactionItem`` to a ``CompactionPart``."""
+    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`."""
     return CompactionPart(
         content=None,
         id=item.id,
@@ -4122,10 +4122,10 @@ def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:
 def _find_search_tool_definition(
     model_request_parameters: ModelRequestParameters,
 ) -> ToolDefinition | None:
-    """Locate the local ``search_tools`` function-tool definition in the current request.
+    """Locate the local `search_tools` function-tool definition in the current request.
 
-    In custom-callable tool search mode, ``ToolSearchToolset`` leaves its ``search_tools``
-    function tool in ``function_tools`` (no ``unless_builtin``), so we look it up by name.
+    In custom-callable tool search mode, `ToolSearchToolset` leaves its `search_tools`
+    function tool in `function_tools` (no `unless_builtin`), so we look it up by name.
     """
     return next(
         (t for t in model_request_parameters.function_tools if t.name == TOOL_SEARCH_FUNCTION_TOOL_NAME),
@@ -4203,22 +4203,22 @@ def _build_client_tool_search_output_param(
 
 
 def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolCallPart:
-    """Map a client-executed OpenAI ``tool_search_call`` into a regular ``ToolCallPart``.
+    """Map a client-executed OpenAI `tool_search_call` into a regular `ToolCallPart`.
 
-    With ``ToolSearchToolParam(execution='client')``, OpenAI still emits the call wrapped
-    as a ``tool_search_call`` item but leaves execution to us: the standard agent-graph
-    tool-execution path runs the local ``search_tools`` function and produces the
-    matching ``ToolReturnPart``. We pack the model's ``{"query": "..."}`` payload as the
-    ``{"keywords": ...}`` shape the local toolset expects.
+    With `ToolSearchToolParam(execution='client')`, OpenAI still emits the call wrapped
+    as a `tool_search_call` item but leaves execution to us: the standard agent-graph
+    tool-execution path runs the local `search_tools` function and produces the
+    matching `ToolReturnPart`. We pack the model's `{"query": "..."}` payload as the
+    `{"keywords": ...}` shape the local toolset expects.
 
     Replay later detects this case from the surrounding context — the call carries
-    ``tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME`` and there is no matching native
+    `tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME` and there is no matching native
     `BuiltinToolSearchCallPart` — so no envelope marker is required.
     """
     call_id = item.call_id or item.id
     args_dict = cast('dict[str, Any]', item.arguments)
     # OpenAI passes through the schema we registered with the builtin, so its
-    # ``tool_search_call.arguments`` uses our local tool's ``keywords`` key.
+    # `tool_search_call.arguments` uses our local tool's `keywords` key.
     return ToolCallPart(
         tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
         args=args_dict,
@@ -4238,9 +4238,9 @@ def _build_tool_search_return_part(
 
     Writes the cross-provider
     [`ToolSearchReturnContent`][pydantic_ai.builtin_tools.tool_search.ToolSearchReturnContent]
-    to ``content`` (with as much detail as the provider returned — name and description
-    for OpenAI's full function-tool definitions) and stashes the ``status`` field on
-    ``provider_details``.
+    to `content` (with as much detail as the provider returned — name and description
+    for OpenAI's full function-tool definitions) and stashes the `status` field on
+    `provider_details`.
     """
     matches: list[ToolSearchMatch] = []
     if output_item is not None:

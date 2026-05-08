@@ -169,9 +169,9 @@ class TestModel(Model):
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """TestModel supports all builtin tools for testing flexibility.
 
-        ``ToolSearchTool`` is excluded because TestModel can't emulate provider-native
-        tool search. Auto-injected ``ToolSearch`` capabilities work transparently thanks
-        to the local ``search_tools`` fallback.
+        `ToolSearchTool` is excluded because TestModel can't emulate provider-native
+        tool search. Auto-injected `ToolSearch` capabilities work transparently thanks
+        to the local `search_tools` fallback.
         """
         return SUPPORTED_BUILTIN_TOOLS - {ToolSearchTool}
 

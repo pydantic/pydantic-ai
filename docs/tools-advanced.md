@@ -604,7 +604,15 @@ For more information on how `end_strategy` works with both function tools and ou
 
 ## Tool Search
 
-Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
+
+Reach for it when:
+
+* the agent exposes ~10+ tools or more than ~10k tokens of tool definitions
+* tools cover distinct domains (e.g. multiple MCP servers) and only a subset is relevant per request
+* the toolset is growing and you want headroom
+
+Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
 To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
 
@@ -614,7 +622,9 @@ Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`]
 * **Custom strategies** via a callable on [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] — runs locally and also benefits from provider-native `defer_loading` on models that support client-executed tool search.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
-Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair), keeping prompt cache warm across rounds. To force the local algorithm everywhere, configure your model so it doesn't expose `ToolSearchTool` natively (override [`ModelProfile.supported_builtin_tools`][pydantic_ai.profiles.ModelProfile.supported_builtin_tools]); see [Configuring `ToolSearch`](#configuring-toolsearch) below for the more common knobs.
+Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. To force the local algorithm everywhere, configure your model so it doesn't expose `ToolSearchTool` natively (override [`ModelProfile.supported_builtin_tools`][pydantic_ai.profiles.ModelProfile.supported_builtin_tools]); see [Configuring `ToolSearch`](#configuring-toolsearch) below for the more common knobs.
+
+For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
 ```python {title="tool_search.py"}
 from pydantic_ai import Agent

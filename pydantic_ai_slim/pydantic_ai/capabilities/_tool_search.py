@@ -51,10 +51,12 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     from pydantic_ai.capabilities import ToolSearch
     from pydantic_ai.tools import ToolDefinition
 
+
     # Tools become deferred via `defer_loading=True`. They stay hidden from the model
     # until tool search discovers them.
     def get_weather(city: str) -> str:
         ...
+
 
     weather_tool = Tool(get_weather, defer_loading=True)
 
