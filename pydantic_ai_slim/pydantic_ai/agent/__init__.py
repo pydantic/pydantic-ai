@@ -1503,11 +1503,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 _outer_context = contextvars.copy_context()
                 _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
-
                 # Wait for handler to start or wrap_run to complete (short-circuit)
                 _ready_waiter = asyncio.create_task(_run_ready.wait())
-                await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-                _ready_waiter.cancel()
+                try:
+                    await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+                except BaseException:
+                    await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+                    raise
+                else:
+                    await _utils.cancel_and_drain(_ready_waiter)
 
                 # Propagate context vars set by wrap_run/before_run to
                 # the outer task so that agent_run.next() (and therefore

@@ -17,7 +17,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import dataclasses_no_defaults_repr, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -652,10 +652,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         )
 
-        # Wait for handler to start or wrap to complete (short-circuit)
+        # Wait for handler to start or wrap to complete (short-circuit).
+        # If outer cancellation arrives during this wait, drain both tasks before re-raising
+        # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
-        await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-        ready_waiter.cancel()
+        try:
+            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        except BaseException:
+            # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
+            # so both tasks are still ours; drain them so cleanup runs before we re-raise.
+            await cancel_and_drain(ready_waiter, wrap_task)
+            raise
+        else:
+            # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
+            # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
+            await cancel_and_drain(ready_waiter)
 
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
@@ -1815,18 +1826,14 @@ async def _call_tools(  # noqa: C901
                             yield event
 
         except asyncio.CancelledError as e:
-            for task in tasks:
-                if not task.done():
-                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+            await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
             raise
         except BaseException:
             # Cancel any still-running sibling tasks so they don't become
             # orphaned asyncio tasks when a non-CancelledError exception
             # (e.g. RuntimeError, ConnectionError) propagates out of
             # handle_call_or_result().
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
+            await cancel_and_drain(*tasks)
             raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
