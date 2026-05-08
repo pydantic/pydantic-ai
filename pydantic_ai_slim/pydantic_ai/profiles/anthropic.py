@@ -17,10 +17,6 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-sonnet-4-6',
 )
 _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS: tuple[AnthropicCodeExecutionToolVersion, ...] = ('20250522', '20250825')
-_ANTHROPIC_CODE_EXECUTION_20260120_VERSIONS: tuple[AnthropicCodeExecutionToolVersion, ...] = (
-    *_ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS,
-    '20260120',
-)
 
 
 @dataclass(kw_only=True)
@@ -73,10 +69,15 @@ class AnthropicModelProfile(ModelProfile):
     """The Anthropic code execution tool version used when `anthropic_code_execution_tool_version='auto'`."""
 
     anthropic_supported_code_execution_tool_versions: tuple[AnthropicCodeExecutionToolVersion, ...] = (
-        '20250522',
-        '20250825',
+        _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS
     )
     """The Anthropic code execution tool versions supported by the model."""
+
+    anthropic_supports_task_budgets: bool = False
+    """Whether the model supports `output_config.task_budget`.
+
+    Anthropic currently documents task budgets as a Claude Opus 4.7 beta feature.
+    """
 
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
@@ -121,6 +122,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
+    supports_task_budgets = model_name.startswith('claude-opus-4-7')
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
@@ -134,12 +136,16 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
+        anthropic_supports_task_budgets=supports_task_budgets,
     )
 
 
 def _code_execution_tool_versions(
     model_name: str,
 ) -> tuple[AnthropicCodeExecutionToolVersion, tuple[AnthropicCodeExecutionToolVersion, ...]]:
+    versions = _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS
+    default_version: AnthropicCodeExecutionToolVersion = '20250825'
     if model_name.startswith(_ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES):
-        return '20260120', _ANTHROPIC_CODE_EXECUTION_20260120_VERSIONS
-    return '20250825', _ANTHROPIC_CODE_EXECUTION_BASE_VERSIONS
+        default_version = '20260120'
+        versions = (*versions, default_version)
+    return default_version, versions

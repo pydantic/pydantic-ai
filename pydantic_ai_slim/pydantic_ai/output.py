@@ -114,10 +114,10 @@ class ToolOutput(Generic[OutputDataT]):
     description: str | None
     """The description of the tool that will be passed to the model. If not specified, the docstring of the output type or function will be used."""
     max_retries: int | None
-    """The maximum number of retries for this specific output tool.
+    """Per-tool retry limit for this output tool.
 
-    Overrides the agent-level `retries`/`output_retries` for this tool.
-    If not set, the agent-level value is used as the default.
+    Overrides the agent-level `output_retries` default (which itself acts as the per-tool default
+    for output tools that do not specify their own limit). If not set, the agent-level value is used.
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
