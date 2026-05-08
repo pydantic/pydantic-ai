@@ -6784,9 +6784,7 @@ async def test_anthropic_container_upload_blocks_multi_turn():
 
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
 
-    code_exec_tool = CodeExecutionTool(
-        files=[UploadedFile(file_id='file_abc', provider_name='anthropic')]
-    )
+    code_exec_tool = CodeExecutionTool(files=[UploadedFile(file_id='file_abc', provider_name='anthropic')])
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
         builtin_tools=[code_exec_tool],
