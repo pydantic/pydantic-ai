@@ -22,7 +22,6 @@ from typing import (
     Generic,
     TypeAlias,
     TypeGuard,
-    TypeVar,
     get_args,
     get_origin,
     overload,
@@ -30,25 +29,21 @@ from typing import (
 
 import anyio
 from anyio.to_thread import run_sync
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeIs,
-    is_typeddict,
-)
+from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
@@ -124,6 +119,10 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await loop.run_in_executor(executor, ctx.run, wrapped_func)
 
     return await run_sync(wrapped_func)
+
+
+def is_async_generator_already_running(exc: RuntimeError) -> bool:
+    return 'asynchronous generator is already running' in str(exc)
 
 
 def is_model_like(type_: Any) -> bool:
@@ -219,6 +218,26 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
         assert not isinstance(result, Unset)
         final_results.append(result)
     return final_results
+
+
+async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> None:
+    """Cancel any tasks still running and wait for them to finish unwinding.
+
+    Cleanup-only: results and exceptions from `tasks` are intentionally discarded so a
+    cancelled child cannot replace an exception already propagating in the caller.
+    Use after `asyncio.create_task` when an outer cancel/exception means the spawned
+    tasks must be torn down before the caller exits.
+    """
+    for task in tasks:
+        if not task.done():
+            task.cancel(msg=msg)
+
+    # Pydantic Graph runs nodes under AnyIO cancel scopes. Once the outer scope
+    # is cancelled, AnyIO uses level cancellation and can keep re-cancelling at
+    # each await. Shield the drain so child tasks get one explicit cancel above,
+    # then can finish normal async `finally` cleanup before we re-raise.
+    with anyio.CancelScope(shield=True):
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class Unset:
@@ -396,15 +415,18 @@ def generate_tool_call_id() -> str:
     return f'pyd_ai_{uuid.uuid4().hex}'
 
 
-class PeekableAsyncStream(Generic[T]):
+SourceT = TypeVar('SourceT', bound=AsyncIterable[Any], default=AsyncIterable[T])
+
+
+class PeekableAsyncStream(Generic[T, SourceT]):
     """Wraps an async iterable of type T and allows peeking at the *next* item without consuming it.
 
     We only buffer one item at a time (the next item). Once that item is yielded, it is discarded.
     This is a single-pass stream.
     """
 
-    def __init__(self, source: AsyncIterable[T]):
-        self._source = source
+    def __init__(self, source: SourceT):
+        self.source = source
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
@@ -423,7 +445,7 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
         if self._source_iter is None:
-            self._source_iter = aiter(self._source)
+            self._source_iter = aiter(self.source)
 
         try:
             self._buffer = await anext(self._source_iter)
@@ -457,13 +479,20 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, fetch the next item from the source.
         if self._source_iter is None:
-            self._source_iter = aiter(self._source)
+            self._source_iter = aiter(self.source)
 
         try:
             return await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             raise
+
+    async def aclose(self) -> None:
+        self._exhausted = True
+        value = self._source_iter if self._source_iter is not None else self.source
+        aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
+        if aclose is not None:
+            await aclose()
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:

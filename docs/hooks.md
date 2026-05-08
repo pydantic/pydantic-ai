@@ -380,7 +380,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 - Converted to retry prompts, same as when an output function raises `ModelRetry`
 - For tool output, retries count against the tool's `max_retries` limit
-- For text output, retries count against the agent's `max_result_retries` limit
+- For text output, retries count against the agent's `output_retries` limit
 
 `ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
 
