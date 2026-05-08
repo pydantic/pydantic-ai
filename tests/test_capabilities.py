@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -370,21 +371,72 @@ def test_agent_from_spec_model_settings_merged():
 
 
 def test_agent_from_spec_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_retries_override():
-    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_output_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
     assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 10  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 10  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_no_retries_does_not_warn():
+    """`from_spec` without an explicit `retries` must not emit the deprecation warning.
+
+    The default for `AgentSpec.retries` is `None` so it can be distinguished from a
+    user-set value; only an explicit value is forwarded to the deprecated
+    `Agent(retries=...)` kwarg.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent.from_spec({'model': 'test'})
+
+    assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_explicit_retries_warns():
+    """An explicit `retries` in the spec still triggers the deprecation warning."""
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated.*Use `tool_retries`'):
+        agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_tool_retries():
+    """`tool_retries` on the spec sets the tool budget without cascading to output and without warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        agent = Agent.from_spec({'model': 'test', 'tool_retries': 5})
+
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_spec_retries_deprecated_getter():
+    """Reading `AgentSpec.retries` warns; the value is still returned for backward compatibility."""
+    spec = AgentSpec(model='test', retries=5)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        assert spec.retries == 5
+
+
+def test_agent_spec_tool_retries_field():
+    """`AgentSpec.tool_retries` is the canonical field and does not warn on access."""
+    spec = AgentSpec(model='test', tool_retries=5)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        assert spec.tool_retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -471,6 +523,12 @@ def test_model_json_schema_with_capabilities():
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'action': {
+                            'default': 'auto',
+                            'enum': ['generate', 'edit', 'auto'],
+                            'title': 'Action',
+                            'type': 'string',
+                        },
                         'background': {
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
@@ -487,6 +545,18 @@ def test_model_json_schema_with_capabilities():
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
+                        },
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -621,6 +691,8 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r7b-12-2024',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
+                        'deepseek:deepseek-v4-flash',
+                        'deepseek:deepseek-v4-pro',
                         'gateway/anthropic:claude-3-haiku-20240307',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
                         'gateway/anthropic:claude-mythos-preview',
@@ -1284,6 +1356,10 @@ Supported by:
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
                         },
+                        'action': {
+                            'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Action',
+                        },
                         'background': {
                             'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Background',
@@ -1295,6 +1371,17 @@ Supported by:
                         'moderation': {
                             'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Moderation',
+                        },
+                        'image_model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Image Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -1479,7 +1566,17 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'tool_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Tool Retries',
+                },
+                'retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'deprecated': True,
+                    'title': 'Retries',
+                },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
@@ -1735,7 +1832,8 @@ def test_agent_from_file_json(tmp_path: str):
 def test_agent_from_file_with_overrides(tmp_path: str):
     spec_path = Path(tmp_path) / 'agent.yaml'
     spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
-    agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    with pytest.warns(DeprecationWarning, match=r'`retries` is deprecated'):
+        agent = Agent.from_file(spec_path, name='override-name', retries=2)
     assert agent.name == 'override-name'
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
 
@@ -1798,14 +1896,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', tool_retries=3)
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.retries == 3
+    assert loaded.tool_retries == 3
 
 
 @dataclass
@@ -2287,6 +2385,36 @@ async def test_for_run_with_different_instructions():
     assert any('per-run' in i for i in instructions_found), (
         f'Expected per-run instructions in messages, got: {captured_messages}'
     )
+
+
+async def test_for_run_receives_populated_run_context():
+    """`for_run` hooks receive a `RunContext` with run_id, conversation_id, and resolved metadata."""
+
+    captured: dict[str, Any] = {}
+
+    class CapturingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            captured['run_id'] = ctx.run_id
+            captured['conversation_id'] = ctx.conversation_id
+            captured['metadata'] = ctx.metadata
+            captured['instrumentation_version'] = ctx.instrumentation_version
+            return self
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    def metadata_factory(ctx: RunContext[None]) -> dict[str, Any]:
+        # Factory should be able to read run_id/conversation_id from the early ctx.
+        return {'run_id_seen': ctx.run_id, 'conversation_id_seen': ctx.conversation_id}
+
+    agent = Agent(FunctionModel(respond), capabilities=[CapturingCap()])
+
+    await agent.run('Hello', conversation_id='conv-123', metadata=metadata_factory)
+
+    assert captured['run_id'] is not None
+    assert captured['conversation_id'] == 'conv-123'
+    assert captured['metadata'] == {'run_id_seen': captured['run_id'], 'conversation_id_seen': 'conv-123'}
+    assert captured['instrumentation_version'] is not None
 
 
 async def test_concurrent_runs_capability_isolation():
@@ -4074,7 +4202,13 @@ class TestPrepareOutputToolsHook:
                 parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 7}', tool_call_id='c1')]
             )
 
-        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, retries=4, capabilities=[CaptureCtxCap()])
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=MyOutput,
+            tool_retries=4,
+            output_retries=4,
+            capabilities=[CaptureCtxCap()],
+        )
         await agent.run('hello')
         assert seen == [(0, 4)]
 
@@ -4178,7 +4312,6 @@ class TestWrapNodeRunHook:
 
     async def test_bare_async_for_warns_with_wrap_node_run(self):
         """Using bare async for on iter() warns when a capability has wrap_node_run."""
-        import warnings
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
@@ -4530,6 +4663,8 @@ class TestImageGenerationCapability:
         builtin_fields = {
             f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
         }
+        builtin_fields.remove('model')
+        builtin_fields.add('image_model')
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
             'builtin',
@@ -4573,9 +4708,11 @@ class TestImageGenerationCapability:
     def test_image_generation_forwards_config_to_builtin(self):
         """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
         cap = ImageGeneration(
+            action='generate',
             background='opaque',
             input_fidelity='high',
             moderation='low',
+            image_model='gpt-image-2',
             output_compression=80,
             output_format='jpeg',
             quality='high',
@@ -4586,9 +4723,11 @@ class TestImageGenerationCapability:
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
+        assert tool.action == 'generate'
         assert tool.background == 'opaque'
         assert tool.input_fidelity == 'high'
         assert tool.moderation == 'low'
+        assert tool.model == 'gpt-image-2'
         assert tool.output_compression == 80
         assert tool.output_format == 'jpeg'
         assert tool.quality == 'high'
@@ -4765,7 +4904,7 @@ class TestImageGenerationCapability:
                 ModelRequest(
                     parts=[
                         RetryPromptPart(
-                            content='Exceeded maximum retries (1) for output validation',
+                            content='Exceeded maximum output retries (1)',
                             tool_name='generate_image',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -4777,7 +4916,7 @@ class TestImageGenerationCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    usage=RequestUsage(input_tokens=66, output_tokens=7),
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4786,10 +4925,11 @@ class TestImageGenerationCapability:
             ]
         )
 
-    def test_image_generation_rejects_image_only_model(self):
-        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
-        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
+    def test_image_generation_rejects_image_only_model(self, model_name: str):
+        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
+        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
+            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
@@ -8290,7 +8430,7 @@ class TestModelRetryFromHooks:
         )
 
     async def test_after_model_request_model_retry_max_retries(self):
-        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+        """after_model_request raises ModelRetry repeatedly — hits output_retries."""
 
         @dataclass
         class AlwaysRetryCap(AbstractCapability[Any]):
@@ -8308,7 +8448,7 @@ class TestModelRetryFromHooks:
             capabilities=[AlwaysRetryCap()],
             output_retries=2,
         )
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
 
     async def test_after_model_request_model_retry_streaming(self):
@@ -8635,7 +8775,7 @@ class TestModelRetryFromHooks:
                 raise error
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
 
@@ -8834,7 +8974,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9161,7 +9301,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9237,7 +9377,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9311,7 +9451,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9385,7 +9525,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], tool_retries=2, output_retries=2)
 
         @agent.tool_plain
         def my_tool() -> str:

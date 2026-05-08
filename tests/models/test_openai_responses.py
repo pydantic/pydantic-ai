@@ -225,6 +225,57 @@ def test_openai_responses_image_generation_tool_unsupported_size_raises_error() 
         _resolve_openai_image_generation_size(tool)
 
 
+async def test_openai_responses_image_generation_tool_options(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        builtin_tools=[
+            ImageGenerationTool(
+                action='generate',
+                model='gpt-image-2',
+                background='opaque',
+                output_format='jpeg',
+                size='1536x1024',
+            )
+        ],
+    )
+
+    result = await agent.run('Generate an image.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'generate',
+                'background': 'opaque',
+                'input_fidelity': None,
+                'moderation': 'auto',
+                'output_compression': 100,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'auto',
+                'size': '1536x1024',
+                'model': 'gpt-image-2',
+            }
+        ]
+    )
+
+
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2682,7 +2733,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     response instead of re-sending the same static seed and duplicating stored state.
     """
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, retries=3)
+    agent = Agent(model=model, tool_retries=3, output_retries=3)
 
     attempts: list[str] = []
 
@@ -7654,9 +7705,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
     agent = Agent(model=model, builtin_tools=[ImageGenerationTool()])
 
     with capture_run_messages() as messages:
-        with pytest.raises(
-            UnexpectedModelBehavior, match=re.escape('Exceeded maximum retries (1) for output validation')
-        ):
+        with pytest.raises(UnexpectedModelBehavior, match=re.escape('Exceeded maximum output retries (1)')):
             await agent.run('Generate an image of an axolotl.')
 
     assert messages == snapshot(
@@ -8548,6 +8597,65 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
     assert len(web_search_items) == 1
     web_search_item = cast(dict[str, Any], web_search_items[0])
     assert web_search_item['id'] == long_id
+
+
+async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Call current_time')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcp_123',
+                    args={'action': 'call_tool', 'tool_name': 'current_time', 'tool_args': {}},
+                    provider_name='openai',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='mcp_server:clock',
+                    tool_call_id='mcp_123',
+                    content={'output': '2026-05-06T00:00:00Z', 'error': None},
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='What did you call?')]),
+    ]
+
+    await model.request(
+        messages,
+        cast(OpenAIResponsesModelSettings, {'openai_send_reasoning_ids': True}),
+        ModelRequestParameters(
+            builtin_tools=[MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])]
+        ),
+    )
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert response_kwargs['input'][1] == snapshot(
+        {
+            'id': 'mcp_123',
+            'server_label': 'clock',
+            'name': 'current_time',
+            'arguments': '{}',
+            'error': None,
+            'output': None,
+            'type': 'mcp_call',
+        }
+    )
 
 
 async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):
@@ -10808,6 +10916,95 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
 
 
+async def test_stream_cancel(allow_model_requests: None):
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello ',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=3,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='world',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=4,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
+                model_name='gpt-4o',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='resp_001',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_null_text(allow_model_requests: None):
     """Test that ResponseOutputText with text=null (from gateways like Bifrost) is handled gracefully."""
     c = response_message(
@@ -10867,6 +11064,8 @@ async def test_openai_responses_null_text(allow_model_requests: None):
 
 async def test_openai_responses_null_text_stream(allow_model_requests: None):
     """Test that ResponseTextDeltaEvent with delta=null (from gateways like Bifrost) is handled gracefully."""
+    from openai.types import responses as resp
+
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',

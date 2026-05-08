@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import os
@@ -8,7 +9,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, overload
@@ -283,6 +284,52 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
 
+_SHUTDOWN_GRACE_SECONDS = 3
+"""How long to wait for the session task to wind down at each shutdown phase
+(graceful stop in `__aexit__`, force-cancel in either `__aenter__` cancel cleanup
+or `__aexit__` escalation). Bounds worst-case cleanup time when the underlying
+transport is unresponsive (e.g. a hung subprocess); past this we move on without
+awaiting it."""
+
+
+@dataclass
+class _MCPSessionState:
+    """State for the single background session task that owns an MCPServer's connection.
+
+    The session task is spawned on first `__aenter__`, runs in its own asyncio.Task
+    (escaping structured concurrency so it can outlive nested `async with` scopes),
+    and is torn down when the last `__aexit__` decrements the ref count to zero.
+
+    Because the task enters and exits its cancel scope in the same task, the
+    `RuntimeError: Attempted to exit cancel scope in a different task` error from
+    the underlying anyio transports cannot occur — regardless of which task
+    originally called `__aenter__` / `__aexit__`.
+    """
+
+    session_task: asyncio.Task[None] | None = None
+    ready_event: anyio.Event | None = None
+    stop_event: anyio.Event | None = None
+    nesting_counter: int = 0
+    client: ClientSession | None = None
+    connect_error: BaseException | None = None
+
+    async def force_close(self, task: asyncio.Task[None]) -> None:
+        """Cancel `task` and wait up to `_SHUTDOWN_GRACE_SECONDS` for it to unwind.
+
+        Shielded against external cancellation so cleanup completes regardless of
+        the caller's cancel state; the timeout bounds worst-case wait when the
+        underlying transport's `__aexit__` can't unwind cleanly (e.g. hung
+        subprocess, server that never closes the connection).
+        """
+        task.cancel()
+        with anyio.CancelScope(shield=True):
+            with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
+                try:
+                    await task
+                except BaseException:
+                    pass
+
+
 class MCPServer(AbstractToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
@@ -374,12 +421,8 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _id: str | None
 
-    _running_count: int
-    _exit_stack: AsyncExitStack | None
+    _session_state: _MCPSessionState = field(compare=False)
 
-    _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
-    _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
     _server_capabilities: ServerCapabilities
     _instructions: str | None
@@ -433,8 +476,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.__post_init__()
 
     def __post_init__(self):
-        self._running_count = 0
-        self._exit_stack = None
+        self._session_state = _MCPSessionState()
         self._cached_tools = None
         self._cached_resources = None
 
@@ -536,7 +578,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return self._cached_tools
 
         async with self:
-            result = await self._client.list_tools()
+            result = await self._get_client().list_tools()
             if self.cache_tools:
                 self._cached_tools = result.tools
             return result.tools
@@ -562,7 +604,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self:  # Ensure server is running
             try:
-                result = await self._client.send_request(
+                result = await self._get_client().send_request(
                     mcp_types.ClientRequest(
                         mcp_types.CallToolRequest(
                             method='tools/call',
@@ -663,7 +705,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.resources:
                 return []
             try:
-                result = await self._client.list_resources()
+                result = await self._get_client().list_resources()
                 resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                 if self.cache_resources:
                     self._cached_resources = resources
@@ -681,7 +723,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.resources:
                 return []
             try:
-                result = await self._client.list_resource_templates()
+                result = await self._get_client().list_resource_templates()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
@@ -712,7 +754,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
             try:
-                result = await self._client.read_resource(AnyUrl(resource_uri))
+                result = await self._get_client().read_resource(AnyUrl(resource_uri))
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
@@ -722,58 +764,144 @@ class MCPServer(AbstractToolset[Any], ABC):
             else [self._get_content(resource) for resource in result.contents]
         )
 
+    def _get_client(self) -> ClientSession:
+        client = self._session_state.client
+        if client is None:
+            raise RuntimeError(  # pragma: no cover
+                f'{self.__class__.__name__} is not connected. Use `async with server:` to open a connection first.'
+            )
+        return client
+
+    async def _session_runner(self) -> None:
+        """Own the MCP session's lifecycle for this server.
+
+        Entered AND exited inside this single dedicated asyncio.Task, so the underlying
+        anyio cancel scopes (from stdio_client / streamable_http_client / etc.) are
+        always exited in the same task they were entered in.
+        """
+        state = self._session_state
+        # Capture local references so a recycled session (new __aenter__ replacing
+        # state.ready_event/state.stop_event before this runner's `finally` runs)
+        # cannot corrupt the next session's events.
+        ready_event = state.ready_event
+        stop_event = state.stop_event
+        assert ready_event is not None
+        assert stop_event is not None
+        client: ClientSession | None = None
+        try:
+            async with AsyncExitStack() as stack:
+                read_stream, write_stream = await stack.enter_async_context(self.client_streams())
+                session = ClientSession(
+                    read_stream=read_stream,
+                    write_stream=write_stream,
+                    sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                    elicitation_callback=self.elicitation_callback,
+                    logging_callback=self.log_handler,
+                    read_timeout_seconds=timedelta(seconds=self.read_timeout),
+                    message_handler=self._handle_notification,
+                    client_info=self.client_info,
+                )
+                client = await stack.enter_async_context(session)
+
+                with anyio.fail_after(self.timeout):
+                    result = await client.initialize()
+                    self._server_info = result.serverInfo
+                    self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
+                    self._instructions = result.instructions
+                    if log_level := self.log_level:
+                        await client.set_logging_level(log_level)
+
+                state.client = client
+                ready_event.set()
+                await stop_event.wait()
+        except BaseException as e:
+            # Only record the error if we are still the active session — otherwise
+            # __aenter__ has already moved on with a fresh session_task.
+            if state.session_task is asyncio.current_task():
+                state.connect_error = e
+        finally:
+            # Only clear state.client if it still references *our* client; a
+            # recycled session may have already installed a new one.
+            if state.client is client:
+                state.client = None
+            ready_event.set()
+
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
-        This will initialize the connection to the server.
-        If this server is an [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio], the server will first be started as a subprocess.
+        The first call starts the connection (spawning a subprocess for stdio servers,
+        opening an HTTP connection for HTTP servers). Subsequent calls — from any task
+        — share the same connection via reference counting. The connection is torn
+        down when the last `async with` scope exits.
 
-        This is a no-op if the MCP server has already been entered.
+        Because the session runs in a dedicated background task, entering and exiting
+        from different tasks (e.g. `asyncio.gather` children, fasta2a workers, or
+        graph node tasks) is safe: the underlying transport's cancel scopes never
+        cross task boundaries.
         """
         async with self._enter_lock:
-            if self._running_count == 0:
-                async with AsyncExitStack() as exit_stack:
-                    self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
-
-                    client = ClientSession(
-                        read_stream=self._read_stream,
-                        write_stream=self._write_stream,
-                        sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                        elicitation_callback=self.elicitation_callback,
-                        logging_callback=self.log_handler,
-                        read_timeout_seconds=timedelta(seconds=self.read_timeout),
-                        message_handler=self._handle_notification,
-                        client_info=self.client_info,
-                    )
-                    self._client = await exit_stack.enter_async_context(client)
-
-                    with anyio.fail_after(self.timeout):
-                        result = await self._client.initialize()
-                        self._server_info = result.serverInfo
-                        self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
-                        self._instructions = result.instructions
-                        if log_level := self.log_level:
-                            await self._client.set_logging_level(log_level)
-
-                    self._exit_stack = exit_stack.pop_all()
-            self._running_count += 1
+            state = self._session_state
+            need_to_start = state.session_task is None or state.session_task.done()
+            if need_to_start:
+                state.stop_event = anyio.Event()
+                state.ready_event = anyio.Event()
+                state.connect_error = None
+                state.client = None
+                state.session_task = asyncio.create_task(self._session_runner())
+                try:
+                    await state.ready_event.wait()
+                except BaseException:
+                    # Cancelled while waiting for startup: tear down the session task
+                    # without impacting anyone else (we hold the lock and just started it)
+                    task = state.session_task
+                    state.stop_event.set()
+                    await state.force_close(task)
+                    state.session_task = None
+                    state.client = None
+                    raise
+                if state.connect_error is not None:
+                    # Connection failed during startup; surface the error and reset state
+                    state.session_task = None
+                    err = state.connect_error
+                    state.connect_error = None
+                    raise err
+            state.nesting_counter += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        state = self._session_state
+        session_task_to_await: asyncio.Task[None] | None = None
         async with self._enter_lock:
-            if self._running_count == 0:
+            if state.nesting_counter == 0:
                 raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
-            self._running_count -= 1
-            if self._running_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
-                self._cached_tools = None
-                self._cached_resources = None
+            state.nesting_counter -= 1
+            if state.nesting_counter > 0:
+                return None
+            if state.session_task is None:
+                return None
+            assert state.stop_event is not None
+            state.stop_event.set()
+            session_task_to_await = state.session_task
+            state.session_task = None
+            self._cached_tools = None
+            self._cached_resources = None
+        # Await outside the lock: the session task's cancel scopes unwind inside the
+        # task itself, so this await can safely happen from any caller. Bound the
+        # wait so a transport whose `__aexit__` deadlocks (hung subprocess, server
+        # that never closes the connection) cannot block our own shutdown forever;
+        # `move_on_after` cancels this `await`, which propagates the cancel through
+        # to `session_task_to_await` itself, so the runner gets torn down too.
+        with anyio.move_on_after(_SHUTDOWN_GRACE_SECONDS):
+            try:
+                await session_task_to_await
+            except BaseException:
+                pass
+        return None
 
     @property
     def is_running(self) -> bool:
         """Check if the MCP server is running."""
-        return bool(self._running_count)
+        return self._session_state.nesting_counter > 0
 
     async def _sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
