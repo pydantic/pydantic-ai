@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import contextlib
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -1239,19 +1238,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     yield message
 
         except asyncio.CancelledError as e:
-            task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-            with contextlib.suppress(BaseException):
-                await task
+            await _utils.cancel_and_drain(task, msg=e.args[0] if len(e.args) != 0 else None)
             raise
 
         except BaseException:
-            task.cancel()
-
             # The consumer side is already exiting. Await the producer only to
             # retrieve its exception and finish cleanup; it must not replace the
             # exception that is already propagating from the consumer side.
-            with contextlib.suppress(BaseException):
-                await task
+            await _utils.cancel_and_drain(task)
             raise
 
         else:
