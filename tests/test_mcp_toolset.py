@@ -323,7 +323,7 @@ class TestMCPToolsetIntegration:
             part = await toolset.get_instructions(run_context)
         assert part is not None
         assert part.content == 'You are an MCP test server.'
-        assert part.dynamic is True
+        assert part.dynamic is False
 
     async def test_get_instructions_returns_none_when_disabled(
         self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
@@ -536,7 +536,7 @@ class TestMCPToolsetIntegration:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('resource_link_tool', {}, run_context, tools['resource_link_tool'])
-        # `_map_fastmcp_tool_result` for ResourceLink returns the URI string.
+        # `_map_mcp_tool_result` for ResourceLink returns the URI string.
         assert result == 'resource://greeting.txt'
 
     async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
@@ -566,32 +566,32 @@ class TestMCPToolsetIntegration:
 
 
 class TestToolResultMapping:
-    """Direct unit tests for `_map_fastmcp_tool_result` — easier than crafting a server response
+    """Direct unit tests for `_map_mcp_tool_result` — easier than crafting a server response
     that bypasses FastMCP's `structured_content` shortcut."""
 
     def test_text_content_returns_str(self):
-        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
-        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='hello'))
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='hello'))
         assert out == 'hello'
 
     def test_text_content_with_json_object_is_parsed(self):
-        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
-        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='{"a": 1}'))
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='{"a": 1}'))
         assert out == {'a': 1}
 
     def test_text_content_with_json_array_is_parsed(self):
-        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
-        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='[1, 2, 3]'))
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='[1, 2, 3]'))
         assert out == [1, 2, 3]
 
     def test_text_content_with_invalid_json_falls_back_to_text(self):
-        from pydantic_ai.mcp import _map_fastmcp_tool_result  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
         # Starts with `{` but isn't valid JSON.
-        out = _map_fastmcp_tool_result(mcp_types.TextContent(type='text', text='{not valid'))
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='{not valid'))
         assert out == '{not valid'
 
 

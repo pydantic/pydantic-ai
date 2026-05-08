@@ -76,6 +76,7 @@ from .settings import ModelSettings
 
 __all__ = (
     'MCPToolset',
+    'MCPToolsetClient',
     'load_mcp_toolsets',
     'MCPServer',
     'MCPServerStdio',
@@ -1434,9 +1435,12 @@ metadata.
 """
 
 
-_MCPToolsetClientInput: TypeAlias = (
+MCPToolsetClient: TypeAlias = (
     'FastMCPClient[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | MCPConfig | dict[str, Any] | str'
 )
+"""Anything `MCPToolset` accepts as its `client` argument — a pre-built `fastmcp.Client`, a FastMCP
+`ClientTransport`, an in-process `FastMCP` server, an `AnyUrl`/URL string, a script `Path`, an
+`MCPConfig`/dict, or any other input FastMCP can build a transport from."""
 
 
 _UNSET: Any = object()
@@ -1456,8 +1460,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     range of transports (HTTP, SSE, stdio, in-process FastMCP servers, multi-server configs).
 
     Pass any input that FastMCP can build a transport from — a URL, a script path, a `FastMCP`
-    server instance for in-process testing, an `MCPConfig` dict — or a pre-built
-    [`fastmcp.Client`][fastmcp.client.Client] for full control over its configuration.
+    server instance for in-process testing, an `MCPConfig` dict — or a pre-built `fastmcp.Client`
+    for full control over its configuration.
 
     Example — connect to a streamable-HTTP MCP server:
 
@@ -1491,8 +1495,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     client: FastMCPClient[Any]
-    """The underlying FastMCP client. Always normalized to a [`fastmcp.Client`][fastmcp.client.Client]
-    regardless of how the toolset was constructed."""
+    """The underlying FastMCP `Client`. Always normalized to a `fastmcp.Client` regardless of how
+    the toolset was constructed."""
 
     tool_error_behavior: Literal['model_retry', 'error']
     """How to handle tool errors raised by the server.
@@ -1532,8 +1536,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """Whether to include the server's `initialize` instructions string in the agent's instruction set.
 
     Defaults to `False` for backward compatibility. When `True`, the instructions returned by the
-    server during initialization are added to the agent's instructions, marked as dynamic so they
-    refresh between connections.
+    server during initialization are added to the agent's instructions.
     """
 
     include_return_schema: bool | None
@@ -1582,7 +1585,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     def __init__(
         self,
-        client: _MCPToolsetClientInput,
+        client: MCPToolsetClient,
         *,
         # Pydantic AI-layer config
         id: str | None = None,
@@ -1859,7 +1862,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return None
         if not self._initialized or self._instructions is None:
             return None
-        return messages.InstructionPart(content=self._instructions, dynamic=True)
+        return messages.InstructionPart(content=self._instructions, dynamic=False)
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.
@@ -1888,7 +1891,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
-                        'output_schema': mcp_tool.outputSchema or None,
                     },
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
@@ -1944,7 +1946,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 return structured['result']
             return structured
 
-        return _map_fastmcp_tool_results(result.content)
+        return _map_mcp_tool_results(result.content)
 
     async def call_tool(
         self,
@@ -2071,14 +2073,14 @@ class _CacheInvalidatingMessageHandler:
 
 
 def _build_transport(
-    client: _MCPToolsetClientInput,
+    client: MCPToolsetClient,
     *,
     headers: dict[str, str] | None,
     http_client: httpx.AsyncClient | None,
     auth: httpx.Auth | Literal['oauth'] | str | None,
     verify: ssl.SSLContext | bool | str | None,
     read_timeout: float | None,
-) -> _MCPToolsetClientInput:
+) -> MCPToolsetClient:
     """Build a FastMCP transport from a flexible input.
 
     For URL-shaped inputs combined with HTTP-specific kwargs, we construct the transport explicitly
@@ -2155,14 +2157,14 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
     return handler
 
 
-def _map_fastmcp_tool_results(
+def _map_mcp_tool_results(
     parts: Sequence[mcp_types.ContentBlock],
 ) -> str | messages.BinaryContent | list[str | messages.BinaryContent]:
-    mapped = [_map_fastmcp_tool_result(part) for part in parts]
+    mapped = [_map_mcp_tool_result(part) for part in parts]
     return mapped[0] if len(mapped) == 1 else mapped
 
 
-def _map_fastmcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent:
+def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent:
     if isinstance(part, mcp_types.TextContent):
         text = part.text
         if text.startswith(('[', '{')):

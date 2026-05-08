@@ -60,7 +60,8 @@ UNKNOWN_BINARY_MEDIA_TYPE = 'application/octet-stream'
 
 @deprecated(
     '`FastMCPToolset` is deprecated and will be removed in v2. '
-    'Use `pydantic_ai.mcp.MCPToolset` instead — it accepts the same input shapes and adds full '
+    'Use `pydantic_ai.mcp.MCPToolset` instead — it is also built on the FastMCP `Client` and accepts '
+    'a pre-built `fastmcp.Client` or any input FastMCP can build a transport from, while adding full '
     'parity with the legacy `MCPServer*` classes (caching, resource methods, sampling shortcuts, '
     'OAuth auth). See the migration guide in the v2 release notes.'
 )
