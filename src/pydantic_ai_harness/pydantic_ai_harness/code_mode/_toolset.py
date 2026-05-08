@@ -76,6 +76,7 @@ The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No classes**: class definitions are not supported
 - **No third-party libraries**: only the standard library modules listed below can be used
 - **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`. These must be imported at the top of your snippet before use, just like in regular Python. For example: `import asyncio` then `results = await asyncio.gather(tool_one(...), tool_two(...))`.
+- **No wall-clock or timing primitives**: `asyncio.sleep`, `datetime.datetime.now()`, `datetime.date.today()`, and the `time` module are unavailable.
 - **No `import *`**: wildcard imports are not supported
 
 State is preserved between calls (REPL-style). Set `restart: true` to reset state.

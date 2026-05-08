@@ -126,6 +126,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No class definitions
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`)
+- No wall-clock or timing primitives: `asyncio.sleep`, `datetime.datetime.now()`/`datetime.date.today()`, and the `time` module are unavailable
 - No `import *`
 - Tools requiring approval or with deferred execution are excluded from the sandbox
 
