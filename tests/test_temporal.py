@@ -4147,7 +4147,7 @@ def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Model
     """Simple model function for durability tests that echoes the last user prompt."""
     for msg in reversed(messages):  # pragma: no branch - first message always carries the prompt
         for part in msg.parts:  # pragma: no branch - first part is always the UserPromptPart
-            if isinstance(part, UserPromptPart):
+            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
