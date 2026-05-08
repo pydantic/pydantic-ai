@@ -784,7 +784,12 @@ class XaiModel(Model[AsyncClient]):
 
         chat = await self._create_chat(messages, cast(XaiModelSettings, model_settings or {}), model_request_parameters)
         response_stream = chat.stream()
-        yield await self._process_streamed_response(response_stream, model_request_parameters)
+        try:
+            yield await self._process_streamed_response(response_stream, model_request_parameters)
+        finally:
+            aclose = getattr(response_stream, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.
@@ -870,7 +875,10 @@ class XaiModel(Model[AsyncClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            tuple[chat_types.Response, chat_types.Chunk],
+            AsyncIterator[tuple[chat_types.Response, Any]],
+        ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_item = await peekable_response.peek()
         if isinstance(first_item, _utils.Unset):
@@ -892,9 +900,29 @@ class XaiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for xAI SDK."""
 
     _model_name: str
-    _response: _utils.PeekableAsyncStream[tuple[chat_types.Response, chat_types.Chunk]]
+    _response: _utils.PeekableAsyncStream[
+        tuple[chat_types.Response, chat_types.Chunk],
+        AsyncIterator[tuple[chat_types.Response, Any]],
+    ]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (grpc.RpcError,)
+
+    async def close_stream(self) -> None:
+        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
+        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
+        #
+        # Calling `aclose()` shuts down that local async-generator wrapper and
+        # stops consumption on our side, but the SDK does not expose the inner
+        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
+        # RPC cancellation hook.
+        try:
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
 
     @property
     def system(self) -> str:
@@ -990,6 +1018,8 @@ class XaiStreamedResponse(StreamedResponse):
                 provider_name=self.system,
                 provider_details={'function_name': tool_call.function.name},
             )
+            if builtin_tool_name == CodeExecutionTool.kind:
+                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
             return
 
@@ -1448,16 +1478,16 @@ def _create_tool_call_part(
                 args = _build_mcp_tool_call_args(tool_call)
             else:
                 args = _parse_tool_args(tool_call.function.arguments)
-            return (
-                tool_call.id,
-                BuiltinToolCallPart(
-                    tool_name=builtin_tool_name,
-                    args=args,
-                    tool_call_id=tool_call.id,
-                    provider_name=provider_name,
-                    provider_details={'function_name': tool_call.function.name},
-                ),
+            call_part = BuiltinToolCallPart(
+                tool_name=builtin_tool_name,
+                args=args,
+                tool_call_id=tool_call.id,
+                provider_name=provider_name,
+                provider_details={'function_name': tool_call.function.name},
             )
+            if builtin_tool_name == CodeExecutionTool.kind:
+                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+            return (tool_call.id, call_part)
     else:
         # Client-side tool call
         return (

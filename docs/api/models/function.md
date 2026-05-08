@@ -32,6 +32,7 @@ async def model_function(
             ],
             timestamp=datetime.datetime(...),
             run_id='...',
+            conversation_id='...',
         )
     ]
     """

@@ -704,9 +704,11 @@ class OpenRouterModel(OpenAIChatModel):
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
-        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam | None:
             message_param = super()._into_message_param()
             if self.reasoning_details:
+                if message_param is None:
+                    message_param = chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
                 message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
             return message_param
 
