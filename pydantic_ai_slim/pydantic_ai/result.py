@@ -365,7 +365,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
             self._agent_stream_iterator = _get_usage_checking_stream_response(
-                self._raw_stream_response, self._usage_limits, self.usage
+                self._raw_stream_response, self._usage_limits, lambda: self.usage
             )
 
         base_iter = self._agent_stream_iterator
