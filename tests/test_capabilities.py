@@ -507,7 +507,9 @@ def test_model_json_schema_with_capabilities():
         {
             '$defs': {
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },

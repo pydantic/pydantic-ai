@@ -121,6 +121,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import (
+        AnthropicCodeExecutionToolVersion,
         AnthropicCompaction,
         AnthropicModel,
         AnthropicModelSettings,
@@ -6543,7 +6544,9 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+        [], model_request_parameters, AnthropicModelSettings()
+    )
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -6576,7 +6579,9 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_builtin_tools(  # pyright: ignore[reportPrivateUsage]
+        [], model_request_parameters, AnthropicModelSettings()
+    )
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -7163,8 +7168,8 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
     )
 
 
-async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
@@ -7173,8 +7178,10 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
         instructions='Always use the code execution tool for math.',
     )
 
-    result = await agent.run('How much is 3 * 12390?')
-    messages = result.all_messages()
+    first_result = await agent.run('How much is 3 * 12390?')
+    messages = first_result.all_messages()
+    second_result = await agent.run('How about 4 * 12390?')
+
     assert messages == snapshot(
         [
             ModelRequest(
@@ -7187,20 +7194,16 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking for a simple multiplication: 3 * 12390. This is a mathematical calculation, and according to my guidelines, I should always use the code execution tool for math. Even though this is a relatively simple calculation that could be done mentally, the instruction is clear that I should use the code execution tool for math.',
-                        signature='EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=',
+                        content='The user wants to calculate 3 * 12390.',
+                        signature='EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-result = 3 * 12390
-print(f"3 * 12390 = {result}")\
-"""
-                        },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
+                        args={'command': 'echo $((3 * 12390))'},
+                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -7208,31 +7211,32 @@ print(f"3 * 12390 = {result}")\
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '3 * 12390 = 37170\n',
-                            'type': 'code_execution_result',
+                            'stdout': '37170\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn',
                         timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='3 * 12390 = 37170'),
+                    TextPart(content='The result of **3 × 12,390 = 37,170**.'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1771,
-                    output_tokens=171,
+                    input_tokens=4692,
+                    output_tokens=106,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1771,
-                        'output_tokens': 171,
+                        'input_tokens': 4692,
+                        'output_tokens': 106,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn'},
-                provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRhtVsGiXZx1CgSETLH'},
+                provider_response_id='msg_01FzttSG1H2WSfUwv2J5qbMB',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7240,8 +7244,7 @@ print(f"3 * 12390 = {result}")\
         ]
     )
 
-    result = await agent.run('How about 4 * 12390?')
-    assert result.new_messages() == snapshot(
+    assert second_result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -7258,20 +7261,16 @@ print(f"3 * 12390 = {result}")\
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking for a simple multiplication: 4 * 12390. This is a computational task that requires precise calculation, so I should use the code execution tool to get the accurate result.',
-                        signature='EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==',
+                        content='The user wants to calculate 4 * 12390.',
+                        signature='EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==',
                         provider_name='anthropic',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-result = 4 * 12390
-print(f"4 * 12390 = {result}")\
-"""
-                        },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        args={'command': 'echo $((4 * 12390))'},
+                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -7279,31 +7278,32 @@ print(f"4 * 12390 = {result}")\
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '4 * 12390 = 49560\n',
-                            'type': 'code_execution_result',
+                            'stdout': '49560\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_017iCje5DPMZEdgBkxj1osgt',
+                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='4 * 12390 = 49560'),
+                    TextPart(content='**4 × 12,390 = 49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1741,
-                    output_tokens=143,
+                    input_tokens=4690,
+                    output_tokens=103,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 1741,
-                        'output_tokens': 143,
+                        'input_tokens': 4690,
+                        'output_tokens': 103,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d'},
-                provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRiLGQoB5CoDJP5jaVY'},
+                provider_response_id='msg_01GpqA67eRBKk6HEb9w5Rs28',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7311,9 +7311,15 @@ print(f"4 * 12390 = {result}")\
         ]
     )
 
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert [body['tools'] for body in request_bodies] == [
+        [{'name': 'code_execution', 'type': 'code_execution_20260120'}],
+        [{'name': 'code_execution', 'type': 'code_execution_20260120'}],
+    ]
+
 
 async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, builtin_tools=[CodeExecutionTool()], model_settings=settings)
 
@@ -7342,30 +7348,17 @@ async def test_anthropic_code_execution_tool_stream(allow_model_requests: None, 
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
-
-This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
-
-65465-6544 * 65464-6+1.02255
-
-Following order of operations:
-1. First, multiplication: 6544 * 65464
-2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
-
-This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
-""",
-                        signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                        content='Let me calculate this mathematical expression.',
+                        signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
                         provider_name='anthropic',
                     ),
-                    TextPart(
-                        content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
-                    ),
+                    TextPart(content="I'll calculate that expression for you right away!"),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -7373,50 +7366,48 @@ This is a computational task that requires precise calculations, so I should use
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                            'type': 'code_execution_result',
+                            'stdout': '-428330955.97745\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                        tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(
                         content="""\
-The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
 
-Here's how it breaks down following the order of operations:
-1. First, multiplication: 6,544 × 65,464 = 428,396,416
-2. Then left to right: 65,465 - 428,396,416 = -428,330,951
-3. Continue: -428,330,951 - 6 = -428,330,957
-4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | `6544 × 65464` | `428,394,416` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
+
+### ✅ Final Answer: **-428,330,955.97745**\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2316,
-                    output_tokens=733,
+                    input_tokens=4714,
+                    output_tokens=304,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2316,
-                        'output_tokens': 733,
+                        'input_tokens': 4714,
+                        'output_tokens': 304,
                     },
                 ),
-                model_name='claude-sonnet-4-20250514',
+                model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01TaPV5KLA8MsCPDuJNKPLF4',
+                provider_details={
+                    'finish_reason': 'end_turn',
+                    'container_id': 'container_011CaNRFAbjdPf4rmBarZzqQ',
+                },
+                provider_response_id='msg_01Js8aWE7YbmiaUPneGiCskE',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7429,340 +7420,91 @@ Here's how it breaks down following the order of operations:
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
+                delta=ThinkingPartDelta(content_delta='Let'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ThinkingPartDelta(content_delta=' a mathematical expression: 65465-6544 *'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- 65464-6+1.02255
-
-This\
-"""
-                ),
+                delta=ThinkingPartDelta(content_delta=' me calculate this mathematical expression.'),
             ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    content_delta=' involves multiplication and subtraction operations, and I need to be careful about the order of'
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' operations (PEMDAS/BODMAS).'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- Let me break this down:
-
-65\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-
-Following order of operations:
-1. First, multiplication:\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 6544 * 65464')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-
-2. Then left to right for\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- - 6 + 1.02255
-
-This\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' is a computational task that requires precise'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' calculations, so I should use the code_execution'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(content_delta=' tool to get an accurate result.'),
-            ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ=='
+                    signature_delta='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB'
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=ThinkingPart(
-                    content="""\
-The user is asking me to calculate a mathematical expression: 65465-6544 * 65464-6+1.02255
-
-This involves multiplication and subtraction operations, and I need to be careful about the order of operations (PEMDAS/BODMAS). Let me break this down:
-
-65465-6544 * 65464-6+1.02255
-
-Following order of operations:
-1. First, multiplication: 6544 * 65464
-2. Then left to right for addition and subtraction: 65465 - (result from step 1) - 6 + 1.02255
-
-This is a computational task that requires precise calculations, so I should use the code_execution tool to get an accurate result.\
-""",
-                    signature='EucFCkYIBxgCKkCfcR3zTiKFcMLhP1aMZu4l0cfgiw3ukkSHOSX2qV1DEKtpe3pu1HpRvDz1mEw32e/wvHoS/AfpVYk3AFb8oAscEgxips//IwdGKRINkQoaDDc122APa5lQXEtsuiIw7RQW/ow7z+MOXL6D8pAl4Iz5V6VSbn2A37DxwRbzOYHSicZuvVrhZHLmn2WWwTZjKs4EYn4HNPF6+Y+9dITwGBWUz6WXsOnv/S1sp+WJLYD8vGMDG9DzTIdjQ9pMN/Bg6VB3hPTveXqxopBk+V7u1WaQC0NmkEmREv6Pdq9iHHEnuIhN0t7UrrNDxPwt/cmbilfa7QL8ofeeSorIRwvibXtG0aqNDu42r6JkatwttDSRIBSqIgKLkel8yPP9ksmOf4SRbNAbgijmq63s+EIkNHt2yjuTHV48pR1j1czHWcsoqJOHj6faeXge0OyGKuPqbBCzoqAjecNq0dRfHQUgXMWmeaJp1R6iWhKxyJV5Y2EwhA5WGH9xzc9h0TobIgGFGAk2OvzDPBO5qr+O85LbjNeHF3WfZciaj2lMIVsveklN9S8598m+R+D4/O8Sscebc2xoVf8qBDazJP5gVtuMoAKBcJuNVWeTR5snv2vs5BEejv6Q2gcb6rPa4ZxEmilhK1NTy9+dwoYvgLUm5o11PBXbI7uRv18tLwwer55Ult5Aq3JgG8Uj8FgBA4exLCw9LKUhzd+1lN0i19f2mDDuBORw5dPUBj2unzIb6sro/2SYm3MF2nmKhh5mm1F/v37ksOzJlTUPhbcs6aYrUJo5cM1H9AB8vpcNln38uWb4tuFgD5Wqy/0WFu60nsRsnInI5SPMN39wA4cx2eyrCfne32iw0Ov+VAdn0+D8FFzyVEEh7lrCQlJFoqoznxvpKh6NRhUzLmLpfEPOhFN/bZBHsj+3YJLT4JgRaYGTf6fMkZGCyIk60hIbqofwcuMFNqFYOK0nffOV8dz9ElisN/6cSJsYAQ==',
+                    content='Let me calculate this mathematical expression.',
+                    signature='EusBClsIDRgCKkBpzetW9oKOZtFP6IeFJJr3gnQBXqdZrYcRnwTLcVuC/mkNQXFCRtvXzgnEVf7l5fFR7h3ot66yltYQokOJgU0XMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgx4VA49Y9x4euFn/C8aDLaPUE1i8unro8wUZyIwTVsbnme/ZlJjB/k0sJpLe/6Hhr1hiJBEwIautRYb9wRO69nCOmte8rf2JIlb3WN2Kj5V5cgiQPXU7/dckGIBOjC3LbVg4fl1yJKZ6A9eiNDAfvI1a3el8ptl54928QUlCPHT6QRNK5dDomrp4RcinBgB',
                     provider_name='anthropic',
                 ),
                 next_part_kind='text',
             ),
             PartStartEvent(
                 index=1,
-                part=TextPart(content="I'll calculate this mathematical expression for you. Let me break"),
+                part=TextPart(content="I'll calculate that expression for you right away!"),
                 previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(
-                index=1, delta=TextPartDelta(content_delta=' it down step by step following the order of operations.')
-            ),
             PartEndEvent(
                 index=1,
-                part=TextPart(
-                    content="I'll calculate this mathematical expression for you. Let me break it down step by step following the order of operations."
-                ),
+                part=TextPart(content="I'll calculate that expression for you right away!"),
                 next_part_kind='builtin-tool-call',
             ),
             PartStartEvent(
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q')
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
+                delta=ToolCallPartDelta(args_delta='{"com', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=')\\n\\nexpression = \\"65465-6544 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='mand": "ec', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='* 65464-6+1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='ho \\"65465-', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='.02255\\"\\nprint(f\\"Expression: {expression',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
+                delta=ToolCallPartDelta(args_delta='6544 * 6', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\n# Let\'s break it down', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='54', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' step by step\\nstep1 = ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
+                delta=ToolCallPartDelta(args_delta='64-6+1.02', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(args_delta='255\\" | ', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# Multiplication first\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='(f\\"Step 1 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='- Multiplication: ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {step1}\\")\\n\\nstep2', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' = 65465 - step1  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# First subtraction\\nprint(f\\"Step', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' 2 - First subtraction:', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=' 65465 - {step1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='} = {step2}\\")\\n\\nstep', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='3 = step2 - 6  # Second subtraction\\nprint',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='(f\\"Step 3 - Second subtraction: {step2}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta=' - 6 = {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\nfinal_result = step3 + ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='1.02255  # Final addition\\nprint(f\\"Step ',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='4 - Final addition: {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='} + 1.02255 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {final_result}\\")\\n\\n#', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=" Let's also verify with", tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' direct calculation\\ndirect_result = 65',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='465-6544 * 65464-', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='6+1.02255\\nprint(f\\"\\\\nDirect calculation:',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta=' {direct_result}\\")\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='(f\\"Results match: {final_result == direct',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='_result}\\")', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                delta=ToolCallPartDelta(args_delta='bc -l"}', tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q'),
             ),
             PartEndEvent(
                 index=2,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -7774,91 +7516,93 @@ This is a computational task that requires precise calculations, so I should use
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
-                        'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                        'type': 'code_execution_result',
+                        'stdout': '-428330955.97745\n',
+                        'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
+            PartStartEvent(index=4, part=TextPart(content='Following'), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta=' the standard **order of operations (PEMDAS/BODMAS)** — multiplication is'
+                ),
+            ),
             PartDeltaEvent(
                 index=4,
                 delta=TextPartDelta(
                     content_delta="""\
+ performed before addition and subtraction — here's the breakdown:
 
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='⃣ | `6544 × 65464` | `428,394,416'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(
+                    content_delta="""\
+⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
 
-Here's how it breaks down following the order of operations:
-1. First\
+### \
 """
                 ),
             ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=', multiplication: 6,544 × 65,464 ')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-= 428,396,416
-2. Then left\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' to right: 65,465 - 428')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-,396,416 = -428,330,951
-3\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. Continue: -428,330,951 -')),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' 6 = -428,330')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta="""\
-,957
-4. Finally: -428,330,957 + \
-"""
-                ),
-            ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='✅ Final Answer: **-428,330,955.97745**')),
             PartEndEvent(
                 index=4,
                 part=TextPart(
                     content="""\
-The answer to **65465-6544 * 65464-6+1.02255** is **-428,330,955.97745**.
+Following the standard **order of operations (PEMDAS/BODMAS)** — multiplication is performed before addition and subtraction — here's the breakdown:
 
-Here's how it breaks down following the order of operations:
-1. First, multiplication: 6,544 × 65,464 = 428,396,416
-2. Then left to right: 65,465 - 428,396,416 = -428,330,951
-3. Continue: -428,330,951 - 6 = -428,330,957
-4. Finally: -428,330,957 + 1.02255 = -428,330,955.97745\
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1️⃣ | `6544 × 65464` | `428,394,416` |
+| 2️⃣ | `65465 - 428,394,416` | `-428,328,951` |
+| 3️⃣ | `-428,328,951 - 6` | `-428,328,957` |
+| 4️⃣ | `-428,328,957 + 1.02255` | **`-428,328,955.97745`** |
+
+### ✅ Final Answer: **-428,330,955.97745**\
 """
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
@@ -7868,25 +7612,102 @@ Here's how it breaks down following the order of operations:
                         'content': [],
                         'return_code': 0,
                         'stderr': '',
-                        'stdout': """\
-Expression: 65465-6544 * 65464-6+1.02255
-Step 1 - Multiplication: 6544 * 65464 = 428396416
-Step 2 - First subtraction: 65465 - 428396416 = -428330951
-Step 3 - Second subtraction: -428330951 - 6 = -428330957
-Step 4 - Final addition: -428330957 + 1.02255 = -428330955.97745
-
-Direct calculation: -428330955.97745
-Results match: True
-""",
-                        'type': 'code_execution_result',
+                        'stdout': '-428330955.97745\n',
+                        'type': 'bash_code_execution_result',
                     },
-                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
                 )
             ),
         ]
     )
+
+
+async def test_anthropic_code_execution_tool_version_unsupported(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-haiku-4-5-20251001',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_code_execution_tool_version='20260120'),
+    )
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    with pytest.raises(
+        UserError,
+        match=(
+            "`anthropic_code_execution_tool_version='20260120'` is not supported by model 'claude-haiku-4-5-20251001'"
+        ),
+    ):
+        await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_tool_type'),
+    [
+        ('claude-sonnet-4-0', 'code_execution_20250825'),
+        ('claude-opus-4-1', 'code_execution_20250825'),
+        ('claude-haiku-4-5-20251001', 'code_execution_20250825'),
+        ('claude-sonnet-4-5', 'code_execution_20260120'),
+        ('claude-sonnet-4-6', 'code_execution_20260120'),
+        ('claude-opus-4-5', 'code_execution_20260120'),
+    ],
+)
+async def test_anthropic_code_execution_tool_version_auto(
+    allow_model_requests: None,
+    model_name: str,
+    expected_tool_type: str,
+):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
+
+
+@pytest.mark.parametrize(
+    ('tool_version', 'expected_tool_type'),
+    [
+        ('20250825', 'code_execution_20250825'),
+        ('20260120', 'code_execution_20260120'),
+    ],
+)
+async def test_anthropic_code_execution_tool_version_setting(
+    allow_model_requests: None,
+    tool_version: AnthropicCodeExecutionToolVersion,
+    expected_tool_type: str,
+):
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_code_execution_tool_version=tool_version),
+    )
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
+    assert completion_kwargs['betas'] is OMIT
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
@@ -7943,21 +7764,44 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     from pydantic_ai.providers.google import GoogleProvider
 
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(builtin_tools=[CodeExecutionTool()])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
+        ]
     )
 
     result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+            ],
             [UserPromptPart],
-            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )
 
@@ -8538,6 +8382,861 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     agent2 = Agent(m)
     result2 = await agent2.run('What was the code execution result?', message_history=result.all_messages())
     assert result2.output == 'The code execution returned the result: 4'
+
+
+async def test_anthropic_text_editor_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions=(
+            'Use only the text editor `create` and `view` commands from the code execution sandbox. '
+            'Do not run any shell commands.'
+        ),
+    )
+
+    result = await agent.run(
+        'Use the text editor to create /tmp/hello.txt with the text: Hello, world! '
+        'Then use the text editor to view the file and tell me what it contains.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Use the text editor to create /tmp/hello.txt with the text: Hello, world! Then use the text editor to view the file and tell me what it contains.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Use only the text editor `create` and `view` commands from the code execution sandbox. Do not run any shell commands.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!"
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'error_code': 'unavailable',
+                            'error_message': 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length, empty document: line 1 column 1 (char 0)',
+                            'type': 'text_editor_code_execution_tool_result_error',
+                        },
+                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'error_code': 'unavailable',
+                            'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                            'type': 'text_editor_code_execution_tool_result_error',
+                        },
+                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    TextPart(content='Let me try again, this time sequentially -- first creating, then viewing.'),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'is_file_update': False,
+                            'type': 'text_editor_code_execution_create_result',
+                        },
+                        timestamp=IsDatetime(),
+                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    TextPart(content="File created! Now let's view it."),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={'command': 'view', 'path': '/tmp/hello.txt'},
+                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                    ),
+                    TextPart(
+                        content="""\
+Here's a summary of what happened:
+
+1. **Created** `/tmp/hello.txt` with the text `Hello, world!` -- the tool confirmed the file was created successfully.
+2. **Viewed** `/tmp/hello.txt` -- the file contains exactly:
+
+> `Hello, world!`
+
+Everything looks perfect! 🎉\
+"""
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=10490,
+                    output_tokens=469,
+                    details={
+                        'input_tokens': 10490,
+                        'output_tokens': 469,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRHVR8X8ny5XjueVygS'},
+                provider_response_id='msg_015ZT9schxByyYqpexx5ir4o',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_text_editor_code_execution_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[CodeExecutionTool()],
+        instructions=(
+            'Use only the text editor `create` and `view` commands from the code execution sandbox. '
+            'Do not run any shell commands.'
+        ),
+    )
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt=(
+            'Use the text editor to create /tmp/hello.txt with the text: Hello, world! '
+            'Then use the text editor to view the file and tell me what it contains.'
+        )
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Sure')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content="Sure! I'll do both steps simultaneously — creating the file and viewing it at the same time!"
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=' "creat', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='e"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta=', "p', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ath": "/', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi')
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='llo.t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='xt"', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', "file_t', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ext', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='": "Hello', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=', world!"}', tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi'),
+            ),
+            PartEndEvent(
+                index=1,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='{"comman', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='d": "view', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='"', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta=', "pa', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='th": "/', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(args_delta='tmp/hello.', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs'),
+            ),
+            PartDeltaEvent(
+                index=2, delta=ToolCallPartDelta(args_delta='txt"}', tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs')
+            ),
+            PartEndEvent(
+                index=2,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=3,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                    timestamp=IsDatetime(),
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=4,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'error_code': 'unavailable',
+                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                        'type': 'text_editor_code_execution_tool_result_error',
+                    },
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=5,
+                part=TextPart(content='No'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartDeltaEvent(
+                index=5, delta=TextPartDelta(content_delta=" worries — the `view` couldn't run in parallel with")
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta=" the `create` since the file didn't exist yet at the time both calls"
+                ),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(
+                    content_delta=' were dispatched. Now that the file has been created, let me view it!'
+                ),
+            ),
+            PartEndEvent(
+                index=5,
+                part=TextPart(
+                    content="No worries — the `view` couldn't run in parallel with the `create` since the file didn't exist yet at the time both calls were dispatched. Now that the file has been created, let me view it!"
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=6,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='text',
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=ToolCallPartDelta(args_delta='{"command":', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta=' "view"', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta=', ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='"p', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='ath": ', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='"/', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6, delta=ToolCallPartDelta(args_delta='tmp/he', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU')
+            ),
+            PartDeltaEvent(
+                index=6,
+                delta=ToolCallPartDelta(args_delta='llo.txt"}', tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU'),
+            ),
+            PartEndEvent(
+                index=6,
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=7,
+                part=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(index=8, part=TextPart(content="Here's a"), previous_part_kind='builtin-tool-return'),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(
+                    content_delta="""\
+ summary of what happened:
+
+1. **Created** `/tmp/hello.txt` — the file was successfully written to\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(
+                    content_delta="""\
+ disk.
+2. **Viewed** `/tmp/hello.txt` — the file contains exactly:\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+> `Hello, world!`
+
+Everything looks perfect! The file contains the text you specified.\
+"""
+                ),
+            ),
+            PartEndEvent(
+                index=8,
+                part=TextPart(
+                    content="""\
+Here's a summary of what happened:
+
+1. **Created** `/tmp/hello.txt` — the file was successfully written to disk.
+2. **Viewed** `/tmp/hello.txt` — the file contains exactly:
+
+> `Hello, world!`
+
+Everything looks perfect! The file contains the text you specified.\
+"""
+                ),
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'error_code': 'unavailable',
+                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
+                        'type': 'text_editor_code_execution_tool_result_error',
+                    },
+                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                )
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=BuiltinToolCallPart(
+                    tool_name='code_execution',
+                    args='{"command": "view", "path": "/tmp/hello.txt"}',
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=BuiltinToolReturnPart(
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
+                    timestamp=IsDatetime(),
+                    provider_name='anthropic',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                )
+            ),
+        ]
+    )
+
+
+async def test_anthropic_text_editor_code_execution_tool_message_replay(allow_model_requests: None):
+    """Serialize Anthropic text editor code execution metadata back to Anthropic block params."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='View the file.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_text_editor_1',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_text_editor_1',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'View the file.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_text_editor_1',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_text_editor_1',
+                        'content': {
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
+async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_requests: None):
+    """Serialize Anthropic bash code execution metadata back to Anthropic block params."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Run a shell command.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_bash_1',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': 'hello\n',
+                        'type': 'bash_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_bash_1',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Run a shell command.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_bash_1',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_bash_1',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': 'hello\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
+async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_tool_name(
+    allow_model_requests: None,
+):
+    """Infer Anthropic code execution tool variants from legacy names and result content."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='text_editor_code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_legacy_text_editor_call',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': 'Hello, world!',
+                        'file_type': 'text',
+                        'num_lines': 1,
+                        'start_line': 1,
+                        'total_lines': 1,
+                        'type': 'text_editor_code_execution_view_result',
+                    },
+                    tool_call_id='srvtoolu_legacy_text_editor_call',
+                ),
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='bash_code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_legacy_bash_call',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': 'hello\n',
+                        'type': 'bash_code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_legacy_bash_call',
+                    provider_details={'anthropic_tool_name': 'not_a_code_execution_tool'},
+                ),
+                BuiltinToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'code': 'print(2 + 2)'},
+                    tool_call_id='srvtoolu_default_code_call',
+                    provider_details={'anthropic_tool_name': 123},
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={
+                        'content': [],
+                        'return_code': 0,
+                        'stderr': '',
+                        'stdout': '4\n',
+                        'type': 'code_execution_result',
+                    },
+                    tool_call_id='srvtoolu_default_code_call',
+                ),
+                BuiltinToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content={'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
+                    tool_call_id='srvtoolu_default_code_call',
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Replay code execution history.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_legacy_text_editor_call',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_legacy_text_editor_call',
+                        'content': {
+                            'content': 'Hello, world!',
+                            'file_type': 'text',
+                            'num_lines': 1,
+                            'start_line': 1,
+                            'total_lines': 1,
+                            'type': 'text_editor_code_execution_view_result',
+                        },
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_legacy_bash_call',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_legacy_bash_call',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': 'hello\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_default_code_call',
+                        'name': 'code_execution',
+                        'input': {'code': 'print(2 + 2)'},
+                    },
+                    {
+                        'type': 'code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_default_code_call',
+                        'content': {
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'code_execution_result',
+                        },
+                    },
+                    {
+                        'type': 'code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_default_code_call',
+                        'content': {'content': [], 'return_code': 0, 'stderr': '', 'stdout': '', 'type': 123},
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
 
 
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
@@ -9938,15 +10637,10 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-
-result = 3 * 12390
-print(result)
-"""
-                        },
-                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        args={'command': 'echo $((3 * 12390))'},
+                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -9954,22 +10648,22 @@ print(result)
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '37170',
-                            'type': 'code_execution_result',
-                            'abort_reason': None,
+                            'stdout': '37170\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_018jG85HfqPrf3Sqs4TKGSqW',
+                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='3 × 12,390 = **37,170**'),
+                    TextPart(content='3 * 12390 = **37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1983,
-                    output_tokens=85,
+                    input_tokens=4612,
+                    output_tokens=80,
                     details={
-                        'input_tokens': 1983,
-                        'output_tokens': 85,
+                        'input_tokens': 4612,
+                        'output_tokens': 80,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -9978,8 +10672,8 @@ print(result)
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
-                provider_response_id='msg_01CSsc4t4e4ThJfJp8nsPxc5',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
+                provider_response_id='msg_01LZfXQfnKjDzM8MfBWwnVqV',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9995,15 +10689,10 @@ print(result)
                 parts=[
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': """\
-
-result = 4 * 12390
-print(result)
-"""
-                        },
-                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        args={'command': 'echo $((4 * 12390))'},
+                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
@@ -10011,22 +10700,22 @@ print(result)
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '49560',
-                            'type': 'code_execution_result',
-                            'abort_reason': None,
+                            'stdout': '49560\n',
+                            'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01TTbZCiryn9gpeCLSZdhs8z',
+                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='4 × 12,390 = **49,560**'),
+                    TextPart(content='4 * 12390 = **49,560**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2219,
-                    output_tokens=85,
+                    input_tokens=4840,
+                    output_tokens=80,
                     details={
-                        'input_tokens': 2219,
-                        'output_tokens': 85,
+                        'input_tokens': 4840,
+                        'output_tokens': 80,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
@@ -10035,8 +10724,8 @@ print(result)
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaLHz8ZTgxUq8TeCULao8'},
-                provider_response_id='msg_016hgHtSKi8fEDBmSkEtL364',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
+                provider_response_id='msg_016CCM7vKzHb1YyMDsVofT35',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
