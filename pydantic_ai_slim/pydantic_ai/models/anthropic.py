@@ -179,6 +179,7 @@ except ImportError as _import_error:
 
 _NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 _FAST_MODE_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex)
+_BEDROCK_PREFIX_CLIENTS = (AsyncAnthropicBedrock,)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
@@ -406,6 +407,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(provider, str):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
         self._provider = provider
+
+        if profile is None and isinstance(provider.client, _BEDROCK_PREFIX_CLIENTS):
+            # Strip Bedrock provider segment (e.g. `us.anthropic.`) so `anthropic_model_profile`'s
+            # `claude-...` startswith checks match. Full id stays on the wire via `self._model_name`.
+            bare_name = model_name.split('anthropic.', 1)[1] if 'anthropic.' in model_name else model_name
+            profile = provider.model_profile(bare_name)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 

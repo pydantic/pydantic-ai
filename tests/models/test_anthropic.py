@@ -552,6 +552,26 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
+@pytest.mark.parametrize(
+    'model_id',
+    [
+        pytest.param('us.anthropic.claude-haiku-4-5-20251001-v1:0', id='bedrock-cross-region'),
+        pytest.param('anthropic.claude-haiku-4-5-20251001-v1:0', id='bedrock-plain'),
+    ],
+)
+def test_anthropic_model_strips_bedrock_prefix_for_profile_lookup(model_id: str):
+    """Test that AnthropicModel strips the Bedrock provider segment before profile lookup."""
+    from anthropic import AsyncAnthropicBedrock
+
+    mock_client = MagicMock(spec=AsyncAnthropicBedrock)
+    mock_client.base_url = 'https://bedrock.amazonaws.com'
+
+    m = AnthropicModel(model_id, provider=AnthropicProvider(anthropic_client=mock_client))
+
+    assert m.model_name == model_id
+    assert m.profile.supports_json_schema_output is True
+
+
 def test_build_cache_control_includes_ttl():
     """Test that _build_cache_control includes TTL for all clients, including Bedrock."""
     from unittest.mock import MagicMock
