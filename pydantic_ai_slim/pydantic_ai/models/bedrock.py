@@ -15,7 +15,7 @@ from typing_extensions import ParamSpec, assert_never
 
 try:
     from botocore.client import BaseClient
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import BotoCoreError, ClientError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -1218,6 +1218,12 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (BotoCoreError, ClientError)
+
+    async def close_stream(self) -> None:
+        await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
