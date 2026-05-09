@@ -886,7 +886,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_capital',
                     content='Paris',
                     tool_call_id=IsStr(),
@@ -914,7 +914,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                 )
             ),
@@ -6038,7 +6038,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
                     tool_call_id=IsStr(),

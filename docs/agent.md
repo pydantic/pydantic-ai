@@ -187,7 +187,7 @@ async def handle_event(event: AgentStreamEvent):
             f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
         )
     elif isinstance(event, FunctionToolResultEvent):
-        output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
+        output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.part.content}')
     elif isinstance(event, FinalResultEvent):
         output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
 
@@ -539,7 +539,7 @@ async def main():
                             )
                         elif isinstance(event, FunctionToolResultEvent):
                             output_messages.append(
-                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
+                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.part.content}'
                             )
             elif Agent.is_end_node(node):
                 # Once an End node is reached, the agent run is complete

@@ -6759,7 +6759,7 @@ async def test_event_stream_function_tool_return_error():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='my_tool',
                 content='Something went wrong',
                 tool_call_id='tc_err',
