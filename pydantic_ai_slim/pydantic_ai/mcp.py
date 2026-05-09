@@ -43,6 +43,32 @@ except ImportError as _import_error:
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
 
+if TYPE_CHECKING:
+    from fastmcp.client import Client as FastMCPClient
+    from fastmcp.client.client import CallToolResult
+    from fastmcp.client.elicitation import ElicitationHandler
+    from fastmcp.client.logging import LogHandler
+    from fastmcp.client.messages import MessageHandlerT
+    from fastmcp.client.progress import ProgressHandler
+    from fastmcp.client.roots import RootsHandler, RootsList
+    from fastmcp.client.sampling import SamplingHandler
+    from fastmcp.client.transports import (
+        ClientTransport,
+        SSETransport,
+        StdioTransport,
+        StreamableHttpTransport,
+    )
+    from fastmcp.exceptions import ToolError
+    from fastmcp.mcp_config import MCPConfig, infer_transport_type_from_url
+    from fastmcp.server import FastMCP
+    from mcp.server.fastmcp import FastMCP as FastMCP1Server
+
+
+# `fastmcp` is an optional dependency: it's required for `MCPToolset` (the recommended path) but
+# the legacy `MCPServer*` classes only need the bare `mcp` package. Defer the import error so
+# users can still import `pydantic_ai.mcp.MCPServer*` with just `[mcp]` installed; only when they
+# try to construct an `MCPToolset` (or call a helper that needs fastmcp) do we raise.
+_fastmcp_import_error: ImportError | None
 try:
     from fastmcp.client import Client as FastMCPClient
     from fastmcp.client.elicitation import ElicitationHandler
@@ -61,19 +87,24 @@ try:
     from fastmcp.mcp_config import MCPConfig, infer_transport_type_from_url
     from fastmcp.server import FastMCP
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
-except ImportError as _fastmcp_import_error:  # pragma: no cover
-    raise ImportError(
-        'Please install the `fastmcp` package to use `MCPToolset`, '
-        'you can use the `mcp` or `fastmcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
-    ) from _fastmcp_import_error
+except ImportError as _err:  # pragma: no cover
+    _fastmcp_import_error = _err
+else:
+    _fastmcp_import_error = None
 
-if TYPE_CHECKING:
-    from fastmcp.client.client import CallToolResult
+
+def _require_fastmcp() -> None:
+    """Raise [`ImportError`][ImportError] if `fastmcp` isn't installed."""
+    if _fastmcp_import_error is not None:  # pragma: no cover
+        raise ImportError(
+            'Please install the `fastmcp` package to use `MCPToolset`. '
+            'Install the `fastmcp` optional group: `pip install "pydantic-ai-slim[fastmcp]"`'
+        ) from _fastmcp_import_error
 
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, _utils, exceptions, messages, models
-from .settings import ModelSettings
+from . import _mcp, _utils, exceptions, messages, models  # noqa: E402
+from .settings import ModelSettings  # noqa: E402
 
 __all__ = (
     'MCPToolset',
@@ -1677,7 +1708,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 would otherwise build a default Client (sampling, elicitation, headers, etc.), or
                 if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
                 `http_client` are both passed.
+            ImportError: If the `fastmcp` package isn't installed. Install the `fastmcp` extra:
+                `pip install "pydantic-ai-slim[fastmcp]"`.
         """
+        _require_fastmcp()
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
                 'sampling_handler': sampling_handler,
@@ -2348,7 +2382,10 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         ValidationError: If the configuration file does not match the schema.
         ValueError: If an environment variable referenced in the configuration is not defined and
             no default is provided.
+        ImportError: If the `fastmcp` package isn't installed. Install the `fastmcp` extra:
+            `pip install "pydantic-ai-slim[fastmcp]"`.
     """
+    _require_fastmcp()
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
