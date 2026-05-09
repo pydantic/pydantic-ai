@@ -3,6 +3,56 @@
 The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to
 access Google's Gemini models via both the Generative Language API and Vertex AI.
 
+## Streaming cancellation
+
+!!! warning "Cancellation limitations"
+    The `google-genai` SDK exposes streaming responses only as an async iterator, with no separate handle for closing the underlying HTTP transport. Because of a [Python language rule on async generators](https://peps.python.org/pep-0525/), [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] cannot interrupt an in-flight chunk read while another coroutine is iterating the stream. Pydantic AI marks the response with `state='interrupted'`, but upstream generation may continue until the surrounding `async with agent.run_stream(...)` block exits.
+
+    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses] and call `cancel()` from the same task that's iterating:
+
+    ```python {title="cancel_google.py" test="skip"}
+    from pydantic_ai import Agent
+
+    agent = Agent('google-gla:gemini-3-pro-preview')
+
+
+    def should_stop(chunk: str) -> bool:
+        return len(chunk) > 100
+
+
+    async def main():
+        async with agent.run_stream('Write a long essay about Python') as result:
+            async for chunk in result.stream_text(debounce_by=None):
+                if should_stop(chunk):
+                    await result.cancel()
+                    break
+    ```
+
+    Or, if you need to keep debouncing, wrap the stream with [`contextlib.aclosing`](https://docs.python.org/3/library/contextlib.html#contextlib.aclosing) so the iterator is closed before `cancel()` runs:
+
+    ```python {title="cancel_google_aclosing.py" test="skip"}
+    from contextlib import aclosing
+
+    from pydantic_ai import Agent
+
+    agent = Agent('google-gla:gemini-3-pro-preview')
+
+
+    def should_stop(chunk: str) -> bool:
+        return len(chunk) > 100
+
+
+    async def main():
+        async with agent.run_stream('Write a long essay about Python') as result:
+            async with aclosing(result.stream_text()) as stream:
+                async for chunk in stream:
+                    if should_stop(chunk):
+                        break
+            await result.cancel()
+    ```
+
+    Calling `cancel()` from a different task while iteration is in progress is not currently reliable on this provider.
+
 ## Install
 
 To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:

@@ -13,7 +13,7 @@ from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import ModelRetry, ToolRetryError
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -2360,7 +2360,7 @@ async def test_run_stream_request_error():
 
 async def test_run_stream_tool_retry_exhaustion():
     """When a tool exhausts its retries, the last tool call should get a tool-output-error chunk."""
-    agent = Agent(model=TestModel(), retries=1)
+    agent = Agent(model=TestModel(), tool_retries=1, output_retries=1)
 
     @agent.tool_plain(retries=1)
     async def flaky_tool(query: str) -> str:
@@ -2431,7 +2431,9 @@ async def test_run_stream_output_tool_error():
     def bad_output(value: str) -> str:
         raise ValueError('Output validation failed')
 
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries=0)
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, tool_retries=0, output_retries=0
+    )
 
     request = SubmitMessage(
         id='foo',
@@ -6276,12 +6278,7 @@ async def test_event_stream_tool_input_error_with_provider_metadata():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
-        retry = RetryPromptPart(
-            content='Validation failed: bad arg',
-            tool_name='my_tool',
-            tool_call_id='tc_err',
-        )
-        yield FunctionToolCallEvent(part, args_valid=False, validation_error=ToolRetryError(retry))
+        yield FunctionToolCallEvent(part, args_valid=False)
 
     request = SubmitMessage(
         id='foo',
@@ -6379,7 +6376,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v5():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
-        yield FunctionToolCallEvent(part, args_valid=True, validated_args={'key': 'value'})
+        yield FunctionToolCallEvent(part, args_valid=True)
 
     request = SubmitMessage(
         id='foo',
@@ -6437,7 +6434,7 @@ async def test_event_stream_tool_call_end_with_provider_metadata_v6():
         )
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
-        yield FunctionToolCallEvent(part, args_valid=True, validated_args={'key': 'value'})
+        yield FunctionToolCallEvent(part, args_valid=True)
 
     request = SubmitMessage(
         id='foo',
@@ -6886,7 +6883,7 @@ async def test_event_stream_function_tool_return_error():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='my_tool',
                 content='Something went wrong',
                 tool_call_id='tc_err',

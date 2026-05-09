@@ -51,6 +51,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
@@ -197,7 +198,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
 async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', tool_retries=5, output_retries=5)
 
     class Response(TypedDict):
         temperature: str
@@ -312,6 +313,70 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             ),
         ]
     )
+
+
+async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
+    provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
+    model = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_url='https://generativelanguage.googleapis.com',
+                provider_response_id=IsStr(),
+                state='interrupted',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_google_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-2.0-flash',
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
+        _provider_name='google-gla',
+        _provider_url='https://generativelanguage.googleapis.com',
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -593,7 +658,11 @@ print(result)\
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(
-        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model,
+        system_prompt='You are a helpful chatbot.',
+        model_settings={'temperature': 0.0},
+        tool_retries=2,
+        output_retries=2,
     )
 
     @agent.tool_plain
@@ -818,7 +887,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 validated_args={'country': 'France'},
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_capital',
                     content='Paris',
                     tool_call_id=IsStr(),
@@ -847,7 +916,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 validated_args={'city': 'Paris'},
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                 )
             ),
@@ -1166,6 +1235,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )
@@ -1976,16 +2046,16 @@ async def test_google_model_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
             [UserPromptPart],
-            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [TextPart],
         ]
     )
 
@@ -4031,8 +4101,8 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     model = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
     assert image_config == {'aspect_ratio': '16:9'}
 
 
@@ -4041,8 +4111,8 @@ async def test_google_image_generation_resolution(google_provider: GoogleProvide
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='2K')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
     assert image_config == {'image_size': '2K'}
 
 
@@ -4051,8 +4121,8 @@ async def test_google_image_generation_resolution_with_aspect_ratio(google_provi
     model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='4K')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
     assert image_config == {'aspect_ratio': '16:9', 'image_size': '4K'}
 
 
@@ -4062,7 +4132,7 @@ async def test_google_image_generation_unsupported_size_raises_error(google_prov
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='1024x1024')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_auto_size_raises_error(google_provider: GoogleProvider) -> None:
@@ -4071,7 +4141,7 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(size='auto')])
 
     with pytest.raises(UserError, match='Google image generation only supports `size` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_tool_output_format(
@@ -4082,8 +4152,8 @@ async def test_google_image_generation_tool_output_format(
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
     assert image_config == {'output_mime_type': 'image/png'}
 
 
@@ -4097,7 +4167,7 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='gif')])  # type: ignore
 
     with pytest.raises(UserError, match='Google image generation only supports `output_format` values'):
-        model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_image_generation_tool_output_compression(
@@ -4109,13 +4179,13 @@ async def test_google_image_generation_tool_output_compression(
 
     # Test explicit value
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=85)])
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
     assert image_config == {'output_compression_quality': 85, 'output_mime_type': 'image/jpeg'}
 
     # Test None (omitted)
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=None)])
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
 
@@ -4128,21 +4198,21 @@ async def test_google_image_generation_tool_compression_validation(
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=101)]))  # pyright: ignore[reportPrivateUsage]
 
     # Invalid range: < 0
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
-        model._get_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=-1)]))  # pyright: ignore[reportPrivateUsage]
 
     # Non-JPEG format (PNG)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
-        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png', output_compression=90)])
         )
 
     # Non-JPEG format (WebP)
     with pytest.raises(UserError, match='`output_compression` is only supported for JPEG format'):
-        model._get_tools(  # pyright: ignore[reportPrivateUsage]
+        model._get_builtin_tools(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='webp', output_compression=90)])
         )
 
@@ -4153,17 +4223,17 @@ async def test_google_image_generation_silently_ignored_by_gemini_api(google_pro
 
     # Test output_format ignored
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_format='png')])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test output_compression ignored
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool(output_compression=90)])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
     # Test both ignored when None
     params = ModelRequestParameters(builtin_tools=[ImageGenerationTool()])
-    _, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    _, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert image_config == {}
 
 
@@ -4190,8 +4260,8 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
         builtin_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
 
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools is None
+    tools, image_config = model._get_builtin_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
     assert image_config == {
         'aspect_ratio': '16:9',
         'image_size': '2K',
@@ -4546,7 +4616,8 @@ async def test_google_nested_models_without_native_output(allow_model_requests: 
         m,
         output_type=TopModel,
         instructions='You are a helpful assistant that creates structured data.',
-        retries=5,
+        tool_retries=5,
+        output_retries=5,
     )
 
     result = await agent.run('Create a simple example with 2 pages, each with 2 items')
@@ -4641,10 +4712,11 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
         yield chunk
 
+    response = response_iterator()
     streamed_response = GeminiStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gemini-test',
-        _response=response_iterator(),
+        _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
         _provider_url='',
@@ -5969,7 +6041,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 validated_args={},
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
                     tool_call_id=IsStr(),

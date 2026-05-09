@@ -469,7 +469,7 @@ async def test_output_type_async_model(mock_async_model: OutlinesModel) -> None:
 
     agent = Agent(mock_async_model, output_type=Box)
     # Mock returns 'test' which isn't valid JSON, so validation fails
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries .* for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         await agent.run('dimensions')
 
 
