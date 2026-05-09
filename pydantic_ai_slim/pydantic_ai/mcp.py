@@ -54,10 +54,11 @@ try:
     from fastmcp.client.transports import (
         ClientTransport,
         SSETransport,
+        StdioTransport,
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import ToolError
-    from fastmcp.mcp_config import MCPConfig
+    from fastmcp.mcp_config import MCPConfig, infer_transport_type_from_url
     from fastmcp.server import FastMCP
     from mcp.server.fastmcp import FastMCP as FastMCP1Server
 except ImportError as _fastmcp_import_error:  # pragma: no cover
@@ -2086,35 +2087,36 @@ def _build_transport(
     """Build a FastMCP transport from a flexible input.
 
     For URL-shaped inputs combined with HTTP-specific kwargs, we construct the transport explicitly
-    so the kwargs take effect. For everything else, we let the FastMCP `Client` infer the transport
-    from the input directly (we just pass it through).
+    so the kwargs take effect (FastMCP's `Client(url, ...)` doesn't forward HTTP kwargs to its
+    auto-inferred transport). For everything else, we pass the input through and let FastMCP's
+    `Client` infer the transport.
     """
     needs_explicit_http = headers is not None or http_client is not None or auth is not None or verify is not None
     is_url = isinstance(client, AnyUrl) or (isinstance(client, str) and client.startswith(('http://', 'https://')))
-    if needs_explicit_http and is_url:
-        url = str(client)
-        # FastMCP's HTTP transports accept `httpx_client_factory`; we adapt `http_client` to that.
-        factory = _make_httpx_client_factory(http_client) if http_client is not None else None
-        if url.endswith('/sse'):
-            return SSETransport(
-                url=url,
-                headers=headers,
-                auth=auth,
-                verify=verify,
-                # SSE keeps its own read timeout for the long-lived event stream.
-                sse_read_timeout=read_timeout if read_timeout is not None else 5 * 60,
-                httpx_client_factory=factory,
-            )
-        # `sse_read_timeout` is deprecated on StreamableHttpTransport; the read timeout for the
-        # long-lived session is configured via the FastMCP `Client(timeout=...)` instead.
-        return StreamableHttpTransport(
+    if not (needs_explicit_http and is_url):
+        return client
+    url = str(client)
+    # FastMCP's HTTP transports accept `httpx_client_factory`; adapt `http_client` to that shape.
+    factory = _make_httpx_client_factory(http_client) if http_client is not None else None
+    if infer_transport_type_from_url(url) == 'sse':
+        return SSETransport(
             url=url,
             headers=headers,
             auth=auth,
             verify=verify,
+            # SSE keeps its own read timeout for the long-lived event stream.
+            sse_read_timeout=read_timeout if read_timeout is not None else 5 * 60,
             httpx_client_factory=factory,
         )
-    return client
+    # `sse_read_timeout` is deprecated on StreamableHttpTransport; the read timeout for the
+    # long-lived session is configured via the FastMCP `Client(timeout=...)` instead.
+    return StreamableHttpTransport(
+        url=url,
+        headers=headers,
+        auth=auth,
+        verify=verify,
+        httpx_client_factory=factory,
+    )
 
 
 def _make_httpx_client_factory(
@@ -2352,10 +2354,8 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     for name, server in config.mcp_servers.items():
         toolset: MCPToolset[Any]
         if isinstance(server, MCPServerStdio):  # pyright: ignore[reportDeprecated]
-            stdio_entry: dict[str, Any] = {'command': server.command, 'args': list(server.args)}
-            if server.env is not None:
-                stdio_entry['env'] = server.env
-            toolset = MCPToolset({'mcpServers': {name: stdio_entry}}, id=name)
+            transport = StdioTransport(command=server.command, args=list(server.args), env=server.env)
+            toolset = MCPToolset(transport, id=name)
         elif isinstance(server, _MCPServerHTTP):
             toolset = MCPToolset(server.url, id=name, headers=server.headers)
         else:  # pragma: no cover
