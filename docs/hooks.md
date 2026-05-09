@@ -280,6 +280,50 @@ print(call_log)
 
 The `tools` parameter accepts a sequence of tool names. The hook only fires for matching tools — other tool calls pass through unaffected.
 
+## Pre-flight input validation
+
+`before_model_request` is a natural place to apply cheap deterministic checks against incoming user messages before the model is called. The example below uses regex patterns drawn from common prompt-injection categories (instruction overrides, role hijacks, system-prompt extraction, delimiter injection). When a pattern matches, the hook raises [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest] with a synthetic response, so the model is never called. Pattern catalogs such as Agent Threat Rules at https://github.com/Agent-Threat-Rule/agent-threat-rules (Apache-2.0) can be plugged in here as the rule source.
+
+```python {title="hooks_preflight_validation.py" test="skip" lint="skip"}
+import re
+
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.exceptions import SkipModelRequest
+from pydantic_ai.messages import ModelResponse, TextPart
+
+INJECTION_PATTERNS = [
+    ('instruction-override', re.compile(r'\b(ignore|disregard|forget)\b[^.]{0,40}\b(previous|prior|above)\b[^.]{0,40}\b(instructions?|rules?)\b', re.I)),
+    ('role-hijack', re.compile(r'\byou\s+are\s+now\b[^.]{0,60}\b(?:dan|jailbroken|developer\s+mode|root)\b', re.I)),
+    ('system-prompt-extraction', re.compile(r'\b(repeat|print|reveal|show|output)\b[^.]{0,40}\b(system\s+prompt|initial\s+prompt)\b', re.I)),
+    ('delimiter-injection', re.compile(r'<\|im_(start|end)\|>|<\/?(system|assistant|user)>|\[\/?INST\]', re.I)),
+]
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def detect_prompt_injection(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    for message in request_context.messages:
+        for part in getattr(message, 'parts', []):
+            text = getattr(part, 'content', None)
+            if not isinstance(text, str):
+                continue
+            for rule_id, pattern in INJECTION_PATTERNS:
+                if pattern.search(text):
+                    raise SkipModelRequest(
+                        ModelResponse(parts=[TextPart(content=f'Request blocked by pre-flight validation: {rule_id}')])
+                    )
+    return request_context
+
+
+agent = Agent('test', capabilities=[hooks])
+```
+
+The same pattern works with `before_tool_execute` to scrutinize tool arguments before execution, e.g. blocking commands that look like attempts to exfiltrate credentials. Pattern-based pre-flight is complementary to model-based detection: it runs in microseconds and acts as a cheap first filter, with the slower model-based layer applied when the pattern check passes.
+
 ## Timeouts
 
 Each hook supports an optional `timeout` in seconds. If the hook exceeds the timeout, a [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError] is raised:
