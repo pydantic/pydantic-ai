@@ -110,14 +110,23 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         dbosagent_name = self._name
 
         def dbosify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            # Replace MCPServer with DBOSMCPServer
+            # Replace MCPToolset / MCPServer with their DBOS-wrapped variants.
             try:
-                from pydantic_ai.mcp import MCPServer
+                from pydantic_ai.mcp import MCPServer, MCPToolset
 
                 from ._mcp_server import DBOSMCPServer
+                from ._mcp_toolset import DBOSMCPToolset
             except ImportError:
                 pass
             else:
+                # Check `MCPToolset` before `MCPServer`; the latter is the abstract base of the
+                # legacy hierarchy and `MCPToolset` is unrelated.
+                if isinstance(toolset, MCPToolset):
+                    return DBOSMCPToolset(
+                        wrapped=toolset,
+                        step_name_prefix=dbosagent_name,
+                        step_config=self._mcp_step_config,
+                    )
                 if isinstance(toolset, MCPServer):
                     return DBOSMCPServer(
                         wrapped=toolset,

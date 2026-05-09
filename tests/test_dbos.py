@@ -46,7 +46,7 @@ try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
-    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolset
+    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolsetBase
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -1589,7 +1589,7 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
     assert result.output == snapshot('Be a helpful assistant.')
 
 
-class _TestDBOSMCPToolset(DBOSMCPToolset[int]):
+class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 

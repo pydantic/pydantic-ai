@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import ToolResult
 
 
-class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
+class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCP toolset that integrates with DBOS, turning call_tool and get_tools to DBOS steps."""
 
     def __init__(
@@ -44,7 +44,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
         ) -> dict[str, ToolDefinition]:
             # Need to return a serializable dict, so we cannot return ToolsetTool directly.
-            tools = await super(DBOSMCPToolset, self).get_tools(ctx)
+            tools = await super(DBOSMCPToolsetBase, self).get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of the activity.
             return {name: tool.tool_def for name, tool in tools.items()}
@@ -60,7 +60,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
         ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
             async with self.wrapped:
-                return await super(DBOSMCPToolset, self).get_instructions(ctx)
+                return await super(DBOSMCPToolsetBase, self).get_instructions(ctx)
 
         self._dbos_wrapped_get_instructions_step = wrapped_get_instructions_step
 
@@ -75,7 +75,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
             tool: ToolsetTool[AgentDepsT],
         ) -> ToolResult:
-            return await super(DBOSMCPToolset, self).call_tool(name, tool_args, ctx, tool)
+            return await super(DBOSMCPToolsetBase, self).call_tool(name, tool_args, ctx, tool)
 
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
@@ -115,9 +115,9 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         # If instructions are enabled but the server isn't initialized locally, fetch via step.
         _mcp_types: tuple[type, ...] = ()
         try:
-            from pydantic_ai.mcp import MCPServer
+            from pydantic_ai.mcp import MCPServer, MCPToolset
 
-            _mcp_types += (MCPServer,)
+            _mcp_types += (MCPServer, MCPToolset)
         except ImportError:
             pass
         try:

@@ -13,11 +13,11 @@ from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
 
-from ._mcp import TemporalMCPToolset
+from ._mcp import TemporalMCPToolsetBase
 from ._run_context import TemporalRunContext
 
 
-class TemporalFastMCPToolset(TemporalMCPToolset[AgentDepsT]):
+class TemporalFastMCPToolset(TemporalMCPToolsetBase[AgentDepsT]):
     def __init__(
         self,
         toolset: FastMCPToolset[AgentDepsT],
