@@ -1672,7 +1672,7 @@ async def test_google_model_web_fetch_tool(
     else:
         tool = WebFetchTool()
 
-    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[tool])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(tool)])
 
     result = await agent.run(
         'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
@@ -1750,7 +1750,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     tool = WebFetchTool()
-    agent = Agent(m, instructions='You are a helpful chatbot.', builtin_tools=[tool])
+    agent = Agent(m, instructions='You are a helpful chatbot.', capabilities=[NativeTool(tool)])
 
     event_parts: list[Any] = []
     async with agent.iter(

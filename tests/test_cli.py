@@ -665,10 +665,10 @@ def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixtur
     assert '"memory" requires configuration and cannot be enabled via CLI' in output
 
 
-def test_run_web_command_agent_builtin_tools_not_duplicated(
+def test_run_web_command_agent_native_tools_not_duplicated(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
-    """Test run_web_command only passes CLI-provided tools, not agent's builtin tools."""
+    """Test run_web_command only passes CLI-provided tools, not agent's native tools."""
     from pydantic_ai.native_tools import WebSearchTool
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
@@ -686,8 +686,8 @@ def test_run_web_command_agent_builtin_tools_not_duplicated(
 
     # Verify only CLI-provided tools are passed (agent's tools are handled by create_web_app)
     call_kwargs = mock_create_app.call_args.kwargs
-    builtin_tools = call_kwargs.get('builtin_tools', [])
-    tool_kinds = {t.kind for t in builtin_tools}
+    native_tools = call_kwargs.get('native_tools', [])
+    tool_kinds = {t.kind for t in native_tools}
     # web_search is on the agent, so it's NOT passed here (it's handled internally)
     assert 'web_search' not in tool_kinds
     # code_execution was provided via CLI, so it IS passed

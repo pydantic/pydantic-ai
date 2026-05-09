@@ -2362,7 +2362,7 @@ async def test_xai_builtin_multiple_tools(allow_model_requests: None, xai_provid
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(), CodeExecutionTool()],
+        capabilities=[NativeTool(WebSearchTool()), NativeTool(CodeExecutionTool())],
         model_settings=XaiModelSettings(
             xai_include_encrypted_content=True,
             xai_include_web_search_output=True,
@@ -2609,13 +2609,15 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                description='DeepWiki MCP server',
-                allowed_tools=['ask_question'],
-                headers={'custom-header-key': 'custom-header-value'},
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    description='DeepWiki MCP server',
+                    allowed_tools=['ask_question'],
+                    headers={'custom-header-key': 'custom-header-value'},
+                )
             ),
         ],
         model_settings=XaiModelSettings(
@@ -2751,13 +2753,15 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                description='DeepWiki MCP server',
-                allowed_tools=['ask_question'],
-                headers={'custom-header-key': 'custom-header-value'},
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    description='DeepWiki MCP server',
+                    allowed_tools=['ask_question'],
+                    headers={'custom-header-key': 'custom-header-value'},
+                )
             ),
         ],
         model_settings=XaiModelSettings(

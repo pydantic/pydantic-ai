@@ -8737,13 +8737,15 @@ async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                description='DeepWiki MCP server',
-                allowed_tools=['ask_question'],
-                headers={'custom-header-key': 'custom-header-value'},
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    description='DeepWiki MCP server',
+                    allowed_tools=['ask_question'],
+                    headers={'custom-header-key': 'custom-header-value'},
+                )
             ),
         ],
     )
@@ -8960,11 +8962,13 @@ async def test_openai_responses_model_mcp_server_tool_stream(allow_model_request
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='deepwiki',
-                url='https://mcp.deepwiki.com/mcp',
-                allowed_tools=['ask_question', 'read_wiki_structure'],
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='deepwiki',
+                    url='https://mcp.deepwiki.com/mcp',
+                    allowed_tools=['ask_question', 'read_wiki_structure'],
+                )
             ),
         ],
     )
@@ -9375,13 +9379,15 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[
-            MCPServerTool(
-                id='google_calendar',
-                url='x-openai-connector:connector_googlecalendar',
-                authorization_token='fake',
-                description='Google Calendar',
-                allowed_tools=['search_events'],
+        capabilities=[
+            NativeTool(
+                MCPServerTool(
+                    id='google_calendar',
+                    url='x-openai-connector:connector_googlecalendar',
+                    authorization_token='fake',
+                    description='Google Calendar',
+                    allowed_tools=['search_events'],
+                )
             ),
         ],
     )

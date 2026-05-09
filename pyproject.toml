@@ -241,11 +241,6 @@ testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
-    # Card 35 native-tools rename: existing tests still construct agents and parameters with the
-    # legacy `builtin_tools` kwarg / `builtin_or_local_tool(builtin=...)` field. Targeted tests
-    # for the deprecation behaviour live under `test_*deprecation*.py` and use `pytest.warns()`.
-    # Other tests should be migrated to the new names over time.
-    "ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
     # boto3

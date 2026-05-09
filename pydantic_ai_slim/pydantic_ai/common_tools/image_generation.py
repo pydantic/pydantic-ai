@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model, parse_model_id
@@ -93,7 +94,7 @@ class ImageGenerationSubagentTool:
         agent = Agent(
             model,
             output_type=BinaryImage,
-            builtin_tools=[self.native_tool],
+            capabilities=[NativeTool(self.native_tool)],
             instructions=self.instructions,
         )
         try:

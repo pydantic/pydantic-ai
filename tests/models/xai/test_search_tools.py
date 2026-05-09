@@ -530,10 +530,12 @@ async def test_xai_builtin_x_search_tool_with_date_range(allow_model_requests: N
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(
         m,
-        builtin_tools=[
-            XSearchTool(
-                from_date=datetime(2024, 1, 1),
-                to_date=datetime(2024, 12, 31),
+        capabilities=[
+            NativeTool(
+                XSearchTool(
+                    from_date=datetime(2024, 1, 1),
+                    to_date=datetime(2024, 12, 31),
+                )
             )
         ],
     )

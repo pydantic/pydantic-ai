@@ -2109,7 +2109,7 @@ def test_annotate_tool_call_otel_metadata():
                 parameters_json_schema={'type': 'object', 'properties': {}},
             ),
         ],
-        builtin_tools=[],
+        native_tools=[],
         output_tools=[],
         output_mode='text',
         output_object=None,

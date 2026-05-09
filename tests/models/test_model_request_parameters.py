@@ -46,7 +46,7 @@ def test_model_request_parameters_are_serializable():
 
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='test')],
-        builtin_tools=[
+        native_tools=[
             WebSearchTool(user_location=WebSearchUserLocation(city='New York', country='US')),
             CodeExecutionTool(),
             WebFetchTool(),
