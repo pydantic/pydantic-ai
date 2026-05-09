@@ -80,7 +80,7 @@ pydantic_ai_harness/
     README.md          # standalone docs for the capability
 tests/
   conftest.py          # shared fixtures (TestModel, test_agent)
-  _<capability>/       # tests mirror source packages
+  <capability>/        # tests mirror source packages
     test_<capability>.py
 ```
 
