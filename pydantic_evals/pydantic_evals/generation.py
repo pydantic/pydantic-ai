@@ -70,7 +70,6 @@ async def generate_dataset(
             ' You must not include any characters in your response before the opening { of the JSON object, or after the closing }.'
         ),
         output_type=str,
-        retries=1,
     )
 
     default_name = Path(path).stem if path is not None else 'generated'

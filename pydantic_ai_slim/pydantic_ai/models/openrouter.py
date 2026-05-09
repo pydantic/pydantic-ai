@@ -33,6 +33,7 @@ try:
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
+    from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
 
@@ -657,7 +658,7 @@ def _openrouter_settings_to_openai_settings(
 
     # Note: openrouter_cache_instructions, openrouter_cache_messages, and
     # openrouter_cache_tool_definitions are intentionally NOT popped here — they are consumed
-    # by OpenRouterModel._map_messages and ._get_tools via the model_settings dict, not passed
+    # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
     # to the OpenAI SDK.
 
     for builtin_tool in model_request_parameters.builtin_tools:
@@ -729,7 +730,7 @@ class OpenRouterModel(OpenAIChatModel):
 
         Args:
             openai_messages: The mapped OpenAI messages to limit.
-            has_tool_cache_point: Whether a tool definition cache point was added by ``_get_tools``.
+            has_tool_cache_point: Whether a tool definition cache point was added by ``_get_tool_choice``.
         """
         max_points = self._cache_profile.openrouter_max_cache_points
         if max_points is None:
@@ -885,24 +886,22 @@ class OpenRouterModel(OpenAIChatModel):
         return omit
 
     @override
-    def _get_tools(
+    def _get_tool_choice(
         self,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
-        *,
-        model_settings: ModelSettings | None = None,
-    ) -> list[chat.ChatCompletionToolParam]:
-        tools = super()._get_tools(model_request_parameters, model_settings=model_settings)
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        tools, tool_choice = super()._get_tool_choice(model_settings, model_request_parameters)
 
         if (
             tools
-            and model_settings
             and (cache_tool_defs := model_settings.get('openrouter_cache_tool_definitions'))
             and self._cache_profile.openrouter_supports_tool_cache
         ):
             last_tool = cast(dict[str, Any], tools[-1])
             last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
 
-        return tools
+        return tools, tool_choice
 
     @override
     async def _map_messages(
@@ -1006,9 +1005,11 @@ class OpenRouterModel(OpenAIChatModel):
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
-        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam | None:
             message_param = super()._into_message_param()
             if self.reasoning_details:
+                if message_param is None:
+                    message_param = chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
                 message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
             return message_param
 
