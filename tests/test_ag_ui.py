@@ -1060,6 +1060,63 @@ async def test_tool_local_parts() -> None:
     )
 
 
+async def test_output_tool() -> None:
+    """Output tool calls emit `TOOL_CALL_RESULT` via `handle_output_tool_result`."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"query":"hello"}', tool_call_id='out_1')}
+
+    def web_search(query: str) -> dict[str, str]:
+        return {'result': f'Searched for {query}'}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+
+    run_input = create_input(UserMessage(id='msg_1', content='Tell me about hello'))
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'final_result',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"query":"hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Final result processed.',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
 async def test_thinking() -> None:
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -3058,10 +3115,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+            part=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
+            part=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
         )
 
         yield PartStartEvent(
@@ -3102,10 +3159,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
+            part=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
+            part=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
         )
 
     run_input = create_input(
@@ -3271,7 +3328,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_status',
                 content='Status retrieved',
                 tool_call_id='call_1',
@@ -3502,7 +3559,7 @@ async def test_tool_return_with_files():
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_image',
                 content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
                 tool_call_id='call_1',
@@ -3510,7 +3567,7 @@ async def test_tool_return_with_files():
         )
         # Content with only a FileUrl - files property returns [ImageUrl]
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_url',
                 content=ImageUrl(url='https://example.com/image.jpg'),
                 tool_call_id='call_2',
