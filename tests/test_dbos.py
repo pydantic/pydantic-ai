@@ -436,7 +436,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "validated_args": {"args": {"city": "Mexico City"}}, "event_kind": "function_tool_call"}'
+                                    content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
                         ),
