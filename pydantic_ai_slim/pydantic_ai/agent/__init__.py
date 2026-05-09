@@ -2841,7 +2841,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
             ```python
-            from pydantic_ai import Agent, NativeTool
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import NativeTool
             from pydantic_ai.native_tools import WebSearchTool
 
             agent = Agent('openai:gpt-5', capabilities=[NativeTool(WebSearchTool())])

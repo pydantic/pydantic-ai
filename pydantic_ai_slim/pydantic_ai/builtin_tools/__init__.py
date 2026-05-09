@@ -4,7 +4,7 @@
     The `pydantic_ai.builtin_tools` namespace was renamed to `pydantic_ai.native_tools`
     in pydantic-ai 1.x. Import these symbols from `pydantic_ai.native_tools` instead:
 
-    ```python
+    ```python {test="skip" lint="skip"}
     # Before
     from pydantic_ai.builtin_tools import WebSearchTool, AbstractBuiltinTool
 
