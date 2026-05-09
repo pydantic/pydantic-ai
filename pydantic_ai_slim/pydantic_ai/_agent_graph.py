@@ -1409,21 +1409,50 @@ def _build_output_run_context(
     )
 
 
-def _emit_skipped_output_tool(
+def _make_output_status_part(
     call: _messages.ToolCallPart,
-    message: str,
+    content: str,
     output_parts: list[_messages.ModelRequestPart],
-    *,
-    args_valid: bool | None = None,
-) -> Iterator[_messages.HandleResponseEvent]:
-    """Yield events for an output tool call that was skipped, and append the result to output_parts."""
-    yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
+) -> _messages.ToolReturnPart:
+    """Synthesize and append a status `ToolReturnPart` for an output tool call (success or skip).
+
+    Sites that retry use the part returned by validation/execution directly, not a synthesized one.
+    """
     part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
-        content=message,
+        content=content,
         tool_call_id=call.tool_call_id,
     )
     output_parts.append(part)
+    return part
+
+
+def _emit_output_tool_events(
+    call: _messages.ToolCallPart,
+    part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+    *,
+    args_valid: bool | None = None,
+) -> Iterator[_messages.HandleResponseEvent]:
+    """Yield `OutputToolCallEvent` and `OutputToolResultEvent` for an output tool call."""
+    yield _messages.OutputToolCallEvent(call, args_valid=args_valid)
+    yield _messages.OutputToolResultEvent(part)
+
+
+def _emit_legacy_output_tool_function_events(
+    call: _messages.ToolCallPart,
+    part: _messages.ToolReturnPart | _messages.RetryPromptPart,
+    *,
+    args_valid: bool | None,
+) -> Iterator[_messages.HandleResponseEvent]:
+    """Yield legacy `FunctionToolCallEvent` / `FunctionToolResultEvent` for an output tool call.
+
+    These keep firing on output-tool failure paths (skipped, validation/execution failure triggering
+    a retry) for backward compatibility, so consumers matching the legacy event types still see them.
+    They will stop firing in v2; users should match `OutputToolCallEvent` / `OutputToolResultEvent`
+    (or the shared `ToolCallEvent` / `ToolResultEvent` bases) instead. No runtime warning is fired
+    so that already-migrated consumers don't see noise on every output-tool retry.
+    """
+    yield _messages.FunctionToolCallEvent(call, args_valid=args_valid)
     yield _messages.FunctionToolResultEvent(part)
 
 
@@ -1457,17 +1486,17 @@ async def process_tool_calls(  # noqa: C901
         # `final_result` can be passed into `process_tool_calls` from `Agent.run_stream`
         # when streaming and there's already a final result
         if final_result and final_result.tool_call_id == call.tool_call_id:
-            part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content='Final result processed.',
-                tool_call_id=call.tool_call_id,
-            )
-            output_parts.append(part)
+            part = _make_output_status_part(call, 'Final result processed.', output_parts)
+            for event in _emit_output_tool_events(call, part, args_valid=True):
+                yield event
         # A final result is already set and this strategy skips remaining output tools
         elif ctx.deps.end_strategy in ('early', 'graceful') and final_result:
-            for event in _emit_skipped_output_tool(
-                call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
-            ):
+            part = _make_output_status_part(
+                call, 'Output tool not used - a final result was already processed.', output_parts
+            )
+            for event in _emit_output_tool_events(call, part, args_valid=None):
+                yield event
+            for event in _emit_legacy_output_tool_function_events(call, part, args_valid=None):
                 yield event
         # No final result yet, or exhaustive strategy processes all output tools
         else:
@@ -1480,9 +1509,12 @@ async def process_tool_calls(  # noqa: C901
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
                 if final_result:
-                    for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
-                    ):
+                    part = _make_output_status_part(
+                        call, 'Output tool not used - output failed validation.', output_parts
+                    )
+                    for event in _emit_output_tool_events(call, part, args_valid=False):
+                        yield event
+                    for event in _emit_legacy_output_tool_function_events(call, part, args_valid=False):
                         yield event
                     continue
                 ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
@@ -1495,15 +1527,22 @@ async def process_tool_calls(  # noqa: C901
             if not validated.args_valid:
                 assert validated.validation_error is not None
                 if final_result:
-                    for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
-                    ):
+                    part = _make_output_status_part(
+                        call, 'Output tool not used - output failed validation.', output_parts
+                    )
+                    for event in _emit_output_tool_events(call, part, args_valid=False):
+                        yield event
+                    for event in _emit_legacy_output_tool_function_events(call, part, args_valid=False):
                         yield event
                     continue
 
-                yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
-                yield _messages.FunctionToolResultEvent(validated.validation_error.tool_retry)
+                for event in _emit_output_tool_events(call, validated.validation_error.tool_retry, args_valid=False):
+                    yield event
+                for event in _emit_legacy_output_tool_function_events(
+                    call, validated.validation_error.tool_retry, args_valid=False
+                ):
+                    yield event
                 ctx.state.output_retries_used += 1
                 continue
 
@@ -1512,9 +1551,12 @@ async def process_tool_calls(  # noqa: C901
                 result_data = await tool_manager.execute_output_tool_call(validated, schema=schema)
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
-                    for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output function execution failed.', output_parts, args_valid=True
-                    ):
+                    part = _make_output_status_part(
+                        call, 'Output tool not used - output function execution failed.', output_parts
+                    )
+                    for event in _emit_output_tool_events(call, part, args_valid=True):
+                        yield event
+                    for event in _emit_legacy_output_tool_function_events(call, part, args_valid=True):
                         yield event
                     continue
                 ctx.state.check_incomplete_tool_call()  # pragma: lax no cover
@@ -1525,18 +1567,17 @@ async def process_tool_calls(  # noqa: C901
                     f'Exceeded maximum output retries ({max_retries})'
                 ) from (e.__cause__ or e)
             except ToolRetryError as e:
-                yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
-                yield _messages.FunctionToolResultEvent(e.tool_retry)
+                for event in _emit_output_tool_events(call, e.tool_retry, args_valid=True):
+                    yield event
+                for event in _emit_legacy_output_tool_function_events(call, e.tool_retry, args_valid=True):
+                    yield event
                 ctx.state.output_retries_used += 1
                 continue
 
-            part = _messages.ToolReturnPart(
-                tool_name=call.tool_name,
-                content='Final result processed.',
-                tool_call_id=call.tool_call_id,
-            )
-            output_parts.append(part)
+            part = _make_output_status_part(call, 'Final result processed.', output_parts)
+            for event in _emit_output_tool_events(call, part, args_valid=True):
+                yield event
 
             # Use the first valid output tool's result as the final result
             if not final_result:
