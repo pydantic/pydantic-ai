@@ -824,12 +824,10 @@ class MCPServer(AbstractToolset[Any], ABC):
             raise ValueError('Sampling model is not set')  # pragma: no cover
 
         pai_messages = _mcp.map_from_mcp_params(params)
-        model_settings = ModelSettings()
-        if max_tokens := params.maxTokens:  # pragma: no branch
-            model_settings['max_tokens'] = max_tokens
-        if temperature := params.temperature:  # pragma: no branch
+        model_settings = ModelSettings(max_tokens=params.maxTokens)
+        if (temperature := params.temperature) is not None:  # pragma: no branch
             model_settings['temperature'] = temperature
-        if stop_sequences := params.stopSequences:  # pragma: no branch
+        if (stop_sequences := params.stopSequences) is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
         model_response = await model_request(self.sampling_model, pai_messages, model_settings=model_settings)
@@ -1829,15 +1827,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._running_count == 0:
-                self._exit_stack = AsyncExitStack()
-                await self._exit_stack.enter_async_context(self.client)
-                init_result = self.client.initialize_result
-                assert init_result is not None, 'FastMCP Client initialization returned no result'
-                self._server_info = init_result.serverInfo
-                self._server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
-                self._instructions = init_result.instructions
-                if self.log_level is not None:
-                    await self.client.session.set_logging_level(self.log_level)
+                # Build the exit stack inside an `async with` so any failure after
+                # `enter_async_context(self.client)` cleans up the open session — only commit the
+                # stack to `self._exit_stack` once initialization fully succeeds.
+                async with AsyncExitStack() as exit_stack:
+                    await exit_stack.enter_async_context(self.client)
+                    init_result = self.client.initialize_result
+                    assert init_result is not None, 'FastMCP Client initialization returned no result'
+                    self._server_info = init_result.serverInfo
+                    self._server_capabilities = ServerCapabilities.from_mcp_sdk(init_result.capabilities)
+                    self._instructions = init_result.instructions
+                    if self.log_level is not None:
+                        await self.client.session.set_logging_level(self.log_level)
+                    self._exit_stack = exit_stack.pop_all()
             self._running_count += 1
         return self
 
@@ -2139,12 +2141,10 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         ctx: Any,
     ) -> mcp_types.CreateMessageResult:
         pai_messages = _mcp.map_from_mcp_params(params)
-        model_settings = ModelSettings()
-        if max_tokens := params.maxTokens:  # pragma: no branch
-            model_settings['max_tokens'] = max_tokens
-        if temperature := params.temperature:  # pragma: no branch
+        model_settings = ModelSettings(max_tokens=params.maxTokens)
+        if (temperature := params.temperature) is not None:  # pragma: no branch
             model_settings['temperature'] = temperature
-        if stop_sequences := params.stopSequences:  # pragma: no branch
+        if (stop_sequences := params.stopSequences) is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
         model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
