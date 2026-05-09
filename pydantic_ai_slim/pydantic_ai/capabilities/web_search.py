@@ -8,7 +8,7 @@ from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _pop_deprecated_native_kwarg
+from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias
 
 
 @dataclass(init=False)
@@ -46,11 +46,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
-        **deprecated_kwargs: Any,
     ) -> None:
-        native = _pop_deprecated_native_kwarg(deprecated_kwargs, native, class_name=type(self).__name__)
-        if deprecated_kwargs:
-            raise TypeError(f'Unexpected keyword arguments: {sorted(deprecated_kwargs)}')
         self.native = native
         self.local = local
         self.search_context_size = search_context_size
@@ -96,3 +92,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
+
+
+_wrap_init_with_builtin_alias(WebSearch)

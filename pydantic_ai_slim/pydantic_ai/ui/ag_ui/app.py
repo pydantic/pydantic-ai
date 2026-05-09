@@ -58,7 +58,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractNativeTool] | None = None,
+        native_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
         # Starlette parameters
         debug: bool = False,
@@ -68,6 +68,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[Self] | None = None,
+        **_deprecated_kwargs: Any,
     ) -> None:
         """An ASGI application that handles every request by running the agent and streaming the response.
 
@@ -96,7 +97,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
+            native_tools: Optional additional native tools for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -118,6 +119,11 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
                 the other, not both.
         """
+        from ... import _utils
+
+        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         super().__init__(
             debug=debug,
             routes=routes,
@@ -152,7 +158,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                native_tools=native_tools,
                 on_complete=on_complete,
             )
 

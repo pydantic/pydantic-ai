@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -15,24 +16,30 @@ from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .abstract import AbstractCapability
 
-_MISSING: Any = object()
 
+def _wrap_init_with_builtin_alias(cls: type[Any]) -> None:
+    """Install a wrapper around `cls.__init__` that accepts the deprecated `builtin=` kwarg.
 
-def _pop_deprecated_native_kwarg(kwargs: dict[str, Any], native: Any, *, class_name: str) -> Any:
-    """Extract a deprecated `builtin=` kwarg, warn, and return the resolved `native` value.
-
-    Subclasses' `__init__` accept `**deprecated_kwargs: Any` and call this to migrate the
-    `builtin=` alias to `native=`.
+    Keeping the alias out of the real `__init__` signature prevents `**deprecated_kwargs`
+    from leaking into Pydantic's JSON-schema introspection of capability classes.
     """
-    if 'builtin' not in kwargs:
-        return native
-    builtin = kwargs.pop('builtin')
-    warnings.warn(
-        f'`{class_name}(builtin=...)` is deprecated, use `native=` instead.',
-        PydanticAIDeprecationWarning,
-        stacklevel=3,
-    )
-    return builtin if native is True else native
+    orig_init = cls.__init__
+
+    @functools.wraps(orig_init)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> None:
+        if 'builtin' in kwargs:
+            warnings.warn(
+                f'`{type(self).__name__}(builtin=...)` is deprecated, use `native=` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            if 'native' not in kwargs:
+                kwargs['native'] = kwargs.pop('builtin')
+            else:
+                kwargs.pop('builtin')
+        orig_init(self, *args, **kwargs)
+
+    cls.__init__ = wrapper
 
 
 @dataclass(init=False)
@@ -81,11 +88,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         *,
         native: AgentNativeTool[AgentDepsT] | bool = True,
         local: Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | Literal[False] | None = None,
-        **deprecated_kwargs: Any,
     ) -> None:
-        native = _pop_deprecated_native_kwarg(deprecated_kwargs, native, class_name=type(self).__name__)
-        if deprecated_kwargs:
-            raise TypeError(f'Unexpected keyword arguments: {sorted(deprecated_kwargs)}')
         self.native = native
         self.local = local
         self.__post_init__()
@@ -194,3 +197,6 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
             )
             return self.native
         raise AttributeError(name)
+
+
+_wrap_init_with_builtin_alias(NativeOrLocalTool)

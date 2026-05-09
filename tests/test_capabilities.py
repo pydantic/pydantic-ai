@@ -4723,7 +4723,7 @@ class TestImageGenerationCapability:
         builtin_fields.add('image_model')
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
-            'builtin',
+            'native',
             'local',
             'fallback_model',
         }

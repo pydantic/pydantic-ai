@@ -542,6 +542,16 @@ class ModelRequestParameters:
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
+    @property
+    def builtin_tools(self) -> list[AbstractNativeTool]:
+        """Deprecated: use [`native_tools`][pydantic_ai.models.ModelRequestParameters.native_tools] instead."""
+        warnings.warn(
+            '`ModelRequestParameters.builtin_tools` is deprecated, use `ModelRequestParameters.native_tools` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.native_tools
+
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:

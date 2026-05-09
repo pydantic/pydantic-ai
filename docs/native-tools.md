@@ -15,7 +15,7 @@ Pydantic AI supports the following native tools:
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 
-These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
+These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
 !!! warning "Provider Support"
     Not all model providers support native tools. If you use a native tool with an unsupported provider, Pydantic AI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
@@ -27,7 +27,7 @@ These tools are passed to the agent via the `builtin_tools` parameter and are ex
 
 ## Dynamic Configuration
 
-Sometimes you need to configure a native tool dynamically based on the [run context][pydantic_ai.tools.RunContext] (e.g., user dependencies), or conditionally omit it. You can achieve this by passing a function to `builtin_tools` that takes [`RunContext`][pydantic_ai.tools.RunContext] as an argument and returns an [`AbstractNativeTool`][pydantic_ai.native_tools.AbstractNativeTool] or `None`.
+Sometimes you need to configure a native tool dynamically based on the [run context][pydantic_ai.tools.RunContext] (e.g., user dependencies), or conditionally omit it. You can achieve this by wrapping a function with [`NativeTool`][pydantic_ai.capabilities.NativeTool] in `capabilities`. The function takes [`RunContext`][pydantic_ai.tools.RunContext] as an argument and returns an [`AbstractNativeTool`][pydantic_ai.native_tools.AbstractNativeTool] or `None`.
 
 This is particularly useful for tools like [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] where you might want to set the user's location based on the current request, or disable the tool if the user provides no location.
 
@@ -46,7 +46,7 @@ async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    builtin_tools=[prepared_web_search],
+    capabilities=[NativeTool(prepared_web_search)],
     deps_type=dict,
 )
 
@@ -128,21 +128,24 @@ The `WebSearchTool` supports several configuration parameters:
 
 ```py {title="web_search_configured.py"}
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
+from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    builtin_tools=[
-        WebSearchTool(
-            search_context_size='high',
-            user_location=WebSearchUserLocation(
-                city='San Francisco',
-                country='US',
-                region='CA',
-                timezone='America/Los_Angeles',
-            ),
-            blocked_domains=['example.com', 'spam-site.net'],
-            allowed_domains=None,  # Cannot use both blocked_domains and allowed_domains with Anthropic
-            max_uses=5,  # Anthropic only: limit tool usage
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                search_context_size='high',
+                user_location=WebSearchUserLocation(
+                    city='San Francisco',
+                    country='US',
+                    region='CA',
+                    timezone='America/Los_Angeles',
+                ),
+                blocked_domains=['example.com', 'spam-site.net'],
+                allowed_domains=None,  # Cannot use both blocked_domains and allowed_domains with Anthropic
+                max_uses=5,  # Anthropic only: limit tool usage
+            )
         )
     ],
 )
@@ -198,13 +201,15 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'xai:grok-4-1-fast',
-    builtin_tools=[
-        XSearchTool(
-            allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
-            from_date=datetime(2024, 1, 1),
-            to_date=datetime(2024, 12, 31),
-            enable_image_understanding=True,
-            enable_video_understanding=True,
+    capabilities=[
+        NativeTool(
+            XSearchTool(
+                allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
+                from_date=datetime(2024, 1, 1),
+                to_date=datetime(2024, 12, 31),
+                enable_image_understanding=True,
+                enable_video_understanding=True,
+            )
         )
     ],
 )
@@ -390,18 +395,20 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    builtin_tools=[
-        ImageGenerationTool(
-            action='generate',
-            background='transparent',
-            input_fidelity='high',
-            model='gpt-image-2',
-            moderation='low',
-            output_compression=100,
-            output_format='png',
-            partial_images=3,
-            quality='high',
-            size='1024x1024',
+    capabilities=[
+        NativeTool(
+            ImageGenerationTool(
+                action='generate',
+                background='transparent',
+                input_fidelity='high',
+                model='gpt-image-2',
+                moderation='low',
+                output_compression=100,
+                output_format='png',
+                partial_images=3,
+                quality='high',
+                size='1024x1024',
+            )
         )
     ],
     output_type=BinaryImage,
@@ -528,12 +535,14 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    builtin_tools=[
-        WebFetchTool(
-            allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
-            max_uses=10,
-            enable_citations=True,
-            max_content_tokens=50000,
+    capabilities=[
+        NativeTool(
+            WebFetchTool(
+                allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
+                max_uses=10,
+                enable_citations=True,
+                max_content_tokens=50000,
+            )
         )
     ],
 )
@@ -680,10 +689,12 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    builtin_tools=[
-        MCPServerTool(
-            id='deepwiki',
-            url='https://mcp.deepwiki.com/mcp',  # (1)
+    capabilities=[
+        NativeTool(
+            MCPServerTool(
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',  # (1)
+            )
         )
     ]
 )
@@ -707,10 +718,12 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    builtin_tools=[
-        MCPServerTool(
-            id='deepwiki',
-            url='https://mcp.deepwiki.com/mcp',  # (1)
+    capabilities=[
+        NativeTool(
+            MCPServerTool(
+                id='deepwiki',
+                url='https://mcp.deepwiki.com/mcp',  # (1)
+            )
         )
     ]
 )
@@ -738,14 +751,16 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    builtin_tools=[
-        MCPServerTool(
-            id='github',
-            url='https://api.githubcopilot.com/mcp/',
-            authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # (1)
-            allowed_tools=['search_repositories', 'list_commits'],
-            description='GitHub MCP server',
-            headers={'X-Custom-Header': 'custom-value'},
+    capabilities=[
+        NativeTool(
+            MCPServerTool(
+                id='github',
+                url='https://api.githubcopilot.com/mcp/',
+                authorization_token=os.getenv('GITHUB_ACCESS_TOKEN', 'mock-access-token'),  # (1)
+                allowed_tools=['search_repositories', 'list_commits'],
+                description='GitHub MCP server',
+                headers={'X-Custom-Header': 'custom-value'},
+            )
         )
     ]
 )
@@ -771,11 +786,13 @@ from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    builtin_tools=[
-        MCPServerTool(
-            id='google-calendar',
-            url='x-openai-connector:connector_googlecalendar',
-            authorization_token=os.getenv('GOOGLE_API_KEY', 'mock-api-key'), # (1)
+    capabilities=[
+        NativeTool(
+            MCPServerTool(
+                id='google-calendar',
+                url='x-openai-connector:connector_googlecalendar',
+                authorization_token=os.getenv('GOOGLE_API_KEY', 'mock-api-key'), # (1)
+            )
         )
     ]
 )

@@ -74,7 +74,7 @@ agent = Agent('openai:gpt-5.2')
 
 app = agent.to_web(
     models=['anthropic:claude-sonnet-4-6'],
-    builtin_tools=[CodeExecutionTool(), WebSearchTool()],
+    native_tools=[CodeExecutionTool(), WebSearchTool()],
 )
 ```
 

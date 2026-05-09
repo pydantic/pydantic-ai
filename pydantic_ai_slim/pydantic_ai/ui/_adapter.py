@@ -473,7 +473,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractNativeTool] | None = None,
+        native_tools: Sequence[AbstractNativeTool] | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -493,8 +494,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
+            native_tools: Optional additional native tools to use for this run.
         """
+        from .. import _utils
+
+        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
         if conversation_id is None:
@@ -542,7 +548,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                native_tools=native_tools,
                 capabilities=capabilities,
             ) as stream:
                 async for event in stream:
@@ -566,8 +572,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractNativeTool] | None = None,
+        native_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[EventT]:
         """Run the agent with the protocol-specific run input and stream protocol-specific events.
 
@@ -587,10 +594,15 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
+            native_tools: Optional additional native tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
+        from .. import _utils
+
+        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         return self.transform_stream(
             self.run_stream_native(
                 output_type=output_type,
@@ -606,7 +618,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                native_tools=native_tools,
             ),
             on_complete=on_complete,
         )
@@ -630,7 +642,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractNativeTool] | None = None,
+        native_tools: Sequence[AbstractNativeTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -659,7 +671,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools to use for this run.
+            native_tools: Optional additional native tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             manage_system_prompt: Who owns the system prompt. See
@@ -671,6 +683,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Returns:
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
+        from .. import _utils
+
+        native_tools = _utils.consume_deprecated_builtin_tools(kwargs, native_tools)
+
         try:
             from starlette.responses import Response
         except ImportError as e:  # pragma: no cover
@@ -713,7 +729,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                native_tools=native_tools,
                 on_complete=on_complete,
             ),
         )

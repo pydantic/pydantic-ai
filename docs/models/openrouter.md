@@ -84,14 +84,15 @@ You can customize the web search behavior using the `search_context_size` parame
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.native_tools import WebSearchTool
 
 tool = WebSearchTool(search_context_size='high')
 model = OpenRouterModel('openai/gpt-4.1')
 agent = Agent(
     model,
-    builtin_tools=[tool]
+    capabilities=[NativeTool(tool)],
 )
 result = agent.run_sync('What is the latest news in AI?')
 ```

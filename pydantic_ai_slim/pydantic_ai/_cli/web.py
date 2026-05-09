@@ -64,7 +64,7 @@ def run_web_command(
     app = create_web_app(
         agent,
         models=models or None,
-        builtin_tools=tool_instances,
+        native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
     )

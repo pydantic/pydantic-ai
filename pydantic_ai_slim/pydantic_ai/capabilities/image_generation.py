@@ -10,7 +10,7 @@ from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName,
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _pop_deprecated_native_kwarg
+from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
@@ -131,11 +131,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
-        **deprecated_kwargs: Any,
     ) -> None:
-        native = _pop_deprecated_native_kwarg(deprecated_kwargs, native, class_name=type(self).__name__)
-        if deprecated_kwargs:
-            raise TypeError(f'Unexpected keyword arguments: {sorted(deprecated_kwargs)}')
         if fallback_model is not None and local is not None:
             raise UserError(
                 'ImageGeneration: cannot specify both `fallback_model` and `local` — '
@@ -201,3 +197,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
+
+
+_wrap_init_with_builtin_alias(ImageGeneration)

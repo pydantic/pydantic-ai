@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, _utils
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..capabilities.native_or_local import NativeOrLocalTool, _pop_deprecated_native_kwarg
+from ..capabilities.native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     AudioUrl,
@@ -243,11 +243,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool = False,
         enable_video_understanding: bool = False,
         include_output: bool = False,
-        **deprecated_kwargs: Any,
     ) -> None:
-        native = _pop_deprecated_native_kwarg(deprecated_kwargs, native, class_name=type(self).__name__)
-        if deprecated_kwargs:
-            raise TypeError(f'Unexpected keyword arguments: {sorted(deprecated_kwargs)}')
         self.native = native
         self.local = local
         self.allowed_x_handles = allowed_x_handles
@@ -278,6 +274,9 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.allowed_x_handles is not None or self.excluded_x_handles is not None
+
+
+_wrap_init_with_builtin_alias(XSearch)
 
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.

@@ -447,7 +447,7 @@ You can combine exception types, exception handlers, and response handlers in a 
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
 
-from fallback_on_builtin_tool import anthropic_model, google_model, web_fetch_failed
+from fallback_on_native_tool import anthropic_model, google_model, web_fetch_failed
 
 fallback_model = FallbackModel(
     google_model,

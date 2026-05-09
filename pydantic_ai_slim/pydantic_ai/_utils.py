@@ -733,6 +733,45 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
+_T = TypeVar('_T')
+
+
+def consume_deprecated_builtin_tools(
+    deprecated_kwargs: dict[str, Any],
+    native_tools: _T,
+    *,
+    stacklevel: int = 3,
+) -> _T:
+    """Pop a deprecated `builtin_tools=` kwarg, warn, and reconcile it with `native_tools=`.
+
+    Used by per-call entry points (`run`/`iter`/`run_stream`/`override`/dispatchers/etc.)
+    after the renaming of `builtin_tools=` to `native_tools=`. The kwarg stays
+    functional but emits a `PydanticAIDeprecationWarning` (visible by default,
+    `UserWarning` subclass) at runtime.
+
+    Returns `native_tools` if the caller passed an explicit value (anything other
+    than `None`/`UNSET`); otherwise the legacy value.
+    """
+    from ._warnings import PydanticAIDeprecationWarning
+
+    if 'builtin_tools' not in deprecated_kwargs:
+        return native_tools
+    legacy = deprecated_kwargs.pop('builtin_tools')
+    import warnings
+
+    warnings.warn(
+        '`builtin_tools=` is deprecated, use `native_tools=` instead. '
+        'For higher-level capability-based registration, use '
+        '`capabilities=[NativeTool(...)]` or a provider-adaptive capability '
+        'like `WebSearch()`, `WebFetch()`, `MCP()`, or `ImageGeneration()`.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    if native_tools is None or native_tools is UNSET:
+        return legacy
+    return native_tools
+
+
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
 
 
