@@ -53,14 +53,16 @@ class TogetherProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        model_name = model_name.lower()
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            profile = provider_to_profile[provider](model_name)
+        raw_model_name = model_name
+        normalized_model_name = model_name.lower()
+        profile_provider, profile_model_name = normalized_model_name.split('/', 1)
+        if profile_provider in provider_to_profile:
+            profile = provider_to_profile[profile_provider](profile_model_name)
 
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return result.with_origin('huggingface_together', raw_model_name)
 
     @overload
     def __init__(self) -> None: ...

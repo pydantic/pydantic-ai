@@ -45,6 +45,11 @@ class ModelProfile:
     """
     supports_image_output: bool = False
     """Whether the model supports image output."""
+    context_window: int | None = None
+    """The model's maximum context window size in tokens, if known.
+
+    Auto-populated from genai-prices when not set explicitly.
+    """
     default_structured_output_mode: StructuredOutputMode = 'tool'
     """The default structured output mode to use for the model."""
     prompted_output_template: str = dedent(
@@ -95,6 +100,16 @@ class ModelProfile:
     Defaults to ALL builtin tools. Profile functions should explicitly
     restrict this based on model capabilities.
     """
+
+    _origin_provider: str | None = None
+    """The canonical provider identifier to use for `genai-prices` lookups for proxy models."""
+
+    _origin_model_name: str | None = None
+    """The canonical model reference to use for `genai-prices` lookups for proxy models."""
+
+    def with_origin(self, provider: str, model_name: str) -> Self:
+        """Return a copy of this profile with `genai-prices` lookup hints set."""
+        return replace(self, _origin_provider=provider, _origin_model_name=model_name)
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:

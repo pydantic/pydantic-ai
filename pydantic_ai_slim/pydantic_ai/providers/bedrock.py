@@ -172,7 +172,12 @@ class BedrockProvider(Provider[BaseClient]):
             model_name = model_name_with_version
 
         if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
+            profile = provider_to_profile[provider](model_name)
+            if profile is not None:
+                return profile.with_origin(provider, model_name)
+            # All current provider functions use _without_builtin_tools which always returns non-None,
+            # but this guard remains for safety if a future provider function can return None.
+            return None  # pragma: no cover
 
         return None
 
