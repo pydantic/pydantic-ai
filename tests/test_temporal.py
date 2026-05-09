@@ -113,12 +113,12 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('fastmcp not installed', allow_module_level=True)
 
@@ -311,7 +311,7 @@ complex_agent = Agent(
     output_type=Response,
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
         ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
@@ -1303,12 +1303,12 @@ mcp_dynamic_toolset_agent = Agent(model, name='mcp_dynamic_toolset_agent')
 
 
 @mcp_dynamic_toolset_agent.toolset(id='mcp_toolset')
-def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:
+def my_mcp_dynamic_toolset(ctx: RunContext[None]) -> MCPServerStreamableHTTP:  # pyright: ignore[reportDeprecated]
     """Dynamic toolset that returns an MCP toolset.
 
     This tests MCP lifecycle management (context manager enter/exit) within DynamicToolset + Temporal.
     """
-    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')
+    return MCPServerStreamableHTTP('https://mcp.deepwiki.com/mcp')  # pyright: ignore[reportDeprecated]
 
 
 mcp_dynamic_toolset_temporal_agent = TemporalAgent(
@@ -2505,7 +2505,7 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
 mcp_instructions_agent = Agent(
     FunctionModel(return_mcp_instructions),
     name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
 )
 
 mcp_instructions_temporal_agent = TemporalAgent(mcp_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG)
@@ -2796,7 +2796,7 @@ def test_temporal_run_context_serializes_usage():
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
 )
 
 

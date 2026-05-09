@@ -58,12 +58,12 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio
+    from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('fastmcp not installed', allow_module_level=True)
 
@@ -220,7 +220,7 @@ complex_agent = Agent(
     output_type=Response,
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+        MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
         ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
@@ -1578,7 +1578,7 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
 mcp_instructions_agent = Agent(
     FunctionModel(return_mcp_instructions),
     name='mcp_instructions_agent',
-    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
 )
 mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
 
@@ -1595,7 +1595,7 @@ class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
 
 
 _uninit_instructions_toolset = _TestDBOSMCPToolset(
-    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),
+    MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),  # pyright: ignore[reportDeprecated]
     step_name_prefix='coverage_test',
     step_config={},
 )
@@ -1612,7 +1612,7 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',
-    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
 )
 
 fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)

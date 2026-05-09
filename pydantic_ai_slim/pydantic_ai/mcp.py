@@ -1316,26 +1316,33 @@ class MCPServerSSE(_MCPServerHTTP):
         return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url  # pyright: ignore[reportDeprecated]
 
 
-@deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
-class MCPServerHTTP(MCPServerSSE):  # pyright: ignore[reportDeprecated]
-    """An MCP server that connects over HTTP using the old SSE transport.
+# Subclassing a `@deprecated` class emits a `DeprecationWarning` at class-creation time, which is
+# fired the moment `pydantic_ai.mcp` is imported. Suppress it locally — the deprecation is
+# intentional and `MCPServerHTTP` itself is also `@deprecated`, so users still see the warning
+# when *they* construct or import it.
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', category=DeprecationWarning)
 
-    This class implements the SSE transport from the MCP specification.
-    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
+    @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
+    class MCPServerHTTP(MCPServerSSE):  # pyright: ignore[reportDeprecated]
+        """An MCP server that connects over HTTP using the old SSE transport.
 
-    !!! note
-        Using this class as an async context manager will create a new pool of HTTP connections to connect
-        to a server which should already be running.
+        This class implements the SSE transport from the MCP specification.
+        See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
 
-    Example:
-    ```python {py="3.10" test="skip"}
-    from pydantic_ai import Agent
-    from pydantic_ai.mcp import MCPServerHTTP
+        !!! note
+            Using this class as an async context manager will create a new pool of HTTP connections to connect
+            to a server which should already be running.
 
-    server = MCPServerHTTP('http://localhost:3001/sse')
-    agent = Agent('openai:gpt-5.2', toolsets=[server])
-    ```
-    """
+        Example:
+        ```python {py="3.10" test="skip"}
+        from pydantic_ai import Agent
+        from pydantic_ai.mcp import MCPServerHTTP
+
+        server = MCPServerHTTP('http://localhost:3001/sse')
+        agent = Agent('openai:gpt-5.2', toolsets=[server])
+        ```
+        """
 
 
 @deprecated(

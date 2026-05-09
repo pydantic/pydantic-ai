@@ -7537,13 +7537,14 @@ def test_deprecated_kwargs_still_work():
     import warnings
 
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
 
             Agent(  # pyright: ignore[reportDeprecated]
-                'test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])]
+                'test',
+                mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])],  # pyright: ignore[reportDeprecated]
             )
             mcp_servers_warnings = [
                 warning
@@ -7933,12 +7934,12 @@ def test_prepare_output_tools_receives_output_max_retries():
 
 async def test_explicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -7953,12 +7954,12 @@ async def test_explicit_context_manager():
 
 async def test_implicit_context_manager():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
@@ -7969,7 +7970,7 @@ async def test_implicit_context_manager():
 
 def test_parallel_mcp_calls():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
@@ -7984,7 +7985,7 @@ def test_parallel_mcp_calls():
         else:
             return ModelResponse(parts=[TextPart('finished')])
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
     result = agent.run_sync('call tools in parallel')
     assert result.output == snapshot('finished')
@@ -8112,13 +8113,13 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
 
 def test_set_mcp_sampling_model():
     try:
-        from pydantic_ai.mcp import MCPServerStdio
+        from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
     test_model = TestModel()
-    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])  # pyright: ignore[reportDeprecated]
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)  # pyright: ignore[reportDeprecated]
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent(None, toolsets=[toolset])
 

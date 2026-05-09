@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `MCPServer*` hierarchy to maintain coverage until v2-cut.
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 from __future__ import annotations

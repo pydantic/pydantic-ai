@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `FastMCPToolset` to maintain coverage until v2-cut.
 """Tests for the FastMCP Toolset implementation."""
 
 from __future__ import annotations
