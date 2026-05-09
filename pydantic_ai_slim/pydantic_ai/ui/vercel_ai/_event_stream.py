@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal
 
 from pydantic_core import to_json
@@ -99,7 +98,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
-    _invalid_function_tool_calls: dict[str, ToolCallPart] = defaultdict()
+    _invalid_function_tool_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
