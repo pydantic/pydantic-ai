@@ -21,7 +21,6 @@ from pydantic_ai import (
     InstructionPart,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -30,7 +29,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import (
-    ModelRetry,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -2260,7 +2258,10 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
     async with server:
         # Should return an error dict when elicitation is attempted without callback
         result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
-        assert result == {'_tool_error': True, '_error_message': 'Error executing tool use_elicitation: Elicitation not supported'}
+        assert result == {
+            '_tool_error': True,
+            '_error_message': 'Error executing tool use_elicitation: Elicitation not supported',
+        }
 
 
 async def test_read_text_resource(run_context: RunContext[int]):
@@ -2883,3 +2884,22 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
 
+
+async def test_tool_returning_error_no_message(mcp_server: MCPServerStdio) -> None:
+    """Test the fallback error message when an MCP tool fails without providing text."""
+    from unittest.mock import AsyncMock, patch
+
+    from mcp.types import CallToolResult
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
+            'send_request',
+            new=AsyncMock(return_value=CallToolResult(isError=True, content=[])),
+        ):
+            result = await mcp_server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+
+            assert result == {
+                '_tool_error': True,
+                '_error_message': 'MCP tool call failed',
+            }
