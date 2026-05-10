@@ -1969,12 +1969,18 @@ async def _call_tool(
         # Standard execution: pass the actual return value, not the object itself
         part_content = tool_return.return_value
 
-    return_part = _messages.ToolReturnPart(
-        tool_name=call.tool_name,
-        tool_call_id=call.tool_call_id,
-        content=part_content,
-        outcome='failed' if is_tool_error else 'success',
-    )
+    # Preserve all original kwargs from tool_return while injecting outcome.
+    # This ensures metadata and timestamp are not lost.
+    return_part_kwargs = {
+        'tool_name': call.tool_name,
+        'tool_call_id': call.tool_call_id,
+        'content': part_content,
+        'outcome': 'failed' if is_tool_error else 'success',
+    }
+    if tool_return.metadata is not None:
+        return_part_kwargs['metadata'] = tool_return.metadata
+    
+    return_part = _messages.ToolReturnPart(**return_part_kwargs)
 
     return return_part, getattr(tool_return, 'content', None)
 

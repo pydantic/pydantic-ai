@@ -251,7 +251,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             except ToolError as e:
                 # Honor the user's requested error behavior.
                 if self.tool_error_behavior == 'model_retry':
-                    raise e
+                    raise ModelRetry(str(e)) from e
                 return {
                     '_tool_error': True,
                     '_error_message': str(e)

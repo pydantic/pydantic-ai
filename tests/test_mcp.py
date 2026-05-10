@@ -2089,7 +2089,8 @@ async def test_mcp_server_raises_mcp_error(
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
-            with pytest.raises(ModelRetry, match='Test MCP error conversion'):
+            # McpError (transport-level errors) should propagate without being caught
+            with pytest.raises(McpError, match='Test MCP error conversion'):
                 await mcp_server.direct_call_tool('test_tool', {})
 
 

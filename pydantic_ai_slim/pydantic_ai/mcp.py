@@ -602,27 +602,19 @@ class MCPServer(AbstractToolset[Any], ABC):
             LLM to receive error information as context rather than triggering a retry.
         """
         async with self:  # Ensure server is running
-            try:
-                result = await self._get_client().send_request(
-                    mcp_types.ClientRequest(
-                        mcp_types.CallToolRequest(
-                            method='tools/call',
-                            params=mcp_types.CallToolRequestParams(
-                                name=name,
-                                arguments=args,
-                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                            ),
-                        )
-                    ),
-                    mcp_types.CallToolResult,
-                )
-            
-            except mcp_exceptions.McpError as e:
-                # Return a standard dict with internal flags instead of a hallucinated class
-                return {
-                    '_tool_error': True,
-                    '_error_message': e.error.message
-                }
+            result = await self._get_client().send_request(
+                mcp_types.ClientRequest(
+                    mcp_types.CallToolRequest(
+                        method='tools/call',
+                        params=mcp_types.CallToolRequestParams(
+                            name=name,
+                            arguments=args,
+                            _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                        ),
+                    )
+                ),
+                mcp_types.CallToolResult,
+            )
 
         if result.isError:
             message: str | None = None
