@@ -475,11 +475,11 @@ class XaiModel(Model[AsyncClient]):
 
     @staticmethod
     def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
-        """Append a tool call to the most recent tool-call assistant message, or create a new one.
+        """Append a tool call to the most recent assistant message, or create a new one.
 
-        We keep tool calls grouped to avoid generating one assistant message per tool call.
+        We keep parts from one assistant response grouped to avoid generating one assistant message per tool call.
         """
-        if messages and messages[-1].tool_calls:
+        if messages and messages[-1].role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT:
             messages[-1].tool_calls.append(tool_call)
         else:
             msg = assistant('')
