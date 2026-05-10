@@ -42,7 +42,7 @@ class CompletedStreamedResponse(StreamedResponse):
         return self.response
 
     def usage(self) -> RequestUsage:
-        return self.response.usage
+        return self.response.usage  # pragma: no cover
 
     @property
     def model_name(self) -> str:
