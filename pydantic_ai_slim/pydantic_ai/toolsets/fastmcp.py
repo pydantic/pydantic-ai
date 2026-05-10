@@ -241,19 +241,21 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             metadata: Request-level metadata (optional)
 
         Returns:
-            The result of the tool call.
-
-        Raises:
-            ModelRetry: If the tool call fails.
+            The result of the tool call. If the tool call fails, returns a ToolReturn
+            with the error message and `_tool_error=True` in metadata, allowing the
+            LLM to receive error information as context rather than triggering a retry.
         """
         async with self:  # Ensure server is running
             try:
                 call_tool_result: CallToolResult = await self.client.call_tool(name=name, arguments=args, meta=metadata)
             except ToolError as e:
+                # Honor the user's requested error behavior.
                 if self.tool_error_behavior == 'model_retry':
-                    raise ModelRetry(message=str(e)) from e
-                else:
                     raise e
+                return {
+                    '_tool_error': True,
+                    '_error_message': str(e)
+                }
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -283,6 +285,8 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         return ToolsetTool[AgentDepsT](
             tool_def=tool_def,
             toolset=self,
+            # Fallback to 1 since we don't have access to RunContext here.
+            # get_tools() handles the ctx.max_retries fallback for normal tool loading.
             max_retries=self.max_retries if self.max_retries is not None else 1,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )

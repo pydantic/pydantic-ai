@@ -1945,6 +1945,7 @@ async def _call_tool(
     except ToolRetryError as e:
         return e.tool_retry, None
 
+    
     if isinstance(tool_result, _messages.ToolReturn):
         tool_return = cast(_messages.ToolReturn[Any], tool_result)
     elif isinstance(tool_result, list) and any(
@@ -1957,14 +1958,25 @@ async def _call_tool(
     else:
         tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
+    # Intercept the MCP error dictionary
+    is_tool_error = False
+    
+    # We must check tool_result (the raw output), not tool_return!
+    if isinstance(tool_result, dict) and tool_result.get('_tool_error') is True:
+        is_tool_error = True
+        part_content = tool_result.get('_error_message', 'Tool failed')
+    else:
+        # Standard execution: pass the actual return value, not the object itself
+        part_content = tool_return.return_value
+
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         tool_call_id=call.tool_call_id,
-        content=tool_return.return_value,
-        metadata=tool_return.metadata,
+        content=part_content,
+        outcome='failed' if is_tool_error else 'success',
     )
 
-    return return_part, tool_return.content or None
+    return return_part, getattr(tool_return, 'content', None)
 
 
 @dataclasses.dataclass
