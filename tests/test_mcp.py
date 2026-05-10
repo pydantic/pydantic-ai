@@ -2882,3 +2882,16 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+async def test_tool_returning_error_no_message(mcp_server): 
+    """Test the fallback error message when an MCP tool fails without providing text."""
+    
+    # Setup your mock server here to return an error with NO text content.
+    # E.g., returning `CallToolResult(isError=True, content=[])`
+    
+    result = await mcp_server.direct_call_tool('your_mocked_tool', {})
+    
+    assert result == {
+        '_tool_error': True,
+        '_error_message': 'MCP tool call failed',
+    }

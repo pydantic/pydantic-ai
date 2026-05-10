@@ -2167,15 +2167,3 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 clean_messages.append(message)
     return clean_messages
 
-async def test_tool_returning_error_no_message(mcp_server): 
-    """Test the fallback error message when an MCP tool fails without providing text."""
-    
-    # Setup your mock server here to return an error with NO text content.
-    # E.g., returning `CallToolResult(isError=True, content=[])`
-    
-    result = await mcp_server.direct_call_tool('your_mocked_tool', {})
-    
-    assert result == {
-        '_tool_error': True,
-        '_error_message': 'MCP tool call failed',
-    }
