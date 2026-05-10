@@ -1962,7 +1962,7 @@ async def _call_tool(
     is_tool_error = False
     
     # We must check tool_result (the raw output), not tool_return!
-    if isinstance(tool_result, dict) and tool_result.get('_tool_error') is True:
+    if isinstance(tool_result, dict) and cast(dict[str, Any], tool_result).get('_tool_error') is True:
         is_tool_error = True
         part_content = tool_result.get('_error_message', 'Tool failed')
     else:
@@ -1980,7 +1980,7 @@ async def _call_tool(
     if tool_return.metadata is not None:
         return_part_kwargs['metadata'] = tool_return.metadata
     
-    return_part = _messages.ToolReturnPart(**return_part_kwargs)
+    return_part = _messages.ToolReturnPart(**cast(Any, return_part_kwargs))
 
     return return_part, getattr(tool_return, 'content', None)
 
@@ -2166,3 +2166,16 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
             else:
                 clean_messages.append(message)
     return clean_messages
+
+async def test_tool_returning_error_no_message(mcp_server): 
+    """Test the fallback error message when an MCP tool fails without providing text."""
+    
+    # Setup your mock server here to return an error with NO text content.
+    # E.g., returning `CallToolResult(isError=True, content=[])`
+    
+    result = await mcp_server.direct_call_tool('your_mocked_tool', {})
+    
+    assert result == {
+        '_tool_error': True,
+        '_error_message': 'MCP tool call failed',
+    }
