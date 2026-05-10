@@ -2,10 +2,11 @@
 
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
     FinishReason,
@@ -160,15 +161,14 @@ def apply_message_metadata(message: ModelMessage, metadata: Any) -> None:
     history must not be the source of truth for it. Mirrors the `manage_system_prompt` filter on
     `SystemPromptPart`s.
     """
-    if not isinstance(metadata, dict):
+    if not is_str_dict(metadata):
         return
-    metadata = cast(dict[str, Any], metadata)
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
     application_metadata = {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY} or None
     message.metadata = application_metadata
 
-    if not isinstance(raw_pydantic_metadata, dict):
+    if not is_str_dict(raw_pydantic_metadata):
         return
 
     try:

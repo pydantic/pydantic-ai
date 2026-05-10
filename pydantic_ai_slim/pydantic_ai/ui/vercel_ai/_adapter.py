@@ -467,6 +467,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(msg.role)
 
+            # Apply metadata to the role-corresponding `ModelMessage`: assistant UIMessages
+            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we
+            # skip via the type filter so metadata lands on the response, not the tool returns.
             target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
             if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
                 apply_message_metadata(target, msg.metadata)
