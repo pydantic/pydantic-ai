@@ -2,7 +2,7 @@
 
 !!! warning "Beta API"
     This is the new beta graph API. It provides enhanced capabilities for parallel execution, conditional branching, and complex workflows.
-The original graph API is still available (and compatible of interop with the new beta API) and is documented in the [main graph documentation](../../graph.md).
+    The original graph API is still available (and compatible with the new beta API) and is documented in the [main graph documentation](../../graph.md).
 
 ## Overview
 
