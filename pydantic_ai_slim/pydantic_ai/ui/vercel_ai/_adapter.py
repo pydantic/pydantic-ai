@@ -807,12 +807,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 # Metadata only goes on the trailing UIMessage of a split request so reload
                 # applies it once to the merged ModelRequest.
+                request_metadata = dump_message_metadata(msg) or None
                 if system_ui_parts:
                     result.append(
                         UIMessage(
                             id=id_generator(msg, 'system', message_index),
                             role='system',
-                            metadata=None if user_ui_parts else dump_message_metadata(msg),
+                            metadata=None if user_ui_parts else request_metadata,
                             parts=system_ui_parts,
                         )
                     )
@@ -823,7 +824,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         UIMessage(
                             id=id_generator(msg, 'user', message_index),
                             role='user',
-                            metadata=dump_message_metadata(msg),
+                            metadata=request_metadata,
                             parts=user_ui_parts,
                         )
                     )

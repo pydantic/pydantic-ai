@@ -116,8 +116,14 @@ def dump_provider_metadata(
         return filtered if filtered else None
 
 
-def dump_message_metadata(message: ModelMessage) -> dict[str, Any] | None:
-    """Dump application metadata plus Pydantic AI message fields into UIMessage.metadata."""
+def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
+    """Dump application metadata plus Pydantic AI message fields into UIMessage.metadata.
+
+    May return an empty dict for a `ModelRequest` with no application metadata and no
+    framework fields set (`ModelRequest.timestamp` is optional). For a `ModelResponse` the
+    result always contains at least `{'pydantic_ai': {'timestamp': ...}}` since
+    `ModelResponse.timestamp` is non-optional.
+    """
     metadata = dict(message.metadata) if message.metadata else {}
 
     if isinstance(message, ModelRequest):
@@ -141,11 +147,9 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any] | None:
             finish_reason=message.finish_reason,
         )
 
-    pydantic_metadata_dump = pydantic_metadata.model_dump(mode='json', exclude_defaults=True)
-    if pydantic_metadata_dump:
+    if pydantic_metadata_dump := pydantic_metadata.model_dump(mode='json', exclude_defaults=True):
         metadata[PROVIDER_METADATA_KEY] = pydantic_metadata_dump
-
-    return metadata or None
+    return metadata
 
 
 def apply_message_metadata(message: ModelMessage, metadata: Any) -> None:

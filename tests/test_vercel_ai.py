@@ -4947,6 +4947,20 @@ async def test_adapter_message_metadata_application_only_roundtrip():
     assert reloaded.metadata == {'createdAt': '2026-04-15T12:00:45Z'}
 
 
+async def test_adapter_load_application_only_metadata_without_pydantic_block():
+    """A `UIMessage.metadata` lacking the `pydantic_ai` key still surfaces application metadata."""
+    ui_message = UIMessage(
+        id='msg-1',
+        role='assistant',
+        metadata={'createdAt': '2026-04-15T12:00:45Z'},
+        parts=[TextUIPart(text='Response text', state='done')],
+    )
+
+    [reloaded] = VercelAIAdapter.load_messages([ui_message])
+    assert isinstance(reloaded, ModelResponse)
+    assert reloaded.metadata == {'createdAt': '2026-04-15T12:00:45Z'}
+
+
 async def test_adapter_load_ignores_message_metadata_without_target_message():
     """A `UIMessage` that produces no Pydantic AI parts has its metadata silently dropped."""
     ui_message = UIMessage(

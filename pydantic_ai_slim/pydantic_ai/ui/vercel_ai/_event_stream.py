@@ -125,8 +125,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
-        if metadata := dump_message_metadata(event.result.response):
-            yield MessageMetadataChunk(message_metadata=metadata)
+        yield MessageMetadataChunk(message_metadata=dump_message_metadata(event.result.response))
 
         # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
         output = event.result.output
