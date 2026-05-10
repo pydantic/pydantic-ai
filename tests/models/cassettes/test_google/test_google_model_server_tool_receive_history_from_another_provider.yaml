@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '250'
+      - '271'
       content-type:
       - application/json
       host:
@@ -27,57 +27,63 @@ interactions:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '920'
+      - '1043'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=4277
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       container:
-        expires_at: '2025-08-07T12:34:48.926660+00:00'
-        id: container_011CRtH8FB5LEPVqMkqupkTy
+        expires_at: '2026-04-20T06:19:45.086939Z'
+        id: container_011CaETbwpaahgXhq7XjBjpj
       content:
-      - text: I'll calculate 3 * 12390 for you.
-        type: text
-      - id: srvtoolu_01PxRfGz768wdcfze4RwVAjw
+      - id: srvtoolu_01WxaqxwPuGZvjWcRUisvcaj
         input:
-          code: |-
-            result = 3 * 12390
-            print(f"3 * 12390 = {result}")
-        name: code_execution
+          command: echo $((3 * 12390))
+        name: bash_code_execution
         type: server_tool_use
       - content:
           content: []
           return_code: 0
           stderr: ''
           stdout: |
-            3 * 12390 = 37170
-          type: code_execution_result
-        tool_use_id: srvtoolu_01PxRfGz768wdcfze4RwVAjw
-        type: code_execution_tool_result
-      - text: 3 * 12390 = 37,170
+            37170
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01WxaqxwPuGZvjWcRUisvcaj
+        type: bash_code_execution_tool_result
+      - text: 3 * 12,390 = **37,170**
         type: text
-      id: msg_017vUE35gAsm2NEEH2fNLDAx
+      id: msg_018q27WzFYPWczFmXSD6Pyuz
       model: claude-sonnet-4-6
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1630
-        output_tokens: 109
+        inference_geo: global
+        input_tokens: 4594
+        output_tokens: 82
         server_tool_use:
+          web_fetch_requests: 0
           web_search_requests: 0
         service_tier: standard
     status:
@@ -88,11 +94,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '308'
+      - '296'
       content-type:
       - application/json
       host:
@@ -104,13 +110,14 @@ interactions:
         - text: How much is 3 * 12390?
         role: user
       - parts:
-        - text: I'll calculate 3 * 12390 for you.
-        - text: 3 * 12390 = 37,170
+        - text: 3 * 12,390 = **37,170**
         role: model
       - parts:
         - text: Multiplied by 12390
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       tools:
       - codeExecution: {}
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
@@ -119,11 +126,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1378'
+      - '512'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7224
+      - gfet4t7; dur=1094
       transfer-encoding:
       - chunked
       vary:
@@ -134,38 +141,24 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |+
-              Okay, I understand. You want to calculate the result of 3 * 12390, and then multiply that result by 12390 again.  In other words, you want to calculate (3 * 12390) * 12390. I'll calculate that for you.
-
-          - executableCode:
-              code: |
-                result = (3 * 12390) * 12390
-                print(result)
-              language: PYTHON
-          - codeExecutionResult:
-              outcome: OUTCOME_OK
-              output: |
-                460536300
           - text: |
-              So, (3 * 12390) * 12390 = 460,536,300.
+              To clarify, do you want me to calculate 12390 * 12390?
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: Wo-UaOCoENSLqsMPw_iTgAw
+      responseId: crflaa3zOp-LjuMPh8mIoAU
       usageMetadata:
-        candidatesTokenCount: 141
+        candidatesTokenCount: 24
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 141
-        promptTokenCount: 54
+          tokenCount: 24
+        promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 54
-        toolUsePromptTokenCount: 161
+          tokenCount: 40
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 161
-        totalTokenCount: 356
+        totalTokenCount: 64
     status:
       code: 200
       message: OK

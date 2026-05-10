@@ -4,6 +4,7 @@ import base64
 import hashlib
 import mimetypes
 import os
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -116,6 +117,9 @@ FinishReason: TypeAlias = Literal[
     'error',
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+ModelResponseState: TypeAlias = Literal['complete', 'interrupted']
+"""Lifecycle state of a model response."""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
@@ -1471,6 +1475,13 @@ class ModelRequest:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
@@ -1703,6 +1714,13 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    def __post_init__(self) -> None:
+        # Per-instance attribute populated by the instrumentation layer from
+        # `ToolDefinition.metadata` to drive OTel rendering hints (e.g. syntax highlighting).
+        # Declared here rather than as a dataclass field so it stays out of `__init__`,
+        # equality, repr, Pydantic JSON schema, and serialization.
+        self.otel_metadata: _otel_messages.ToolCallPartOtelMetadata | None = None
+
     def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -1828,8 +1846,18 @@ class ModelResponse:
     run_id: str | None = None
     """The unique identifier of the agent run in which this message originated."""
 
+    conversation_id: str | None = None
+    """The unique identifier of the conversation this message belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Emitted as the `gen_ai.conversation.id` OpenTelemetry span attribute on the agent run.
+    """
+
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    state: ModelResponseState = 'complete'
+    """Lifecycle state of the response."""
 
     @property
     def text(self) -> str | None:
@@ -1992,6 +2020,11 @@ class ModelResponse:
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
+                if part.otel_metadata:
+                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
+                        call_part['code_arg_name'] = code_arg_name
+                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
+                        call_part['code_arg_language'] = code_arg_language
                 if settings.include_content and part.args is not None:
                     if isinstance(part.args, str):
                         call_part['arguments'] = part.args
@@ -2462,11 +2495,15 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False)
-class FunctionToolCallEvent:
-    """An event indicating the start to a call to a function tool."""
+class ToolCallEvent:
+    """Base class for events emitted when a tool call is about to be invoked.
+
+    Match against this in a `case` to handle [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]
+    and [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] together.
+    """
 
     part: ToolCallPart
-    """The (function) tool call to make."""
+    """The tool call to make."""
 
     _: KW_ONLY
 
@@ -2479,13 +2516,20 @@ class FunctionToolCallEvent:
     - `None`: Validation was not performed.
     """
 
-    event_kind: Literal['function_tool_call'] = 'function_tool_call'
-    """Event type identifier, used as a discriminator."""
-
     @property
     def tool_call_id(self) -> str:
         """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class FunctionToolCallEvent(ToolCallEvent):
+    """An event indicating the start to a call to a function tool."""
+
+    event_kind: Literal['function_tool_call'] = 'function_tool_call'
+    """Event type identifier, used as a discriminator."""
 
     @property
     @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
@@ -2493,17 +2537,37 @@ class FunctionToolCallEvent:
         """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id  # pragma: no cover
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+
+@dataclass(repr=False)
+class OutputToolCallEvent(ToolCallEvent):
+    """An event indicating the start of a call to an output tool (the model's "submit final answer" call)."""
+
+    event_kind: Literal['output_tool_call'] = 'output_tool_call'
+    """Event type identifier, used as a discriminator."""
 
 
 @dataclass(repr=False)
-class FunctionToolResultEvent:
+class ToolResultEvent:
+    """Base class for events emitted when a tool call has been completed.
+
+    Match against this in a `case` to handle [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]
+    and [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] together.
+    """
+
+    part: ToolReturnPart | RetryPromptPart
+    """The tool result part that will be sent back to the model."""
+
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.part.tool_call_id
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, init=False)
+class FunctionToolResultEvent(ToolResultEvent):
     """An event indicating the result of a function tool call."""
-
-    result: ToolReturnPart | RetryPromptPart
-    """The result of the call to the function tool."""
-
-    _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
     """The content that will be sent to the model as a UserPromptPart following the result."""
@@ -2511,12 +2575,40 @@ class FunctionToolResultEvent:
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
-    @property
-    def tool_call_id(self) -> str:
-        """An ID used to match the result to its original call."""
-        return self.result.tool_call_id
+    def __init__(
+        self,
+        part: ToolReturnPart | RetryPromptPart | None = None,
+        *,
+        content: str | Sequence[UserContent] | None = None,
+        result: ToolReturnPart | RetryPromptPart | None = None,
+    ) -> None:
+        if result is not None:
+            if part is not None:
+                raise TypeError('FunctionToolResultEvent: pass either `part` or `result` (deprecated alias), not both')
+            warnings.warn(
+                'Passing `result=...` to `FunctionToolResultEvent` is deprecated, use `part=...` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            part = result
+        if part is None:
+            raise TypeError("FunctionToolResultEvent.__init__() missing required argument: 'part'")
+        self.part = part
+        self.content = content
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
+    @property
+    @deprecated('`result` is deprecated, use `part` instead.')
+    def result(self) -> ToolReturnPart | RetryPromptPart:
+        """The tool result part that will be sent back to the model."""
+        return self.part
+
+
+@dataclass(repr=False)
+class OutputToolResultEvent(ToolResultEvent):
+    """An event indicating the result of an output tool call."""
+
+    event_kind: Literal['output_tool_result'] = 'output_tool_result'
+    """Event type identifier, used as a discriminator."""
 
 
 @deprecated(
@@ -2554,6 +2646,8 @@ class BuiltinToolResultEvent:
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
+    | OutputToolCallEvent
+    | OutputToolResultEvent
     | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
     | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     pydantic.Discriminator('event_kind'),

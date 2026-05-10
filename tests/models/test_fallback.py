@@ -90,6 +90,7 @@ def test_first_successful() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -97,6 +98,7 @@ def test_first_successful() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -118,6 +120,7 @@ def test_first_failed() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -125,6 +128,7 @@ def test_first_failed() -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -147,6 +151,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
@@ -154,6 +159,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -180,6 +186,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
@@ -214,6 +221,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
@@ -268,6 +276,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -296,6 +305,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'thinking': None,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
@@ -330,6 +340,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
@@ -418,6 +429,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'properties': {'model_request_parameters': {'type': 'object'}},
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -448,6 +460,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
@@ -524,6 +537,7 @@ async def test_first_success_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -560,6 +574,7 @@ async def test_first_failed_streaming() -> None:
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -879,6 +894,7 @@ Don't include any text or Markdown fencing before or after.
                 timestamp=IsDatetime(),
                 instructions='Be kind',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
@@ -886,6 +902,7 @@ Don't include any text or Markdown fencing before or after.
                 model_name='function:prompted_output_func:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -955,6 +972,7 @@ Don't include any text or Markdown fencing before or after.
                         ],
                         'thinking': None,
                     },
+                    'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
@@ -992,6 +1010,7 @@ Don't include any text or Markdown fencing before or after.
                     'agent_name': 'agent',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
                     'gen_ai.operation.name': 'invoke_agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
@@ -1054,6 +1073,7 @@ async def test_response_handler_triggered() -> None:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='fallback response')],
@@ -1061,6 +1081,7 @@ async def test_response_handler_triggered() -> None:
                 model_name='function:fallback_response:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

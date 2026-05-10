@@ -136,6 +136,7 @@ docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
 
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
+exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/README.md", "/Makefile"]
@@ -191,6 +192,7 @@ convention = "google"
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 "typing.assert_never".msg = "Use typing_extensions.assert_never instead."
+"asyncio.Lock".msg = "Use anyio.Lock instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -249,6 +251,8 @@ filterwarnings = [
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # AgentEventStream standalone iteration deprecation — existing tests will be migrated to `async with` incrementally
+    "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",

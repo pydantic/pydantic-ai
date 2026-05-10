@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
+import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingEffort
+from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -61,6 +62,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from google.genai import Client, errors
@@ -96,6 +98,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        ServiceTier as _GoogleSDKServiceTier,
         ThinkingConfigDict,
         ToolCodeExecutionDict,
         ToolConfigDict,
@@ -168,30 +171,51 @@ _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
 _GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
-GoogleServiceTier = Literal['pt_then_on_demand', 'pt_only', 'pt_then_flex', 'on_demand', 'flex_only']
-"""Values for the `google_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
+GoogleVertexServiceTier = Literal[
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'pt_then_priority',
+    'on_demand',
+    'flex_only',
+    'priority_only',
+]
+"""Values for the `google_vertex_service_tier` field on [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 Controls Vertex AI HTTP headers for [Provisioned Throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput)
-(PT) and [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo). Only applies when using the Vertex AI API.
-
-**Values:**
+(PT), [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo), and [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo).
 
 - `'pt_then_on_demand'` (**default**): PT when quota allows, then standard on-demand spillover. No headers sent.
 - `'pt_only'`: PT only (`X-Vertex-AI-LLM-Request-Type: dedicated`). No on-demand spillover; returns 429 when over quota.
 - `'pt_then_flex'`: PT when quota allows, then [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: flex`).
+- `'pt_then_priority'`: PT when quota allows, then [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) spillover (`X-Vertex-AI-LLM-Shared-Request-Type: priority`).
 - `'on_demand'`: Standard on-demand only (`X-Vertex-AI-LLM-Request-Type: shared`). Bypasses PT for this request.
 - `'flex_only'`: [Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`). Bypasses PT.
+- `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
+"""
 
-Note: these headers only affect Vertex AI. When using the GLA API they are silently ignored.
+GoogleServiceTier = Literal[
+    'pt_then_on_demand',
+    'pt_only',
+    'pt_then_flex',
+    'pt_then_priority',
+    'on_demand',
+    'flex_only',
+    'priority_only',
+]
+"""Deprecated alias for service tier values.
+
+Use [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] for Gemini API (GLA)
+or [`google_vertex_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_vertex_service_tier] for Vertex AI.
 """
 
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
-    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_safety_settings: list[SafetySettingDict]
     """The safety settings to use for the model.
@@ -243,15 +267,88 @@ class GoogleModelSettings(ModelSettings, total=False):
     These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
-    google_service_tier: GoogleServiceTier
-    """Vertex AI routing for Provisioned Throughput and Flex PayGo. Defaults to `'pt_then_on_demand'`.
+    google_vertex_service_tier: GoogleVertexServiceTier
+    """The service tier to use for the model request when using Vertex AI.
 
-    See [`GoogleServiceTier`][pydantic_ai.models.google.GoogleServiceTier] for all values, headers sent, and links to Google docs.
+    Controls routing for Provisioned Throughput, Flex PayGo, and Priority PayGo
+    (e.g., `'pt_only'`, `'flex_only'`, `'priority_only'`).
+
+    See [`GoogleVertexServiceTier`][pydantic_ai.models.google.GoogleVertexServiceTier] for all values,
+    headers sent, and links to Google docs.
     """
 
+    google_service_tier: GoogleServiceTier
+    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
 
-def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict[str, str]:
-    """HTTP headers for Vertex AI Provisioned Throughput and Flex PayGo routing."""
+
+def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
+    """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
+    if (deprecated := model_settings.get('google_service_tier')) is not None:
+        # stacklevel=2 points at the resolver (caller of this helper); the warning text already
+        # names the field so users can identify the source from the message itself.
+        warnings.warn(
+            '`google_service_tier` is deprecated; use `google_vertex_service_tier` for Vertex AI '
+            'or the top-level `service_tier` for the Gemini API (GLA).',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return deprecated
+    return None
+
+
+_GlaServiceTier = Literal['standard', 'flex', 'priority']
+_TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
+    'default': 'standard',
+    'flex': 'flex',
+    'priority': 'priority',
+}
+
+
+def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServiceTier | None:
+    """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
+
+    The deprecated `google_service_tier` only covers Vertex-shaped values, so on GLA we
+    ignore it (after triggering the warning) and map the top-level `service_tier`
+    (`'default'` → `'standard'`, `'flex'`/`'priority'` pass through, `'auto'` is dropped
+    so the server picks the default).
+    """
+    _get_deprecated_google_service_tier(model_settings)
+    if unified := model_settings.get('service_tier'):
+        return _TOP_LEVEL_TO_GLA_SERVICE_TIER.get(unified)
+    return None
+
+
+# Mapping from cross-provider `ServiceTier` to the safe Vertex equivalent, used when the top-level
+# `service_tier` is the only signal available. `'flex'` / `'priority'` always pick the PT-with-spillover
+# variant (never `*_only`) so PT customers keep using their reserved capacity first; users who want to
+# bypass PT must set `google_vertex_service_tier` explicitly.
+_TOP_LEVEL_TO_VERTEX_SERVICE_TIER: dict[ServiceTier, GoogleVertexServiceTier] = {
+    'auto': 'pt_then_on_demand',
+    'default': 'pt_then_on_demand',
+    'flex': 'pt_then_flex',
+    'priority': 'pt_then_priority',
+}
+
+
+def _resolve_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleVertexServiceTier:
+    """Resolve the Vertex tier to use for this request.
+
+    Per-provider `google_vertex_service_tier` wins, then the deprecated `google_service_tier`
+    (with warning), then the top-level `service_tier` mapped via
+    [`_TOP_LEVEL_TO_VERTEX_SERVICE_TIER`][]. Defaults to `'pt_then_on_demand'` so Vertex's
+    built-in PT-with-spillover behavior is the baseline.
+    """
+    if vertex_tier := model_settings.get('google_vertex_service_tier'):
+        return vertex_tier
+    if deprecated := _get_deprecated_google_service_tier(model_settings):
+        return deprecated
+    if top_level := model_settings.get('service_tier'):
+        return _TOP_LEVEL_TO_VERTEX_SERVICE_TIER[top_level]
+    return 'pt_then_on_demand'
+
+
+def _google_vertex_service_tier_headers(service_tier: GoogleVertexServiceTier) -> dict[str, str]:
+    """HTTP headers for Vertex AI Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
         return {}
     if service_tier == 'pt_only':
@@ -260,10 +357,17 @@ def _google_vertex_service_tier_headers(service_tier: GoogleServiceTier) -> dict
         return {'X-Vertex-AI-LLM-Request-Type': 'shared'}
     if service_tier == 'pt_then_flex':
         return {'X-Vertex-AI-LLM-Shared-Request-Type': 'flex'}
+    if service_tier == 'pt_then_priority':
+        return {'X-Vertex-AI-LLM-Shared-Request-Type': 'priority'}
     if service_tier == 'flex_only':
         return {
             'X-Vertex-AI-LLM-Request-Type': 'shared',
             'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+        }
+    if service_tier == 'priority_only':
+        return {
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
 
@@ -435,7 +539,12 @@ class GoogleModel(Model[Client]):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
-        yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        try:
+            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        finally:
+            aclose = getattr(response, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
         """Build ImageConfigDict from ImageGenerationTool with validation."""
@@ -479,16 +588,16 @@ class GoogleModel(Model[Client]):
 
         return image_config
 
-    def _get_tools(
+    def _get_builtin_tools(
         self, model_request_parameters: ModelRequestParameters
-    ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
-        tools: list[ToolDict] = [
-            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-            for t in model_request_parameters.tool_defs.values()
-        ]
+    ) -> tuple[list[ToolDict], ImageConfigDict | None]:
+        """Get Google-specific builtin tools (web search, code execution, etc.).
 
+        Returns:
+            A tuple of (builtin_tools, image_config).
+        """
+        tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
-
         if model_request_parameters.builtin_tools:
             if model_request_parameters.function_tools:
                 raise UserError('Google does not support function tools and built-in tools at the same time.')
@@ -513,20 +622,57 @@ class GoogleModel(Model[Client]):
                     raise UserError(
                         f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
                     )
-        return tools or None, image_config
+        return tools, image_config
 
     def _get_tool_config(
-        self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
-    ) -> ToolConfigDict | None:
-        if not model_request_parameters.allow_text_output and tools:
-            names: list[str] = []
-            for tool in tools:
-                for function_declaration in tool.get('function_declarations') or []:
-                    if name := function_declaration.get('name'):  # pragma: no branch
-                        names.append(name)
-            return _tool_config(names)
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: GoogleModelSettings,
+    ) -> tuple[list[ToolDict] | None, ToolConfigDict | None, ImageConfigDict | None]:
+        """Determine which tools to send and the API tool config.
+
+        Returns:
+            A tuple of (filtered_tools, tool_config, image_config).
+        """
+        builtin_tools, image_config = self._get_builtin_tools(model_request_parameters)
+
+        tool_defs = model_request_parameters.tool_defs
+
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+
+        function_calling_config_modes: dict[ToolChoiceScalar, FunctionCallingConfigMode] = {
+            'auto': FunctionCallingConfigMode.AUTO,
+            'none': FunctionCallingConfigMode.NONE,
+            'required': FunctionCallingConfigMode.ANY,
+        }
+
+        allowed_function_names: list[str] = []
+        if isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'auto':
+                # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            else:
+                # Use ANY mode with allowed_function_names to force one of the specified tools
+                allowed_function_names = list(tool_names)
         else:
-            return None
+            tool_choice_mode = resolved_tool_choice
+
+        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
+        if allowed_function_names:
+            function_calling_config['allowed_function_names'] = allowed_function_names
+        tool_config = ToolConfigDict(function_calling_config=function_calling_config)
+
+        tools: list[ToolDict] = [
+            ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
+        ]
+
+        tools.extend(builtin_tools)
+
+        if not tools:
+            return None, None, image_config
+
+        return tools, tool_config, image_config
 
     @overload
     async def _generate_content(
@@ -615,7 +761,7 @@ class GoogleModel(Model[Client]):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
-        tools, image_config = self._get_tools(model_request_parameters)
+        tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
@@ -634,20 +780,23 @@ class GoogleModel(Model[Client]):
             if not self.profile.supports_json_object_output:
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
-
-        tool_config = self._get_tool_config(model_request_parameters, tools)
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
-        modalities = [Modality.TEXT.value]
+        modalities: list[str] = [Modality.TEXT.value]
         if self.profile.supports_image_output:
             modalities.append(Modality.IMAGE.value)
+            if not model_request_parameters.allow_text_output:
+                modalities.remove(Modality.TEXT.value)
 
         headers: dict[str, str] = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         if extra_headers := model_settings.get('extra_headers'):
             headers.update(extra_headers)
 
-        service_tier = model_settings.get('google_service_tier', 'pt_then_on_demand')
-        headers.update(_google_vertex_service_tier_headers(service_tier))
+        gla_service_tier: _GlaServiceTier | None = None
+        if self.system == 'google-vertex':
+            headers.update(_google_vertex_service_tier_headers(_resolve_vertex_service_tier(model_settings)))
+        else:
+            gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
         if timeout := model_settings.get('timeout'):
@@ -678,6 +827,9 @@ class GoogleModel(Model[Client]):
             response_modalities=modalities,
             image_config=image_config,
         )
+
+        if gla_service_tier is not None:
+            config['service_tier'] = cast(_GoogleSDKServiceTier, gla_service_tier)
 
         # Validate logprobs settings
         logprobs_requested = model_settings.get('google_logprobs')
@@ -717,6 +869,13 @@ class GoogleModel(Model[Client]):
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
 
+        if (
+            response.sdk_http_response
+            and response.sdk_http_response.headers
+            and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
+        ):
+            vendor_details['service_tier'] = service_tier.lower()
+
         # Add traffic_type to provider_details for Flex PayGo verification
         if response.usage_metadata and response.usage_metadata.traffic_type:
             vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
@@ -751,7 +910,9 @@ class GoogleModel(Model[Client]):
         self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
+        peekable_response: _utils.PeekableAsyncStream[
+            GenerateContentResponse, AsyncIterator[GenerateContentResponse]
+        ] = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -996,7 +1157,7 @@ class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
     _model_name: GoogleModelName
-    _response: AsyncIterator[GenerateContentResponse]
+    _response: _utils.PeekableAsyncStream[GenerateContentResponse, AsyncIterator[GenerateContentResponse]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -1005,12 +1166,28 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
 
+    async def close_stream(self) -> None:
+        try:
+            # google.genai types this as AsyncIterator, but at runtime it's an
+            # async generator that exposes aclose().
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+
+                if (
+                    chunk.sdk_http_response
+                    and chunk.sdk_http_response.headers
+                    and (service_tier := chunk.sdk_http_response.headers.get('x-gemini-service-tier'))
+                ):
+                    self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier.lower()}
 
                 # Capture traffic_type before the candidates guard, since usage_metadata
                 # may be present on chunks without candidates.
@@ -1046,7 +1223,10 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 raw_finish_reason = candidate.finish_reason
                 if raw_finish_reason and not self._has_content_filter:
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'finish_reason': raw_finish_reason.value,
+                    }
 
                     if candidate.safety_ratings:
                         self.provider_details['safety_ratings'] = [
@@ -1437,12 +1617,6 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
     return f
 
 
-def _tool_config(function_names: list[str]) -> ToolConfigDict:
-    mode = FunctionCallingConfigMode.ANY
-    function_calling_config = FunctionCallingConfigDict(mode=mode, allowed_function_names=function_names)
-    return ToolConfigDict(function_calling_config=function_calling_config)
-
-
 def _metadata_as_usage(response: GenerateContentResponse, provider: str, provider_url: str) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
@@ -1481,12 +1655,14 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
 
 
 def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> BuiltinToolCallPart:
-    return BuiltinToolCallPart(
+    part = BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         args=executable_code.model_dump(mode='json', exclude_none=True),
         tool_call_id=tool_call_id,
     )
+    part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+    return part
 
 
 def _map_code_execution_result(
