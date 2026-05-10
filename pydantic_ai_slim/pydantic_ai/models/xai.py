@@ -415,10 +415,10 @@ class XaiModel(Model[AsyncClient]):
             for part in tool_results:
                 if isinstance(part, ToolReturnPart):
                     text, files = part.model_response_str_and_user_content()
-                    xai_messages.append(tool_result(text))
+                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
                     file_content.extend(files)
                 else:
-                    xai_messages.append(tool_result(part.model_response()))
+                    xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
             if file_content and (
                 user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
             ):  # pragma: no branch
