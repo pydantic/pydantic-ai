@@ -92,6 +92,8 @@ async def test_agent_stream_get_response_warns_and_response_property_silent():
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
                     response_attr = _assert_no_deprecation(lambda: stream.response)
                     assert isinstance(response_attr, ModelResponse)
 
@@ -107,6 +109,8 @@ async def test_agent_stream_usage_and_timestamp_property_then_call():
         async for node in run:
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
                     usage_attr = _assert_no_deprecation(lambda: stream.usage)
                     assert isinstance(usage_attr, RunUsage)
                     with pytest.warns(DeprecationWarning, match=r'`AgentStream\.usage` is no longer a method'):
