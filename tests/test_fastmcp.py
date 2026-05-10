@@ -28,7 +28,6 @@ with try_import() as imports_successful:
         StdioTransport,
         StreamableHttpTransport,
     )
-    from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
         AnyUrl,

@@ -44,7 +44,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, _utils, exceptions, messages, models
+from . import _mcp, _utils, messages, models
 
 __all__ = (
     'MCPServer',
@@ -625,10 +625,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             # Return error as a ToolReturn with error metadata instead of raising ModelRetry,
             # so the LLM receives the error message as informational context
             error_message = message or 'MCP tool call failed'
-            return {
-                '_tool_error': True,
-                '_error_message': error_message
-            }
+            return {'_tool_error': True, '_error_message': error_message}
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output

@@ -252,10 +252,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                 # Honor the user's requested error behavior.
                 if self.tool_error_behavior == 'model_retry':
                     raise ModelRetry(str(e)) from e
-                return {
-                    '_tool_error': True,
-                    '_error_message': str(e)
-                }
+                return {'_tool_error': True, '_error_message': str(e)}
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
