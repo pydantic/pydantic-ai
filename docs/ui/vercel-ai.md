@@ -126,24 +126,16 @@ async def search_docs(query: str) -> ToolReturn:
 
 ## Message metadata
 
-By default, the adapter keeps the historical behavior of ignoring Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata). If your application needs message-level metadata to survive the Pydantic AI ↔ Vercel AI round-trip, pass `preserve_message_metadata=True`.
-
-When enabled, [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into `UIMessage.metadata`, and it stores Pydantic AI fields needed for lossless reloads, such as timestamps and response provider details, under the `pydantic_ai` metadata key. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those fields when called with the same option.
+[`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores response-side fields like timestamp, usage, and provider details under a reserved `pydantic_ai` key for lossless round-trips. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those fields on the way back.
 
 ```py {test="skip" lint="skip"}
-ui_messages = VercelAIAdapter.dump_messages(messages, preserve_message_metadata=True)
-messages = VercelAIAdapter.load_messages(ui_messages, preserve_message_metadata=True)
+ui_messages = VercelAIAdapter.dump_messages(messages)
+messages = VercelAIAdapter.load_messages(ui_messages)
 ```
 
-For streaming endpoints, pass the option to the adapter. The response metadata is emitted as a Vercel AI `message-metadata` chunk, so frontends using AI SDK UI can persist it with the assistant message.
+When streaming, response metadata is emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. The chunk fires once per run from `AgentRunResultEvent`, so it only carries fields that are known at run completion (timestamp, usage, provider details, finish reason); to attach metadata mid-stream, yield a [`MessageMetadataChunk`][pydantic_ai.ui.vercel_ai.response_types.MessageMetadataChunk] yourself from a custom event source.
 
-```py {test="skip" lint="skip"}
-@app.post('/chat')
-async def chat(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(
-        request, agent=agent, preserve_message_metadata=True
-    )
-```
+`UIMessage.metadata` is fully client-controlled. Behavior-shaping fields are not loaded back from it: `instructions` is re-resolved by the agent on every request and is intentionally never restored from history, mirroring the [`manage_system_prompt`](./overview.md#trust-model-for-client-submitted-messages) filter on `SystemPromptPart`s.
 
 ## Trust model
 

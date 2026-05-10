@@ -2,15 +2,16 @@
 
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from pydantic_ai.messages import (
     BaseToolReturnPart,
     FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     ProviderDetailsDelta,
     ToolReturnPart,
 )
@@ -45,10 +46,29 @@ __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
-datetime_ta: TypeAdapter[datetime] = TypeAdapter(datetime)
-request_usage_ta: TypeAdapter[RequestUsage] = TypeAdapter(RequestUsage)
-T = TypeVar('T')
-_FINISH_REASONS: set[FinishReason] = {'stop', 'length', 'content_filter', 'tool_call', 'error'}
+
+class _PydanticAIMessageMetadata(BaseModel):
+    """Schema for the `pydantic_ai` key in `UIMessage.metadata`.
+
+    Internal protocol contract for round-tripping `ModelRequest` / `ModelResponse`
+    fields through Vercel AI `UIMessage.metadata`. Adding a field here extends the
+    wire format; field changes need a deprecation cycle.
+    """
+
+    model_config = ConfigDict(extra='ignore')
+
+    timestamp: datetime | None = None
+    run_id: str | None = None
+    conversation_id: str | None = None
+    instructions: str | None = None
+
+    usage: RequestUsage | None = None
+    model_name: str | None = None
+    provider_name: str | None = None
+    provider_url: str | None = None
+    provider_details: dict[str, Any] | None = None
+    provider_response_id: str | None = None
+    finish_reason: FinishReason | None = None
 
 
 def tool_return_output(part: BaseToolReturnPart) -> Any:
@@ -99,103 +119,81 @@ def dump_provider_metadata(
 def dump_message_metadata(message: ModelMessage) -> dict[str, Any] | None:
     """Dump application metadata plus Pydantic AI message fields into UIMessage.metadata."""
     metadata = dict(message.metadata) if message.metadata else {}
-    pydantic_metadata: dict[str, Any] = {}
-
-    if message.timestamp is not None:
-        pydantic_metadata['timestamp'] = message.timestamp.isoformat()
-    if message.run_id is not None:
-        pydantic_metadata['run_id'] = message.run_id
-    if message.conversation_id is not None:
-        pydantic_metadata['conversation_id'] = message.conversation_id
 
     if isinstance(message, ModelRequest):
-        if message.instructions is not None:
-            pydantic_metadata['instructions'] = message.instructions
+        pydantic_metadata = _PydanticAIMessageMetadata(
+            timestamp=message.timestamp,
+            run_id=message.run_id,
+            conversation_id=message.conversation_id,
+            instructions=message.instructions,
+        )
     else:
-        if message.usage.has_values():
-            pydantic_metadata['usage'] = request_usage_ta.dump_python(message.usage, mode='json', exclude_defaults=True)
-        if message.model_name is not None:
-            pydantic_metadata['model_name'] = message.model_name
-        if message.provider_name is not None:
-            pydantic_metadata['provider_name'] = message.provider_name
-        if message.provider_url is not None:
-            pydantic_metadata['provider_url'] = message.provider_url
-        if message.provider_details is not None:
-            pydantic_metadata['provider_details'] = message.provider_details
-        if message.provider_response_id is not None:
-            pydantic_metadata['provider_response_id'] = message.provider_response_id
-        if message.finish_reason is not None:
-            pydantic_metadata['finish_reason'] = message.finish_reason
+        pydantic_metadata = _PydanticAIMessageMetadata(
+            timestamp=message.timestamp,
+            run_id=message.run_id,
+            conversation_id=message.conversation_id,
+            usage=message.usage if message.usage.has_values() else None,
+            model_name=message.model_name,
+            provider_name=message.provider_name,
+            provider_url=message.provider_url,
+            provider_details=message.provider_details,
+            provider_response_id=message.provider_response_id,
+            finish_reason=message.finish_reason,
+        )
 
-    if pydantic_metadata:
-        metadata[PROVIDER_METADATA_KEY] = pydantic_metadata
+    pydantic_metadata_dump = pydantic_metadata.model_dump(mode='json', exclude_defaults=True)
+    if pydantic_metadata_dump:
+        metadata[PROVIDER_METADATA_KEY] = pydantic_metadata_dump
 
     return metadata or None
 
 
 def apply_message_metadata(message: ModelMessage, metadata: Any) -> None:
-    """Load UIMessage.metadata back onto a Pydantic AI message."""
+    """Load UIMessage.metadata back onto a Pydantic AI message.
+
+    `instructions` is intentionally not restored: it's a behavior-shaping field that
+    the agent re-resolves on every request (see `_agent_graph.LLMNode.run`), so client-controlled
+    history must not be the source of truth for it. Mirrors the `manage_system_prompt` filter on
+    `SystemPromptPart`s.
+    """
     if not isinstance(metadata, dict):
         return
     metadata = cast(dict[str, Any], metadata)
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
+    application_metadata = {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY} or None
+    message.metadata = application_metadata
+
     if not isinstance(raw_pydantic_metadata, dict):
-        message.metadata = metadata or None
         return
-    pydantic_metadata = cast(dict[str, Any], raw_pydantic_metadata)
 
-    message.metadata = {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY} or None
-
-    if timestamp := _validate_with(datetime_ta, pydantic_metadata.get('timestamp')):
-        message.timestamp = timestamp
-    if run_id := _metadata_str(pydantic_metadata, 'run_id'):
-        message.run_id = run_id
-    if conversation_id := _metadata_str(pydantic_metadata, 'conversation_id'):
-        message.conversation_id = conversation_id
-
-    if isinstance(message, ModelRequest):
-        if instructions := _metadata_str(pydantic_metadata, 'instructions'):
-            message.instructions = instructions
-    else:
-        if usage := _validate_with(request_usage_ta, pydantic_metadata.get('usage')):
-            message.usage = usage
-        if model_name := _metadata_str(pydantic_metadata, 'model_name'):
-            message.model_name = model_name
-        if provider_name := _metadata_str(pydantic_metadata, 'provider_name'):
-            message.provider_name = provider_name
-        if provider_url := _metadata_str(pydantic_metadata, 'provider_url'):
-            message.provider_url = provider_url
-        if provider_details := _metadata_dict(pydantic_metadata, 'provider_details'):
-            message.provider_details = provider_details
-        if provider_response_id := _metadata_str(pydantic_metadata, 'provider_response_id'):
-            message.provider_response_id = provider_response_id
-        if finish_reason := _metadata_finish_reason(pydantic_metadata):
-            message.finish_reason = finish_reason
-
-
-def _metadata_str(metadata: dict[str, Any], key: str) -> str | None:
-    value = metadata.get(key)
-    return value if isinstance(value, str) else None
-
-
-def _metadata_dict(metadata: dict[str, Any], key: str) -> dict[str, Any] | None:
-    value = metadata.get(key)
-    return cast(dict[str, Any], value) if isinstance(value, dict) else None
-
-
-def _metadata_finish_reason(metadata: dict[str, Any]) -> FinishReason | None:
-    value = _metadata_str(metadata, 'finish_reason')
-    return value if value in _FINISH_REASONS else None
-
-
-def _validate_with(type_adapter: TypeAdapter[T], value: Any) -> T | None:
-    if value is None:
-        return None
     try:
-        return type_adapter.validate_python(value)
-    except Exception:  # pragma: no cover
-        return None
+        pydantic_metadata = _PydanticAIMessageMetadata.model_validate(raw_pydantic_metadata)
+    except ValidationError:
+        return
+
+    if pydantic_metadata.timestamp is not None:
+        message.timestamp = pydantic_metadata.timestamp
+    if pydantic_metadata.run_id is not None:
+        message.run_id = pydantic_metadata.run_id
+    if pydantic_metadata.conversation_id is not None:
+        message.conversation_id = pydantic_metadata.conversation_id
+
+    if isinstance(message, ModelResponse):
+        if pydantic_metadata.usage is not None:
+            message.usage = pydantic_metadata.usage
+        if pydantic_metadata.model_name is not None:
+            message.model_name = pydantic_metadata.model_name
+        if pydantic_metadata.provider_name is not None:
+            message.provider_name = pydantic_metadata.provider_name
+        if pydantic_metadata.provider_url is not None:
+            message.provider_url = pydantic_metadata.provider_url
+        if pydantic_metadata.provider_details is not None:
+            message.provider_details = pydantic_metadata.provider_details
+        if pydantic_metadata.provider_response_id is not None:
+            message.provider_response_id = pydantic_metadata.provider_response_id
+        if pydantic_metadata.finish_reason is not None:
+            message.finish_reason = pydantic_metadata.finish_reason
 
 
 # Data-carrying chunk types that have a direct UIMessagePart counterpart in the

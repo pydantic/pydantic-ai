@@ -93,8 +93,6 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
-    preserve_message_metadata: bool = False
-    """Whether to emit Pydantic AI response metadata as Vercel AI message metadata."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
@@ -127,7 +125,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
-        if self.preserve_message_metadata and (metadata := dump_message_metadata(event.result.response)):
+        if metadata := dump_message_metadata(event.result.response):
             yield MessageMetadataChunk(message_metadata=metadata)
 
         # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
