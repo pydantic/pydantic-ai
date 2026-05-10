@@ -1765,11 +1765,12 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Error executing tool get_error: This is an error. Call the tool with True instead',
                             tool_name='get_error',
                             tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                             timestamp=IsDatetime(),
+                            outcome='failed',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -2074,8 +2075,11 @@ async def test_client_sampling_disabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
-        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
-            await server.direct_call_tool('use_sampling', {'foo': 'bar'})
+        result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
+        assert result == {
+            '_tool_error': True,
+            '_error_message': 'Error executing tool use_sampling: Sampling not supported',
+        }
 
 
 async def test_mcp_server_raises_mcp_error(
@@ -2254,9 +2258,9 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
     async with server:
-        # Should raise an error when elicitation is attempted without callback
-        with pytest.raises(ModelRetry, match='Elicitation not supported'):
-            await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+        # Should return an error dict when elicitation is attempted without callback
+        result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+        assert result == {'_tool_error': True, '_error_message': 'Error executing tool use_elicitation: Elicitation not supported'}
 
 
 async def test_read_text_resource(run_context: RunContext[int]):
