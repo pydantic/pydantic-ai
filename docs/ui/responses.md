@@ -2,6 +2,8 @@
 
 Pydantic AI supports the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) as a UI event stream integration. This lets you receive Responses API requests from a frontend or OpenAI-compatible client, run a Pydantic AI agent, and stream back Responses-compatible events.
 
+The Responses integration is currently gated under `agent.beta` while the API stabilizes — see [`Agent.beta.to_responses()`][pydantic_ai.agent._beta.AgentBeta.to_responses].
+
 ## Installation
 
 The only dependencies are:
@@ -96,14 +98,14 @@ async def responses(request: Request) -> Response:
 
 ### Stand-alone ASGI app
 
-[`ResponsesApp`][pydantic_ai.ui.responses.app.ResponsesApp] creates a Starlette app and mounts a `POST /v1/responses` endpoint for you.
+[`responses_app()`][pydantic_ai.ui.responses.app.responses_app] creates a Starlette app and mounts a `POST /v1/responses` endpoint for you.
 
 ```py {title="responses_app.py"}
 from pydantic_ai import Agent
-from pydantic_ai.ui.responses.app import ResponsesApp
+from pydantic_ai.ui.responses.app import responses_app
 
 agent = Agent('openai:gpt-5.2')
-app = ResponsesApp(agent)
+app = responses_app(agent)
 ```
 
 Since `app` is an ASGI application, it can be served with:
@@ -132,4 +134,4 @@ Responses request `metadata` is exposed as frontend state. If your deps type imp
 
 ### Completion callback
 
-Like other UI adapters, [`ResponsesAdapter.dispatch_request()`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request] and [`ResponsesApp`][pydantic_ai.ui.responses.app.ResponsesApp] support `on_complete`, which receives the final [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
+Like other UI adapters, [`ResponsesAdapter.dispatch_request()`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request] and [`responses_app()`][pydantic_ai.ui.responses.app.responses_app] support `on_complete`, which receives the final [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].

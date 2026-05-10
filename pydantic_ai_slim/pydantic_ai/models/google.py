@@ -25,6 +25,7 @@ from ..builtin_tools import (
 )
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
+    AgentContextPart,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -1494,6 +1495,9 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             part['inline_data'] = inline_data_dict
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
+            pass
+        elif isinstance(item, AgentContextPart):  # pragma: no cover
+            # Layered-agent context only round-trips via the OpenResponses adapter.
             pass
         else:
             assert_never(item)

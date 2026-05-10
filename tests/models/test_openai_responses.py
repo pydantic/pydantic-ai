@@ -11336,7 +11336,9 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
         e for e in all_events if isinstance(e, PartStartEvent) and isinstance(e.part, CompactionPart)
     ]
     assert compaction_start_events, 'expected PartStartEvent for CompactionPart during streaming'
-    assert compaction_start_events[0].part.provider_name == 'openai'
+    first_compaction_part = compaction_start_events[0].part
+    assert isinstance(first_compaction_part, CompactionPart)
+    assert first_compaction_part.provider_name == 'openai'
 
     # Verify final messages contain the CompactionPart with encrypted_content
     compaction_parts = [

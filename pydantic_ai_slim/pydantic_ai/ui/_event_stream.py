@@ -12,6 +12,7 @@ from typing_extensions import assert_never
 from pydantic_ai import _utils
 
 from ..messages import (
+    AgentContextPart,
     AgentStreamEvent,
     BinaryContent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -338,7 +339,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case _:
                 pass
 
-    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:
+    async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a `PartStartEvent`.
 
         This method dispatches to specific `handle_*` methods based on part type:
@@ -350,6 +351,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
         - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
         - [`CompactionPart`][pydantic_ai.messages.CompactionPart] -> [`handle_compaction()`][pydantic_ai.ui.UIEventStream.handle_compaction]
+        - [`AgentContextPart`][pydantic_ai.messages.AgentContextPart] -> [`handle_agent_context()`][pydantic_ai.ui.UIEventStream.handle_agent_context]
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all part start events, make sure you call the super method.
@@ -380,6 +382,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case CompactionPart():  # pragma: no cover
                 async for e in self.handle_compaction(part):
+                    yield e
+            case AgentContextPart():
+                async for e in self.handle_agent_context(part):
                     yield e
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
@@ -440,7 +445,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case BuiltinToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
+            case BuiltinToolReturnPart() | FilePart() | CompactionPart() | AgentContextPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
@@ -631,6 +636,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             part: The compaction part.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_agent_context(self, part: AgentContextPart) -> AsyncIterator[EventT]:
+        """Handle an `AgentContextPart`.
+
+        Args:
+            part: The agent context part.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

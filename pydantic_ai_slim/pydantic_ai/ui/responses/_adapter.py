@@ -317,6 +317,18 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
                 )
                 continue
 
+            # OpenResponses extension item that an outer agent emits to feed an inner agent
+            # narrative / observation context. v1 maps all three roles onto a SystemPromptPart
+            # with the provenance encoded in the prefix; reversible later via a dedicated inbound
+            # part if a use case justifies it.
+            if item_type == 'pydantic_ai:agent_context':
+                from_agent = raw_item.get('from_agent', '')
+                role = raw_item.get('role', 'context')
+                content = raw_item.get('content', '')
+                if isinstance(from_agent, str) and isinstance(role, str) and isinstance(content, str) and content:
+                    builder.add(SystemPromptPart(content=f'[from {from_agent}, role={role}] {content}'))
+                continue
+
     @classmethod
     def _load_message_item(cls, item: dict[str, Any], builder: MessagesBuilder) -> None:
         role = item.get('role')

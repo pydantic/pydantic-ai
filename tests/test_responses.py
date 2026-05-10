@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.messages import (
+    AgentContextPart,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -482,9 +483,9 @@ async def test_input_file_with_file_id_passes_through_as_uploaded_file() -> None
 
 
 def test_to_responses_returns_app() -> None:
-    """`Agent.to_responses()` returns a Starlette app mounting `POST /v1/responses`."""
+    """`Agent.beta.to_responses()` returns a Starlette app mounting `POST /v1/responses`."""
     agent = Agent('test')
-    app = agent.to_responses()
+    app = agent.beta.to_responses()
     assert isinstance(app, Starlette)
     paths_methods = {(getattr(r, 'path', ''), frozenset(getattr(r, 'methods', None) or [])) for r in app.routes}
     assert ('/v1/responses', frozenset({'POST'})) in paths_methods
@@ -493,7 +494,7 @@ def test_to_responses_returns_app() -> None:
 def test_to_responses_app_streams() -> None:
     """The mounted endpoint accepts a Responses request and streams SSE chunks."""
     agent = Agent(model=FunctionModel(stream_function=_comprehensive_stream))
-    app = agent.to_responses()
+    app = agent.beta.to_responses()
 
     with TestClient(app) as client:
         with client.stream(
@@ -672,7 +673,7 @@ def test_state_handler_deps_are_replaced_per_request() -> None:
 
     agent = Agent(model=FunctionModel(stream_function=stream), deps_type=_CountingDeps)
     shared = _CountingDeps(counter=0)
-    app = agent.to_responses(deps=shared)
+    app = agent.beta.to_responses(deps=shared)
 
     body = json.dumps({'model': 'test', 'stream': True, 'input': 'x'}).encode()
     with TestClient(app) as client:
@@ -1205,7 +1206,7 @@ async def test_to_responses_deps_factory_called_per_request() -> None:
         return _Token(value=token)
 
     agent = Agent(model=FunctionModel(stream_function=stream), deps_type=_Token)
-    app = agent.to_responses(deps=_Token(value=''), deps_factory=factory)
+    app = agent.beta.to_responses(deps=_Token(value=''), deps_factory=factory)
 
     body = json.dumps(_bare_run_input()).encode()
     with TestClient(app) as client:
@@ -1232,7 +1233,7 @@ async def test_to_responses_deps_factory_sync_callable() -> None:
         return _Token(value=token)
 
     agent = Agent(model=FunctionModel(stream_function=stream), deps_type=_Token)
-    app = agent.to_responses(deps=_Token(value=''), deps_factory=factory)
+    app = agent.beta.to_responses(deps=_Token(value=''), deps_factory=factory)
     body = json.dumps(_bare_run_input()).encode()
     with TestClient(app) as client:
         with client.stream('POST', '/v1/responses', content=body, headers={'X-Tenant': 'acme'}) as resp:
@@ -1259,7 +1260,7 @@ async def test_to_responses_deps_factory_takes_precedence_over_deps() -> None:
 
     agent = Agent(model=FunctionModel(stream_function=stream_with_capture), deps_type=_Deps)
     shared = _Deps(token='SHARED')
-    app = agent.to_responses(deps=shared, deps_factory=factory)
+    app = agent.beta.to_responses(deps=shared, deps_factory=factory)
     body = json.dumps(_bare_run_input()).encode()
     with TestClient(app) as client:
         with client.stream('POST', '/v1/responses', content=body, headers={'X-Tenant': 'acme'}) as resp:
@@ -1386,7 +1387,7 @@ async def test_gateway_with_deps_factory() -> None:
 
 
 async def test_to_ag_ui_accepts_deps_factory() -> None:
-    """`Agent.to_ag_ui` exposes `deps_factory` in parity with `to_responses`."""
+    """`Agent.to_ag_ui` exposes `deps_factory` in parity with `Agent.beta.to_responses`."""
     agent = Agent('test')
     app = agent.to_ag_ui(deps_factory=lambda _request: None)
     assert isinstance(app, Starlette)
@@ -1706,3 +1707,144 @@ def test_response_id_is_uuid7_format() -> None:
     msg_id = stream.new_message_id()
     parsed = UUID(msg_id)
     assert parsed.version == 7
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Iter 5: pydantic_ai:agent_context extension item (layered-agent comms)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_agent_context_input_item_maps_to_system_prompt_with_provenance() -> None:
+    """An incoming `pydantic_ai:agent_context` item is parsed into a `SystemPromptPart` with prefix-encoded provenance."""
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': [
+                {
+                    'type': 'pydantic_ai:agent_context',
+                    'from_agent': 'guardrail',
+                    'role': 'context',
+                    'content': 'User profile: gold-tier loyalty member.',
+                },
+                {'type': 'message', 'role': 'user', 'content': "What's the weather in Paris?"},
+            ],
+        }
+    ).encode()
+    run_input = ResponsesAdapter.build_run_input(body)
+    agent = Agent(model=FunctionModel(stream_function=_comprehensive_stream))
+    adapter = ResponsesAdapter[None, str](agent=agent, run_input=run_input)
+
+    [request] = adapter.messages
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            SystemPromptPart(
+                content='[from guardrail, role=context] User profile: gold-tier loyalty member.',
+                timestamp=IsDatetime(),
+            ),
+            UserPromptPart(content="What's the weather in Paris?", timestamp=IsDatetime()),
+        ]
+    )
+
+
+def test_agent_context_load_messages_round_trip_via_classmethod() -> None:
+    """`ResponsesAdapter.load_messages` round-trips a `pydantic_ai:agent_context` item to a `SystemPromptPart`."""
+    items: list[Any] = [
+        {
+            'type': 'pydantic_ai:agent_context',
+            'from_agent': 'planner',
+            'role': 'observation',
+            'content': 'User seems frustrated.',
+        },
+    ]
+    messages = ResponsesAdapter.load_messages(items)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='[from planner, role=observation] User seems frustrated.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_agent_context_part_emits_extension_item_in_openresponses_mode() -> None:
+    """`mode='openresponses'`: an `AgentContextPart` from the agent stream surfaces as a `pydantic_ai:agent_context` output item."""
+    event_stream = ResponsesEventStream[None, str](
+        run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
+        mode='openresponses',
+    )
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(
+            index=0,
+            part=AgentContextPart(
+                content='Routed via guardrail layer.',
+                from_agent='guardrail',
+                role='developer',
+                id='ctx_1',
+            ),
+        )
+
+    events = await _collect_from_stream(event_stream, parts())
+    context_events = [
+        e
+        for e in events
+        if e['type'] in ('response.output_item.added', 'response.output_item.done')
+        and e.get('item', {}).get('type') == 'pydantic_ai:agent_context'
+    ]
+    assert context_events == snapshot(
+        [
+            {
+                'type': 'response.output_item.added',
+                'output_index': 0,
+                'item': {
+                    'type': 'pydantic_ai:agent_context',
+                    'id': 'ctx_1',
+                    'from_agent': 'guardrail',
+                    'role': 'developer',
+                    'content': 'Routed via guardrail layer.',
+                },
+                'sequence_number': 1,
+            },
+            {
+                'type': 'response.output_item.done',
+                'output_index': 0,
+                'item': {
+                    'type': 'pydantic_ai:agent_context',
+                    'id': 'ctx_1',
+                    'from_agent': 'guardrail',
+                    'role': 'developer',
+                    'content': 'Routed via guardrail layer.',
+                },
+                'sequence_number': 2,
+            },
+        ]
+    )
+
+
+async def test_agent_context_part_is_suppressed_in_openai_compat_mode() -> None:
+    """`mode='openai_compat'`: `AgentContextPart` from the agent stream is suppressed (no extension items on the wire)."""
+    event_stream = ResponsesEventStream[None, str](
+        run_input=_bare_run_input(),  # pyright: ignore[reportArgumentType]
+        mode='openai_compat',
+    )
+
+    async def parts() -> AsyncIterator[Any]:
+        yield PartStartEvent(
+            index=0,
+            part=AgentContextPart(
+                content='Routed via guardrail layer.',
+                from_agent='guardrail',
+                role='developer',
+            ),
+        )
+
+    events = await _collect_from_stream(event_stream, parts())
+    item_types = [e.get('item', {}).get('type') for e in events if 'item' in e]
+    assert 'pydantic_ai:agent_context' not in item_types

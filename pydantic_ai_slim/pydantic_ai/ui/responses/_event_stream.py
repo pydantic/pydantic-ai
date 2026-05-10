@@ -50,6 +50,7 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 from ...messages import (
+    AgentContextPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FunctionToolResultEvent,
@@ -522,6 +523,37 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
             output_index=output_index,
             sequence_number=self._next_seq(),
         )
+        self._output_index += 1
+
+    async def handle_agent_context(self, part: AgentContextPart) -> AsyncIterator[Any]:
+        # Mirrors the backend-tool suppression policy: extension items never appear on the
+        # wire when the client is a vanilla OpenAI Responses SDK.
+        if self.mode != 'openresponses':
+            return
+
+        async for ev in self._close_open_message_item():
+            yield ev
+
+        output_index = self._output_index
+        item: dict[str, Any] = {
+            'type': 'pydantic_ai:agent_context',
+            'id': part.id or self.new_message_id(),
+            'from_agent': part.from_agent,
+            'role': part.role,
+            'content': part.content,
+        }
+        yield {
+            'type': 'response.output_item.added',
+            'output_index': output_index,
+            'item': item,
+            'sequence_number': self._next_seq(),
+        }
+        yield {
+            'type': 'response.output_item.done',
+            'output_index': output_index,
+            'item': item,
+            'sequence_number': self._next_seq(),
+        }
         self._output_index += 1
 
     @staticmethod

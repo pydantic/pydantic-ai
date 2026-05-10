@@ -18,6 +18,7 @@ from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_ca
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -459,7 +460,7 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -487,6 +488,9 @@ class GroqModel(Model[AsyncGroq]):
                         pass
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
+                        pass
+                    elif isinstance(item, AgentContextPart):  # pragma: no cover
+                        # Layered-agent context only round-trips via the OpenResponses adapter.
                         pass
                     else:
                         assert_never(item)

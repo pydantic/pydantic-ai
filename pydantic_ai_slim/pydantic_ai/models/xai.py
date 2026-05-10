@@ -17,6 +17,7 @@ from ..builtin_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, We
 from ..capabilities.builtin_or_local import BuiltinOrLocalTool
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -467,6 +468,9 @@ class XaiModel(Model[AsyncClient]):
                 pass
             elif isinstance(item, CompactionPart):  # pragma: no cover
                 # Compaction parts are not sent back to models that don't support compaction.
+                pass
+            elif isinstance(item, AgentContextPart):  # pragma: no cover
+                # Agent context parts are layered-agent metadata; xAI's Chat API has no equivalent slot.
                 pass
             else:
                 assert_never(item)

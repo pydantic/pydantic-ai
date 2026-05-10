@@ -19,6 +19,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from ..exceptions import UserError
 from ..messages import (
+    AgentContextPart,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -496,6 +497,9 @@ class OutlinesModel(Model):
                             )
                     elif isinstance(part, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
+                        pass
+                    elif isinstance(part, AgentContextPart):  # pragma: no cover
+                        # Layered-agent context only round-trips via the OpenResponses adapter.
                         pass
                     else:
                         assert_never(part)
