@@ -23,7 +23,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .. import OnCompleteFunc, StateHandler
-from ._adapter import ResponsesAdapter
+from ._adapter import ResponsesAdapter, ResponsesMode
 
 try:
     from starlette.applications import Starlette
@@ -63,6 +63,8 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
+        history_loader: Callable[[str], Awaitable[Sequence[ModelMessage]]] | None = None,
+        mode: ResponsesMode = 'auto',
         # Starlette parameters
         debug: bool = False,
         routes: Sequence[BaseRoute] | None = None,
@@ -101,6 +103,11 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
             builtin_tools: Optional additional builtin tools for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+            history_loader: Optional async callable that loads message history from a user-managed
+                store, keyed by the request's `conversation` / `previous_response_id`. See
+                [`ResponsesAdapter.dispatch_request`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request].
+            mode: Wire emission mode. See [`ResponsesMode`][pydantic_ai.ui.responses.ResponsesMode].
+                Defaults to `'auto'`.
 
             debug: Boolean indicating if debug tracebacks should be returned on errors.
             routes: A list of routes to serve incoming HTTP and WebSocket requests.
@@ -154,6 +161,8 @@ class ResponsesApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 on_complete=on_complete,
+                history_loader=history_loader,
+                mode=mode,
             )
 
         self.router.add_route('/v1/responses', run_responses, methods=['POST'])
@@ -163,6 +172,8 @@ def gateway(
     agents: Mapping[str, AbstractAgent[Any, Any]],
     *,
     deps_factory: Callable[[Request], Any | Awaitable[Any]] | None = None,
+    history_loader: Callable[[str], Awaitable[Sequence[ModelMessage]]] | None = None,
+    mode: ResponsesMode = 'auto',
     owned_by: str = 'pydantic-ai',
     debug: bool = False,
     routes: Sequence[BaseRoute] | None = None,
@@ -191,6 +202,11 @@ def gateway(
         deps_factory: Optional callback that produces per-request `deps` from the incoming
             Starlette `Request`. Sync or async. Applied uniformly to every dispatched agent —
             for per-agent deps shaping, mount separate `to_responses()` apps.
+        history_loader: Optional async callable that loads message history from a user-managed
+            store, keyed by the request's `conversation` / `previous_response_id`. Applied
+            uniformly across agents.
+        mode: Wire emission mode forwarded to every dispatched adapter. See
+            [`ResponsesMode`][pydantic_ai.ui.responses.ResponsesMode].
         owned_by: String returned in the `owned_by` field of `/v1/models` entries.
         debug: Boolean indicating if debug tracebacks should be returned on errors.
         routes: A list of routes to serve incoming HTTP and WebSocket requests.
@@ -242,6 +258,8 @@ def gateway(
             request,
             agent=agents[model_name],
             deps_factory=deps_factory,
+            history_loader=history_loader,
+            mode=mode,
         )
 
     app.router.add_route('/v1/responses', run_responses, methods=['POST'])

@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.ui.ag_ui.app import AGUIApp
+    from pydantic_ai.ui.responses._adapter import ResponsesMode
     from pydantic_ai.ui.responses.app import ResponsesApp
 
 
@@ -1717,6 +1718,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        history_loader: Callable[[str], Awaitable[Sequence[_messages.ModelMessage]]] | None = None,
+        mode: ResponsesMode = 'auto',
         # Starlette
         debug: bool = False,
         routes: Sequence[BaseRoute] | None = None,
@@ -1770,6 +1773,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            history_loader: Optional async callable that loads message history from a user-managed
+                store. Awaited for each request whose body carries a `conversation` /
+                `previous_response_id` field; the resolved id is passed as the loader argument.
+                When absent, the agent runs fresh — no error is raised. See
+                [`ResponsesAdapter.dispatch_request`][pydantic_ai.ui.responses.ResponsesAdapter.dispatch_request].
+            mode: How the wire emits backend tool calls (and how the adapter parses extension
+                input items). See [`ResponsesMode`][pydantic_ai.ui.responses.ResponsesMode].
+                Defaults to `'auto'` (sniff input items for a `<slug>:` extension prefix).
 
             debug: Boolean indicating if debug tracebacks should be returned on errors.
             routes: A list of routes to serve incoming HTTP and WebSocket requests.
@@ -1798,6 +1809,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            history_loader=history_loader,
+            mode=mode,
             debug=debug,
             routes=routes,
             middleware=middleware,

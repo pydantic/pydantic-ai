@@ -274,6 +274,32 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return None
 
+    @cached_property
+    def request_output_type(self) -> OutputSpec[Any] | None:
+        """Output type derived from the protocol-specific run input.
+
+        When the protocol carries structured-output configuration on the request itself
+        (e.g. OpenAI Responses' `text.format = {type: 'json_schema', schema: ...}`), the
+        adapter can override this property so the request-level configuration takes
+        precedence over the caller's `output_type` argument.
+
+        Default: `None` — the caller's `output_type` (or the agent's default) is used.
+        """
+        return None
+
+    @cached_property
+    def request_instructions(self) -> str | None:
+        """Per-run instructions derived from the protocol-specific run input.
+
+        Returned value is appended to the agent's configured `instructions` for this
+        run only. Use for protocols that carry an `instructions` field on the request
+        body (e.g. OpenAI Responses) and want to expose it as per-run kwargs rather
+        than as a `SystemPromptPart` (the latter is gated by `manage_system_prompt`).
+
+        Default: `None` — only the caller-supplied `instructions` is used.
+        """
+        return None
+
     def sanitize_messages(
         self,
         messages: Sequence[ModelMessage],
@@ -517,6 +543,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
 
+        if output_type is None:
+            output_type = self.request_output_type
+
+        if instructions is None:
+            instructions = self.request_instructions
+
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
@@ -647,6 +679,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        history_loader: Callable[[str], Awaitable[Sequence[ModelMessage]]] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
@@ -680,6 +713,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            history_loader: Optional callback that loads message history from a user-managed store
+                keyed by [`adapter.conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id]
+                (which for OpenAI Responses derives from the request's `conversation` /
+                `previous_response_id` fields). Awaited before the agent runs whenever the
+                request carries a conversation/previous-response identifier and `message_history`
+                wasn't supplied directly. When the loader is absent or returns nothing the agent
+                runs fresh — no error is raised, since Pydantic AI doesn't yet ship a built-in
+                conversation store and asking users to opt out of strictness would be noisy.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
@@ -719,6 +760,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 media_type='application/json',
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
+
+        if history_loader is not None and message_history is None:
+            loader_key = adapter.conversation_id
+            if loader_key is not None:
+                loaded = await history_loader(loader_key)
+                if loaded:
+                    message_history = list(loaded)
 
         return adapter.streaming_response(
             adapter.run_stream(

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
@@ -21,7 +22,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
 )
-from ...output import OutputDataT
+from ...output import NativeOutput, OutputDataT, OutputSpec, StructuredDict
 from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
 
@@ -105,8 +106,40 @@ def _parse_user_content_part(part: dict[str, Any]) -> UserContent | None:
     return None
 
 
+ResponsesMode = Literal['openai_compat', 'openresponses', 'auto']
+"""Mode for [`ResponsesAdapter`][pydantic_ai.ui.responses.ResponsesAdapter] emission.
+
+- `'openai_compat'`: strict OpenAI Responses subset. Backend (agent-registered) tool
+  calls are hidden from the wire; round-trip across turns is lossy without server-side
+  state. Vanilla `openai-python` SDK clients work cleanly.
+- `'openresponses'`: [OpenResponses](https://www.openresponses.org/specification) extended
+  emission. Backend tool calls surface as `pydantic_ai:custom_tool_call` paired with
+  `pydantic_ai:custom_tool_call_output` items. Lossless round-trip; requires an
+  OpenResponses-aware client (Vercel AI Gateway, HuggingFace, OpenResponses-conformant
+  SDKs).
+- `'auto'` (default): structurally sniff the request input — any item type carrying a
+  `<slug>:` extension prefix means an OpenResponses-aware client; otherwise emit
+  `openai_compat`. Lets a single endpoint serve both kinds of clients.
+"""
+
+
+@dataclass
 class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputItemParam, Any, AgentDepsT, OutputDataT]):
     """UI adapter for the OpenAI Responses protocol."""
+
+    mode: ResponsesMode = 'auto'
+    """How the adapter emits backend tool calls and parses extension input items.
+
+    See [`ResponsesMode`][pydantic_ai.ui.responses.ResponsesMode] for the three modes.
+    """
+
+    manage_system_prompt: Literal['server', 'client'] = 'client'
+    """Override of the base [`UIAdapter`][pydantic_ai.ui.UIAdapter] default of `'server'`.
+
+    Responses is a generic API where requests typically carry an `instructions` field
+    that the caller controls; trusting the client by default matches the spec's
+    semantics. Flip to `'server'` for adversarial-client deployments.
+    """
 
     @classmethod
     def build_run_input(cls, body: bytes) -> ResponseCreateParamsStreaming:
@@ -127,7 +160,31 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
             self.run_input,
             accept=self.accept,
             frontend_tool_names=self.frontend_tool_names,
+            mode=self.resolved_mode,
         )
+
+    @cached_property
+    def resolved_mode(self) -> Literal['openai_compat', 'openresponses']:
+        """Concrete emission mode after resolving `'auto'`.
+
+        - `'auto'` → structurally sniff `run_input['input']` for any item type carrying
+          a `<slug>:` extension prefix (per the OpenResponses spec, vendor extensions
+          MUST be prefixed with the implementer's slug). Any such item means the client
+          speaks OpenResponses; otherwise the client is treated as a vanilla OpenAI
+          Responses SDK.
+        - `'openai_compat'` / `'openresponses'` → returned as-is.
+        """
+        if self.mode != 'auto':
+            return self.mode
+        items = self.run_input.get('input')
+        if isinstance(items, list):
+            for raw_item in items:
+                if not is_str_dict(raw_item):
+                    continue
+                item_type = raw_item.get('type')
+                if isinstance(item_type, str) and ':' in item_type:
+                    return 'openresponses'
+        return 'openai_compat'
 
     @cached_property
     def frontend_tool_names(self) -> frozenset[str]:
@@ -151,12 +208,17 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
-        """Pydantic AI messages from the Responses input."""
-        builder = MessagesBuilder()
+        """Pydantic AI messages from the Responses input.
 
-        instructions = self.run_input.get('instructions')
-        if isinstance(instructions, str) and instructions:
-            builder.add(SystemPromptPart(content=instructions))
+        Note: `run_input['instructions']` is intentionally NOT mapped onto a
+        `SystemPromptPart` here — it surfaces via [`request_instructions`][pydantic_ai.ui.UIAdapter.request_instructions]
+        and is passed to the agent as a per-run `instructions=` kwarg, matching the
+        OpenAI Responses spec semantic ("appended to the model's instructions for this
+        request"). Routing through `SystemPromptPart` would be filtered by
+        `manage_system_prompt='server'` in deployments that flip back to server-managed
+        system prompts.
+        """
+        builder = MessagesBuilder()
 
         input_data = self.run_input.get('input')
         if isinstance(input_data, str):
@@ -165,6 +227,43 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
             self._load_input_items(input_data, builder)
 
         return builder.messages
+
+    @cached_property
+    def request_instructions(self) -> str | None:
+        instructions = self.run_input.get('instructions')
+        return instructions if isinstance(instructions, str) and instructions else None
+
+    @cached_property
+    def request_output_type(self) -> OutputSpec[Any] | None:
+        text_cfg = self.run_input.get('text')
+        if not is_str_dict(text_cfg):
+            return None
+        format_cfg = text_cfg.get('format')
+        if not is_str_dict(format_cfg):
+            return None
+
+        format_type = format_cfg.get('type')
+        if format_type == 'json_schema':
+            schema = format_cfg.get('schema')
+            if not is_str_dict(schema):
+                return None
+            name_raw = format_cfg.get('name')
+            description_raw = format_cfg.get('description')
+            strict_raw = format_cfg.get('strict')
+            structured = StructuredDict(
+                schema,
+                name=name_raw if isinstance(name_raw, str) else None,
+                description=description_raw if isinstance(description_raw, str) else None,
+            )
+            return NativeOutput(
+                structured,
+                name=name_raw if isinstance(name_raw, str) else None,
+                description=description_raw if isinstance(description_raw, str) else None,
+                strict=strict_raw if isinstance(strict_raw, bool) else None,
+            )
+        if format_type == 'json_object':
+            return dict[str, Any]
+        return None
 
     @classmethod
     def _load_input_items(cls, items: Sequence[ResponseInputItemParam], builder: MessagesBuilder) -> None:
@@ -182,7 +281,13 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
                 cls._load_message_item(raw_item, builder)
                 continue
 
-            if item_type == 'function_call':
+            # Frontend tool round-trip: `function_call` (in) → `function_call_output` (out).
+            # OpenResponses backend tool round-trip: `pydantic_ai:custom_tool_call` paired with
+            # `pydantic_ai:custom_tool_call_output`. Both shapes carry the same
+            # `(call_id, name, arguments)` / `(call_id, output)` payload — the difference is the
+            # `type` discriminator. Treat them uniformly here so message-history reconstruction
+            # is symmetric across modes.
+            if item_type in ('function_call', 'pydantic_ai:custom_tool_call'):
                 call_id_raw = raw_item.get('call_id') or raw_item.get('id') or ''
                 name_raw = raw_item.get('name', '')
                 if isinstance(call_id_raw, str) and isinstance(name_raw, str) and name_raw:
@@ -196,13 +301,13 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
                     )
                 continue
 
-            if item_type == 'function_call_output':
+            if item_type in ('function_call_output', 'pydantic_ai:custom_tool_call_output'):
                 call_id_raw = raw_item.get('call_id', '')
                 if not isinstance(call_id_raw, str):
                     continue
                 tool_name = tool_call_names.get(call_id_raw)
                 if tool_name is None:
-                    raise ValueError(f'function_call_output references unknown call_id {call_id_raw!r}.')
+                    raise ValueError(f'{item_type} references unknown call_id {call_id_raw!r}.')
                 builder.add(
                     ToolReturnPart(
                         tool_name=tool_name,
@@ -273,6 +378,36 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
         if isinstance(metadata, dict) and metadata:
             return metadata
         return None
+
+    @cached_property
+    def previous_response_id(self) -> str | None:
+        """The `previous_response_id` field from the request, if set.
+
+        Exposed separately from [`conversation_id`][pydantic_ai.ui.responses.ResponsesAdapter.conversation_id]
+        so user code can distinguish "client wants to continue this specific prior response"
+        from "client wants to label this run with a thread ID". When both are present the
+        adapter prefers `conversation` for `conversation_id` but keeps `previous_response_id`
+        accessible here for `history_loader` lookups.
+        """
+        value = self.run_input.get('previous_response_id')
+        return value if isinstance(value, str) and value else None
+
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID derived from the request.
+
+        Priority chain (per OpenAI Responses semantics):
+
+        1. `conversation` — explicit conversation thread label (the [Conversations API](https://platform.openai.com/docs/api-reference/conversations) field).
+           More specific than `previous_response_id`; wins when both are set.
+        2. `previous_response_id` — point-to-point continuation reference. Used as the conversation
+           key when no explicit `conversation` is provided.
+        3. `None` — request is a fresh standalone run.
+        """
+        conversation = self.run_input.get('conversation')
+        if isinstance(conversation, str) and conversation:
+            return conversation
+        return self.previous_response_id
 
     @classmethod
     def load_messages(cls, messages: Sequence[ResponseInputItemParam]) -> list[ModelMessage]:

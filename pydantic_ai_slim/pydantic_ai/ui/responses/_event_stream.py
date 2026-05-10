@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+from ..._uuid import uuid7
 
 try:
     from openai.types.responses import (
@@ -49,10 +52,12 @@ except ImportError as e:  # pragma: no cover
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FunctionToolResultEvent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
@@ -73,11 +78,18 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     frontend_tool_names: frozenset[str] = field(default_factory=frozenset[str])
     """Names of tools the client declared in the request `tools` array.
 
-    `ToolCallPart`s for tools NOT in this set are server-executed (agent-registered)
-    and are suppressed from the wire — vanilla SDK clients should not see them as
-    `function_call` items, since the SDK contract treats those as requests for the
-    client to act and the agent already ran them.
+    Used to distinguish frontend tool calls (echoed back as `function_call` items the
+    client must round-trip) from backend agent-registered tool calls. Backend behavior
+    depends on `mode`:
+
+    - `openai_compat`: backend tool calls are suppressed from the wire — vanilla SDK
+      clients shouldn't see them as `function_call` items since the agent already ran them.
+    - `openresponses`: backend tool calls surface as `pydantic_ai:custom_tool_call`
+      paired with `pydantic_ai:custom_tool_call_output` (lossless round-trip).
     """
+
+    mode: Literal['openai_compat', 'openresponses'] = 'openai_compat'
+    """Concrete emission mode (already resolved from `auto` by the adapter)."""
 
     _response_id: str = ''
     _text_item_id: str = ''
@@ -92,14 +104,40 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     _open_builtin_calls: dict[str, tuple[_BuiltinItem, int]] = field(
         default_factory=dict[str, tuple[_BuiltinItem, int]]
     )
+    # OpenResponses-mode extension items can't go through the SDK's pydantic union; we hold
+    # the raw `pydantic_ai:custom_tool_call` dicts here and emit them via encode_event's
+    # raw-dict path. Keyed by tool_call_id.
+    _open_backend_calls: dict[str, tuple[dict[str, Any], int]] = field(
+        default_factory=dict[str, tuple[dict[str, Any], int]]
+    )
 
     @property
     def content_type(self) -> str:
         return 'text/event-stream'
 
+    def new_message_id(self) -> str:
+        # Override the base uuid4 with uuid7 so emitted IDs share format with `RunContext.run_id`.
+        # Storage backends keyed by `previous_response_id` end up with the same
+        # lexicographic-time ordering as the agent's own run records.
+        self.message_id = str(uuid7())
+        return self.message_id
+
     def encode_event(self, event: Any) -> str:
+        # OpenResponses extension events (e.g. `pydantic_ai:custom_tool_call.added`) are emitted
+        # as raw dicts because the OpenAI SDK's response-side pydantic union is closed and
+        # rejects extension-prefixed types. The wire is JSON either way; SDK pydantic models
+        # are just stricter validators we don't need on the producing side.
+        if isinstance(event, dict):
+            return self._encode_extension_event(event)  # pyright: ignore[reportUnknownArgumentType]
         event_type = getattr(event, 'type', 'message')
         event_data = event.model_dump_json(exclude_unset=True)
+        return f'event: {event_type}\ndata: {event_data}\n\n'
+
+    @staticmethod
+    def _encode_extension_event(event: dict[str, Any]) -> str:
+        type_value = event.get('type')
+        event_type = type_value if isinstance(type_value, str) else 'message'
+        event_data = json.dumps(event)
         return f'event: {event_type}\ndata: {event_data}\n\n'
 
     async def encode_stream(self, stream: AsyncIterator[Any]) -> AsyncIterator[str]:
@@ -286,17 +324,39 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         self._output_index += 1
 
     async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[Any]:
-        if part.tool_name not in self.frontend_tool_names:
-            # Backend (agent-registered) tools are server-executed; emitting a `function_call`
-            # output item would mislead vanilla SDK clients into thinking they owe a
-            # `function_call_output` follow-up. Suppress entirely.
+        is_backend = part.tool_name not in self.frontend_tool_names
+
+        if is_backend and self.mode == 'openai_compat':
+            # Vanilla OpenAI SDK clients treat `function_call` as a request for the client to
+            # act; emitting one for an already-server-executed tool would cause double-fire.
+            # Suppress entirely. Cross-turn round-trip is lossy in this mode (per design).
             return
 
         async for ev in self._close_open_message_item():
             yield ev
 
+        if is_backend:
+            # OpenResponses mode: emit the `pydantic_ai:custom_tool_call` extension item.
+            output_index = self._output_index
+            item: dict[str, Any] = {
+                'type': 'pydantic_ai:custom_tool_call',
+                'id': self.new_message_id(),
+                'call_id': part.tool_call_id,
+                'name': part.tool_name,
+                'arguments': part.args_as_json_str() if part.args else '',
+                'status': 'in_progress',
+            }
+            self._open_backend_calls[part.tool_call_id] = (item, output_index)
+            yield {
+                'type': 'response.output_item.added',
+                'output_index': output_index,
+                'item': item,
+                'sequence_number': self._next_seq(),
+            }
+            return
+
         item_id = self.new_message_id()
-        item = ResponseFunctionToolCall(
+        function_item = ResponseFunctionToolCall(
             id=item_id,
             type='function_call',
             call_id=part.tool_call_id,
@@ -305,18 +365,18 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
             status='in_progress',
         )
         output_index = self._output_index
-        self._open_function_calls[part.tool_call_id] = (item, output_index)
+        self._open_function_calls[part.tool_call_id] = (function_item, output_index)
 
         yield ResponseOutputItemAddedEvent(
             type='response.output_item.added',
-            item=item,
+            item=function_item,
             output_index=output_index,
             sequence_number=self._next_seq(),
         )
 
         if part.args:
             initial = part.args_as_json_str()
-            item.arguments = initial
+            function_item.arguments = initial
             yield ResponseFunctionCallArgumentsDeltaEvent(
                 type='response.function_call_arguments.delta',
                 item_id=item_id,
@@ -343,6 +403,10 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[Any]:
+        if part.tool_call_id in self._open_backend_calls:
+            async for ev in self._finalize_backend_call(part.tool_call_id, final_args=part.args_as_json_str()):
+                yield ev
+            return
         async for ev in self._finalize_function_call(part.tool_call_id, final_args=part.args_as_json_str()):
             yield ev
 
@@ -367,6 +431,55 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
             output_index=output_index,
             sequence_number=self._next_seq(),
         )
+        self._output_index += 1
+
+    async def _finalize_backend_call(self, tool_call_id: str, *, final_args: str) -> AsyncIterator[Any]:
+        item, output_index = self._open_backend_calls.pop(tool_call_id)
+        item['arguments'] = final_args
+        item['status'] = 'completed'
+        yield {
+            'type': 'response.output_item.done',
+            'output_index': output_index,
+            'item': item,
+            'sequence_number': self._next_seq(),
+        }
+        self._output_index += 1
+
+    async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[Any]:
+        # Backend tool results in `openresponses` mode surface as a paired
+        # `pydantic_ai:custom_tool_call_output` item so the client can reconstruct the full
+        # message history on the next turn. In `openai_compat` mode the result stays on the
+        # server (matching the suppressed `function_call`).
+        if self.mode != 'openresponses':
+            return
+        part = event.part
+        if not isinstance(part, ToolReturnPart):
+            return
+        if part.tool_call_id not in self._open_backend_calls and part.tool_call_id not in {*self._open_function_calls}:
+            # Only emit the extension output for tools we already started as extension items.
+            # Frontend `function_call` tools execute on the client; their `function_call_output`
+            # comes back over the wire on the next request, not in this stream.
+            pass
+        output_index = self._output_index
+        output_item: dict[str, Any] = {
+            'type': 'pydantic_ai:custom_tool_call_output',
+            'id': self.new_message_id(),
+            'call_id': part.tool_call_id,
+            'output': part.model_response_str(),
+            'status': 'completed',
+        }
+        yield {
+            'type': 'response.output_item.added',
+            'output_index': output_index,
+            'item': output_item,
+            'sequence_number': self._next_seq(),
+        }
+        yield {
+            'type': 'response.output_item.done',
+            'output_index': output_index,
+            'item': output_item,
+            'sequence_number': self._next_seq(),
+        }
         self._output_index += 1
 
     async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[Any]:

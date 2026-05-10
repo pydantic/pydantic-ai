@@ -51,7 +51,9 @@ pytestmark = [
     pytest.mark.filterwarnings(
         'ignore:State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol:UserWarning'
     ),
-    pytest.mark.filterwarnings('ignore:Frontend system prompts were provided:UserWarning'),
+    # `manage_system_prompt='client'` is the default on `ResponsesAdapter`, so the "Frontend
+    # system prompts were provided" UserWarning never fires. Tests that opt back into 'server'
+    # behavior should suppress locally with their own `filterwarnings` mark.
 ]
 
 
@@ -279,12 +281,7 @@ async def test_load_messages_round_trip() -> None:
 
     assert adapter.messages == snapshot(
         [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='Be concise.', timestamp=IsDatetime()),
-                    UserPromptPart(content=["What's the weather in Paris?"], timestamp=IsDatetime()),
-                ]
-            ),
+            ModelRequest(parts=[UserPromptPart(content=["What's the weather in Paris?"], timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -1393,3 +1390,319 @@ async def test_to_ag_ui_accepts_deps_factory() -> None:
     agent = Agent('test')
     app = agent.to_ag_ui(deps_factory=lambda _request: None)
     assert isinstance(app, Starlette)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Iter 4: text.format → request_output_type (success criterion #2, #3)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_text_format_json_schema_resolves_to_native_output_with_strict() -> None:
+    """`text.format=json_schema` request → `NativeOutput(StructuredDict(...))` w/ strict flag."""
+    from pydantic_ai.output import NativeOutput
+
+    schema = {
+        'type': 'object',
+        'properties': {'city': {'type': 'string'}, 'temp_c': {'type': 'number'}},
+        'required': ['city', 'temp_c'],
+    }
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': 'What is the weather?',
+            'text': {
+                'format': {
+                    'type': 'json_schema',
+                    'name': 'Weather',
+                    'description': 'Weather payload.',
+                    'schema': schema,
+                    'strict': True,
+                }
+            },
+        }
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+
+    parsed = adapter.request_output_type
+    assert isinstance(parsed, NativeOutput)
+    assert parsed.name == 'Weather'
+    assert parsed.description == 'Weather payload.'
+    assert parsed.strict is True
+
+
+def test_text_format_json_object_resolves_to_dict_type() -> None:
+    """`text.format=json_object` request → `dict[str, Any]`."""
+    body = json.dumps(
+        {'model': 'test', 'stream': True, 'input': 'x', 'text': {'format': {'type': 'json_object'}}}
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.request_output_type == dict[str, Any]
+
+
+def test_text_format_text_resolves_to_none() -> None:
+    """`text.format=text` (or absent) → no override; caller's output_type wins."""
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'x', 'text': {'format': {'type': 'text'}}}).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.request_output_type is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Iter 4: manage_system_prompt='client' default + instructions routing (#4)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_manage_system_prompt_default_is_client() -> None:
+    """`ResponsesAdapter` defaults `manage_system_prompt` to `'client'` (override of base)."""
+    adapter = ResponsesAdapter[None, Any](
+        agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(b'{"model":"x","stream":true,"input":"y"}')
+    )
+    assert adapter.manage_system_prompt == 'client'
+
+
+def test_request_instructions_surfaces_via_property_not_messages() -> None:
+    """`run_input['instructions']` populates `request_instructions`, NOT a `SystemPromptPart`."""
+    body = json.dumps({'model': 'test', 'stream': True, 'instructions': 'Be concise.', 'input': 'hi'}).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.request_instructions == 'Be concise.'
+    # No SystemPromptPart leaked into the message list.
+    assert all(
+        not isinstance(part, SystemPromptPart)
+        for msg in adapter.messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+    )
+
+
+async def test_request_instructions_reach_agent_run_without_warning(recwarn: pytest.WarningsRecorder) -> None:
+    """No `Frontend system prompts were provided` warning fires (replaces the suppressed `filterwarnings`)."""
+    received_instructions: list[str | None] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        received_instructions.append(info.instructions)
+        yield 'ok'
+
+    body = json.dumps({'model': 'test', 'stream': True, 'instructions': 'Be concise.', 'input': 'hi'}).encode()
+    adapter = ResponsesAdapter[None, Any](
+        agent=Agent(model=FunctionModel(stream_function=stream)),
+        run_input=ResponsesAdapter.build_run_input(body),
+    )
+    await _collect_events(adapter)
+
+    # `instructions` reached the agent (FunctionModel surfaces it on AgentInfo).
+    assert received_instructions == ['Be concise.']
+    # No Frontend-system-prompts warning.
+    assert not any('Frontend system prompts' in str(w.message) for w in recwarn.list)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Iter 4: mode knob + auto-detect (#5, #6, #7)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_resolved_mode_auto_with_no_extension_input_is_openai_compat() -> None:
+    """Vanilla OpenAI Responses input → `auto` resolves to `openai_compat`."""
+    body = json.dumps(
+        {'model': 'test', 'stream': True, 'input': [{'type': 'message', 'role': 'user', 'content': 'hi'}]}
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.resolved_mode == 'openai_compat'
+
+
+def test_resolved_mode_auto_detects_openresponses_via_extension_input() -> None:
+    """Any `<slug>:`-prefixed input item type → `auto` resolves to `openresponses`."""
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': [
+                {'type': 'message', 'role': 'user', 'content': 'hi'},
+                {
+                    'type': 'pydantic_ai:custom_tool_call',
+                    'call_id': 'b_1',
+                    'name': 'lookup',
+                    'arguments': '{}',
+                },
+            ],
+        }
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.resolved_mode == 'openresponses'
+
+
+def test_explicit_mode_openai_compat_overrides_auto_sniff() -> None:
+    """Explicit `mode='openai_compat'` wins even if input carries extension items."""
+    body = json.dumps(
+        {
+            'model': 'test',
+            'stream': True,
+            'input': [{'type': 'pydantic_ai:custom_tool_call', 'call_id': 'b', 'name': 'x', 'arguments': '{}'}],
+        }
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](
+        agent=Agent('test'),
+        run_input=ResponsesAdapter.build_run_input(body),
+        mode='openai_compat',
+    )
+    assert adapter.resolved_mode == 'openai_compat'
+
+
+async def test_openresponses_mode_emits_extension_items_for_backend_tool() -> None:
+    """`mode='openresponses'`: backend tool call → `pydantic_ai:custom_tool_call` + `_output` items."""
+
+    async def stream_with_backend_tool(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            yield {0: DeltaToolCall(name='lookup_user', json_args='{"user_id":"u_42"}', tool_call_id='b_1')}
+        else:
+            yield 'Alice is the answer.'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_with_backend_tool))
+
+    @agent.tool_plain
+    def lookup_user(user_id: str) -> str:
+        return 'Alice'
+
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'Who is u_42?'}).encode()
+    adapter = ResponsesAdapter[None, str](
+        agent=agent, run_input=ResponsesAdapter.build_run_input(body), mode='openresponses'
+    )
+
+    events = await _collect_events(adapter)
+    item_types = [e['item']['type'] for e in events if e.get('item')]
+    assert 'pydantic_ai:custom_tool_call' in item_types
+    assert 'pydantic_ai:custom_tool_call_output' in item_types
+    # Vanilla `function_call` must NOT be emitted for backend tools in either mode.
+    assert 'function_call' not in item_types
+
+    # The output item carries the tool result.
+    output_items = [
+        e['item']
+        for e in events
+        if e['type'] == 'response.output_item.done' and e['item']['type'] == 'pydantic_ai:custom_tool_call_output'
+    ]
+    assert output_items and output_items[0]['output'] == 'Alice'
+
+
+def test_openresponses_extension_input_round_trips_through_load_messages() -> None:
+    """`pydantic_ai:custom_tool_call` + `_output` round-trip → `ToolCallPart` + `ToolReturnPart`."""
+    items: list[Any] = [
+        {
+            'type': 'pydantic_ai:custom_tool_call',
+            'call_id': 'b_1',
+            'name': 'lookup_user',
+            'arguments': '{"user_id":"u_42"}',
+        },
+        {
+            'type': 'pydantic_ai:custom_tool_call_output',
+            'call_id': 'b_1',
+            'output': 'Alice',
+        },
+    ]
+    messages = ResponsesAdapter.load_messages(items)
+    response = next(m for m in messages if isinstance(m, ModelResponse))
+    request = next(m for m in messages if isinstance(m, ModelRequest))
+    assert any(isinstance(p, ToolCallPart) and p.tool_name == 'lookup_user' for p in response.parts)
+    assert any(isinstance(p, ToolReturnPart) and p.content == 'Alice' for p in request.parts)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Iter 4: previous_response_id + conversation_id derivation + history_loader (#8, #9, #10)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_previous_response_id_property_returns_field_when_present() -> None:
+    body = json.dumps({'model': 'x', 'stream': True, 'input': 'y', 'previous_response_id': 'resp_abc'}).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.previous_response_id == 'resp_abc'
+    assert adapter.conversation_id == 'resp_abc'
+
+
+def test_conversation_field_takes_precedence_over_previous_response_id() -> None:
+    """`conversation` is more specific than `previous_response_id`; wins for `conversation_id`."""
+    body = json.dumps(
+        {
+            'model': 'x',
+            'stream': True,
+            'input': 'y',
+            'conversation': 'conv_xyz',
+            'previous_response_id': 'resp_abc',
+        }
+    ).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.previous_response_id == 'resp_abc'
+    assert adapter.conversation_id == 'conv_xyz'
+
+
+def test_no_conversation_or_previous_yields_none() -> None:
+    body = json.dumps({'model': 'x', 'stream': True, 'input': 'y'}).encode()
+    adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
+    assert adapter.previous_response_id is None
+    assert adapter.conversation_id is None
+
+
+async def test_history_loader_invoked_with_conversation_key() -> None:
+    """`dispatch_request(history_loader=...)` awaits the loader with `adapter.conversation_id`."""
+    seen_keys: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok'
+
+    async def loader(key: str) -> list[ModelMessage]:
+        seen_keys.append(key)
+        return [
+            ModelRequest(parts=[UserPromptPart(content='earlier turn')]),
+            ModelResponse(parts=[TextPart(content='earlier reply')]),
+        ]
+
+    agent = Agent(model=FunctionModel(stream_function=stream))
+
+    async def endpoint(request: Request) -> Any:
+        return await ResponsesAdapter[None, str].dispatch_request(request, agent=agent, history_loader=loader)
+
+    app = Starlette()
+    app.router.add_route('/v1/responses', endpoint, methods=['POST'])
+    body = json.dumps(
+        {'model': 'test', 'stream': True, 'input': 'follow-up', 'previous_response_id': 'resp_prev'}
+    ).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body) as resp:
+            ''.join(resp.iter_text())
+    assert seen_keys == ['resp_prev']
+
+
+async def test_history_loader_skipped_when_no_conversation_id() -> None:
+    """No `conversation` / `previous_response_id` → loader is not called (fresh run)."""
+    called = False
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'ok'
+
+    async def loader(_key: str) -> list[ModelMessage]:
+        nonlocal called
+        called = True
+        return []
+
+    agent = Agent(model=FunctionModel(stream_function=stream))
+
+    async def endpoint(request: Request) -> Any:
+        return await ResponsesAdapter[None, str].dispatch_request(request, agent=agent, history_loader=loader)
+
+    app = Starlette()
+    app.router.add_route('/v1/responses', endpoint, methods=['POST'])
+    body = json.dumps({'model': 'test', 'stream': True, 'input': 'fresh'}).encode()
+    with TestClient(app) as client:
+        with client.stream('POST', '/v1/responses', content=body) as resp:
+            ''.join(resp.iter_text())
+    assert called is False
+
+
+def test_response_id_is_uuid7_format() -> None:
+    """`new_message_id()` on the Responses event stream returns a uuid7 (v=7), not uuid4."""
+    from uuid import UUID
+
+    stream = _bare_event_stream()
+    msg_id = stream.new_message_id()
+    parsed = UUID(msg_id)
+    assert parsed.version == 7
