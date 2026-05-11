@@ -4795,4 +4795,196 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
     assert cleanup_finished.is_set()
 
 
+async def test_run_stream_consumer_exception_captures_partial_response():
+    """When the event-stream consumer raises, the partial `ModelResponse` is captured
+    with `state='interrupted'` so `capture_run_messages` reflects what was streamed.
+    """
+    agent = Agent(TestModel())
+
+    with capture_run_messages() as messages:
+        with pytest.raises(ValueError, match='consumer-failure'):
+            async with agent.run_stream_events('Hello') as stream:
+                async for event in stream:
+                    # Raise after a part has been fully assembled so we can assert content.
+                    if isinstance(event, PartEndEvent):
+                        raise ValueError('consumer-failure')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_external_cancellation_captures_partial_response():
+    """When the outer task is cancelled mid-stream (e.g. Vercel AI frontend abort),
+    `capture_run_messages` should still see the partial response.
+
+    Mirrors the scenario described in https://github.com/pydantic/pydantic-ai/issues/3219.
+    """
+    captured: list[ModelMessage] = []
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def blocking_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello '
+        started.set()
+        await never.wait()  # block forever so we can cancel mid-stream
+
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
+
+    async def consume() -> None:
+        nonlocal captured
+        with capture_run_messages() as messages:
+            try:
+                async with agent.run_stream_events('Hi') as stream:
+                    async for _ in stream:
+                        pass
+            finally:
+                captured = list(messages)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(captured) == 2
+    assert isinstance(captured[1], ModelResponse)
+    assert captured[1].state == 'interrupted'
+    assert captured[1].parts == snapshot([TextPart(content='hello ')])
+
+
+async def test_tool_exception_captures_partial_request():
+    """When one tool raises mid-loop, completed tool returns are captured in a
+    `ModelRequest` with `state='interrupted'` so `capture_run_messages` reflects
+    the partial state.
+    """
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    # `sequential=True` makes tool execution deterministic: good_tool runs and
+    # completes before bad_tool raises, so the captured partial reliably includes
+    # good_tool's return.
+    @agent.tool_plain(sequential=True)
+    def good_tool(x: int) -> int:
+        return x * 10
+
+    @agent.tool_plain(sequential=True)
+    def bad_tool(x: int) -> int:
+        raise RuntimeError('tool-failure')
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='tool-failure'):
+            await agent.run('Hello')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='good_tool', args='{"x": 1}', tool_call_id='call_good'),
+                    ToolCallPart(tool_name='bad_tool', args='{"x": 2}', tool_call_id='call_bad'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='good_tool',
+                        content=10,
+                        tool_call_id='call_good',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_tool_execution_cancellation_captures_partial_request():
+    """Cancellation mid-tool-execution captures the completed tool returns as a partial
+    `ModelRequest` with `state='interrupted'`.
+    """
+    first_done = asyncio.Event()
+    never = asyncio.Event()
+
+    def llm(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_tool', args='{"x": 1}', tool_call_id='call_fast'),
+                ToolCallPart(tool_name='slow_tool', args='{"x": 2}', tool_call_id='call_slow'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(function=llm))
+
+    @agent.tool_plain
+    async def fast_tool(x: int) -> int:
+        first_done.set()
+        return x * 10
+
+    @agent.tool_plain
+    async def slow_tool(x: int) -> int:
+        await never.wait()
+        return x  # pragma: no cover
+
+    captured: list[ModelMessage] = []
+
+    async def consume() -> None:
+        nonlocal captured
+        with capture_run_messages() as messages:
+            try:
+                await agent.run('Hello')
+            finally:
+                captured = list(messages)
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(first_done.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    partial_requests = [m for m in captured if isinstance(m, ModelRequest) and m.state == 'interrupted']
+    assert len(partial_requests) == 1
+    parts = partial_requests[0].parts
+    assert any(isinstance(p, ToolReturnPart) and p.tool_name == 'fast_tool' and p.content == 10 for p in parts)
+
+
 # endregion

@@ -131,6 +131,9 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
   finished generating.
 """
 
+ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
+"""Lifecycle state of a model request."""
+
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
 """Type for the force_download parameter on FileUrl subclasses.
 
@@ -1571,6 +1574,14 @@ class ModelRequest:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    state: ModelRequestState = 'complete'
+    """Lifecycle state of the request.
+
+    Set to `'interrupted'` when the request was being assembled (e.g. collecting tool returns) and
+    the run was abnormally terminated by an exception or cancellation before the request was sent to the model.
+    Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
+    """
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:

@@ -262,6 +262,40 @@ assert forked.conversation_id != result1.conversation_id
 
 The [UI adapters](ui/overview.md) auto-populate `conversation_id` from the protocol's own thread/chat ID, so frontends using these protocols get correlation for free.
 
+### Inspecting interrupted runs
+
+When a run is cut short — by an exception while streaming, by an exception inside a tool, or by an
+external cancellation — Pydantic AI still captures the partial state so you can persist or replay it.
+
+The partial messages appear inside [`capture_run_messages`][pydantic_ai.capture_run_messages] (and
+in `result.all_messages()` for `run_stream`) with `state='interrupted'`:
+
+- A partial [`ModelResponse`][pydantic_ai.messages.ModelResponse] holds the parts streamed before the
+  interruption (e.g. a frontend abort mid-stream, like a `CancelledError`).
+- A partial [`ModelRequest`][pydantic_ai.messages.ModelRequest] holds the tool returns that completed
+  before a tool raised or the run was cancelled.
+
+```python {title="capture_interrupted_run.py" test="skip"}
+from pydantic_ai import Agent, ModelRequest, ModelResponse, capture_run_messages
+
+agent = Agent('openai:gpt-5.2')
+
+with capture_run_messages() as messages:
+    try:
+        await agent.run('Do the thing', message_history=...)
+    except Exception:
+        pass
+
+for message in messages:
+    if isinstance(message, ModelResponse) and message.state == 'interrupted':
+        print(f'partial response: {message.parts}')
+    elif isinstance(message, ModelRequest) and message.state == 'interrupted':
+        print(f'partial tool returns: {message.parts}')
+```
+
+The `state` field is `'complete'` for normal messages and `'interrupted'` for partial captures, so
+downstream consumers (databases, replayers, UIs) can distinguish the two.
+
 ## Storing and loading messages (to JSON)
 
 While maintaining conversation state in memory is enough for many applications, often times you may want to store the messages history of an agent run on disk or in a database. This might be for evals, for sharing data between Python and JavaScript/TypeScript, or any number of other use cases.
