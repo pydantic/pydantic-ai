@@ -15,10 +15,9 @@ from .builtin_or_local import BuiltinOrLocalTool
 class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's builtin URL fetching when available, falling back to a local
-    function tool (markdownify-based fetch by default) when it isn't.
-
-    The local fallback requires the `web-fetch` optional group::
+    Uses the model's builtin URL fetching by default and raises `UserError` on models
+    that don't support it natively. Pass `local=True` to opt into a local fallback
+    (requires the `web-fetch` optional group)::
 
         pip install "pydantic-ai-slim[web-fetch]"
     """
@@ -76,33 +75,6 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
 
     def _builtin_unique_id(self) -> str:
         return WebFetchTool.kind
-
-    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        import warnings
-
-        try:
-            from pydantic_ai.common_tools.web_fetch import web_fetch_tool
-        except ImportError:
-            warnings.warn(
-                'WebFetch local fallback requires the `web-fetch` optional group — '
-                '`pip install "pydantic-ai-slim[web-fetch]"`. '
-                'Without it, WebFetch only works with models that support it natively.',
-                UserWarning,
-                stacklevel=2,
-            )
-            return None
-
-        warnings.warn(
-            'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '
-            'availability in v2. To keep this fallback, pass `local=True`. '
-            'To disable the fallback, pass `local=False`.',
-            DeprecationWarning,
-            stacklevel=4,
-        )
-        return web_fetch_tool(
-            allowed_domains=self.allowed_domains,
-            blocked_domains=self.blocked_domains,
-        )
 
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         from pydantic_ai.exceptions import UserError

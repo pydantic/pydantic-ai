@@ -25,8 +25,10 @@ except ImportError:  # pragma: lax no cover
 class MCP(BuiltinOrLocalTool[AgentDepsT]):
     """MCP server capability.
 
-    Uses the model's builtin MCP server support when available, connecting
-    directly via HTTP when it isn't.
+    Runs the MCP server locally by default — keeps credentials, hooks, and tracing under
+    your control. Pass `builtin=True` to also advertise the model provider's built-in MCP
+    support (with local as a fallback for unsupported models), or `builtin=True, local=False`
+    for strict builtin-only.
     """
 
     url: str
@@ -53,8 +55,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         *,
         builtin: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
-        | bool
-        | None = None,
+        | bool = False,
         local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | bool | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
@@ -62,24 +63,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         description: str | None = None,
     ) -> None:
-        # In v2, MCP's `builtin` default flips from True to False. Warn whenever the user is
-        # relying on the default — passing only `local=False` today gives builtin-only behavior,
-        # but in v2 that combo will raise "both can't be False" without an explicit `builtin=True`.
-        if builtin is None:
-            import warnings
-
-            warnings.warn(
-                'MCP() defaults will change in v2: it will run the MCP server locally instead of '
-                "preferring the model's built-in MCP support. To keep the current builtin-preferred "
-                'behavior (with local as a fallback), pass `builtin=True`. To adopt the new '
-                'local-first behavior now, install the MCP extra (`pip install '
-                '"pydantic-ai-slim[mcp]"`) and pass `builtin=False`. For builtin-only (no local '
-                'fallback), pass `builtin=True, local=False`.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            builtin = True
-
         self.url = url
         self.builtin = builtin
         self.local = local
@@ -121,32 +104,38 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         from pydantic_ai.exceptions import UserError
 
         if name is True:
-            local = self._build_local()
-            if local is None:
-                raise UserError(
-                    'MCP(local=True) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.'
-                )  # pragma: no cover
-            return local
+            return self._build_local()
         raise UserError(
             f'MCP(local={name!r}) is not a known strategy. '
             'Pass `local=True` for the default local MCP transport, or a Tool/callable directly.'
         )
 
-    def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+    def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        from pydantic_ai.exceptions import UserError
+
         # Merge authorization_token into headers for local connection
         local_headers = dict(self.headers or {})
         if self.authorization_token:
             local_headers['Authorization'] = self.authorization_token
 
         # Transport detection matching _mcp_server_discriminator() in pydantic_ai.mcp
-        if self.url.endswith('/sse'):
-            from pydantic_ai.mcp import MCPServerSSE
+        try:
+            if self.url.endswith('/sse'):
+                from pydantic_ai.mcp import MCPServerSSE
 
-            return MCPServerSSE(self.url, headers=local_headers or None, include_instructions=True)
+                return MCPServerSSE(self.url, headers=local_headers or None, include_instructions=True)
 
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+            from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-        return MCPServerStreamableHTTP(self.url, headers=local_headers or None, include_instructions=True)
+            return MCPServerStreamableHTTP(self.url, headers=local_headers or None, include_instructions=True)
+        except ImportError as e:
+            raise UserError(
+                'MCP runs the server locally by default in v2, but the MCP extra is not installed.\n\n'
+                'Either install the MCP extras:\n'
+                '    pip install "pydantic-ai-slim[mcp]"\n'
+                "or use only the model's built-in MCP support (no local needed):\n"
+                "    MCP(url='…', builtin=True, local=False)"
+            ) from e
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         toolset = super().get_toolset()

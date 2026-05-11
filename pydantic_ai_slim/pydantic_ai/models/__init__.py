@@ -772,10 +772,11 @@ class Model(ABC, Generic[InterfaceClient]):
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
                     f'Builtin tool(s) {unsupported_names} not supported by this model. '
-                    f'Supported: {supported_names}. '
-                    f'To use these tools with this model, provide a local fallback via '
-                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
+                    f'Supported by this model: {supported_names}. '
+                    f'Either pick a model that supports these tools natively, or pass a local fallback via '
+                    f'the `local=` parameter of the capability '
+                    f"(e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+                    f'ImageGeneration(fallback_model=...), or any callable / Tool / AbstractToolset).'
                 )
 
             # Remove local fallback tools whose preferred builtin IS supported (model handles natively)

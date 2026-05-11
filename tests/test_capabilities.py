@@ -1338,7 +1338,7 @@ Supported by:
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
                         'builtin': {
-                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
                             'title': 'Builtin',
                         },
                         'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
@@ -1403,7 +1403,10 @@ Supported by:
                             ],
                             'title': 'Builtin',
                         },
-                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'allowed_domains': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Domains',
@@ -1436,7 +1439,11 @@ Supported by:
                             'title': 'Builtin',
                         },
                         'local': {
-                            'anyOf': [{'const': 'duckduckgo', 'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'anyOf': [
+                                {'const': 'duckduckgo', 'type': 'string'},
+                                {'type': 'boolean'},
+                                {'type': 'null'},
+                            ],
                             'title': 'Local',
                         },
                         'search_context_size': {
@@ -4182,7 +4189,6 @@ class TestWrapNodeRunHook:
 
     async def test_bare_async_for_warns_with_wrap_node_run(self):
         """Using bare async for on iter() warns when a capability has wrap_node_run."""
-        import warnings
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
@@ -4251,22 +4257,27 @@ class TestWrapNodeRunHook:
 
 
 class TestWebSearchCapability:
-    def test_websearch_default_with_supporting_model(self):
-        """WebSearch() with a model that supports builtin web search → builtin used, local removed."""
+    def test_websearch_default_no_local(self):
+        """WebSearch() defaults to builtin-only — no local fallback unless explicitly requested."""
         cap = WebSearch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
 
-        toolset = cap.get_toolset()
-        # Should have a toolset (for the DuckDuckGo fallback wrapped with PreparedToolset)
-        assert toolset is not None
+        # No local fallback by default in v2
+        assert cap.get_toolset() is None
 
-    def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebSearch() with a model that doesn't support builtin → DuckDuckGo fallback used."""
+    def test_websearch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
+        """WebSearch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebSearch()])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('search')
+
+    def test_websearch_local_string_strategy(self, allow_model_requests: None):
+        """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # When called with tools, call the first one
             for msg in messages:
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart):
@@ -4280,24 +4291,26 @@ class TestWebSearchCapability:
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebSearch()])
+        agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
         result = agent.run_sync('search for something')
-        # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
 
-    def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebSearch(local=False)])
-        with pytest.raises(UserError, match='not supported'):
-            agent.run_sync('search')
+    def test_websearch_unknown_strategy_raises(self):
+        """WebSearch(local='unknown_name') → UserError."""
+        with pytest.raises(UserError, match='not a known strategy'):
+            WebSearch(local='not_a_real_strategy')  # type: ignore[arg-type]
 
-    def test_websearch_builtin_false(self):
-        """WebSearch(builtin=False) → only local, no builtin registered."""
-        cap = WebSearch(builtin=False)
+    def test_websearch_builtin_false_without_local_raises(self):
+        """WebSearch(builtin=False) without an explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit `local=…` value'):
+            WebSearch(builtin=False)
+
+    def test_websearch_builtin_false_with_local_string(self):
+        """WebSearch(builtin=False, local='duckduckgo') → only local, no builtin registered."""
+        cap = WebSearch(builtin=False, local='duckduckgo')
         assert cap.get_builtin_tools() == []
         toolset = cap.get_toolset()
-        # Should have a plain toolset (no PreparedToolset wrapping)
+        # Plain toolset (no PreparedToolset wrapping since builtin is disabled)
         assert toolset is not None
 
     def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
@@ -4313,9 +4326,9 @@ class TestWebSearchCapability:
             WebSearch(builtin=False, local=False)
 
     def test_websearch_builtin_false_with_constraints_raises(self):
-        """WebSearch(builtin=False, allowed_domains=...) → UserError at construction."""
+        """WebSearch(builtin=False, local='duckduckgo', allowed_domains=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebSearch(builtin=False, allowed_domains=['example.com'])
+            WebSearch(builtin=False, local='duckduckgo', allowed_domains=['example.com'])
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4371,25 +4384,32 @@ class TestXSearchCapability:
         with pytest.raises(UserError, match='both builtin and local cannot be False'):
             XSearch(builtin=False, local=False)
 
-    def test_xsearch_builtin_false_with_constraints_raises(self):
-        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+    def test_xsearch_builtin_false_raises(self):
+        """XSearch(builtin=False) → UserError (no local fallback for X search)."""
+        with pytest.raises(UserError, match='requires an explicit `local=…` value'):
             XSearch(builtin=False, allowed_x_handles=['handle1'])
 
 
 class TestWebFetchCapability:
-    def test_webfetch_default(self):
-        """WebFetch() provides builtin and default local fallback."""
+    def test_webfetch_default_no_local(self):
+        """WebFetch() defaults to builtin-only — no local fallback unless explicitly requested."""
         cap = WebFetch()
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
-        # Default local fallback is auto-detected (markdownify-based)
-        assert cap.local is not None
-        assert cap.get_toolset() is not None
+        # No local fallback by default in v2
+        assert cap.local is None
+        assert cap.get_toolset() is None
 
-    def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+    def test_webfetch_default_with_nonsupporting_model_raises(self, allow_model_requests: None):
+        """WebFetch() with a model that doesn't support builtin → UserError (no auto-fallback)."""
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch()])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
+
+    def test_webfetch_local_string_strategy(self, allow_model_requests: None):
+        """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
         import httpx
@@ -4419,12 +4439,11 @@ class TestWebFetchCapability:
         )
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebFetch()])
+        agent = Agent(model, capabilities=[WebFetch(local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch something')
-        # Verify the web_fetch fallback tool was actually called
         tool_calls = [
             part
             for msg in result.all_messages()
@@ -4435,6 +4454,11 @@ class TestWebFetchCapability:
         assert len(tool_calls) == 1
         assert tool_calls[0].tool_name == 'web_fetch'
 
+    def test_webfetch_unknown_strategy_raises(self):
+        """WebFetch(local='unknown_name') → UserError."""
+        with pytest.raises(UserError, match='not a known strategy'):
+            WebFetch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
@@ -4442,9 +4466,14 @@ class TestWebFetchCapability:
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_builtin_false(self):
-        """WebFetch(builtin=False) → only local, no builtin registered."""
-        cap = WebFetch(builtin=False)
+    def test_webfetch_builtin_false_without_local_raises(self):
+        """WebFetch(builtin=False) without explicit local → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit `local=…` value'):
+            WebFetch(builtin=False)
+
+    def test_webfetch_builtin_false_with_local_string(self):
+        """WebFetch(builtin=False, local=True) → only local, no builtin registered."""
+        cap = WebFetch(builtin=False, local=True)
         assert cap.get_builtin_tools() == []
         toolset = cap.get_toolset()
         assert toolset is not None
@@ -4457,7 +4486,7 @@ class TestWebFetchCapability:
             agent.run_sync('fetch')
 
     def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
-        """WebFetch(allowed_domains=...) with non-supporting model → falls back to local with domain filtering."""
+        """WebFetch(allowed_domains=..., local=True) with non-supporting model → falls back to local with domain filtering."""
         from unittest.mock import AsyncMock, patch
 
         import httpx
@@ -4487,12 +4516,11 @@ class TestWebFetchCapability:
         )
 
         model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'], local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
             result = agent.run_sync('fetch example.com')
-        # Verify the web_fetch fallback tool was actually called with domain filtering
         tool_calls = [
             part
             for msg in result.all_messages()
@@ -4509,9 +4537,9 @@ class TestWebFetchCapability:
             WebFetch(builtin=False, local=False)
 
     def test_webfetch_builtin_false_with_max_uses_raises(self):
-        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
+        """WebFetch(builtin=False, local=True, max_uses=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebFetch(builtin=False, max_uses=5)
+            WebFetch(builtin=False, local=True, max_uses=5)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -4959,24 +4987,38 @@ except ImportError:
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
-    def test_mcp_default(self):
-        """MCP(url=...) provides builtin + local fallback."""
+    def test_mcp_default_local_only(self):
+        """MCP(url=...) defaults to local-only via FastMCP — no builtin advertised."""
         cap = MCP(url='https://mcp.example.com/api')
+        assert cap.get_builtin_tools() == []
+        assert cap.get_toolset() is not None
+
+    def test_mcp_builtin_true_advertises_both(self):
+        """MCP(url=..., builtin=True) advertises builtin + keeps local as fallback."""
+        cap = MCP(url='https://mcp.example.com/api', builtin=True)
         builtins = cap.get_builtin_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], MCPServerTool)
         assert builtins[0].url == 'https://mcp.example.com/api'
         assert cap.get_toolset() is not None
 
+    def test_mcp_builtin_only(self):
+        """MCP(url=..., builtin=True, local=False) advertises only the builtin."""
+        cap = MCP(url='https://mcp.example.com/api', builtin=True, local=False)
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], MCPServerTool)
+        assert cap.get_toolset() is None
+
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
-        cap = MCP(url='https://mcp.example.com/api')
+        cap = MCP(url='https://mcp.example.com/api', builtin=True)
         builtin = cap.get_builtin_tools()[0]
         assert isinstance(builtin, MCPServerTool)
         assert builtin.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
-        cap_sse = MCP(url='https://server1.example.com/sse')
+        cap_sse = MCP(url='https://server1.example.com/sse', builtin=True)
         builtin_sse = cap_sse.get_builtin_tools()[0]
         assert isinstance(builtin_sse, MCPServerTool)
         assert builtin_sse.id == 'server1.example.com-sse'
@@ -6159,8 +6201,8 @@ def test_web_search_with_constraints():
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
-def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
+def test_web_search_unknown_strategy_with_extras_missing(monkeypatch: pytest.MonkeyPatch):
+    """WebSearch(local='duckduckgo') raises with install hint when [duckduckgo] extra is missing."""
     import builtins
 
     original_import = builtins.__import__
@@ -6171,14 +6213,12 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with pytest.warns(UserWarning, match='duckduckgo'):
-        cap = WebSearch(builtin=False)
-    # With builtin disabled and no duckduckgo, local is None
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[duckduckgo\]'):
+        WebSearch(local='duckduckgo')
 
 
-def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+def test_web_fetch_unknown_strategy_with_extras_missing(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch(local=True) raises with install hint when [web-fetch] extra is missing."""
     import builtins
 
     original_import = builtins.__import__
@@ -6189,126 +6229,28 @@ def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with pytest.warns(UserWarning, match='web-fetch'):
-        cap = WebFetch(builtin=False)
-    # With builtin disabled and no markdownify, local is None
-    assert cap.local is None
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[web-fetch\]'):
+        WebFetch(local=True)
 
 
-def test_mcp_default_builtin():
-    """MCP capability constructs the default builtin MCPServerTool."""
+def test_mcp_default_local_only():
+    """MCP(url=...) defaults to local-only via FastMCP — no builtin advertised."""
     pytest.importorskip('mcp', reason='mcp package not installed')
     cap = MCP(url='http://example.com/mcp', id='my-mcp')
+    assert cap.get_builtin_tools() == []
+    assert cap.get_toolset() is not None
+
+
+def test_mcp_builtin_true_default_construction():
+    """MCP(url=..., builtin=True) constructs MCPServerTool with id from url."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    cap = MCP(url='http://example.com/mcp', id='my-mcp', builtin=True)
     builtin_tools = cap.get_builtin_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, MCPServerTool)
     assert tool.url == 'http://example.com/mcp'
     assert tool.id == 'my-mcp'
-
-
-@pytest.mark.filterwarnings(
-    'ignore::RuntimeWarning'
-)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning on import
-def test_web_search_v2_deprecation_warning():
-    """WebSearch() with duckduckgo installed warns about v2 default change."""
-    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
-    with pytest.warns(DeprecationWarning, match='WebSearch will stop auto-selecting'):
-        WebSearch()
-
-
-def test_web_search_v2_deprecation_silenced_with_explicit_local():
-    """WebSearch(local=False) does not emit the v2 deprecation warning."""
-
-    def noop_search(q: str) -> str:
-        return q  # pragma: no cover
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        WebSearch(local=False)
-        WebSearch(builtin=False, local=noop_search)
-
-
-def test_web_fetch_v2_deprecation_warning():
-    """WebFetch() with web-fetch extra installed warns about v2 default change."""
-    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
-    with pytest.warns(DeprecationWarning, match='WebFetch will stop auto-selecting'):
-        WebFetch()
-
-
-def test_web_fetch_v2_deprecation_silenced_with_explicit_local():
-    """WebFetch(local=False) does not emit the v2 deprecation warning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        WebFetch(local=False)
-
-
-def test_mcp_v2_deprecation_warning():
-    """MCP(url=...) with no explicit builtin/local warns about v2 default change."""
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.warns(DeprecationWarning, match=r'MCP\(\) defaults will change'):
-        MCP(url='http://example.com/mcp')
-
-
-def test_mcp_v2_deprecation_silenced_with_explicit_builtin():
-    """MCP(url=..., builtin=...) does not emit the v2 deprecation warning.
-
-    `local=False` alone still warns since it relies on the v1 builtin default flipping in v2.
-    """
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        MCP(url='http://example.com/mcp', builtin=True)
-        MCP(url='http://example.com/mcp', builtin=False)
-        MCP(url='http://example.com/mcp', builtin=True, local=False)
-
-
-def test_mcp_v2_deprecation_warns_for_local_false_alone():
-    """MCP(url=..., local=False) still warns because the user relies on the v1 default of builtin=True.
-
-    In v2, builtin defaults to False, so `MCP(url=..., local=False)` would raise "both can't be False"
-    without an explicit builtin=True. The warning surfaces this silent breaking change.
-    """
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with pytest.warns(DeprecationWarning, match=r'MCP\(\) defaults will change'):
-        MCP(url='http://example.com/mcp', local=False)
-
-
-def test_web_search_local_string_strategy_silent():
-    """WebSearch(local='duckduckgo') resolves silently to the DDG tool — no DeprecationWarning."""
-    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        cap = WebSearch(local='duckduckgo')
-    assert cap.local is not None and cap.local is not False
-
-
-def test_web_search_local_true_silent():
-    """WebSearch(local=True) resolves silently to the default strategy (DDG)."""
-    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        cap = WebSearch(local=True)
-    assert cap.local is not None and cap.local is not False
-
-
-def test_web_fetch_local_true_silent():
-    """WebFetch(local=True) resolves silently to the default markdownify-based tool."""
-    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        cap = WebFetch(local=True)
-    assert cap.local is not None and cap.local is not False
-
-
-def test_mcp_local_true_silent_with_explicit_builtin():
-    """MCP(url=..., local=True, builtin=True) resolves silently — no DeprecationWarning."""
-    pytest.importorskip('mcp', reason='mcp package not installed')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', DeprecationWarning)
-        cap = MCP(url='http://example.com/mcp', local=True, builtin=True)
-    assert cap.local is not None and cap.local is not False
-    assert len(cap.get_builtin_tools()) == 1
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')

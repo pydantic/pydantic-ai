@@ -74,7 +74,7 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
                 )
             self.builtin = default
 
-        # Resolve local: None → default (may warn), True/str → named strategy (silent), callable → Tool
+        # Resolve local: None → subclass default (often None in v2), True/str → named strategy, callable → Tool
         if self.local is None:
             self.local = self._default_local()
         elif self.local is True or isinstance(self.local, str):
@@ -83,6 +83,14 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
             pass  # explicit disable
         elif callable(self.local) and not isinstance(self.local, (Tool, AbstractToolset)):
             self.local = Tool(self.local)
+
+        # After resolution: must have at least one active path. Reachable when a subclass's
+        # `_default_local()` returns `None` and `builtin=False` was set — e.g. `WebSearch(builtin=False)`.
+        if self.builtin is False and self.local in (None, False):  # pyright: ignore[reportUnknownMemberType]
+            raise UserError(
+                f'{type(self).__name__}(builtin=False) requires an explicit `local=…` value '
+                f"(e.g. a Tool, callable, or named strategy like 'duckduckgo')."
+            )
 
         # Catch contradictory config: builtin disabled but constraint fields require it
         if self.builtin is False and self._requires_builtin():
