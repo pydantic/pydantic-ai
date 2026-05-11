@@ -280,6 +280,16 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_service_tier: GoogleServiceTier
     """Deprecated: use `service_tier` for Gemini API (GLA) or `google_vertex_service_tier` for Vertex AI."""
 
+    google_tool_config: ToolConfigDict
+    """Override the tool_config sent to Gemini.
+
+    When set, this takes precedence over the tool_config derived from the cross-provider `tool_choice` setting.
+    Use this to opt into modes not exposed by the cross-provider abstraction — most notably `VALIDATED`,
+    which enforces schema at the API layer and rejects hallucinated function names before they reach user code.
+
+    See <https://ai.google.dev/gemini-api/docs/function-calling> for more information.
+    """
+
 
 def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
     """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
@@ -662,6 +672,8 @@ class GoogleModel(Model[Client]):
         if allowed_function_names:
             function_calling_config['allowed_function_names'] = allowed_function_names
         tool_config = ToolConfigDict(function_calling_config=function_calling_config)
+        if override_config := model_settings.get('google_tool_config'):
+            tool_config = override_config
 
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)]) for t in tool_defs.values()
