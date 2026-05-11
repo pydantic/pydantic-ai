@@ -160,9 +160,18 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `dynamic_filtering` | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Dynamic Filtering"
+    With Anthropic models that support it (Claude Sonnet 4.6+, Claude Opus 4.6+),
+    `dynamic_filtering` enables the model to write and execute code to filter search
+    results before they enter the context window, reducing token consumption and improving
+    accuracy. This requires [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]
+    to be enabled alongside it. By default (`None`), dynamic filtering is auto-detected
+    based on model support and whether `CodeExecutionTool` is present.
 
 ## X Search Tool
 
@@ -545,9 +554,14 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
+| `dynamic_filtering` | ✅ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Dynamic Filtering"
+    The `dynamic_filtering` parameter works the same way as for
+    [`WebSearchTool`](#web-search-tool) — see the note above for details.
 
 ## Memory Tool
 

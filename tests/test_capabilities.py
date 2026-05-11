@@ -1119,6 +1119,11 @@ All types must be serializable using Pydantic.\
                             'default': None,
                             'title': 'Max Content Tokens',
                         },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Dynamic Filtering',
+                        },
                     },
                     'title': 'UrlContextTool',
                     'type': 'object',
@@ -1146,6 +1151,11 @@ All types must be serializable using Pydantic.\
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Max Content Tokens',
+                        },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Dynamic Filtering',
                         },
                     },
                     'title': 'WebFetchTool',
@@ -1178,6 +1188,11 @@ All types must be serializable using Pydantic.\
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Max Uses',
+                        },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Dynamic Filtering',
                         },
                     },
                     'title': 'WebSearchTool',
@@ -1528,6 +1543,10 @@ Supported by:
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Dynamic Filtering',
+                        },
                     },
                     'title': 'spec_params_WebFetch',
                     'type': 'object',
@@ -1557,6 +1576,10 @@ Supported by:
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'dynamic_filtering': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Dynamic Filtering',
+                        },
                     },
                     'title': 'spec_params_WebSearch',
                     'type': 'object',
@@ -4515,6 +4538,11 @@ class TestWebSearchCapability:
         """WebSearch(builtin=False, allowed_domains=...) → UserError at construction."""
         with pytest.raises(UserError, match='constraint fields require the builtin tool'):
             WebSearch(builtin=False, allowed_domains=['example.com'])
+
+    def test_websearch_builtin_false_with_dynamic_filtering_raises(self):
+        """WebSearch(builtin=False, dynamic_filtering=True) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebSearch(builtin=False, dynamic_filtering=True)
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
