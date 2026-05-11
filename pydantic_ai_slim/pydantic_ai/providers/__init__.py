@@ -125,6 +125,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .deepseek import DeepSeekProvider
 
         return DeepSeekProvider
+    elif provider == 'edenai':
+        from .edenai import EdenAIProvider
+
+        return EdenAIProvider
     elif provider == 'openrouter':
         from .openrouter import OpenRouterProvider
 

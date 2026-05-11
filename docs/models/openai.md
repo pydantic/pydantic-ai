@@ -882,3 +882,37 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+### Eden AI
+
+[Eden AI](https://www.edenai.co) is an OpenAI-compatible gateway exposing models from multiple providers (Anthropic, OpenAI, Google, Mistral, Cohere, and others) behind a single API. Follow the [getting started guide](https://www.edenai.co/docs/v3/quickstart/first-llm-call) to create an API key.
+
+You can set the `EDENAI_API_KEY` environment variable and use [`EdenAIProvider`][pydantic_ai.providers.edenai.EdenAIProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('edenai:openai/gpt-5')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.edenai import EdenAIProvider
+
+model = OpenAIChatModel(
+    'anthropic/claude-opus-4-7',
+    provider=EdenAIProvider(api_key='your-edenai-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Eden AI exposes models with vendor-prefixed ids, for example `openai/gpt-5`, `anthropic/claude-opus-4-7`, `anthropic/claude-opus-4-6`, `anthropic/claude-sonnet-4-6`, `google/gemini-2.5-flash`, or `mistral/mistral-large-latest`. Anthropic ids on Eden AI use the hyphen form (`claude-opus-4-7`), not the dot form. The full catalog is available in [Eden AI's app](https://app.edenai.run/bricks/text/chat).

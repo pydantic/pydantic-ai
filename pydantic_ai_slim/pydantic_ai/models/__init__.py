@@ -467,6 +467,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'azure',
         'cerebras',
         'deepseek',
+        'edenai',
         'fireworks',
         'github',
         'grok',
