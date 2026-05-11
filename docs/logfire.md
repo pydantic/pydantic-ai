@@ -104,6 +104,28 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 
 ![Logfire monitoring Pydantic AI](img/logfire-monitoring-pydanticai.png)
 
+### LLM Cost
+
+Logfire's [LLM Panels](https://pydantic.dev/docs/logfire/observe/llm-panels/#how-costs-are-calculated) display a per-request and per-run cost in USD. That number comes from the `operation.cost` attribute that Pydantic AI's instrumentation sets on each model request span, computed by calling [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] — which uses [`genai-prices`](https://github.com/pydantic/genai-prices) to convert the response's [`RequestUsage`][pydantic_ai.usage.RequestUsage] into a price.
+
+The cost breakdown applies the provider's published rates per token type. Cached input tokens (`cache_read_tokens`), cache writes (`cache_write_tokens`), and audio tokens are billed at different rates from regular input/output tokens when the provider differentiates them, and `genai-prices` reflects that in the total. See [Cost Estimation](agent.md#cost-estimation) for the underlying API and how to inspect the breakdown in code.
+
+If `operation.cost` is missing on a span (so Logfire shows no cost, or a fallback computed from raw input/output tokens that ignores cached pricing), the model or provider isn't known to the installed `genai-prices` snapshot — typically because the model was released after the version bundled with Pydantic AI. Two fixes, in order of preference:
+
+1. Upgrade `genai-prices`:
+
+    ```bash
+    pip/uv-add -U genai-prices
+    ```
+
+2. Or call [`update_in_background()`][pydantic_ai.prices.update_in_background] once at startup to refresh pricing data from GitHub hourly without waiting for a PyPI release:
+
+    ```python {test="skip"}
+    from pydantic_ai import prices
+
+    prices.update_in_background()
+    ```
+
 ### Monitoring HTTP Requests
 
 As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)

@@ -425,7 +425,9 @@ Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic
 
 #### Cost Estimation
 
-Pydantic AI uses [`genai-prices`](https://github.com/pydantic/genai-prices) to estimate the cost of model requests. You can call the [`.cost()`][pydantic_ai.messages.ModelResponse.cost] method on any [`ModelResponse`][pydantic_ai.messages.ModelResponse] in the message history to get a cost breakdown:
+Pydantic AI uses [`genai-prices`](https://github.com/pydantic/genai-prices) to estimate the cost of model requests. The calculation applies the provider's published rates per token type, so cached input tokens ([`cache_read_tokens`][pydantic_ai.usage.RequestUsage]), cache writes ([`cache_write_tokens`][pydantic_ai.usage.RequestUsage]), and audio tokens are billed separately from regular input/output tokens when the provider differentiates them. The same cost is also surfaced in OpenTelemetry/Logfire as the `operation.cost` span attribute — see [LLM Cost](logfire.md#llm-cost).
+
+You can call the [`.cost()`][pydantic_ai.messages.ModelResponse.cost] method on any [`ModelResponse`][pydantic_ai.messages.ModelResponse] in the message history to get a cost breakdown:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
