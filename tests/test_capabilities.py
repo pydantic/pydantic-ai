@@ -1600,9 +1600,15 @@ Supported by:
                             'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
                             'title': 'To Date',
                         },
-                        'enable_image_understanding': {'title': 'Enable Image Understanding', 'type': 'boolean'},
-                        'enable_video_understanding': {'title': 'Enable Video Understanding', 'type': 'boolean'},
-                        'include_output': {'title': 'Include Output', 'type': 'boolean'},
+                        'enable_image_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Image Understanding',
+                        },
+                        'enable_video_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Video Understanding',
+                        },
+                        'include_output': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Include Output'},
                     },
                     'title': 'spec_params_XSearch',
                     'type': 'object',
