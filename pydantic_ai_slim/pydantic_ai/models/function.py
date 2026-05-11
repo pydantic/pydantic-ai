@@ -16,6 +16,7 @@ from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
 from ..builtin_tools import AbstractBuiltinTool
 from ..messages import (
+    AgentContextPart,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -382,7 +383,7 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # noqa: C901
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -414,6 +415,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
+                    pass
+                elif isinstance(part, AgentContextPart):
                     pass
                 else:
                     assert_never(part)

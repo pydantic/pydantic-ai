@@ -15,6 +15,7 @@ from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..exceptions import ModelAPIError
 from ..messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -597,6 +598,9 @@ class MistralModel(Model[Mistral]):
                         pass
                     elif isinstance(part, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
+                        pass
+                    elif isinstance(part, AgentContextPart):  # pragma: no cover
+                        # Layered-agent context only round-trips via the OpenResponses adapter.
                         pass
                     else:
                         assert_never(part)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
@@ -13,6 +14,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    TypeAlias,
     cast,
     runtime_checkable,
 )
@@ -56,7 +58,19 @@ __all__ = [
     'UIAdapter',
     'StateHandler',
     'StateDeps',
+    'DepsFactory',
 ]
+
+
+DepsFactory: TypeAlias = Callable[['Request'], Any]
+"""Callback that produces per-request `deps` from the incoming Starlette `Request`.
+
+Either sync or async. When passed to [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request]
+or one of the `*App` constructors, it takes precedence over the shared `deps` argument.
+
+Useful for gateways that need to scope deps per request (e.g. authenticate the
+incoming `Authorization` header into a tenant id).
+"""
 
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
@@ -257,6 +271,32 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         Subclasses for protocols that carry a conversation/thread/chat ID should override this
         (e.g. AG-UI's `RunAgentInput.threadId`, Vercel AI's top-level chat `id`).
+        """
+        return None
+
+    @cached_property
+    def request_output_type(self) -> OutputSpec[Any] | None:
+        """Output type derived from the protocol-specific run input.
+
+        When the protocol carries structured-output configuration on the request itself
+        (e.g. OpenAI Responses' `text.format = {type: 'json_schema', schema: ...}`), the
+        adapter can override this property so the request-level configuration takes
+        precedence over the caller's `output_type` argument.
+
+        Default: `None` — the caller's `output_type` (or the agent's default) is used.
+        """
+        return None
+
+    @cached_property
+    def request_instructions(self) -> str | None:
+        """Per-run instructions derived from the protocol-specific run input.
+
+        Returned value is appended to the agent's configured `instructions` for this
+        run only. Use for protocols that carry an `instructions` field on the request
+        body (e.g. OpenAI Responses) and want to expose it as per-run kwargs rather
+        than as a `SystemPromptPart` (the latter is gated by `manage_system_prompt`).
+
+        Default: `None` — only the caller-supplied `instructions` is used.
         """
         return None
 
@@ -503,6 +543,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
 
+        if output_type is None:
+            output_type = self.request_output_type
+
+        if instructions is None:
+            instructions = self.request_instructions
+
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
@@ -623,6 +669,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model: Model | KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
+        deps_factory: Callable[[Request], DispatchDepsT | Awaitable[DispatchDepsT]] | None = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
@@ -632,6 +679,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        history_loader: Callable[[str], Awaitable[Sequence[ModelMessage]]] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         **kwargs: Any,
@@ -652,6 +700,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps`. Useful for gateway
+                scenarios where deps are scoped per authenticated tenant.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -662,6 +713,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            history_loader: Optional callback that loads message history from a user-managed store
+                keyed by [`adapter.conversation_id`][pydantic_ai.ui.UIAdapter.conversation_id]
+                (which for OpenAI Responses derives from the request's `conversation` /
+                `previous_response_id` fields). Awaited before the agent runs whenever the
+                request carries a conversation/previous-response identifier and `message_history`
+                wasn't supplied directly. When the loader is absent or returns nothing the agent
+                runs fresh — no error is raised, since Pydantic AI doesn't yet ship a built-in
+                conversation store and asking users to opt out of strictness would be noisy.
             manage_system_prompt: Who owns the system prompt. See
                 [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
             allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
@@ -678,6 +737,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 'Please install the `starlette` package to use `dispatch_request()` method, '
                 'you can use the `ui` optional group — `pip install "pydantic-ai-slim[ui]"`'
             ) from e
+
+        if deps_factory is not None:
+            produced = deps_factory(request)
+            deps = await produced if inspect.isawaitable(produced) else cast(DispatchDepsT, produced)
 
         try:
             # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
@@ -697,6 +760,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 media_type='application/json',
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             )
+
+        if history_loader is not None and message_history is None:
+            loader_key = adapter.conversation_id
+            if loader_key is not None:
+                loaded = await history_loader(loader_key)
+                if loaded:
+                    message_history = list(loaded)
 
         return adapter.streaming_response(
             adapter.run_stream(

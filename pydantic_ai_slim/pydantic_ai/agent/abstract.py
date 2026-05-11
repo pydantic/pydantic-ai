@@ -15,6 +15,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from functools import cached_property
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -62,9 +63,11 @@ if TYPE_CHECKING:
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
     from starlette.middleware import Middleware
+    from starlette.requests import Request
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
+    from pydantic_ai.agent._beta import AgentBeta
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.ui.ag_ui.app import AGUIApp
@@ -137,6 +140,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
         """Set the description of the agent."""
         raise NotImplementedError
+
+    @cached_property
+    def beta(self) -> AgentBeta[AgentDepsT, OutputDataT]:
+        """Access beta-track features. APIs under `agent.beta` are subject to change.
+
+        Currently includes:
+
+        - `agent.beta.to_responses(...)` — expose the agent as an OpenAI Responses API endpoint.
+        """
+        from pydantic_ai.agent._beta import AgentBeta
+
+        return AgentBeta(self)
 
     @property
     @abstractmethod
@@ -1593,6 +1608,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         conversation_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
+        deps_factory: Callable[[Request], AgentDepsT | Awaitable[AgentDepsT]] | None = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         usage: RunUsage | None = None,
@@ -1642,6 +1658,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
+            deps_factory: Optional callback that produces per-request `deps` from the incoming Starlette
+                `Request`. Sync or async. When provided, takes precedence over `deps` — useful for gateway
+                scenarios where each request's deps are derived from headers (e.g. tenant/auth).
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
@@ -1680,6 +1699,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             conversation_id=conversation_id,
             model=model,
             deps=deps,
+            deps_factory=deps_factory,
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,

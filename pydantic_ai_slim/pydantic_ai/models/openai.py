@@ -38,6 +38,7 @@ from ..builtin_tools import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import UserError
 from ..messages import (
+    AgentContextPart,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -1235,6 +1236,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     self._map_response_file_part(item)
                 elif isinstance(item, CompactionPart):  # pragma: no cover
                     # Compaction parts are not sent back to the Chat Completions API.
+                    pass
+                elif isinstance(item, AgentContextPart):  # pragma: no cover
+                    # Layered-agent context items only round-trip via the OpenResponses adapter;
+                    # vanilla Chat Completions has no shape for them.
                     pass
                 else:
                     assert_never(item)
@@ -2709,6 +2714,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='compaction',
                                 )
                             )
+                    elif isinstance(item, AgentContextPart):  # pragma: no cover
+                        # Layered-agent context only round-trips via the OpenResponses subclass;
+                        # the strict OpenAI Responses union has no shape for it.
+                        pass
                     else:
                         assert_never(item)
             else:

@@ -26,6 +26,7 @@ from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
+    AgentContextPart,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -682,6 +683,9 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
             pass
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
+            pass
+        elif isinstance(item, AgentContextPart):  # pragma: no cover
+            # Layered-agent context only round-trips via the OpenResponses adapter.
             pass
         else:
             assert_never(item)
