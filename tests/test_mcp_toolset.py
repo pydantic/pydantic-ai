@@ -382,7 +382,7 @@ class TestMCPToolsetIntegration:
 
         async def hook(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
             seen.append((name, args))
-            return await call_tool(name, args, None)
+            return await call_tool(name, args, metadata=None)
 
         toolset = MCPToolset(fastmcp_server, process_tool_call=hook)
         async with toolset:

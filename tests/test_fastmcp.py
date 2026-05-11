@@ -581,7 +581,7 @@ class TestFastMCPToolsetToolCalling:
         ) -> ToolResult:
             nonlocal called
             called = True
-            return await call_tool(name, tool_args, None)
+            return await call_tool(name, tool_args, metadata=None)
 
         toolset = FastMCPToolset(fastmcp_client, process_tool_call=process_tool_call)
         async with toolset:

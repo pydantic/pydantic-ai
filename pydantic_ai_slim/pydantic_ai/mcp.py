@@ -12,7 +12,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeAlias, overload
 
 import anyio
 import httpx
@@ -1451,8 +1451,23 @@ ToolResult = (
 )
 """The result type of an MCP tool call."""
 
-CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
-"""A function type that represents a tool call."""
+
+class CallToolFunc(Protocol):
+    """A callable that invokes an MCP tool — typically `MCPToolset.direct_call_tool` or its legacy equivalent.
+
+    Passed to user-defined [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback] functions as
+    the underlying call hook. `metadata` is keyword-only — pass it as
+    `await call_tool(name, args, metadata=...)`.
+    """
+
+    async def __call__(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolResult: ...
+
 
 ProcessToolCallback = Callable[
     [
@@ -1957,6 +1972,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self,
         name: str,
         args: dict[str, Any],
+        *,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Call a tool on the server directly.

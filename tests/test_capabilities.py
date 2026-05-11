@@ -1375,7 +1375,15 @@ Supported by:
                             'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
                             'title': 'Builtin',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [
+                                {'type': 'string'},
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'const': False, 'type': 'boolean'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Local',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],

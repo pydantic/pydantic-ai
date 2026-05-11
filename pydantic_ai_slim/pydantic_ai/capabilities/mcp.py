@@ -13,12 +13,13 @@ from pydantic_ai.toolsets import AbstractToolset
 from .builtin_or_local import BuiltinOrLocalTool
 
 try:
-    from pydantic_ai.mcp import MCPServer, MCPToolset
+    from pydantic_ai.mcp import MCPServer, MCPToolset, MCPToolsetClient
     from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     if not TYPE_CHECKING:
         MCPServer = Any  # type: ignore[assignment,misc]
         MCPToolset = Any  # type: ignore[assignment,misc]
+        MCPToolsetClient = Any  # type: ignore[assignment,misc]
         FastMCPToolset = Any  # type: ignore[assignment,misc]
 
 
@@ -55,7 +56,8 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         builtin: MCPServerTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
         | bool = True,
-        local: MCPToolset[AgentDepsT]
+        local: MCPToolsetClient
+        | MCPToolset[AgentDepsT]
         | MCPServer
         | FastMCPToolset[AgentDepsT]  # pyright: ignore[reportDeprecated]
         | Callable[..., Any]
@@ -69,6 +71,13 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
     ) -> None:
         self.url = url
         self.builtin = builtin
+        # Wide `local=` inputs (URL, Path, transport, FastMCP server, MCPConfig dict, pre-built
+        # `fastmcp.Client`, etc.) are wrapped into an `MCPToolset` here. Pre-built toolsets,
+        # callables, `False`, and `None` pass through to `BuiltinOrLocalTool` unchanged.
+        if local is not None and local is not False and not isinstance(local, AbstractToolset) and not callable(local):
+            from pydantic_ai.mcp import MCPToolset as _MCPToolset
+
+            local = _MCPToolset(local, include_instructions=True)
         self.local = local
         self.id = id
         self.authorization_token = authorization_token
@@ -118,3 +127,34 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
             allowed = set(self.allowed_tools)
             return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
         return toolset
+
+    @classmethod
+    def from_spec(
+        cls,
+        url: str,
+        *,
+        builtin: MCPServerTool | bool = True,
+        local: str | dict[str, Any] | Literal[False] | None = None,
+        id: str | None = None,
+        authorization_token: str | None = None,
+        headers: dict[str, str] | None = None,
+        allowed_tools: list[str] | None = None,
+        description: str | None = None,
+    ) -> MCP[AgentDepsT]:
+        """Construct an `MCP` capability from spec-serializable args.
+
+        Restricts the runtime-wide `local=` union to the JSON/YAML-serializable subset
+        (`str | dict | False | None`) so `AgentSpec` schema generation works. Non-serializable
+        runtime values like `fastmcp.Client`, `ClientTransport`, or pre-built `MCPToolset` instances
+        can still be passed to `MCP(...)` directly — they just can't roundtrip through a spec file.
+        """
+        return cls(
+            url,
+            builtin=builtin,
+            local=local,
+            id=id,
+            authorization_token=authorization_token,
+            headers=headers,
+            allowed_tools=allowed_tools,
+            description=description,
+        )
