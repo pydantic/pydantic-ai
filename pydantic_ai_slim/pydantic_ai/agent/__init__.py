@@ -247,7 +247,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
+        native_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
@@ -280,7 +280,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
+        native_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
@@ -311,7 +311,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
+        native_tools: Sequence[AgentNativeTool[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
@@ -363,8 +363,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Can also be overridden per run via `agent.run(output_retries=...)` (and friends).
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
-            builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
-                support certain tools. If the model doesn't support the builtin tools, an error will be raised.
+            native_tools: The native (provider-side) tools that the agent will use. This depends on the model, as some models
+                may not support certain tools. If the model doesn't support a given native tool, an error will be raised.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
@@ -429,7 +429,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities = wrap_capability_funcs(capabilities)
         for history_processor in self.history_processors:
             capabilities.append(ProcessHistory(history_processor))
-        if builtin_tools:
+
+        if 'builtin_tools' in _deprecated_kwargs:
             warnings.warn(
                 '`Agent(builtin_tools=...)` is deprecated, use `capabilities=[NativeTool(...)]` for raw '
                 'native-tool registration, or a provider-adaptive capability like `WebSearch()`, '
@@ -437,8 +438,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 PydanticAIDeprecationWarning,
                 stacklevel=3,
             )
-            for builtin_tool in builtin_tools:
-                capabilities.append(NativeToolCap(builtin_tool))
+            legacy_native_tools = _deprecated_kwargs.pop('builtin_tools')
+            if not native_tools:
+                native_tools = legacy_native_tools
+
+        for native_tool in native_tools:
+            capabilities.append(NativeToolCap(native_tool))
         if prepare_tools is not None:
             capabilities.append(PrepareTools(prepare_tools))
         if prepare_output_tools is not None:

@@ -10,7 +10,7 @@ from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName,
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import AbstractToolset
 
-from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias
+from .native_or_local import NativeOrLocalTool, _wrap_init_with_builtin_alias  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel

@@ -107,7 +107,7 @@ def test_builtin_tools_module_unknown_attribute_raises():
     import pydantic_ai.builtin_tools as bt
 
     with pytest.raises(AttributeError, match=r'has no attribute'):
-        bt.DefinitelyDoesNotExist  # pyright: ignore[reportAttributeAccessIssue]
+        bt.DefinitelyDoesNotExist
 
 
 # --- `pydantic_ai.messages` `__getattr__` deprecations ---
@@ -233,7 +233,7 @@ def test_native_or_local_tool_builtin_attr_alias_deprecated():
         PydanticAIDeprecationWarning,
         match=r'`WebSearch\.builtin` is deprecated, use `\.native`',
     ):
-        result = cap.builtin  # pyright: ignore[reportDeprecated]
+        result = cap.builtin
     assert result is cap.native
 
 
@@ -248,7 +248,7 @@ def test_native_or_local_tool_builtin_kwarg_deprecated():
         PydanticAIDeprecationWarning,
         match=r'`NativeOrLocalTool\(builtin=\.\.\.\)` is deprecated, use `native=`',
     ):
-        cap = NativeOrLocalTool(builtin=WebSearchTool())
+        cap = NativeOrLocalTool(builtin=WebSearchTool())  # pyright: ignore[reportCallIssue]
     assert isinstance(cap.native, WebSearchTool)
 
 
@@ -260,7 +260,7 @@ def test_web_search_builtin_kwarg_deprecated():
         PydanticAIDeprecationWarning,
         match=r'`WebSearch\(builtin=\.\.\.\)` is deprecated, use `native=`',
     ):
-        cap = WebSearch(builtin=WebSearchTool(), local=False)
+        cap = WebSearch(builtin=WebSearchTool(), local=False)  # pyright: ignore[reportCallIssue]
     assert isinstance(cap.native, WebSearchTool)
 
 
@@ -274,7 +274,7 @@ def test_mcp_builtin_kwarg_deprecated():
         match=r'`MCP\(builtin=\.\.\.\)` is deprecated, use `native=`',
     ):
         cap = MCP(
-            builtin=MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),
+            builtin=MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'),  # pyright: ignore[reportCallIssue]
             url='https://mcp.deepwiki.com/mcp',
             id='deepwiki',
             local=False,
@@ -325,7 +325,7 @@ def test_agent_builtin_tools_constructor_deprecated():
         match=r'`Agent\(builtin_tools=\.\.\.\)` is deprecated, '
         r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
     ):
-        agent = Agent(TestModel(), builtin_tools=[WebSearchTool()])  # pyright: ignore[reportDeprecated]
+        agent = Agent(TestModel(), builtin_tools=[WebSearchTool()])  # pyright: ignore[reportCallIssue]
 
     assert len(agent._cap_native_tools) == 1  # pyright: ignore[reportPrivateUsage]
 
@@ -376,8 +376,8 @@ async def test_agent_iter_builtin_tools_kwarg_deprecated():
         match=r'`builtin_tools=` is deprecated, use `native_tools=`',
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
-            async with agent.iter('hi', builtin_tools=[WebSearchTool()]) as agent_run:  # pyright: ignore[reportCallIssue]
-                async for _ in agent_run:  # pragma: no cover
+            async with agent.iter('hi', builtin_tools=[WebSearchTool()]) as agent_run:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+                async for _ in agent_run:  # pyright: ignore[reportUnknownVariableType]  # pragma: no cover
                     pass
 
 
@@ -391,7 +391,7 @@ def test_agent_override_builtin_tools_kwarg_deprecated():
         match=r'`builtin_tools=` is deprecated, use `native_tools=`',
     ):
         with (
-            agent.override(builtin_tools=[CodeExecutionTool()]),  # pyright: ignore[reportCallIssue]
+            agent.override(builtin_tools=[CodeExecutionTool()]),
             pytest.raises(UserError, match='TestModel does not support built-in tools'),
         ):
             agent.run_sync('hi')
