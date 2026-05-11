@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any
 
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.exceptions import UserError
@@ -46,11 +46,16 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
     - A callable (`BuiltinToolFunc`): dynamically create the builtin per-run via `RunContext`.
     """
 
-    local: Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | Literal[False] | None = None
+    local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
     """Configure the local fallback tool.
 
-    - `None` (default): auto-detect a local fallback via `_default_local`.
+    - `None` (default): use the subclass-specific default (in v1 this still auto-detects an installed
+      extra and emits a `DeprecationWarning` — set an explicit value to silence it).
+    - `True`: opt into the subclass's default named strategy (e.g. DuckDuckGo for `WebSearch`,
+      the markdownify-based tool for `WebFetch`, FastMCP for `MCP`). Subclasses without a default
+      strategy raise `UserError`.
     - `False`: disable the local fallback; only use the builtin.
+    - A `str`: use a named strategy (subclass-specific, e.g. `'duckduckgo'` for `WebSearch`).
     - A `Tool` or `AbstractToolset` instance: use this specific local tool.
     - A bare callable: automatically wrapped in a `Tool`.
     """
@@ -69,9 +74,13 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
                 )
             self.builtin = default
 
-        # Resolve local: None → default, callable → Tool
+        # Resolve local: None → default (may warn), True/str → named strategy (silent), callable → Tool
         if self.local is None:
             self.local = self._default_local()
+        elif self.local is True or isinstance(self.local, str):
+            self.local = self._resolve_local_strategy(self.local)
+        elif self.local is False:
+            pass  # explicit disable
         elif callable(self.local) and not isinstance(self.local, (Tool, AbstractToolset)):
             self.local = Tool(self.local)
 
@@ -106,6 +115,16 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
         """Auto-detect a local fallback. Override in subclasses that have one."""
         return None
 
+    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        """Resolve a named strategy (or `True` for the subclass's default) to a tool/toolset.
+
+        Override in subclasses that accept named strategies. Default raises `UserError`.
+        """
+        raise UserError(
+            f'{type(self).__name__}: no named local strategies are supported. '
+            f'Pass a `Tool`, `AbstractToolset`, or callable as `local=` instead of {name!r}.'
+        )
+
     def _requires_builtin(self) -> bool:
         """Return True if capability-level constraint fields require the builtin.
 
@@ -130,6 +149,8 @@ class BuiltinOrLocalTool(AbstractCapability[AgentDepsT]):
         local = self.local
         if local is None or local is False or self._requires_builtin():
             return None
+        # str/True is resolved to a tool/toolset in __post_init__ — narrow for the type-checker
+        assert not isinstance(local, (str, bool))
 
         # local is Tool | AbstractToolset after __post_init__ resolution
         toolset: AbstractToolset[AgentDepsT] = local if isinstance(local, AbstractToolset) else FunctionToolset([local])  # pyright: ignore[reportUnknownVariableType]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from pydantic_ai.builtin_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -44,7 +44,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         builtin: WebFetchTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[WebFetchTool | None] | WebFetchTool | None]
         | bool = True,
-        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        local: Tool[AgentDepsT] | Callable[..., Any] | bool | None = None,
         allowed_domains: list[str] | None = None,
         blocked_domains: list[str] | None = None,
         max_uses: int | None = None,
@@ -94,8 +94,7 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
 
         warnings.warn(
             'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '
-            'availability in v2. To keep this fallback, pass `local=web_fetch_tool()` explicitly '
-            '(import: `from pydantic_ai.common_tools.web_fetch import web_fetch_tool`). '
+            'availability in v2. To keep this fallback, pass `local=True`. '
             'To disable the fallback, pass `local=False`.',
             DeprecationWarning,
             stacklevel=4,
@@ -103,6 +102,26 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         return web_fetch_tool(
             allowed_domains=self.allowed_domains,
             blocked_domains=self.blocked_domains,
+        )
+
+    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        from pydantic_ai.exceptions import UserError
+
+        if name is True:
+            try:
+                from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+            except ImportError as e:
+                raise UserError(
+                    'WebFetch(local=True) requires the `web-fetch` optional group — '
+                    '`pip install "pydantic-ai-slim[web-fetch]"`.'
+                ) from e
+            return web_fetch_tool(
+                allowed_domains=self.allowed_domains,
+                blocked_domains=self.blocked_domains,
+            )
+        raise UserError(
+            f'WebFetch(local={name!r}) is not a known strategy. '
+            'Pass `local=True` for the default markdownify-based tool, or a Tool/callable directly.'
         )
 
     def _requires_builtin(self) -> bool:

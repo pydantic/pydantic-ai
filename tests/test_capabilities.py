@@ -1341,7 +1341,7 @@ Supported by:
                             'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}, {'type': 'null'}],
                             'title': 'Builtin',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -1403,7 +1403,7 @@ Supported by:
                             ],
                             'title': 'Builtin',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'allowed_domains': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Domains',
@@ -1435,7 +1435,10 @@ Supported by:
                             ],
                             'title': 'Builtin',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'const': 'duckduckgo', 'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'search_context_size': {
                             'anyOf': [{'enum': ['low', 'medium', 'high'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Search Context Size',
@@ -6269,6 +6272,43 @@ def test_mcp_v2_deprecation_warns_for_local_false_alone():
     pytest.importorskip('mcp', reason='mcp package not installed')
     with pytest.warns(DeprecationWarning, match=r'MCP\(\) defaults will change'):
         MCP(url='http://example.com/mcp', local=False)
+
+
+def test_web_search_local_string_strategy_silent():
+    """WebSearch(local='duckduckgo') resolves silently to the DDG tool — no DeprecationWarning."""
+    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        cap = WebSearch(local='duckduckgo')
+    assert cap.local is not None and cap.local is not False
+
+
+def test_web_search_local_true_silent():
+    """WebSearch(local=True) resolves silently to the default strategy (DDG)."""
+    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        cap = WebSearch(local=True)
+    assert cap.local is not None and cap.local is not False
+
+
+def test_web_fetch_local_true_silent():
+    """WebFetch(local=True) resolves silently to the default markdownify-based tool."""
+    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        cap = WebFetch(local=True)
+    assert cap.local is not None and cap.local is not False
+
+
+def test_mcp_local_true_silent_with_explicit_builtin():
+    """MCP(url=..., local=True, builtin=True) resolves silently — no DeprecationWarning."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        cap = MCP(url='http://example.com/mcp', local=True, builtin=True)
+    assert cap.local is not None and cap.local is not False
+    assert len(cap.get_builtin_tools()) == 1
 
 
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')

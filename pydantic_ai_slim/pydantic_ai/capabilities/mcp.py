@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from pydantic_ai.builtin_tools import MCPServerTool
@@ -55,7 +55,7 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool | None] | MCPServerTool | None]
         | bool
         | None = None,
-        local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        local: MCPServer | FastMCPToolset[AgentDepsT] | Callable[..., Any] | bool | None = None,
         id: str | None = None,
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
@@ -70,8 +70,11 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
 
             warnings.warn(
                 'MCP() defaults will change in v2: it will run locally via FastMCP instead of '
-                "preferring the model's built-in MCP support. Pass `builtin=True` to keep the "
-                'current builtin-preferred behavior, or `builtin=True, local=False` for builtin-only.',
+                "preferring the model's built-in MCP support. To keep the current builtin-preferred "
+                'behavior (with local as a fallback), pass `builtin=True`. To adopt the new '
+                'local-first behavior now, install the MCP extra (`pip install '
+                '"pydantic-ai-slim[mcp]"`) and pass `builtin=False`. For builtin-only (no local '
+                'fallback), pass `builtin=True, local=False`.',
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -112,6 +115,24 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         return f'mcp_server:{self._resolved_id}'
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        return self._build_local()
+
+    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        from pydantic_ai.exceptions import UserError
+
+        if name is True:
+            local = self._build_local()
+            if local is None:
+                raise UserError(
+                    'MCP(local=True) requires the MCP extra — `pip install "pydantic-ai-slim[mcp]"`.'
+                )  # pragma: no cover
+            return local
+        raise UserError(
+            f'MCP(local={name!r}) is not a known strategy. '
+            'Pass `local=True` for the default FastMCP/MCPServer transport, or a Tool/callable directly.'
+        )
+
+    def _build_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         # Merge authorization_token into headers for local connection
         local_headers = dict(self.headers or {})
         if self.authorization_token:
