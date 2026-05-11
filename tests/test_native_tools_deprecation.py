@@ -112,6 +112,53 @@ def test_builtin_tools_module_unknown_attribute_raises():
         bt.DefinitelyDoesNotExist
 
 
+# --- Top-level `pydantic_ai` `__getattr__` deprecations ---
+
+
+def test_top_level_builtin_tool_call_part_renamed():
+    """`from pydantic_ai import BuiltinToolCallPart` warns and resolves to `NativeToolCallPart`."""
+    import pydantic_ai
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`pydantic_ai\.BuiltinToolCallPart` is deprecated, use `pydantic_ai\.NativeToolCallPart`',
+    ):
+        cls = pydantic_ai.BuiltinToolCallPart
+    assert cls is pydantic_ai.NativeToolCallPart
+
+
+def test_top_level_builtin_tool_return_part_renamed():
+    """`from pydantic_ai import BuiltinToolReturnPart` warns and resolves to `NativeToolReturnPart`."""
+    import pydantic_ai
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`pydantic_ai\.BuiltinToolReturnPart` is deprecated, use `pydantic_ai\.NativeToolReturnPart`',
+    ):
+        cls = pydantic_ai.BuiltinToolReturnPart
+    assert cls is pydantic_ai.NativeToolReturnPart
+
+
+def test_top_level_agent_builtin_tool_renamed():
+    """`from pydantic_ai import AgentBuiltinTool` warns and resolves to `AgentNativeTool`."""
+    import pydantic_ai
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`pydantic_ai\.AgentBuiltinTool` is deprecated, use `pydantic_ai\.AgentNativeTool`',
+    ):
+        alias = pydantic_ai.AgentBuiltinTool
+    assert alias is pydantic_ai.AgentNativeTool
+
+
+def test_top_level_unknown_attribute_raises():
+    """Unknown attributes on `pydantic_ai` raise `AttributeError`, not a deprecation warning."""
+    import pydantic_ai
+
+    with pytest.raises(AttributeError, match=r'has no attribute'):
+        pydantic_ai.DefinitelyDoesNotExist
+
+
 # --- `pydantic_ai.messages` `__getattr__` deprecations ---
 
 
