@@ -39,8 +39,9 @@ except ImportError as e:  # pragma: no cover
 
 
 warnings.warn(
-    'The `pydantic_ai.ag_ui` module is deprecated and will be removed in v2. '
-    'Import from `pydantic_ai.ui.ag_ui` instead.',
+    'The `pydantic_ai.ag_ui` module is deprecated and will be removed in v2; '
+    'import `AGUIAdapter` from `pydantic_ai.ui.ag_ui` and `SSE_CONTENT_TYPE`/`StateDeps`/`StateHandler` from `pydantic_ai.ui` instead. '
+    'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for migration examples.',
     DeprecationWarning,
     stacklevel=2,
 )

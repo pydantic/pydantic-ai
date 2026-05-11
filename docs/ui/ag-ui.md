@@ -125,7 +125,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 ### Stand-alone ASGI app
 
 !!! warning "Deprecated in 1.x, removed in v2"
-    [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] and [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] are deprecated and will be removed in v2. Compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly instead — see the examples above.
+    [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] and [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] are deprecated and will be removed in v2. See [Migrating from deprecated APIs](#migrating-from-deprecated-apis) below for runnable before/after examples.
 
 This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agent into a stand-alone ASGI application:
 
@@ -144,6 +144,98 @@ uvicorn ag_ui_app:app
 ```
 
 This will expose the agent as an AG-UI server, and your frontend can start sending requests to it.
+
+## Migrating from deprecated APIs
+
+[`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in v2. Each one maps directly to [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] composition shown earlier on this page. The migrations below also work in 1.x today.
+
+### `pydantic_ai.ag_ui` → `pydantic_ai.ui.ag_ui` + `pydantic_ai.ui`
+
+The shim module re-exports symbols that live in two different locations in v2:
+
+- [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] is in [`pydantic_ai.ui.ag_ui`][pydantic_ai.ui.ag_ui].
+- [`SSE_CONTENT_TYPE`][pydantic_ai.ui.SSE_CONTENT_TYPE], [`StateDeps`][pydantic_ai.ui.StateDeps], [`StateHandler`][pydantic_ai.ui.StateHandler], and [`OnCompleteFunc`][pydantic_ai.ui.OnCompleteFunc] are in [`pydantic_ai.ui`][pydantic_ai.ui].
+- The `handle_ag_ui_request` and `run_ag_ui` helpers are removed in v2 — call [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] or compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly as shown in [Usage](#usage).
+
+=== "Before (deprecated)"
+
+    ```python {title="ag_ui_shim_before.py" test="skip" noqa="F401 I001"}
+    from pydantic_ai.ag_ui import AGUIAdapter, SSE_CONTENT_TYPE, StateDeps
+    ```
+
+=== "After"
+
+    ```python {title="ag_ui_shim_after.py" noqa="F401 I001"}
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, StateDeps
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+    ```
+
+### `Agent.to_ag_ui()` → `AGUIAdapter.dispatch_request`
+
+Mount a Starlette/FastAPI route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (same shape as [Handle a Starlette request](#handle-a-starlette-request)):
+
+=== "Before (deprecated)"
+
+    ```python {title="agent_to_ag_ui_before.py" test="skip"}
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+    app = agent.to_ag_ui()
+    ```
+
+=== "After"
+
+    ```python {title="agent_to_ag_ui_after.py"}
+    from fastapi import FastAPI
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    from pydantic_ai import Agent
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+
+    app = FastAPI()
+
+    @app.post('/')
+    async def run_agent(request: Request) -> Response:
+        return await AGUIAdapter.dispatch_request(request, agent=agent)
+    ```
+
+### `AGUIApp` → `Starlette` + `AGUIAdapter.dispatch_request`
+
+Build the ASGI app directly with a [`Starlette`](https://www.starlette.io/applications/) route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
+
+=== "Before (deprecated)"
+
+    ```python {title="agui_app_before.py" test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.ui.ag_ui.app import AGUIApp
+
+    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+    app = AGUIApp(agent)
+    ```
+
+=== "After"
+
+    ```python {title="agui_app_after.py"}
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from starlette.routing import Route
+
+    from pydantic_ai import Agent
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+
+
+    async def run_agent(request: Request) -> Response:
+        return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+    app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+    ```
 
 ## Design
 

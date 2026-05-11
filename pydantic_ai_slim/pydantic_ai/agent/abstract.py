@@ -1584,8 +1584,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
 
     @deprecated(
-        '`Agent.to_ag_ui()` is deprecated and will be removed in v2. '
-        'Compose `AGUIAdapter` directly instead — see `pydantic_ai.ui.ag_ui.AGUIAdapter`.'
+        '`Agent.to_ag_ui()` is deprecated and will be removed in v2; '
+        'mount `AGUIAdapter.dispatch_request(request, agent=agent)` as a Starlette/FastAPI route instead. '
+        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for migration examples.'
     )
     def to_ag_ui(
         self,
