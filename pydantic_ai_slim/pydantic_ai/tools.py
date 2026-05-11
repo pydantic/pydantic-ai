@@ -798,6 +798,21 @@ class ToolDefinition:
     this provider); otherwise it's kept as a regular function tool.
     """
 
+    tool_kind: str | None = None
+    """Discriminator for promoting message parts to a typed subclass on this tool's behalf.
+
+    Set this to the matching emitter identifier (e.g. `'tool_search'`) when the tool's
+    arguments and return value follow a cross-provider typed shape that has a registered
+    typed [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] subclass. The framework copies
+    this onto the part's `tool_kind` field and narrows the part to its typed subclass at
+    construction time on both the call side (model-emitted) and the return side (framework-
+    constructed). Leaving it `None` (the default) is the right answer for user-defined tools.
+
+    Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about
+    invocation semantics ('function' / 'output' / 'external' / 'unapproved').
+    """
+
     return_schema: ObjectJsonSchema | None = None
     """The JSON schema for the tool's return value.
 

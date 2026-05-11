@@ -70,6 +70,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
     UserContent,
@@ -4202,29 +4203,35 @@ def _build_client_tool_search_output_param(
     }
 
 
-def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolCallPart:
-    """Map a client-executed OpenAI `tool_search_call` into a regular `ToolCallPart`.
+def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> ToolSearchCallPart:
+    """Map a client-executed OpenAI `tool_search_call` into a typed `ToolSearchCallPart`.
 
     With `ToolSearchToolParam(execution='client')`, OpenAI still emits the call wrapped
     as a `tool_search_call` item but leaves execution to us: the standard agent-graph
     tool-execution path runs the local `search_tools` function and produces the
-    matching `ToolReturnPart`. We pack the model's `{"query": "..."}` payload as the
-    `{"keywords": ...}` shape the local toolset expects.
+    matching `ToolSearchReturnPart`.
 
-    Replay later detects this case from the surrounding context — the call carries
-    `tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME` and there is no matching native
-    `BuiltinToolSearchCallPart` — so no envelope marker is required.
+    OpenAI's wire shape for `tool_search_call.arguments` is `{"query": "..."}` (singular);
+    our local function tool's schema is the cross-provider `{"queries": list[str]}`
+    (matching [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]). Wrap the singular
+    `query` into a single-element `queries` list so the local dispatch validator accepts it.
+
+    Emits the typed [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
+    subclass directly — the wire shape is distinct enough that the adapter can identify
+    this as a tool-search call without going through the framework's post-hoc
+    `_narrow_tool_call_parts` pass.
     """
     call_id = item.call_id or item.id
-    args_dict = cast('dict[str, Any]', item.arguments)
-    # OpenAI passes through the schema we registered with the builtin, so its
-    # `tool_search_call.arguments` uses our local tool's `keywords` key.
-    return ToolCallPart(
+    raw_args = cast('dict[str, Any]', item.arguments)
+    query = raw_args.get('query')
+    args: ToolSearchArgs = {'queries': [query] if isinstance(query, str) else []}
+    return ToolSearchCallPart(
         tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
-        args=args_dict,
+        args=args,
         tool_call_id=call_id,
         id=item.id,
         provider_name=provider_name,
+        tool_kind='tool_search',
     )
 
 

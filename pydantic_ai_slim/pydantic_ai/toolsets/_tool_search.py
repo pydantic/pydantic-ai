@@ -115,29 +115,36 @@ def keywords_search_fn(_ctx: RunContext[Any], keywords: str, tools: Sequence[Too
 _DEFAULT_TOOL_DESCRIPTION = (
     'There are additional tools not yet visible to you.'
     ' When you need a capability not provided by your current tools,'
-    ' search here by providing specific keywords to discover and activate relevant tools.'
-    ' Each keyword is matched independently against tool names and descriptions.'
+    ' search here by providing one or more queries to discover and activate relevant tools.'
+    ' Each query is tokenized into words; tool names and descriptions are scored by token overlap.'
     ' If no tools are found, they do not exist — do not retry.'
 )
 
 
 _DEFAULT_PARAMETER_DESCRIPTION = (
-    'Space-separated keywords to match against tool names and descriptions.'
+    'List of search queries to match against tool names and descriptions.'
     ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
+    ' Each query is independently tokenized; matches across queries are unioned.'
 )
 
 
 def _search_tools_signature(
-    keywords: Annotated[str, Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
-) -> str:  # pragma: no cover - schema source only, never invoked
+    queries: Annotated[list[str], Field(description=_DEFAULT_PARAMETER_DESCRIPTION)],
+) -> list[str]:  # pragma: no cover - schema source only, never invoked
     """Source-of-truth signature for the `search_tools` function tool.
 
     Used by [`Tool`][pydantic_ai.tools.Tool] to derive the JSON schema and validator
     that go on the `ToolDefinition` we hand to the model. Wrapping the function in a
     `Tool` (rather than hand-rolling a `TypedDict` + `TypeAdapter`) keeps schema
     generation aligned with how every other tool in the framework is defined.
+
+    Parameter is `queries: list[str]` to match the cross-provider
+    [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs] shape — so the same typed
+    [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] represents both
+    model-emitted local calls AND cross-provider-synthesized history (Anthropic native
+    `bm25`/`regex` and OpenAI Responses `tool_search_call`, both normalized to `queries`).
     """
-    return keywords
+    return queries
 
 
 _SEARCH_TOOL_FN_SCHEMA = Tool(_search_tools_signature).function_schema
@@ -147,7 +154,7 @@ _SEARCH_TOOL_VALIDATOR = _SEARCH_TOOL_FN_SCHEMA.validator
 
 @cache
 def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any], Any]:
-    """Reuse the default schema/validator or splice in a custom `keywords` description.
+    """Reuse the default schema/validator or splice in a custom `queries` description.
 
     Cached per-description: with the default description the call is a constant-time
     lookup that returns the module-level schema and validator (`Tool(fn).function_schema`
@@ -165,7 +172,7 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
         return _SEARCH_TOOL_SCHEMA, _SEARCH_TOOL_VALIDATOR
 
     schema = deepcopy(_SEARCH_TOOL_SCHEMA)
-    schema['properties']['keywords']['description'] = parameter_description
+    schema['properties']['queries']['description'] = parameter_description
     return schema, _SEARCH_TOOL_VALIDATOR
 
 
@@ -281,6 +288,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
+            tool_kind='tool_search',
             unless_builtin=_TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None,
         )
 
@@ -358,24 +366,26 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], search_tool: _SearchTool[AgentDepsT]
     ) -> ToolReturn:
         """Run the configured search strategy over the deferred-but-not-yet-discovered tools."""
-        keywords = tool_args['keywords']
-        if not keywords:
-            raise ModelRetry('Please provide search keywords.')
+        queries: list[str] = tool_args.get('queries') or []
+        joined = ' '.join(queries).strip()
+        if not joined:
+            raise ModelRetry('Please provide at least one non-empty search query.')
 
         if self.search_fn is not None:
-            return await self._run_search_fn(keywords, ctx, search_tool)
-        return self._run_keywords_search(keywords, search_tool)
+            return await self._run_search_fn(joined, ctx, search_tool)
+        return self._run_keywords_search(joined, search_tool)
 
-    def _run_keywords_search(self, keywords: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Score each tool by how many query keywords appear in its name/description.
+    def _run_keywords_search(self, query: str, search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
+        """Score each tool by how many query tokens appear in its name/description.
 
         Tokenizes on alphanumeric runs for both the query and the indexed terms, so the
         top hit for "github profile" is `github_get_me` (two matches) without matching
-        substrings inside longer words like `comment` for the query `me`.
+        substrings inside longer words like `comment` for the query `me`. Multiple queries
+        are joined upstream — the same token-overlap score applies to the union.
         """
-        terms = self._search_terms(keywords, None)
+        terms = self._search_terms(query, None)
         if not terms:
-            raise ModelRetry('Please provide search keywords.')
+            raise ModelRetry('Please provide at least one non-empty search query.')
 
         scored_matches: list[tuple[int, ToolSearchMatch]] = []
         for tool_def in search_tool.corpus:
@@ -393,14 +403,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         return self._build_return(matches)
 
     async def _run_search_fn(
-        self, keywords: str, ctx: RunContext[AgentDepsT], search_tool: _SearchTool[AgentDepsT]
+        self, query: str, ctx: RunContext[AgentDepsT], search_tool: _SearchTool[AgentDepsT]
     ) -> ToolReturn:
         """Invoke a user-provided strategy, validating that the returned names are known."""
         assert self.search_fn is not None
 
         tool_defs_by_name = {tool_def.name: tool_def for tool_def in search_tool.corpus}
 
-        result = self.search_fn(ctx, keywords, search_tool.corpus)
+        result = self.search_fn(ctx, query, search_tool.corpus)
         if inspect.isawaitable(result):
             result = await result
 

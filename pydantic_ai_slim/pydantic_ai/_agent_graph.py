@@ -791,6 +791,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await req_ctx.model.request(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
                 )
+                response = _narrow_tool_call_parts(response, req_ctx.model_request_parameters)
                 _handler_response = response
                 return response
 
@@ -1985,12 +1986,19 @@ async def _call_tool(
     else:
         tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
+    # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
+    # (e.g. `'tool_search'`), promote the return part to that subclass. This keeps the
+    # typed identity intact across multi-turn history: the next turn's discovery parser /
+    # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
+    tool_def = tool_manager.get_tool_def(call.tool_name)
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         tool_call_id=call.tool_call_id,
         content=tool_return.return_value,
         metadata=tool_return.metadata,
+        tool_kind=tool_def.tool_kind if tool_def else None,
     )
+    return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
     return return_part, tool_return.content or None
 
@@ -2080,6 +2088,38 @@ def build_agent_graph(
         ),
     )
     return g.build(validate_graph_structure=False)
+
+
+def _narrow_tool_call_parts(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+
+    Lives here rather than in each model adapter so adapter authors emit base
+    `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
+    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    function handles the non-streaming `Model.request()` return path. Either path produces
+    the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
+    moment the call is emitted by the model.
+    """
+    tool_kind_by_name = {td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind}
+    if not tool_kind_by_name:
+        return response
+
+    changed = False
+    new_parts: list[_messages.ModelResponsePart] = []
+    for part in response.parts:
+        if (
+            isinstance(part, _messages.ToolCallPart)
+            and part.tool_kind is None
+            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
+        ):
+            promoted = _messages.ToolCallPart.narrow_type(replace(part, tool_kind=tool_kind))
+            new_parts.append(promoted)
+            changed = True
+        else:
+            new_parts.append(part)
+    return replace(response, parts=new_parts) if changed else response
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:

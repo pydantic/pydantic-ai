@@ -320,6 +320,7 @@ class TestStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
+        super().__post_init__()
         self._usage = _estimate_usage(_messages)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:

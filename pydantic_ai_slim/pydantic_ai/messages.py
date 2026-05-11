@@ -1930,13 +1930,13 @@ _TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = 
 # discriminator unions below can reference them and so import-time registration of
 # narrowers happens whenever `pydantic_ai.messages` is imported.
 from ._tool_search import (  # noqa: E402  (intentional late import: typed subclasses depend on the base parts above)
-    BuiltinToolSearchCallPart,
-    BuiltinToolSearchReturnPart,
+    BuiltinToolSearchCallPart as BuiltinToolSearchCallPart,
+    BuiltinToolSearchReturnPart as BuiltinToolSearchReturnPart,
     ToolSearchArgs as ToolSearchArgs,
-    ToolSearchCallPart,
+    ToolSearchCallPart as ToolSearchCallPart,
     ToolSearchMatch as ToolSearchMatch,
     ToolSearchReturnContent as ToolSearchReturnContent,
-    ToolSearchReturnPart,
+    ToolSearchReturnPart as ToolSearchReturnPart,
 )
 
 

@@ -1060,10 +1060,18 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
+    _parts_manager: ModelResponsePartsManager = field(init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        # Hand `model_request_parameters` to the parts manager so streamed `ToolCallPart`s
+        # auto-promote to their typed subclasses (via `ToolDefinition.tool_kind`) from the
+        # first `PartStartEvent` — consumers see typed parts throughout the stream rather
+        # than only after a post-stream pass. Subclasses that override `__post_init__`
+        # should call `super().__post_init__()`.
+        self._parts_manager = ModelResponsePartsManager(model_request_parameters=self.model_request_parameters)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.

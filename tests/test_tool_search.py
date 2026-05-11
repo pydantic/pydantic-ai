@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -197,8 +197,9 @@ if evals_available():
         def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
             if not ctx.output.search_args:
                 return {}
-            keywords_str = ctx.output.search_args[0].get('keywords', '')
-            return len(keywords_str.split())
+            raw: Any = ctx.output.search_args[0].get('queries')
+            queries = cast('list[str]', raw) if isinstance(raw, list) else ([str(raw)] if raw else [])
+            return len(' '.join(queries).split())
 
 
 # --- Helpers ---
@@ -320,7 +321,9 @@ def _summarize_report(report: EvaluationReport[str, EvalOutput, EvalMetadata]) -
         output: EvalOutput = case.output
         keywords: str | None = None
         if output.search_args:
-            keywords = output.search_args[0].get('keywords')
+            raw: Any = output.search_args[0].get('queries')
+            queries = cast('list[str]', raw) if isinstance(raw, list) else ([str(raw)] if raw else [])
+            keywords = ' '.join(queries) or None
         summary[case.name] = ScenarioSummary(keywords=keywords, tool_calls=output.tool_calls)
     return summary
 
@@ -515,18 +518,19 @@ async def test_search_tool_def_description_and_schema():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     assert search_tool.tool_def.description == snapshot(
-        'There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.'
+        'There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist — do not retry.'
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {
             'additionalProperties': False,
             'properties': {
-                'keywords': {
-                    'description': 'Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.',
-                    'type': 'string',
+                'queries': {
+                    'description': 'List of search queries to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized; matches across queries are unioned.',
+                    'items': {'type': 'string'},
+                    'type': 'array',
                 }
             },
-            'required': ['keywords'],
+            'required': ['queries'],
             'type': 'object',
         }
     )
@@ -541,7 +545,7 @@ async def test_tool_search_toolset_search_returns_matching_tools():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mortgage']}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
             return_value={
@@ -562,7 +566,7 @@ async def test_tool_search_toolset_search_is_case_insensitive():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'STOCK'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['STOCK']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv = cast(ToolSearchReturnContent, result.return_value)
     assert len(rv['discovered_tools']) == 1
@@ -578,7 +582,7 @@ async def test_tool_search_toolset_search_matches_description():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'cryptocurrency'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['cryptocurrency']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv = cast(ToolSearchReturnContent, result.return_value)
     assert len(rv['discovered_tools']) == 1
@@ -604,7 +608,7 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'github profile'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['github profile']}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
             return_value={
@@ -636,7 +640,7 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'stock price'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['stock price']}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
             return_value={
@@ -668,7 +672,7 @@ async def test_tool_search_toolset_does_not_match_substrings_inside_words():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'get me'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['get me']}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
             return_value={'discovered_tools': [{'name': 'github_get_me', 'description': 'Get my GitHub profile.'}]},
@@ -685,7 +689,7 @@ async def test_tool_search_toolset_search_returns_no_matches():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'nonexistent'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['nonexistent']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot(
         {'discovered_tools': [], 'message': 'No matching tools found. The tools you need may not be available.'}
@@ -701,12 +705,12 @@ async def test_tool_search_toolset_search_empty_query():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    with pytest.raises(ModelRetry, match='Please provide search keywords.'):
-        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': ''}, ctx, search_tool)
+    with pytest.raises(ModelRetry, match='Please provide at least one non-empty search query.'):
+        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['']}, ctx, search_tool)
 
 
-@pytest.mark.parametrize('keywords', ['   ', '---', '!!!', '...'])
-async def test_tool_search_toolset_search_non_tokenizable_query(keywords: str):
+@pytest.mark.parametrize('query', ['   ', '---', '!!!', '...'])
+async def test_tool_search_toolset_search_non_tokenizable_query(query: str):
     """Queries that tokenize to an empty set must retry, not match every tool."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -715,8 +719,8 @@ async def test_tool_search_toolset_search_non_tokenizable_query(keywords: str):
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    with pytest.raises(ModelRetry, match='Please provide search keywords.'):
-        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': keywords}, ctx, search_tool)
+    with pytest.raises(ModelRetry, match='Please provide at least one non-empty search query.'):
+        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': [query]}, ctx, search_tool)
 
 
 async def test_tool_search_toolset_max_results():
@@ -736,7 +740,7 @@ async def test_tool_search_toolset_max_results():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'tool'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv = cast(ToolSearchReturnContent, result.return_value)
     assert len(rv['discovered_tools']) == 10
@@ -931,7 +935,7 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     assert 'Mortgage calculated' in str(result)
 
     # The local search_tools function is also dispatchable.
-    result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'keywords': 'mortgage'}))
+    result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}))
     assert 'calculate_mortgage' in str(result)
 
 
@@ -949,7 +953,7 @@ async def test_tool_search_toolset_tool_with_none_description():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'no_desc'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['no_desc']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot({'discovered_tools': [{'name': 'no_desc_tool', 'description': None}]})
 
@@ -1156,7 +1160,7 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     ctx = _build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
     assert result.return_value == {
         'discovered_tools': [
@@ -1844,7 +1848,7 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
 
     call = ResponseToolSearchCall(
         id='ts_1',
-        arguments={'keywords': 'exchange rate'},
+        arguments={'queries': ['exchange rate']},
         call_id='call_1',
         execution='client',
         status='completed',
@@ -2474,7 +2478,7 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     ctx = _build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
     assert result.return_value == {
         'discovered_tools': [
@@ -2495,7 +2499,7 @@ async def test_tool_search_toolset_custom_search_fn_no_matches():
     ctx = _build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'anything'}, ctx, tools[_SEARCH_TOOLS_NAME])
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['anything']}, ctx, tools[_SEARCH_TOOLS_NAME])
     assert isinstance(result, ToolReturn)
     assert result.return_value == {
         'discovered_tools': [],
@@ -2846,6 +2850,131 @@ async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name(
     assert 'should_not_surface' not in discovered
 
 
+async def test_local_tool_search_stream_emits_typed_call_part_from_first_event() -> None:
+    """Streaming counterpart to the non-streaming typed-parts test. The model streams a
+    `search_tools` call name + args delta-by-delta; `ModelResponsePartsManager` materializes
+    the call part as the typed `ToolSearchCallPart` from the first `PartStartEvent` rather
+    than only after a post-stream pass. This relies on the parts manager receiving
+    `model_request_parameters` (set on `StreamedResponse.__post_init__`) so it can look up
+    `ToolDefinition.tool_kind` for the called tool name.
+
+    Forces the local-fallback path by using a model that doesn't claim native
+    `ToolSearchTool` support — otherwise the swap drops `search_tools` from
+    `function_tools` (Rule 1) on the assumption the model handles tool search
+    server-side via the native wire shape.
+    """
+    from collections.abc import AsyncIterable as _AsyncIterable
+
+    from pydantic_ai.builtin_tools import AbstractBuiltinTool
+    from pydantic_ai.messages import AgentStreamEvent, PartStartEvent
+    from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+
+    class NoNativeToolSearchModel(FunctionModel):
+        """A `FunctionModel` that drops `ToolSearchTool` from its supported builtins so the
+        framework routes through the local `search_tools` function tool rather than the
+        native wire shape."""
+
+        @classmethod
+        def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+            return frozenset(super().supported_builtin_tools()) - {ToolSearchTool}
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
+        return f'${principal * rate * years:.2f}'
+
+    call_count = 0
+
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield {0: DeltaToolCall(name='search_tools', tool_call_id='c1')}
+            yield {0: DeltaToolCall(json_args='{"queries":')}
+            yield {0: DeltaToolCall(json_args='["mortgage"]}')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        NoNativeToolSearchModel(stream_function=stream_function), toolsets=[toolset], capabilities=[ToolSearch()]
+    )
+
+    typed_at_start: list[bool] = []
+
+    async def event_stream_handler(_ctx: RunContext[None], stream: _AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
+                if event.part.tool_name == 'search_tools':
+                    typed_at_start.append(isinstance(event.part, ToolSearchCallPart))
+
+    await agent.run('find a mortgage tool', event_stream_handler=event_stream_handler)
+
+    # The first PartStartEvent for the search_tools call already carries the typed identity.
+    assert typed_at_start, 'expected a PartStartEvent for search_tools during streaming'
+    assert all(typed_at_start), f'expected typed `ToolSearchCallPart` from first event; got {typed_at_start}'
+
+
+async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
+    """End-to-end typed identity for the local `search_tools` path: the model emits a
+    base `ToolCallPart`, the framework promotes it to `ToolSearchCallPart` via the
+    declared `ToolDefinition.tool_kind`, dispatches to `ToolSearchToolset`, and constructs
+    a typed `ToolSearchReturnPart`. Both halves of the exchange carry the typed identity
+    so multi-turn discovery parsing and cross-provider replay see typed parts everywhere.
+
+    Reported by Devin's review of commit 53eb27b06 for the return side: previously the
+    framework constructed a base `ToolReturnPart` (no `tool_kind`), and neither
+    `_parse_discovered_tools`' isinstance check nor the legacy-metadata reader caught
+    it, so previously-discovered tools reverted to hidden on every subsequent turn.
+    """
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
+        return f'${principal * rate * years:.2f}'
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']})])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_function), toolsets=[toolset], capabilities=[ToolSearch()])
+    result = await agent.run('find a mortgage tool')
+
+    # The framework-promoted call part is typed (via `_narrow_tool_call_parts` post-hook).
+    search_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools'
+    ]
+    assert len(search_calls) == 1
+    assert isinstance(search_calls[0], ToolSearchCallPart)
+    assert search_calls[0].tool_kind == 'tool_search'
+
+    # The framework-constructed return part is typed (via `_call_tool` dispatch hook).
+    search_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools'
+    ]
+    assert len(search_returns) == 1
+    assert isinstance(search_returns[0], ToolSearchReturnPart)
+    assert search_returns[0].tool_kind == 'tool_search'
+    # And the typed content carries the discovery.
+    content = cast(ToolSearchReturnContent, search_returns[0].content)
+    assert {m['name'] for m in content['discovered_tools']} == {'calculate_mortgage'}
+
+
 async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
     """Histories serialized on `main` (before this PR's typed-content shape) carry the
     discovered names on `ToolReturnPart.metadata['discovered_tools']` rather than on a
@@ -2857,7 +2986,9 @@ async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
     base_toolset = FunctionToolset[None]()
 
     history: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'keywords': 'mortgage'}, tool_call_id='c1')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}, tool_call_id='c1')]
+        ),
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -2948,7 +3079,7 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     the parts originated."""
 
     history: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'keywords': 'a'}, tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['a']}, tool_call_id='c1')]),
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -2994,17 +3125,17 @@ def test_tool_search_toolset_parses_discovery_with_none_content() -> None:
 
 async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     """`ToolSearch(parameter_description=...)` flows through to the local `search_tools`
-    function tool's `keywords` parameter description on the wire — verifies the
+    function tool's `queries` parameter description on the wire — verifies the
     custom-description branch in `_build_search_args_schema` rebuilds the JSON
     schema rather than reusing the default."""
-    cap = ToolSearch[None](parameter_description='custom keyword hint')
+    cap = ToolSearch[None](parameter_description='custom queries hint')
     base_toolset = _create_function_toolset()
     wrapped = cap.get_wrapper_toolset(base_toolset)
     ctx = _build_run_context(None)
     tools = await wrapped.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
     schema = search_tool.tool_def.parameters_json_schema
-    assert schema['properties']['keywords']['description'] == 'custom keyword hint'
+    assert schema['properties']['queries']['description'] == 'custom queries hint'
 
 
 def test_prepare_messages_translates_on_non_native_model() -> None:
@@ -3608,7 +3739,7 @@ async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     ctx = _build_run_context(None)
     tools = await ts.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
-    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'weather'}, ctx, search_tool)
+    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['weather']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     return_value = cast(dict[str, Any], result.return_value)
     discovered_names = {match['name'] for match in return_value['discovered_tools']}
@@ -4214,7 +4345,7 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
     ctx = _build_run_context(None)
     tools = await ts.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
-    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
+    result = await ts.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mortgage']}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     return_value = cast(dict[str, Any], result.return_value)
     discovered_names = {match['name'] for match in return_value['discovered_tools']}
