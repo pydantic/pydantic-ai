@@ -78,19 +78,15 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
         return WebFetchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        import warnings
-
         try:
             from pydantic_ai.common_tools.web_fetch import web_fetch_tool
         except ImportError:
-            warnings.warn(
-                'WebFetch local fallback requires the `web-fetch` optional group — '
-                '`pip install "pydantic-ai-slim[web-fetch]"`. '
-                'Without it, WebFetch only works with models that support it natively.',
-                UserWarning,
-                stacklevel=2,
-            )
+            # No [web-fetch] extra → the auto-fallback path can't run, so there's no deprecated
+            # behavior to warn about. If the model also doesn't support the builtin, the user
+            # will hit a clear UserError at request time with `local=…` migration hints.
             return None
+
+        import warnings
 
         warnings.warn(
             'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '

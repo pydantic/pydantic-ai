@@ -6159,8 +6159,8 @@ def test_web_search_with_constraints():
     assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
 
 
-def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
+def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
+    """WebSearch() silently produces a builtin-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
     import builtins
 
     original_import = builtins.__import__
@@ -6171,14 +6171,14 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with pytest.warns(UserWarning, match='duckduckgo'):
-        cap = WebSearch(builtin=False)
-    # With builtin disabled and no duckduckgo, local is None
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        cap = WebSearch()
     assert cap.local is None
 
 
-def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch() silently produces a builtin-only capability when markdownify isn't installed — user isn't on the deprecated path, no warning."""
     import builtins
 
     original_import = builtins.__import__
@@ -6189,9 +6189,9 @@ def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with pytest.warns(UserWarning, match='web-fetch'):
-        cap = WebFetch(builtin=False)
-    # With builtin disabled and no markdownify, local is None
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        cap = WebFetch()
     assert cap.local is None
 
 
