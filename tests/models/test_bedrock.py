@@ -1327,29 +1327,19 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
     )
 
 
-async def test_bedrock_model_thinking_part_anthropic_adaptive(allow_model_requests: None):
+async def test_bedrock_model_thinking_part_anthropic_adaptive(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
     """Multi-turn thinking on Sonnet 4.6 via the unified `thinking` setting.
 
     Reproduces the regression from https://github.com/pydantic/pydantic-ai/issues/5304:
     pre-fix the legacy `{'type': 'enabled', 'budget_tokens': N}` shape silently disabled
     thinking on turn 2. With adaptive support wired in, both turns must emit a
     `ThinkingPart`.
-
-    Routed via the Pydantic AI Gateway (rather than direct AWS) because Anthropic's
-    Bedrock use-case approval is per-account; the gateway's account is approved.
     """
-    from pydantic_ai.providers.gateway import gateway_provider
-
-    provider = gateway_provider(
-        'bedrock',
-        api_key=os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'mock-api-key'),
-        # Pin base_url so cassette replay matches recording — `_infer_base_url` derives
-        # a region-specific URL from the api key, which diverges with a fake replay key.
-        base_url='https://gateway-us.pydantic.dev/proxy',
-    )
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-6',
-        provider=provider,
+        provider=bedrock_provider,
         settings=BedrockModelSettings(thinking=True),
     )
     agent = Agent(m)
@@ -1413,7 +1403,7 @@ Would you like more specific advice for a particular situation?\
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://gateway-us.pydantic.dev/proxy/bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1503,7 +1493,7 @@ Would you like detail on any specific method?\
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
-                provider_url='https://gateway-us.pydantic.dev/proxy/bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
