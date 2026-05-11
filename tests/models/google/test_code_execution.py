@@ -121,9 +121,7 @@ print(result)\
                     TextPart(
                         content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.',
                         provider_name='google-gla',
-                        provider_details={
-                            'thought_signature': 'EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ='
-                        },
+                        provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
@@ -209,9 +207,7 @@ print(result)\
                 delta=TextPartDelta(
                     content_delta='',
                     provider_name='google-gla',
-                    provider_details={
-                        'thought_signature': 'EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ='
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 ),
             ),
             PartEndEvent(
@@ -219,9 +215,7 @@ print(result)\
                 part=TextPart(
                     content='The result of $65465 - 6544 \\times 65464 - 6 + 1.02255$ is **-428,330,955.97745**.',
                     provider_name='google-gla',
-                    provider_details={
-                        'thought_signature': 'EoECCv4BAQw51segR8LGndTf8Iwu2QYvjZg3wHjXGTJ8+VvJoEShPtn7lNbFgBCet+vE6a6ZbZETGgJ/JgMvZDEW0HXQCmxO1XFTRHroM4UfNRA20wJKySXfhCA8sLsNJvo2y6p/6MSFQRVfwsioSuD5PaDkfOjD4uUeAn5uK1EqSM0AKNqub9VI+x6ZbmUUJCxzasqUv0YftrL71uv0Yk3kwD4UNf486pB9ZdcdeiZOzNCiNlxNX14GP9M0YHP0UnC7G5URBF36Q2w3leU/gYr6CyZaE47NGlocGW/878cdfJqsLvfHaVBe6EkAx+mebTkkO/eT85V96VQ8b/zmGQyWIDQ='
-                    },
+                    provider_details={'thought_signature': IsStr()},
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
@@ -421,9 +415,7 @@ print(f"Time in Utrecht: {now}")
                     TextPart(
                         content='Tomorrow in Utrecht will be **Friday, May 24, 2024**.',
                         provider_name='google-gla',
-                        provider_details={
-                            'thought_signature': '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'
-                        },
+                        provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(

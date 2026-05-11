@@ -14,6 +14,11 @@ from __future__ import annotations as _annotations
 import pytest
 from inline_snapshot import snapshot
 
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    WebSearchTool,
+)
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -26,11 +31,6 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from google.genai.types import ToolType
 
-    from pydantic_ai.builtin_tools import (
-        CodeExecutionTool,
-        FileSearchTool,
-        WebSearchTool,
-    )
     from pydantic_ai.models.google import (
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
     )
