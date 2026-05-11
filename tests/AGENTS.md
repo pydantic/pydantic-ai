@@ -2,12 +2,6 @@
 
 # tests/ Guidelines
 
-## v2 deprecation tests
-
-Tests for v2 deprecation warnings (and the new symbols / prefixes / kwargs they steer users toward) live in **`tests/v2/test_<theme>.py`** — not at the top level of `tests/`. The folder is the v2-specific bucket: when v2 is cut, the entire folder is reviewed and pruned together. See the root `AGENTS.md` for the broader v2 PR conventions.
-
-Existing tests that exercise the now-deprecated path stay in their original location. Add `# pyright: ignore[reportDeprecated]` on the deprecated call site (specific code, not a blanket `# type: ignore`), and add a `pyproject.toml` `[tool.pytest.ini_options].filterwarnings` entry matching the new warning text so the existing suite still passes under `filterwarnings = ['error']`. Keep the filterwarnings pattern specific (anchor on a quoted symbol name).
-
 ## Testing
 
 <!-- rule:177 -->
