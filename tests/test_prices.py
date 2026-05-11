@@ -1,62 +1,51 @@
-from collections.abc import Callable
-from unittest.mock import MagicMock
+"""Tests for `pydantic_ai.prices`."""
+# pyright: reportPrivateUsage=false
+
+import threading
 
 import pytest
-from pytest_mock import MockerFixture
+from genai_prices import UpdatePrices, update_prices
 
-import pydantic_ai.prices as prices_mod
-from pydantic_ai.prices import update_in_background
+from pydantic_ai import prices
 
 
 @pytest.fixture(autouse=True)
-def _reset_updater():
-    """Reset the module-level singleton before each test."""
-    prices_mod._updater = None  # pyright: ignore[reportPrivateUsage]
+def isolate(monkeypatch: pytest.MonkeyPatch):
+    # Both modules hold a process-wide singleton; reset both so tests
+    # don't leak threads or trip `RuntimeError` on the next `start()`.
+    def noop(self: UpdatePrices) -> None: ...
+
+    monkeypatch.setattr(UpdatePrices, 'fetch', noop)
+    prices._updater = None
+    update_prices._global_update_prices = None
     yield
-    prices_mod._updater = None  # pyright: ignore[reportPrivateUsage]
+    if prices._updater is not None:
+        prices._updater.stop()
+    prices._updater = None
+    update_prices._global_update_prices = None
 
 
-def test_update_in_background_calls_start(mocker: MockerFixture):
-    """Verify update_in_background() creates an UpdatePrices instance and starts it."""
-    mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
-    update_in_background()
-    mock_cls.assert_called_once()
-    mock_cls.return_value.start.assert_called_once()
+def _running_threads() -> int:
+    return sum(t.name == 'genai_prices:update' and t.is_alive() for t in threading.enumerate())
 
 
-def test_update_in_background_is_idempotent(mocker: MockerFixture):
-    """Verify calling update_in_background() twice only creates one updater."""
-    mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
-    update_in_background()
-    update_in_background()
-    mock_cls.assert_called_once()
+def test_starts_one_thread():
+    prices.update_in_background()
+    prices.update_in_background()
+    prices.update_in_background()
+    assert _running_threads() == 1
 
 
-def _start_raises(m: MagicMock) -> None:
-    m.return_value.start.side_effect = RuntimeError('already started')
+def test_swallows_failure_and_retries(monkeypatch: pytest.MonkeyPatch):
+    real_start = UpdatePrices.start
 
+    def boom(self: UpdatePrices, *, wait: bool | float = False) -> None:
+        raise RuntimeError
 
-def _constructor_raises(m: MagicMock) -> None:
-    m.side_effect = Exception('import failed')
+    monkeypatch.setattr(UpdatePrices, 'start', boom)
+    prices.update_in_background()
+    assert _running_threads() == 0
 
-
-@pytest.mark.parametrize(
-    'setup_mock',
-    [
-        pytest.param(_start_raises, id='start-raises'),
-        pytest.param(_constructor_raises, id='constructor-raises'),
-    ],
-)
-def test_update_in_background_suppresses_errors(mocker: MockerFixture, setup_mock: Callable[[MagicMock], None]):
-    """Verify update_in_background() silently catches exceptions and allows retry."""
-    mock_cls = mocker.patch('pydantic_ai.prices.UpdatePrices')
-    setup_mock(mock_cls)
-    update_in_background()
-
-    # After failure, a subsequent call should retry (not be stuck thinking an updater exists).
-    mock_cls.reset_mock()
-    mock_cls.side_effect = None
-    mock_cls.return_value.start.side_effect = None
-    update_in_background()
-    mock_cls.assert_called_once()
-    mock_cls.return_value.start.assert_called_once()
+    monkeypatch.setattr(UpdatePrices, 'start', real_start)
+    prices.update_in_background()
+    assert _running_threads() == 1
