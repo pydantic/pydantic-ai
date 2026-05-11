@@ -890,6 +890,102 @@ async def test_system_prompt_role(
     ]
 
 
+async def test_merge_leading_system_messages(allow_model_requests: None) -> None:
+    """When `openai_chat_supports_multiple_system_messages=False`, consecutive system messages at the start are merged."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
+    )
+    agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt\n\nextra static prompt\n\ndynamic instructions', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_single_system_message(allow_model_requests: None) -> None:
+    """With only one leading system message, the merge flag is a no-op."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_multiple_system_messages=False),
+    )
+    agent = Agent(m, system_prompt='only one')
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'only one', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_user_role_unchanged(allow_model_requests: None) -> None:
+    """When system prompts are sent as `user` role, the merge flag does not collapse them."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_multiple_system_messages=False,
+            openai_system_prompt_role='user',
+        ),
+    )
+    agent = Agent(m, system_prompt='static prompt')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    await agent.run('hello')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt', 'role': 'user'},
+        {'content': 'extra static prompt', 'role': 'user'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
+async def test_merge_leading_system_messages_disabled_by_default(allow_model_requests: None) -> None:
+    """Default behavior is preserved: multiple system messages are sent as separate messages."""
+
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, system_prompt='static prompt', instructions='dynamic instructions')
+
+    @agent.system_prompt
+    def extra_system_prompt() -> str:
+        return 'extra static prompt'
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == [
+        {'content': 'static prompt', 'role': 'system'},
+        {'content': 'extra static prompt', 'role': 'system'},
+        {'content': 'dynamic instructions', 'role': 'system'},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
 async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api_key: str):
     model = OpenAIChatModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
