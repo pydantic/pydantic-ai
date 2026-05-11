@@ -1957,14 +1957,31 @@ async def _call_tool(
     else:
         tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
 
-    return_part = _messages.ToolReturnPart(
-        tool_name=call.tool_name,
-        tool_call_id=call.tool_call_id,
-        content=tool_return.return_value,
-        metadata=tool_return.metadata,
-    )
+    # Intercept the MCP error dictionary
+    is_tool_error = False
+    part_content: Any = None
 
-    return return_part, tool_return.content or None
+    # We must check tool_result (the raw output), not tool_return!
+    if isinstance(tool_result, dict) and cast(dict[str, Any], tool_result).get('_tool_error') is True:
+        is_tool_error = True
+        part_content = cast(dict[str, Any], tool_result).get('_error_message', 'Tool failed')
+    else:
+        # Standard execution: pass the actual return value, not the object itself
+        part_content = tool_return.return_value
+
+    # Preserve all original kwargs from tool_return while injecting outcome.
+    return_part_kwargs: dict[str, Any] = {
+        'tool_name': call.tool_name,
+        'tool_call_id': call.tool_call_id,
+        'content': part_content,
+        'outcome': 'failed' if is_tool_error else 'success',
+    }
+    if tool_return.metadata is not None:
+        return_part_kwargs['metadata'] = tool_return.metadata
+
+    return_part = _messages.ToolReturnPart(**return_part_kwargs)
+
+    return return_part, getattr(tool_return, 'content', None)
 
 
 @dataclasses.dataclass

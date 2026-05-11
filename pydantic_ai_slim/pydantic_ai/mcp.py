@@ -44,7 +44,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, _utils, exceptions, messages, models
+from . import _mcp, _utils, messages, models
 
 __all__ = (
     'MCPServer',
@@ -597,36 +597,35 @@ class MCPServer(AbstractToolset[Any], ABC):
             metadata: Request-level metadata (optional)
 
         Returns:
-            The result of the tool call.
-
-        Raises:
-            ModelRetry: If the tool call fails.
+            The result of the tool call. If the tool call fails, returns a ToolReturn
+            with the error message and `_tool_error=True` in metadata, allowing the
+            LLM to receive error information as context rather than triggering a retry.
         """
         async with self:  # Ensure server is running
-            try:
-                result = await self._get_client().send_request(
-                    mcp_types.ClientRequest(
-                        mcp_types.CallToolRequest(
-                            method='tools/call',
-                            params=mcp_types.CallToolRequestParams(
-                                name=name,
-                                arguments=args,
-                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                            ),
-                        )
-                    ),
-                    mcp_types.CallToolResult,
-                )
-            except mcp_exceptions.McpError as e:
-                raise exceptions.ModelRetry(e.error.message)
+            result = await self._get_client().send_request(
+                mcp_types.ClientRequest(
+                    mcp_types.CallToolRequest(
+                        method='tools/call',
+                        params=mcp_types.CallToolRequestParams(
+                            name=name,
+                            arguments=args,
+                            _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                        ),
+                    )
+                ),
+                mcp_types.CallToolResult,
+            )
 
         if result.isError:
             message: str | None = None
-            if result.content:  # pragma: no branch
+            if result.content:
                 text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
                 message = '\n'.join(text_parts)
 
-            raise exceptions.ModelRetry(message or 'MCP tool call failed')
+            # Return error as a ToolReturn with error metadata instead of raising ModelRetry,
+            # so the LLM receives the error message as informational context
+            error_message = message or 'MCP tool call failed'
+            return {'_tool_error': True, '_error_message': error_message}
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -1481,6 +1480,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 ToolResult = (
     str
     | messages.BinaryContent
+    | messages.ToolReturn[Any]
     | dict[str, Any]
     | list[Any]
     | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]

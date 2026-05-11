@@ -21,7 +21,6 @@ from pydantic_ai import (
     InstructionPart,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -30,7 +29,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import (
-    ModelRetry,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -1765,11 +1763,12 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Error executing tool get_error: This is an error. Call the tool with True instead',
                             tool_name='get_error',
                             tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                             timestamp=IsDatetime(),
+                            outcome='failed',
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -2074,8 +2073,11 @@ async def test_client_sampling_disabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
-        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
-            await server.direct_call_tool('use_sampling', {'foo': 'bar'})
+        result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
+        assert result == {
+            '_tool_error': True,
+            '_error_message': 'Error executing tool use_sampling: Sampling not supported',
+        }
 
 
 async def test_mcp_server_raises_mcp_error(
@@ -2089,7 +2091,8 @@ async def test_mcp_server_raises_mcp_error(
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
-            with pytest.raises(ModelRetry, match='Test MCP error conversion'):
+            # McpError (transport-level errors) should propagate without being caught
+            with pytest.raises(McpError, match='Test MCP error conversion'):
                 await mcp_server.direct_call_tool('test_tool', {})
 
 
@@ -2253,9 +2256,12 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
     async with server:
-        # Should raise an error when elicitation is attempted without callback
-        with pytest.raises(ModelRetry, match='Elicitation not supported'):
-            await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+        # Should return an error dict when elicitation is attempted without callback
+        result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+        assert result == {
+            '_tool_error': True,
+            '_error_message': 'Error executing tool use_elicitation: Elicitation not supported',
+        }
 
 
 async def test_read_text_resource(run_context: RunContext[int]):
@@ -2877,3 +2883,23 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+async def test_tool_returning_error_no_message(mcp_server: MCPServerStdio) -> None:
+    """Test the fallback error message when an MCP tool fails without providing text."""
+    from unittest.mock import AsyncMock, patch
+
+    from mcp.types import CallToolResult
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
+            'send_request',
+            new=AsyncMock(return_value=CallToolResult(isError=True, content=[])),
+        ):
+            result = await mcp_server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+
+            assert result == {
+                '_tool_error': True,
+                '_error_message': 'MCP tool call failed',
+            }

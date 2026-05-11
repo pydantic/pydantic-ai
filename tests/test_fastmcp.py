@@ -28,7 +28,6 @@ with try_import() as imports_successful:
         StdioTransport,
         StreamableHttpTransport,
     )
-    from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
         AnyUrl,
@@ -545,8 +544,10 @@ class TestFastMCPToolsetToolCalling:
             tools = await toolset.get_tools(run_context)
             error_tool = tools['error_tool']
 
-            with pytest.raises(ToolError, match='This is a test error'):
-                await toolset.call_tool('error_tool', {}, run_context, error_tool)
+            result = await toolset.call_tool('error_tool', {}, run_context, error_tool)
+            assert isinstance(result, dict)
+            assert result['_tool_error'] is True
+            assert 'This is a test error' in result['_error_message']
 
     async def test_call_tool_with_error_behavior_model_retry(
         self,
