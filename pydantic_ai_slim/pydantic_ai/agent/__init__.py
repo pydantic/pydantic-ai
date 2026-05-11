@@ -2916,9 +2916,14 @@ def _capabilities_from_spec(
 
     Shared by `Agent.from_spec()` and `Agent._resolve_spec()`.
     """
+    from pydantic_ai._spec import resolve_capability_path
     from pydantic_ai.agent import spec as _agent_spec
 
-    registry = get_capability_registry(custom_capability_types)
+    resolved_types: list[type[AbstractCapability[Any]]] = [
+        resolve_capability_path(path) for path in spec.import_capability_types
+    ]
+    merged = [*resolved_types, *custom_capability_types]
+    registry = get_capability_registry(merged)
 
     def _instantiate_cap(
         cap_cls: type[AbstractCapability[Any]],
