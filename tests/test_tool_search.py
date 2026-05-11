@@ -442,7 +442,7 @@ async def test_tool_search_eval(allow_model_requests: None, case: ModelCase) -> 
     async def task(prompt: str) -> EvalOutput:
         try:
             result = await agent.run(prompt)
-        except UnexpectedModelBehavior:  # pragma: no cover
+        except UnexpectedModelBehavior:
             return EvalOutput(tool_calls=[], search_args=[])
         return EvalOutput(
             tool_calls=_extract_tool_calls(result),
