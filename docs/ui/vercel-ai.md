@@ -155,9 +155,9 @@ Tool approval responses are trusted from the request by design, matching the pro
 
 ## Tool input validation
 
-`tool-input-available` is emitted **after** the agent has validated the call against the tool's schema and any custom [`args_validator`](../tools-advanced.md#args-validator). The chunk's `input` field carries the post-coercion arguments — what the tool function will actually receive — rather than the raw text the model emitted.
+`tool-input-available` is emitted **after** the agent has validated the call against the tool's schema and any custom [`args_validator`](../tools-advanced.md#args-validator), so the chunk only fires once the args are known to be acceptable. The chunk's `input` field carries the raw arguments the model emitted.
 
-When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the original raw arguments) plus an `error_text` field rendered from the retry prompt that will be sent back to the model. The agent will retry the call (subject to the tool's `retries` setting) and emit a new `tool-input-(available|error)` for each attempt.
+When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the raw arguments) plus an `error_text` field rendered from the retry prompt that will be sent back to the model. The agent will retry the call (subject to the tool's `retries` setting) and emit a new `tool-input-(available|error)` for each attempt.
 
 ## System prompts and instructions
 
