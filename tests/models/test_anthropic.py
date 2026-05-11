@@ -10353,8 +10353,12 @@ async def test_anthropic_bedrock_count_tokens(env: TestEnv):
     model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
 
     result = await model.count_tokens(
-        [ModelRequest.user_text_prompt('hello')],
-        None,
+        [ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hello')])],
+        AnthropicModelSettings(
+            anthropic_betas=['custom-beta'],
+            extra_body={'metadata': {'purpose': 'test'}},
+            timeout=12.5,
+        ),
         ModelRequestParameters(),
     )
 
@@ -10364,13 +10368,17 @@ async def test_anthropic_bedrock_count_tokens(env: TestEnv):
     kwargs = bedrock_client.post.call_args.kwargs
     assert kwargs['cast_to'] == dict[str, object]
     assert kwargs['options']['headers']['Content-Type'] == 'application/json'
+    assert kwargs['options']['timeout'] == 12.5
     content = json.loads(kwargs['content'])
     body = base64.b64decode(content['input']['invokeModel']['body']).decode()
     assert json.loads(body) == snapshot(
         {
             'anthropic_version': 'bedrock-2023-05-31',
+            'anthropic_beta': ['custom-beta'],
             'max_tokens': 4096,
+            'metadata': {'purpose': 'test'},
             'messages': [{'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]}],
+            'system': 'You are helpful.',
         }
     )
 
@@ -10393,6 +10401,39 @@ async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
             None,
             ModelRequestParameters(),
         )
+
+
+def test_anthropic_process_response_server_tool_blocks(allow_model_requests: None):
+    response = completion_message(
+        [
+            BetaTextBlock(text='Let me search.', type='text'),
+            BetaServerToolUseBlock(
+                id='server_tool_123',
+                name='web_search',
+                input={'query': 'current date today'},
+                type='server_tool_use',
+                caller=BetaDirectCaller(type='direct'),
+            ),
+            BetaWebSearchToolResultBlock(
+                tool_use_id='server_tool_123',
+                type='web_search_tool_result',
+                content=[
+                    BetaWebSearchResultBlock(
+                        title='Current Date and Time',
+                        url='https://example.com/date',
+                        type='web_search_result',
+                        encrypted_content='dummy_encrypted_content',
+                    )
+                ],
+            ),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+
+    assert part_types_from_messages([result]) == snapshot([[TextPart, NativeToolCallPart, NativeToolReturnPart]])
 
 
 @pytest.mark.vcr()
