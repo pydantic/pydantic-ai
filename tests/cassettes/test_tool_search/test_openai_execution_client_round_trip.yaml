@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1993'
+      - '2112'
       content-type:
       - application/json
       host:
@@ -27,18 +27,22 @@ interactions:
       tool_choice: auto
       tools:
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         execution: client
         parameters:
           additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         type: tool_search
       - description: Get the current weather for a city.
@@ -85,20 +89,18 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '3081'
+      - '3254'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1203'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '2489'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -109,11 +111,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776914175
-      created_at: 1776914174
+      completed_at: 1778535245
+      created_at: 1778535244
       error: null
       frequency_penalty: 0.0
-      id: resp_0776f2bc26bc16870069e98efebda481939e63fb135457b519
+      id: resp_0b4953538bc9314d006a024b4ceca4819092faf4d90e503410
       incomplete_details: null
       instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
         discover and activate the right one before answering.
@@ -125,10 +127,12 @@ interactions:
       object: response
       output:
       - arguments:
-          keywords: exchange rate currency usd eur forex
-        call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+          queries:
+          - exchange rate currency USD EUR forex rates
+          - currency conversion USD to EUR current rate
+        call_id: call_dAz29NuO19FtcApDC03CTtjL
         execution: client
-        id: tsc_0776f2bc26bc16870069e98eff60ac8193a117a74295c420f0
+        id: tsc_0b4953538bc9314d006a024b4d658881908db889448f0b03ef
         status: completed
         type: tool_search_call
       parallel_tool_calls: true
@@ -192,31 +196,35 @@ interactions:
         strict: true
         type: function
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         execution: client
         parameters:
           additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         type: tool_search
       top_logprobs: 0
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 223
+        input_tokens: 234
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 25
+        output_tokens: 36
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 248
+        total_tokens: 270
       user: null
     status:
       code: 200
@@ -230,11 +238,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2720'
+      - '2915'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=YJi3YX5OB1EqPt4cbVIoyXBvffAq.dWG2JMrN9pIHg0-1776914174.694682-1.0.1.1-x6ULyNfuhLQlCr0f1ONjaI0Fdb71xJYuLGaAfd.JtPC2SnCFeMzLDMkYAUhIkzGVrlyR_HSspo6y16NDEmoC9UZDTqcylc_vN.JENilOtX8ZVhKo8y7czHyu2sFL9aYR
       host:
       - api.openai.com
     method: POST
@@ -245,17 +251,20 @@ interactions:
       - content: What is the current exchange rate from USD to EUR?
         role: user
       - arguments:
-          keywords: exchange rate currency usd eur forex
-        call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+          queries:
+          - exchange rate currency USD EUR forex rates
+          - currency conversion USD to EUR current rate
+        call_id: call_dAz29NuO19FtcApDC03CTtjL
         execution: client
-        id: tsc_0776f2bc26bc16870069e98eff60ac8193a117a74295c420f0
+        id: tsc_0b4953538bc9314d006a024b4d658881908db889448f0b03ef
         status: completed
         type: tool_search_call
-      - call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+      - call_id: call_dAz29NuO19FtcApDC03CTtjL
         execution: client
         status: completed
         tools:
-        - description: Look up the current exchange rate between two currencies.
+        - defer_loading: true
+          description: Look up the current exchange rate between two currencies.
           name: get_exchange_rate
           parameters:
             additionalProperties: false
@@ -268,7 +277,7 @@ interactions:
             - from_currency
             - to_currency
             type: object
-          strict: false
+          strict: true
           type: function
         type: tool_search_output
       instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
@@ -278,18 +287,22 @@ interactions:
       tool_choice: auto
       tools:
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         execution: client
         parameters:
           additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         type: tool_search
       - description: Get the current weather for a city.
@@ -336,20 +349,18 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '3234'
+      - '3353'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1239'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '1226'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -360,11 +371,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776914177
-      created_at: 1776914176
+      completed_at: 1778535248
+      created_at: 1778535247
       error: null
       frequency_penalty: 0.0
-      id: resp_0776f2bc26bc16870069e98f00b9ec8193b3ff962d32ea5a42
+      id: resp_0b4953538bc9314d006a024b4f9c588190b752cb511194f4c5
       incomplete_details: null
       instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
         discover and activate the right one before answering.
@@ -376,8 +387,8 @@ interactions:
       object: response
       output:
       - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
-        call_id: call_f1ak53o1XuudmPiM1ZaA2gox
-        id: fc_0776f2bc26bc16870069e98f01781081939dac02d73ce9e196
+        call_id: call_9E8xt6bgb3QNCE9bfIW274ih
+        id: fc_0b4953538bc9314d006a024b504d4081909cfeba7650c111d4
         name: get_exchange_rate
         namespace: get_exchange_rate
         status: completed
@@ -427,18 +438,22 @@ interactions:
         strict: true
         type: function
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         execution: client
         parameters:
           additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         type: tool_search
       - description: Look up the current exchange rate between two currencies.
@@ -464,13 +479,13 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 457
+        input_tokens: 429
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 26
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 483
+        total_tokens: 455
       user: null
     status:
       code: 200
@@ -484,11 +499,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3093'
+      - '3288'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=YJi3YX5OB1EqPt4cbVIoyXBvffAq.dWG2JMrN9pIHg0-1776914174.694682-1.0.1.1-x6ULyNfuhLQlCr0f1ONjaI0Fdb71xJYuLGaAfd.JtPC2SnCFeMzLDMkYAUhIkzGVrlyR_HSspo6y16NDEmoC9UZDTqcylc_vN.JENilOtX8ZVhKo8y7czHyu2sFL9aYR
       host:
       - api.openai.com
     method: POST
@@ -499,17 +512,20 @@ interactions:
       - content: What is the current exchange rate from USD to EUR?
         role: user
       - arguments:
-          keywords: exchange rate currency usd eur forex
-        call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+          queries:
+          - exchange rate currency USD EUR forex rates
+          - currency conversion USD to EUR current rate
+        call_id: call_dAz29NuO19FtcApDC03CTtjL
         execution: client
-        id: tsc_0776f2bc26bc16870069e98eff60ac8193a117a74295c420f0
+        id: tsc_0b4953538bc9314d006a024b4d658881908db889448f0b03ef
         status: completed
         type: tool_search_call
-      - call_id: call_4nXCfa5GwPZbrEKxJnlcOlst
+      - call_id: call_dAz29NuO19FtcApDC03CTtjL
         execution: client
         status: completed
         tools:
-        - description: Look up the current exchange rate between two currencies.
+        - defer_loading: true
+          description: Look up the current exchange rate between two currencies.
           name: get_exchange_rate
           parameters:
             additionalProperties: false
@@ -522,16 +538,16 @@ interactions:
             - from_currency
             - to_currency
             type: object
-          strict: false
+          strict: true
           type: function
         type: tool_search_output
       - arguments: '{"from_currency":"USD","to_currency":"EUR"}'
-        call_id: call_f1ak53o1XuudmPiM1ZaA2gox
-        id: fc_0776f2bc26bc16870069e98f01781081939dac02d73ce9e196
+        call_id: call_9E8xt6bgb3QNCE9bfIW274ih
+        id: fc_0b4953538bc9314d006a024b504d4081909cfeba7650c111d4
         name: get_exchange_rate
         namespace: get_exchange_rate
         type: function_call
-      - call_id: call_f1ak53o1XuudmPiM1ZaA2gox
+      - call_id: call_9E8xt6bgb3QNCE9bfIW274ih
         output: 1 USD = 0.92 EUR
         type: function_call_output
       instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
@@ -541,18 +557,22 @@ interactions:
       tool_choice: auto
       tools:
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         execution: client
         parameters:
           additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         type: tool_search
       - description: Get the current weather for a city.
@@ -599,20 +619,18 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '3220'
+      - '3321'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1036'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '930'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -623,11 +641,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776914178
-      created_at: 1776914178
+      completed_at: 1778535249
+      created_at: 1778535249
       error: null
       frequency_penalty: 0.0
-      id: resp_0776f2bc26bc16870069e98f0213fc81939a59966e977770d4
+      id: resp_0b4953538bc9314d006a024b50f9e88190bf57bedb97495c0f
       incomplete_details: null
       instructions: When you need a capability not provided by your visible tools, call the built-in tool search first to
         discover and activate the right one before answering.
@@ -641,9 +659,9 @@ interactions:
       - content:
         - annotations: []
           logprobs: []
-          text: 'Current rate: **1 USD = 0.92 EUR**.'
+          text: 1 USD = 0.92 EUR.
           type: output_text
-        id: msg_0776f2bc26bc16870069e98f02988c81939fae8304f13a21b6
+        id: msg_0b4953538bc9314d006a024b51742c819080fbea4717069e17
         phase: final_answer
         role: assistant
         status: completed
@@ -693,18 +711,22 @@ interactions:
         strict: true
         type: function
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         execution: client
         parameters:
           additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         type: tool_search
       - description: Look up the current exchange rate between two currencies.
@@ -730,13 +752,13 @@ interactions:
       top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 505
+        input_tokens: 477
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 18
+        output_tokens: 13
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 523
+        total_tokens: 490
       user: null
     status:
       code: 200

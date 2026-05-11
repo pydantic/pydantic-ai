@@ -4137,13 +4137,22 @@ def _find_search_tool_definition(
 def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:
     """Translate an OpenAI `tool_search_call.arguments` payload into `ToolSearchArgs`.
 
-    OpenAI's server-side `tool_search` returns the picked tool paths under `paths`;
-    this helper folds that into the canonical
-    [`queries`][pydantic_ai.builtin_tools.tool_search.ToolSearchArgs] slot. Other
-    input shapes pass through with an empty `queries` list so adapters never have to
-    guess.
+    OpenAI's wire shape varies by execution mode:
+
+    * **Server-executed `tool_search`**: the result carries the picked tool paths under
+      `paths`. Fold those into the canonical `queries` slot for cross-provider history.
+    * **Client-executed `tool_search` (`execution='client'`)**: arguments mirror the
+      schema we registered for the local `search_tools` function tool — already
+      `{"queries": list[str]}` — so pass through unchanged.
+
+    Empty or unrecognized shapes produce `{'queries': []}` so adapters never have to
+    guess. (Streaming-mid events carry `arguments={}` on the first item-added event;
+    that path lands here cleanly.)
     """
     if isinstance(raw, dict):
+        queries = raw.get('queries')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(queries, list):
+            return {'queries': [q for q in queries if isinstance(q, str)]}  # pyright: ignore[reportUnknownVariableType]
         paths = raw.get('paths')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if isinstance(paths, list):
             return {'queries': [p for p in paths if isinstance(p, str)]}  # pyright: ignore[reportUnknownVariableType]
@@ -4211,10 +4220,11 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: st
     tool-execution path runs the local `search_tools` function and produces the
     matching `ToolSearchReturnPart`.
 
-    OpenAI's wire shape for `tool_search_call.arguments` is `{"query": "..."}` (singular);
-    our local function tool's schema is the cross-provider `{"queries": list[str]}`
-    (matching [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs]). Wrap the singular
-    `query` into a single-element `queries` list so the local dispatch validator accepts it.
+    OpenAI's wire shape for `tool_search_call.arguments` mirrors the schema we registered
+    with the builtin — `{"queries": list[str]}` matching the cross-provider
+    [`ToolSearchArgs`][pydantic_ai.messages.ToolSearchArgs] — so we forward it
+    unchanged. Streaming-mid item events carry `arguments={}` (empty), which validates
+    fine as `{"queries": []}` per `_normalize_tool_search_args`.
 
     Emits the typed [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
     subclass directly — the wire shape is distinct enough that the adapter can identify
@@ -4222,9 +4232,7 @@ def _map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: st
     `_narrow_tool_call_parts` pass.
     """
     call_id = item.call_id or item.id
-    raw_args = cast('dict[str, Any]', item.arguments)
-    query = raw_args.get('query')
-    args: ToolSearchArgs = {'queries': [query] if isinstance(query, str) else []}
+    args = _normalize_tool_search_args(item.arguments)
     return ToolSearchCallPart(
         tool_name=TOOL_SEARCH_FUNCTION_TOOL_NAME,
         args=args,

@@ -288,7 +288,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
-            tool_kind='tool_search',
+            tool_kind=_TOOL_SEARCH_BUILTIN_ID,
             unless_builtin=_TOOL_SEARCH_BUILTIN_ID if self.search_fn is None else None,
         )
 

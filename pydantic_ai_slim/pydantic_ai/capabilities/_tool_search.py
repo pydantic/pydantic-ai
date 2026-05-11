@@ -118,7 +118,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     """Custom description for the local `search_tools` function shown to the model."""
 
     parameter_description: str | None = None
-    """Custom description for the `keywords` parameter on the local `search_tools` function."""
+    """Custom description for the `queries` parameter on the local `search_tools` function."""
 
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 

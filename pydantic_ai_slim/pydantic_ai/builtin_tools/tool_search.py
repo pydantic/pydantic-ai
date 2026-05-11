@@ -60,7 +60,7 @@ ToolSearchLocalStrategy = Literal['keywords']
 `'keywords'` opts into the built-in keyword-overlap algorithm explicitly — use this
 to lock in the current local algorithm rather than the `None` default (which lets
 Pydantic AI pick the best algorithm per provider and may change over time). Matches
-the parameter name (`keywords:`) on the local `search_tools` function tool.
+the parameter shape (`queries: list[str]`) on the local `search_tools` function tool.
 """
 
 ToolSearchFunc = Callable[

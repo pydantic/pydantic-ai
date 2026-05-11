@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1679'
+      - '1829'
       content-type:
       - application/json
       host:
@@ -62,16 +62,21 @@ interactions:
           type: object
         name: stock_lookup
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         input_schema:
+          additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -80,27 +85,34 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '734'
+      - '782'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-fd2e157e4c568a1141aa81f660708203-bda031a756cf9dde-01
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
       - text: I'll search for a tool that can help with currency exchange rates.
         type: text
       - caller:
           type: direct
-        id: toolu_0136umDbXxAs2uroc99LyysL
+        id: toolu_01FWrycbhCvuTogJufWKj2Mu
         input:
-          keywords: currency exchange rate USD EUR
+          queries:
+          - currency exchange rate USD EUR
+          - exchange rate converter
+          - foreign exchange
         name: search_tools
         type: tool_use
-      id: msg_01WwMkcq3LxcuBK3n8bDHYhe
+      id: msg_01WNhxeiWj9zshXETo91jBLt
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -114,8 +126,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 719
-        output_tokens: 72
+        input_tokens: 759
+        output_tokens: 83
         service_tier: standard
     status:
       code: 200
@@ -129,11 +141,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2153'
+      - '2351'
       content-type:
       - application/json
-      cookie:
-      - _cfuvid=6p4erBUuArm0fBY2MHRZfJLy73rvlm2AM4wkC3z7qz4-1776913774.2178977-1.0.1.1-ZfnMrQIZrq3FL2q7bCZn0wGqx3Va07OxtNqfS2rFppw
       host:
       - api.anthropic.com
     method: POST
@@ -147,9 +157,12 @@ interactions:
       - content:
         - text: I'll search for a tool that can help with currency exchange rates.
           type: text
-        - id: toolu_0136umDbXxAs2uroc99LyysL
+        - id: toolu_01FWrycbhCvuTogJufWKj2Mu
           input:
-            keywords: currency exchange rate USD EUR
+            queries:
+            - currency exchange rate USD EUR
+            - exchange rate converter
+            - foreign exchange
           name: search_tools
           type: tool_use
         role: assistant
@@ -158,7 +171,7 @@ interactions:
           - tool_name: get_exchange_rate
             type: tool_reference
           is_error: false
-          tool_use_id: toolu_0136umDbXxAs2uroc99LyysL
+          tool_use_id: toolu_01FWrycbhCvuTogJufWKj2Mu
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -202,16 +215,21 @@ interactions:
           type: object
         name: stock_lookup
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         input_schema:
+          additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -227,21 +245,25 @@ interactions:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-4a10837616300428ea75edf14844ce3e-7b93204e2c71cdf3-01
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
       - text: Great! I found a tool to get exchange rates. Let me check the current USD to EUR exchange rate for you.
         type: text
       - caller:
           type: direct
-        id: toolu_01PEtoXRRSh934Jv9Fqeowf7
+        id: toolu_01NKR8AepojeiSr76aFLLTiL
         input:
           from_currency: USD
           to_currency: EUR
         name: get_exchange_rate
         type: tool_use
-      id: msg_01QSuuUh4wUYy52emiWPViQm
+      id: msg_01RZ1YJKW5JWC51ZKmYR19sf
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -255,7 +277,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 899
+        input_tokens: 950
         output_tokens: 101
         service_tier: standard
     status:
@@ -270,11 +292,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2653'
+      - '2851'
       content-type:
       - application/json
-      cookie:
-      - _cfuvid=6p4erBUuArm0fBY2MHRZfJLy73rvlm2AM4wkC3z7qz4-1776913774.2178977-1.0.1.1-ZfnMrQIZrq3FL2q7bCZn0wGqx3Va07OxtNqfS2rFppw
       host:
       - api.anthropic.com
     method: POST
@@ -288,9 +308,12 @@ interactions:
       - content:
         - text: I'll search for a tool that can help with currency exchange rates.
           type: text
-        - id: toolu_0136umDbXxAs2uroc99LyysL
+        - id: toolu_01FWrycbhCvuTogJufWKj2Mu
           input:
-            keywords: currency exchange rate USD EUR
+            queries:
+            - currency exchange rate USD EUR
+            - exchange rate converter
+            - foreign exchange
           name: search_tools
           type: tool_use
         role: assistant
@@ -299,13 +322,13 @@ interactions:
           - tool_name: get_exchange_rate
             type: tool_reference
           is_error: false
-          tool_use_id: toolu_0136umDbXxAs2uroc99LyysL
+          tool_use_id: toolu_01FWrycbhCvuTogJufWKj2Mu
           type: tool_result
         role: user
       - content:
         - text: Great! I found a tool to get exchange rates. Let me check the current USD to EUR exchange rate for you.
           type: text
-        - id: toolu_01PEtoXRRSh934Jv9Fqeowf7
+        - id: toolu_01NKR8AepojeiSr76aFLLTiL
           input:
             from_currency: USD
             to_currency: EUR
@@ -317,7 +340,7 @@ interactions:
           - text: 1 USD = 0.92 EUR
             type: text
           is_error: false
-          tool_use_id: toolu_01PEtoXRRSh934Jv9Fqeowf7
+          tool_use_id: toolu_01NKR8AepojeiSr76aFLLTiL
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -361,16 +384,21 @@ interactions:
           type: object
         name: stock_lookup
       - description: There are additional tools not yet visible to you. When you need a capability not provided by your current
-          tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched
-          independently against tool names and descriptions. If no tools are found, they do not exist -- do not retry.
+          tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized
+          into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist --
+          do not retry.
         input_schema:
+          additionalProperties: false
           properties:
-            keywords:
-              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
-                to appear in tool names or descriptions to narrow down relevant tools.
-              type: string
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
           required:
-          - keywords
+          - queries
           type: object
         name: search_tools
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -386,8 +414,12 @@ interactions:
       - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-bd4b79f2a6ed91903b64f01cc82002b3-b324959f1927d69d-01
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
       - text: |-
@@ -395,7 +427,7 @@ interactions:
 
           This means that 1 US Dollar equals 0.92 Euros.
         type: text
-      id: msg_01J5AY8tweWMErkPotiWSAcQ
+      id: msg_01UYbgzyKYYrRWYcWDirCAZL
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -409,7 +441,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 1022
+        input_tokens: 1073
         output_tokens: 38
         service_tier: standard
     status:
