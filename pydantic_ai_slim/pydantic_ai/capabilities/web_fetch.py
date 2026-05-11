@@ -94,7 +94,8 @@ class WebFetch(BuiltinOrLocalTool[AgentDepsT]):
 
         warnings.warn(
             'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '
-            'availability in v2. To keep this fallback, pass `local=web_fetch_tool()` explicitly. '
+            'availability in v2. To keep this fallback, pass `local=web_fetch_tool()` explicitly '
+            '(import: `from pydantic_ai.common_tools.web_fetch import web_fetch_tool`). '
             'To disable the fallback, pass `local=False`.',
             DeprecationWarning,
             stacklevel=4,

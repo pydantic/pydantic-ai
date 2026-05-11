@@ -62,9 +62,10 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         description: str | None = None,
     ) -> None:
-        # In v2, MCP defaults will flip from "builtin if supported else local" to "local only".
-        # Warn when both kwargs are at their defaults (the only call-site that changes behavior).
-        if builtin is None and local is None:
+        # In v2, MCP's `builtin` default flips from True to False. Warn whenever the user is
+        # relying on the default — passing only `local=False` today gives builtin-only behavior,
+        # but in v2 that combo will raise "both can't be False" without an explicit `builtin=True`.
+        if builtin is None:
             import warnings
 
             warnings.warn(
@@ -74,7 +75,6 @@ class MCP(BuiltinOrLocalTool[AgentDepsT]):
                 DeprecationWarning,
                 stacklevel=2,
             )
-        if builtin is None:
             builtin = True
 
         self.url = url

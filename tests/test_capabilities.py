@@ -6247,13 +6247,27 @@ def test_mcp_v2_deprecation_warning():
         MCP(url='http://example.com/mcp')
 
 
-def test_mcp_v2_deprecation_silenced_with_explicit_kwargs():
-    """MCP(url=..., builtin=...) or MCP(url=..., local=...) does not emit the v2 deprecation warning."""
+def test_mcp_v2_deprecation_silenced_with_explicit_builtin():
+    """MCP(url=..., builtin=...) does not emit the v2 deprecation warning.
+
+    `local=False` alone still warns since it relies on the v1 builtin default flipping in v2.
+    """
     pytest.importorskip('mcp', reason='mcp package not installed')
     with warnings.catch_warnings():
         warnings.simplefilter('error', DeprecationWarning)
         MCP(url='http://example.com/mcp', builtin=True)
         MCP(url='http://example.com/mcp', builtin=False)
+        MCP(url='http://example.com/mcp', builtin=True, local=False)
+
+
+def test_mcp_v2_deprecation_warns_for_local_false_alone():
+    """MCP(url=..., local=False) still warns because the user relies on the v1 default of builtin=True.
+
+    In v2, builtin defaults to False, so `MCP(url=..., local=False)` would raise "both can't be False"
+    without an explicit builtin=True. The warning surfaces this silent breaking change.
+    """
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with pytest.warns(DeprecationWarning, match=r'MCP\(\) defaults will change'):
         MCP(url='http://example.com/mcp', local=False)
 
 

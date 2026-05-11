@@ -90,7 +90,8 @@ class WebSearch(BuiltinOrLocalTool[AgentDepsT]):
 
         warnings.warn(
             'WebSearch will stop auto-selecting DuckDuckGo based on package availability in v2. '
-            'To keep this fallback, pass `local=duckduckgo_search_tool()` explicitly. '
+            'To keep this fallback, pass `local=duckduckgo_search_tool()` explicitly '
+            '(import: `from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool`). '
             'To disable the fallback, pass `local=False`.',
             DeprecationWarning,
             stacklevel=4,
