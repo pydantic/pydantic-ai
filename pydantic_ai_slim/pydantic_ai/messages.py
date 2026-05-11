@@ -1286,7 +1286,7 @@ class ToolReturnPart(BaseToolReturnPart):
 
 @dataclass(repr=False)
 class NativeToolReturnPart(BaseToolReturnPart):
-    """A tool return message from a built-in tool."""
+    """A tool return message from a native tool."""
 
     _: KW_ONLY
 
@@ -1778,7 +1778,7 @@ class ToolCallPart(BaseToolCallPart):
 
 @dataclass(repr=False)
 class NativeToolCallPart(BaseToolCallPart):
-    """A tool call to a built-in tool."""
+    """A tool call to a native tool."""
 
     _: KW_ONLY
 

@@ -27,6 +27,7 @@ __all__ = (
     'NATIVE_TOOL_TYPES',
     'DEPRECATED_NATIVE_TOOLS',
     'SUPPORTED_NATIVE_TOOLS',
+    'NATIVE_TOOLS_REQUIRING_CONFIG',
 )
 
 NATIVE_TOOL_TYPES: dict[str, type[AbstractNativeTool]] = {}

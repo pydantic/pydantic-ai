@@ -88,9 +88,9 @@ class ModelProfile:
     """
 
     supported_native_tools: frozenset[type[AbstractNativeTool]] = field(default_factory=lambda: SUPPORTED_NATIVE_TOOLS)
-    """The set of builtin tool types that this model/profile supports.
+    """The set of native tool types that this model/profile supports.
 
-    Defaults to ALL builtin tools. Profile functions should explicitly
+    Defaults to ALL native tools. Profile functions should explicitly
     restrict this based on model capabilities.
     """
 

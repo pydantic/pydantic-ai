@@ -758,7 +758,7 @@ class Model(ABC, Generic[InterfaceClient]):
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if native_tools := params.native_tools:
-            # Deduplicate builtin tools
+            # Deduplicate native tools
             params = replace(
                 params,
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
@@ -796,36 +796,36 @@ class Model(ABC, Generic[InterfaceClient]):
         if params.allow_image_output and not self.profile.supports_image_output:
             raise UserError('Image output is not supported by this model.')
 
-        # Check builtin tools and handle fallback swap
+        # Check native tools and handle fallback swap
         if params.native_tools or any(t.prefer_native for t in params.function_tools):
             supported_types = self.profile.supported_native_tools
 
-            supported_builtins = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-            unsupported_builtins = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
+            supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+            unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
 
-            supported_ids = {t.unique_id for t in supported_builtins}
-            unsupported_ids = {t.unique_id for t in unsupported_builtins}
+            supported_ids = {t.unique_id for t in supported_natives}
+            unsupported_ids = {t.unique_id for t in unsupported_natives}
             fallback_ids = {t.prefer_native for t in params.function_tools if t.prefer_native}
 
-            # Error only for unsupported builtins that have no local fallback
+            # Error only for unsupported native tools that have no local fallback
             without_fallback = unsupported_ids - fallback_ids
             if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
+                unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
+                    f'Native tool(s) {unsupported_names} not supported by this model. '
                     f'Supported: {supported_names}. '
                     f'To use these tools with this model, provide a local fallback via '
-                    f'NativeOrLocalTool(builtin=..., local=...) or the `local` parameter '
+                    f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
                     f'of the capability (e.g. ImageGeneration(local=my_func)).'
                 )
 
-            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
-            # Remove unsupported builtins (their local fallbacks stay)
+            # Remove local fallback tools whose preferred native tool IS supported (model handles natively)
+            # Remove unsupported native tools (their local fallbacks stay)
             function_tools = [
                 t for t in params.function_tools if not t.prefer_native or t.prefer_native not in supported_ids
             ]
-            params = replace(params, native_tools=supported_builtins, function_tools=function_tools)
+            params = replace(params, native_tools=supported_natives, function_tools=function_tools)
 
         return model_settings, params
 
@@ -873,7 +873,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """Return the set of builtin tool types this model class can handle.
+        """Return the set of native tool types this model class can handle.
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
@@ -886,7 +886,7 @@ class Model(ABC, Generic[InterfaceClient]):
 
         We use this to compute the intersection of the profile's supported_native_tools
         and the model's implemented tools, ensuring model.profile.supported_native_tools
-        is the single source of truth for what builtin tools are actually usable.
+        is the single source of truth for what native tools are actually usable.
         """
         _profile = self._profile
         if callable(_profile):
@@ -1313,7 +1313,7 @@ def infer_model_profile(model: str) -> ModelProfile:
 
     Note: This returns the raw provider profile **without** intersecting with
     `Model.supported_native_tools()`, unlike `Model.profile`. This means the returned
-    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    profile may claim support for native tools that a specific `Model` subclass doesn't
     implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
     unregistered model strings) where the actual `Model` class isn't available.
 
