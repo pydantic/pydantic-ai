@@ -157,6 +157,23 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
+    dynamic_filtering: bool | None = None
+    """Whether to use dynamic filtering for web search results.
+
+    When enabled, the model writes and executes code to filter search results before they enter
+    the context window, reducing token consumption and improving accuracy. Requires
+    [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] to be enabled alongside it.
+
+    * `True` — always use dynamic filtering; raises an error if `CodeExecutionTool` is not present.
+    * `False` — never use dynamic filtering; use the older tool version.
+    * `None` (default) — auto-detect: use dynamic filtering when the model supports it and
+      `CodeExecutionTool` is present.
+
+    Supported by:
+
+    * Anthropic (models starting with `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-7`)
+    """
+
     kind: str = 'web_search'
     """The kind of tool."""
 
@@ -345,6 +362,23 @@ class WebFetchTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
+    """
+
+    dynamic_filtering: bool | None = None
+    """Whether to use dynamic filtering for fetched content.
+
+    When enabled, the model writes and executes code to filter fetched content before it enters
+    the context window, reducing token consumption and improving accuracy. Requires
+    [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] to be enabled alongside it.
+
+    * `True` — always use dynamic filtering; raises an error if `CodeExecutionTool` is not present.
+    * `False` — never use dynamic filtering; use the older tool version.
+    * `None` (default) — auto-detect: use dynamic filtering when the model supports it and
+      `CodeExecutionTool` is present.
+
+    Supported by:
+
+    * Anthropic (models starting with `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-opus-4-7`)
     """
 
     kind: str = 'web_fetch'

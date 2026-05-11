@@ -166,9 +166,11 @@ try:
         BetaToolUseBlockParam,
         BetaUsage,
         BetaWebFetchTool20250910Param,
+        BetaWebFetchTool20260209Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
+        BetaWebSearchTool20260209Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
@@ -968,38 +970,72 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+        has_code_execution = any(isinstance(t, CodeExecutionTool) for t in model_request_parameters.builtin_tools)
+        profile = self.profile
+        supports_dynamic = isinstance(profile, AnthropicModelProfile) and profile.anthropic_supports_dynamic_filtering
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
+                use_dynamic = _resolve_dynamic_filtering(
+                    tool.dynamic_filtering, has_code_execution, supports_dynamic, 'WebSearchTool'
+                )
                 user_location = (
                     BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
                 )
-                tools.append(
-                    BetaWebSearchTool20250305Param(
-                        name='web_search',
-                        type='web_search_20250305',
-                        max_uses=tool.max_uses,
-                        allowed_domains=tool.allowed_domains,
-                        blocked_domains=tool.blocked_domains,
-                        user_location=user_location,
+                if use_dynamic:
+                    tools.append(
+                        BetaWebSearchTool20260209Param(
+                            name='web_search',
+                            type='web_search_20260209',
+                            max_uses=tool.max_uses,
+                            allowed_domains=tool.allowed_domains,
+                            blocked_domains=tool.blocked_domains,
+                            user_location=user_location,
+                        )
                     )
-                )
+                else:
+                    tools.append(
+                        BetaWebSearchTool20250305Param(
+                            name='web_search',
+                            type='web_search_20250305',
+                            max_uses=tool.max_uses,
+                            allowed_domains=tool.allowed_domains,
+                            blocked_domains=tool.blocked_domains,
+                            user_location=user_location,
+                        )
+                    )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-                tools.append(
-                    BetaWebFetchTool20250910Param(
-                        name='web_fetch',
-                        type='web_fetch_20250910',
-                        max_uses=tool.max_uses,
-                        allowed_domains=tool.allowed_domains,
-                        blocked_domains=tool.blocked_domains,
-                        citations=citations,
-                        max_content_tokens=tool.max_content_tokens,
-                    )
+                use_dynamic = _resolve_dynamic_filtering(
+                    tool.dynamic_filtering, has_code_execution, supports_dynamic, 'WebFetchTool'
                 )
-                beta_features.add('web-fetch-2025-09-10')
+                citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+                if use_dynamic:
+                    tools.append(
+                        BetaWebFetchTool20260209Param(
+                            name='web_fetch',
+                            type='web_fetch_20260209',
+                            max_uses=tool.max_uses,
+                            allowed_domains=tool.allowed_domains,
+                            blocked_domains=tool.blocked_domains,
+                            citations=citations,
+                            max_content_tokens=tool.max_content_tokens,
+                        )
+                    )
+                else:
+                    tools.append(
+                        BetaWebFetchTool20250910Param(
+                            name='web_fetch',
+                            type='web_fetch_20250910',
+                            max_uses=tool.max_uses,
+                            allowed_domains=tool.allowed_domains,
+                            blocked_domains=tool.blocked_domains,
+                            citations=citations,
+                            max_content_tokens=tool.max_content_tokens,
+                        )
+                    )
+                    beta_features.add('web-fetch-2025-09-10')
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
@@ -2175,6 +2211,22 @@ def _get_anthropic_code_execution_tool_name(
                 return 'text_editor_code_execution'
 
     return 'code_execution'
+
+
+def _resolve_dynamic_filtering(
+    setting: bool | None,
+    has_code_execution: bool,
+    model_supports: bool,
+    tool_class_name: str,
+) -> bool:
+    if setting is True:
+        if not has_code_execution:
+            raise UserError(f'`{tool_class_name}(dynamic_filtering=True)` requires `CodeExecutionTool` to be enabled.')
+        return True
+    if setting is False:
+        return False
+    # None → auto-detect
+    return model_supports and has_code_execution
 
 
 def _map_code_execution_tool(version: AnthropicCodeExecutionToolVersion) -> BetaToolUnionParam:
