@@ -2088,10 +2088,9 @@ and [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
 - [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]: used as-is — pass an explicit part
     (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) when wrapping in `UserPromptPart`
     isn't what you want.
-- [`ModelRequest`][pydantic_ai.messages.ModelRequest]: used as-is and emitted verbatim — pass a
-    complete request when you need to control `instructions`, `metadata`, or other
-    request-level fields. Must be the only positional argument to `enqueue` (mixing
-    with strings/parts is rejected).
+- [`ModelRequest`][pydantic_ai.messages.ModelRequest]: emitted verbatim as its own message at
+    drain time — pass a complete request when you need to control `instructions`, `metadata`,
+    or other request-level fields. Must be the only positional argument to `enqueue`.
 """
 
 
@@ -2102,7 +2101,7 @@ def coerce_enqueue_item(item: EnqueueContent) -> ModelRequestPart:
     """Coerce an [`EnqueueContent`][pydantic_ai.messages.EnqueueContent] item to a [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
 
     Raises [`ValueError`][] if a [`ModelRequest`][pydantic_ai.messages.ModelRequest] is passed —
-    those go through [`build_enqueue_request`][pydantic_ai.messages.build_enqueue_request] instead.
+    those go through [`build_enqueue_payload`][pydantic_ai.messages.build_enqueue_payload] instead.
     """
     if isinstance(item, _MODEL_REQUEST_PART_TYPES):
         return item
@@ -2111,8 +2110,12 @@ def coerce_enqueue_item(item: EnqueueContent) -> ModelRequestPart:
     return UserPromptPart(content=item)
 
 
-def build_enqueue_request(items: Sequence[EnqueueContent]) -> ModelRequest:
-    """Build the [`ModelRequest`][pydantic_ai.messages.ModelRequest] that will be queued from the args to `enqueue`.
+def build_enqueue_payload(items: Sequence[EnqueueContent]) -> 'tuple[ModelRequestPart, ...] | ModelRequest':
+    """Build the payload that will be stored on a [`PendingMessage`][pydantic_ai.messages.PendingMessage] from the args to `enqueue`.
+
+    Returns the original [`ModelRequest`][pydantic_ai.messages.ModelRequest] when a single one was passed (passthrough);
+    otherwise returns a tuple of coerced parts (which the drainer merges with adjacent parts-style
+    payloads of the same priority into one synthesized request, matching what the model sees).
 
     Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
     [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
@@ -2121,7 +2124,7 @@ def build_enqueue_request(items: Sequence[EnqueueContent]) -> ModelRequest:
         raise ValueError('enqueue requires at least one item')
     if len(items) == 1 and isinstance(items[0], ModelRequest):
         return items[0]
-    return ModelRequest(parts=[coerce_enqueue_item(item) for item in items])
+    return tuple(coerce_enqueue_item(item) for item in items)
 
 
 @dataclass
@@ -2129,8 +2132,13 @@ class PendingMessage:
     """A message queued for injection into the agent conversation.
 
     Pending messages are enqueued via [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
-    or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and are
-    automatically drained at the appropriate time during the agent run.
+    or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] and are automatically
+    drained at the appropriate time during the agent run.
+
+    The `payload` is either a tuple of parts (merged with adjacent parts-style payloads of the
+    same priority into one synthesized [`ModelRequest`][pydantic_ai.messages.ModelRequest] at
+    drain time — matching what the model sees) or a complete `ModelRequest`
+    (emitted verbatim as its own message).
 
     Unlike `ModelRequest` / `ModelResponse` and the part types in this module, this is
     a plain `dataclass` rather than a Pydantic `BaseModel`: pending messages are
@@ -2138,8 +2146,9 @@ class PendingMessage:
     serializable message history.
     """
 
-    request: ModelRequest
-    """The [`ModelRequest`][pydantic_ai.messages.ModelRequest] to inject."""
+    payload: 'tuple[ModelRequestPart, ...] | ModelRequest'
+    """Either a tuple of [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s to merge
+    at drain time, or a complete [`ModelRequest`][pydantic_ai.messages.ModelRequest] to emit verbatim."""
 
     _: KW_ONLY
 
@@ -2151,8 +2160,11 @@ class PendingMessage:
     """
 
     def __post_init__(self) -> None:
-        if not self.request.parts:
-            raise ValueError('PendingMessage requires a request with at least one part')
+        if isinstance(self.payload, ModelRequest):
+            if not self.payload.parts:
+                raise ValueError('PendingMessage requires a request with at least one part')
+        elif not self.payload:
+            raise ValueError('PendingMessage requires at least one part')
 
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(

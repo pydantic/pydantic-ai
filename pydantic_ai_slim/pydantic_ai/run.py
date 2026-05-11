@@ -417,23 +417,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         *content: _messages.EnqueueContent,
         priority: _messages.PendingMessagePriority = 'steering',
     ) -> None:
-        """Enqueue content to be injected into the conversation as a [`ModelRequest`][pydantic_ai.messages.ModelRequest].
+        """Enqueue content to be injected into the conversation.
 
         Args:
-            *content: One or more items, combined into a single `ModelRequest`. Each is coerced:
+            *content: One or more items. Each is coerced:
                 a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
                 is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart];
                 an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]
                 (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is used as-is.
-                Pass a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] to enqueue
-                it verbatim (preserving `instructions`, `metadata`, etc.) — it cannot be mixed
-                with other items.
+                Adjacent parts-style enqueues of the same priority are merged into one synthesized
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] at drain time, matching what
+                the model sees on the wire.
+                Pass a single [`ModelRequest`][pydantic_ai.messages.ModelRequest] alone to enqueue
+                it verbatim (preserving `instructions`, `metadata`, etc.) as its own message —
+                it cannot be mixed with other items.
             priority: When to inject:
                 `'steering'` (default) — before the next model request.
                 `'follow_up'` — when the agent would otherwise end.
         """
-        request = _messages.build_enqueue_request(content)
-        self._graph_run.state.pending_messages.append(_messages.PendingMessage(request=request, priority=priority))
+        payload = _messages.build_enqueue_payload(content)
+        self._graph_run.state.pending_messages.append(_messages.PendingMessage(payload=payload, priority=priority))
 
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output

@@ -10891,6 +10891,93 @@ async def test_enqueue_accepts_model_request_passthrough():
     assert injected[0].run_id is not None
 
 
+async def test_enqueue_parts_style_calls_merge_into_one_request():
+    """Two parts-style `enqueue` calls of the same priority merge into one drained `ModelRequest`.
+
+    The merge matches what the model sees on the wire (consecutive `ModelRequest`s
+    get merged by `_clean_message_history`), keeping `all_messages()` aligned with
+    "what the model saw" rather than fragmented per-call.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('first hint')
+        ctx.enqueue('second hint')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
+    ]
+    assert len(drained) == 1, 'parts-style enqueues did not merge'
+    contents = [p.content for p in drained[0].parts if isinstance(p, UserPromptPart)]
+    assert contents == ['first hint', 'second hint']
+
+
+async def test_enqueue_passthrough_stays_separate_from_parts_style():
+    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('before')
+        ctx.enqueue(
+            ModelRequest(parts=[UserPromptPart(content='passthrough')], instructions='careful'),
+        )
+        ctx.enqueue('after')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # Three drained requests: synthesized(["before"]), passthrough, synthesized(["after"]).
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(
+            isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
+            for p in msg.parts
+        )
+    ]
+    assert len(drained) == 3
+    contents = [
+        next(p.content for p in r.parts if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after'))
+        for r in drained
+    ]
+    assert contents == ['before', 'passthrough', 'after']
+    # Passthrough preserved its instructions.
+    assert drained[1].instructions == 'careful'
+    assert drained[0].instructions is None
+    assert drained[2].instructions is None
+
+
 async def test_enqueue_rejects_model_request_mixed_with_parts():
     """Mixing a `ModelRequest` with strings or parts in one `enqueue` call is rejected."""
     agent = Agent(FunctionModel(simple_model_function))
