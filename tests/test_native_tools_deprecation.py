@@ -7,7 +7,7 @@ so the surface stays stable until removal in v2.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import TypeAdapter
@@ -687,3 +687,44 @@ async def test_ui_adapter_dispatch_request_builtin_tools_kwarg_deprecated():
             builtin_tools=[WebSearchTool()],
         )
     assert isinstance(response, _StreamingResponse)
+
+
+def test_ag_ui_app_builtin_tools_kwarg_routed_to_capabilities(monkeypatch: pytest.MonkeyPatch):
+    """`AGUIApp(builtin_tools=[...])` warns AND forwards the legacy tools to `dispatch_request`.
+
+    Lock-in for a Devin-flagged bug where the helper return value was previously
+    discarded, silently dropping any deprecated `builtin_tools=` before the request
+    reached the agent.
+    """
+    pytest.importorskip('starlette')
+    pytest.importorskip('pydantic_ai.ui.ag_ui')
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from pydantic_ai.ui.ag_ui.app import AGUIApp
+
+    captured: dict[str, object] = {}
+
+    async def fake_dispatch_request(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr(AGUIAdapter, 'dispatch_request', fake_dispatch_request)
+
+    agent = Agent(TestModel())
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`AGUIApp\(builtin_tools=\.\.\.\)` is deprecated, use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        app = AGUIApp(agent, builtin_tools=[WebSearchTool()])
+
+    # Find the registered POST handler and invoke it so dispatch_request runs.
+    from starlette.routing import Route
+
+    route = next(r for r in app.routes if isinstance(r, Route) and r.path == '/')
+    import asyncio
+
+    asyncio.run(route.endpoint(object()))
+
+    capabilities = captured.get('capabilities')
+    assert isinstance(capabilities, list)
+    capabilities_list = cast(list[NativeTool[Any]], capabilities)
+    assert any(isinstance(cap, NativeTool) and isinstance(cap.tool, WebSearchTool) for cap in capabilities_list)
