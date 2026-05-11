@@ -42,6 +42,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def __post_init__(self) -> None:
+        # Splat any nested `CombinedCapability` so leaves participate as siblings in the
+        # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
+        # span both `outermost` and `innermost` tiers would force `_effective_ordering`
+        # to merge them into a single position and raise `Conflicting positions`.
+        flat: list[AbstractCapability[AgentDepsT]] = []
+        for cap in self.capabilities:
+            if isinstance(cap, CombinedCapability):
+                flat.extend(cap.capabilities)
+            else:
+                flat.append(cap)
+        self.capabilities = flat
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 

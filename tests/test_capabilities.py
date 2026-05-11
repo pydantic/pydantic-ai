@@ -10088,37 +10088,34 @@ def test_ordering_preserves_user_order():
 
 
 def test_ordering_nested_combined():
-    """Ordering from leaves inside a nested CombinedCapability is respected.
+    """Leaves of a nested `CombinedCapability` participate as siblings in the outer sort.
 
-    When a CombinedCapability is nested inside another, its leaves' ordering
-    constraints are merged and applied to the outer sort. Leaves without
-    ordering constraints are skipped during the merge.
+    `CombinedCapability` auto-flattens nested instances so each leaf is sorted
+    independently rather than as a group. Here `OutermostCap` (inside `inner`)
+    sorts to the front; its former sibling `PlainCapB` is unconstrained.
     """
-    # OutermostCap declares position='outermost'; PlainCapB has no ordering.
-    # The merged effective ordering for 'inner' should be position='outermost',
-    # placing it before PlainCapA despite being listed second.
     inner = CombinedCapability([PlainCapB(), OutermostCap()])
     combined = CombinedCapability([PlainCapA(), inner])
-    assert combined.capabilities[0] is inner
+    # `inner` is splatted; `OutermostCap` sorts first.
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
 
 
 def test_ordering_nested_combined_no_constraints():
-    """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
+    """A nested `CombinedCapability` with no ordering leaves is splatted as flat siblings."""
     inner = CombinedCapability([PlainCapA(), PlainCapB()])
     combined = CombinedCapability([inner, OutermostCap()])
-    # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
-    assert combined.capabilities[0].__class__ is OutermostCap
-    assert combined.capabilities[1] is inner
+    # `OutermostCap` first; `inner`'s leaves follow as flat siblings in their original order.
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
 
 
 def test_ordering_nested_combined_wraps_without_position():
-    """A nested CombinedCapability with wraps constraints (but no position) merges correctly."""
+    """A `wraps` constraint on a leaf inside a nested `CombinedCapability` applies to that leaf only."""
     inner = CombinedCapability([PlainCapB(), WrapsACap()])
-    # WrapsACap has wraps=[PlainCapA] but no position.
-    # The nested group inherits that constraint, so it sorts before PlainCapA.
     combined = CombinedCapability([PlainCapA(), inner])
-    assert combined.capabilities[0] is inner
-    assert combined.capabilities[1].__class__ is PlainCapA
+    # `WrapsACap` is splatted and sorts before `PlainCapA`; `PlainCapB` is unconstrained
+    # and keeps its insertion order (it sits between PlainCapA and WrapsACap in the
+    # post-flatten input list, so the topo sort surfaces it first as ready-without-deps).
+    assert [type(c) for c in combined.capabilities] == [PlainCapB, WrapsACap, PlainCapA]
 
 
 def test_ordering_single_capability():
@@ -10150,11 +10147,12 @@ def test_ordering_cycle_detection():
         CombinedCapability([CycleA(), CycleB()])
 
 
-def test_ordering_conflicting_positions_in_nested():
-    """Conflicting positions in a nested CombinedCapability raise UserError."""
+def test_ordering_mixed_positions_in_nested():
+    """Mixed positions in a nested `CombinedCapability` work — leaves are splatted into the outer sort."""
     inner = CombinedCapability([OutermostCap(), InnermostCap()])
-    with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
-        CombinedCapability([inner, PlainCapA()])
+    combined = CombinedCapability([inner, PlainCapA()])
+    # `OutermostCap` first (outermost tier), `PlainCapA` middle, `InnermostCap` last (innermost tier).
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
 def test_ordering_wrapper_capability_recurses():
