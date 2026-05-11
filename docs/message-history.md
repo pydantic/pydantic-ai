@@ -408,7 +408,9 @@ Each positional argument to `enqueue` accepts the same shape as `Agent.run(user_
 a `str` or `Sequence[UserContent]` is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
 Pass an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) when you need something
-other than user-style content.
+other than user-style content. Pass a single
+[`ModelRequest`][pydantic_ai.messages.ModelRequest] when you need to control
+request-level fields like `instructions` or `metadata`.
 
 ### From inside a tool or hook
 

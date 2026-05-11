@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
-from pydantic_ai.messages import ModelRequest, PendingMessage, PendingMessagePriority
+from pydantic_ai.messages import PendingMessage, PendingMessagePriority
 from pydantic_ai.tools import RunContext
 
 if TYPE_CHECKING:
@@ -63,20 +63,26 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     ) -> ModelRequestContext:
         """Drain steering messages into the model request.
 
-        Appends to both `request_context.messages` (so the model sees them in this
+        Each pending steering message is emitted as its own [`ModelRequest`][pydantic_ai.messages.ModelRequest],
+        appended to both `request_context.messages` (so the model sees them in this
         request) and `ctx.messages` (so they persist in the agent's message history).
+        Consecutive `ModelRequest`s are merged on the wire by
+        [`_clean_message_history`][pydantic_ai._utils._clean_message_history].
         """
-        drained = _drain_by_priority(ctx.pending_messages, 'steering')
-        if drained:
-            parts = [part for msg in drained for part in msg.parts]
+        for msg in _drain_by_priority(ctx.pending_messages, 'steering'):
             # Stamp explicitly: ModelRequestNode.run() only stamps `self.request` (the
             # current node's request). The agent graph also fixes up `messages[-1]`
             # before calling the model, but relying on that is fragile — another
             # capability could append after us. Stamp at construction so the
             # persisted history always has timestamp/run_id, regardless of order.
-            steering_request = ModelRequest(parts=parts, timestamp=now_utc(), run_id=ctx.run_id)
-            request_context.messages.append(steering_request)
-            ctx.messages.append(steering_request)
+            # Leave producer-supplied values alone (e.g. when enqueueing a full ModelRequest).
+            request = msg.request
+            if request.timestamp is None:
+                request.timestamp = now_utc()
+            if request.run_id is None:
+                request.run_id = ctx.run_id
+            request_context.messages.append(request)
+            ctx.messages.append(request)
         return request_context
 
     async def after_node_run(
@@ -86,7 +92,13 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         node: _agent_graph.AgentNode[Any, Any],
         result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
     ) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
-        """Drain follow-up messages when the agent would otherwise end."""
+        """Drain follow-up messages when the agent would otherwise end.
+
+        Each pending follow-up becomes its own [`ModelRequest`][pydantic_ai.messages.ModelRequest].
+        The last one becomes the redirect [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s
+        request; any earlier ones are appended to `ctx.messages` so they appear in
+        history before the redirect.
+        """
         from pydantic_ai._agent_graph import ModelRequestNode
         from pydantic_graph import End
 
@@ -97,11 +109,17 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         if not follow_ups:
             return result
 
-        parts = [part for msg in follow_ups for part in msg.parts]
-        # No explicit timestamp/run_id needed: `ModelRequestNode._prepare_request`
+        *extras, final = follow_ups
+        for extra in extras:
+            request = extra.request
+            if request.timestamp is None:
+                request.timestamp = now_utc()
+            if request.run_id is None:
+                request.run_id = ctx.run_id
+            ctx.messages.append(request)
+        # No explicit stamping for `final.request`: `ModelRequestNode._prepare_request`
         # stamps `self.request` during the graph lifecycle (see `_agent_graph.py`
         # `self.request.timestamp = now_utc()` / `self.request.run_id = ...`).
-        # The steering path stamps explicitly because it appends directly to
+        # The earlier-extras path stamps explicitly because it appends directly to
         # `messages` outside that lifecycle.
-        request = ModelRequest(parts=parts)
-        return ModelRequestNode(request=request)
+        return ModelRequestNode(request=final.request)

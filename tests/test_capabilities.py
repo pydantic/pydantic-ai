@@ -10719,12 +10719,12 @@ async def test_enqueue_rejects_empty_parts():
 
     @agent.tool
     def from_tool(ctx: RunContext[None]) -> str:
-        with pytest.raises(ValueError, match='PendingMessage requires at least one'):
+        with pytest.raises(ValueError, match='enqueue requires at least one item'):
             ctx.enqueue()
         return 'ok'
 
     async with agent.iter('hi') as agent_run:
-        with pytest.raises(ValueError, match='PendingMessage requires at least one'):
+        with pytest.raises(ValueError, match='enqueue requires at least one item'):
             agent_run.enqueue()
         async for _ in agent_run:
             pass
@@ -10850,6 +10850,62 @@ async def test_enqueue_accepts_mixed_strings_and_parts():
     )
     kinds = [type(p).__name__ for p in steering_request.parts]
     assert kinds == ['UserPromptPart', 'SystemPromptPart']
+
+
+async def test_enqueue_accepts_model_request_passthrough():
+    """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    custom = ModelRequest(
+        parts=[UserPromptPart(content='wire-level payload')],
+        instructions='do this carefully',
+        metadata={'origin': 'webhook-42'},
+    )
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue(custom)
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and msg.instructions == 'do this carefully'
+    ]
+    assert len(injected) == 1
+    assert injected[0].metadata == {'origin': 'webhook-42'}
+    # Drain should have stamped timestamp/run_id since the user didn't set them.
+    assert injected[0].timestamp is not None
+    assert injected[0].run_id is not None
+
+
+async def test_enqueue_rejects_model_request_mixed_with_parts():
+    """Mixing a `ModelRequest` with strings or parts in one `enqueue` call is rejected."""
+    agent = Agent(FunctionModel(simple_model_function))
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        with pytest.raises(ValueError, match='ModelRequest must be enqueued alone'):
+            ctx.enqueue('hint', ModelRequest(parts=[UserPromptPart(content='wire')]))
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        with pytest.raises(ValueError, match='ModelRequest must be enqueued alone'):
+            agent_run.enqueue(ModelRequest(parts=[UserPromptPart(content='wire')]), 'hint')
+        async for _ in agent_run:
+            pass
 
 
 # --- Output hook tests ---
