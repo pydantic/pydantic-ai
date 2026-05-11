@@ -780,7 +780,7 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: RunContext, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]` | Observe, filter, or transform streamed events |
 
-```python {title="event_stream_example.py" test="skip"}
+```python {title="event_stream_example.py"}
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
@@ -788,10 +788,10 @@ from typing import Any
 from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     PartStartEvent,
     TextPart,
+    ToolCallEvent,
+    ToolResultEvent,
 )
 
 
@@ -806,14 +806,19 @@ class StreamAuditor(AbstractCapability[Any]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         async for event in stream:
-            if isinstance(event, FunctionToolCallEvent):
+            if isinstance(event, ToolCallEvent):
                 print(f'Tool called: {event.part.tool_name}')
-            elif isinstance(event, FunctionToolResultEvent):
-                print(f'Tool result: {event.tool_return.content!r}')
+            elif isinstance(event, ToolResultEvent):
+                print(f'Tool result: {event.part.content!r}')
             elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                 print(f'Text: {event.part.content!r}')
             yield event
 ```
+
+Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently.
+
+!!! note "Migration from `FunctionToolCallEvent` / `FunctionToolResultEvent`"
+    For output tool calls, match `OutputToolCallEvent` / `OutputToolResultEvent` (or the shared `ToolCallEvent` / `ToolResultEvent` bases). `FunctionToolCallEvent` / `FunctionToolResultEvent` will stop firing for output tool calls in v2.
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 

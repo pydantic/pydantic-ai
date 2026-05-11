@@ -31,6 +31,8 @@ from pydantic_ai import (
     ModelResponse,
     ModelSettings,
     MultiModalContent,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -513,7 +515,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -540,7 +542,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -621,7 +623,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"result": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -772,6 +774,34 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
@@ -910,7 +940,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_country',
                     content='Mexico',
                     tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
@@ -918,7 +948,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 )
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_product_name',
                     content='Pydantic AI',
                     tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
@@ -960,7 +990,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_weather',
                     content='sunny',
                     tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
@@ -1138,6 +1168,22 @@ async def test_complex_agent_run(allow_model_requests: None):
                     args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
                 ),
+            ),
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                    timestamp=IsDatetime(),
+                )
             ),
         ]
     )
@@ -2676,7 +2722,7 @@ web_search_model = OpenAIResponsesModel(
 web_search_agent = Agent(
     web_search_model,
     name='web_search_agent',
-    builtin_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
+    native_tools=[WebSearchTool(user_location=WebSearchUserLocation(city='Mexico City', country='MX'))],
 )
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
@@ -3250,7 +3296,7 @@ code_execution_builtin_model = _CodeExecutionOnlyModel(custom_output_text='code 
 builtin_tool_agent = Agent(
     web_search_builtin_model,
     name='builtin_tool_dynamic_agent',
-    builtin_tools=[_select_builtin_tool],
+    native_tools=[_select_builtin_tool],
 )
 
 builtin_tool_temporal_agent = TemporalAgent(
