@@ -16,12 +16,14 @@ from ...messages import (
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    OutputToolCallEvent,
     OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -98,7 +100,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
-    _invalid_function_tool_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
+    _invalidated_tool_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
+    """Calls whose `tool-input-available` chunk was suppressed because validation failed.
+
+    Keyed by tool call ID; the part carries the raw args and provider metadata that the
+    later `tool-input-error` chunk needs to mirror what the suppressed `tool-input-available`
+    would have shown. The entry is popped by `_handle_tool_result` when the matching
+    `RetryPromptPart` arrives, so `tool-input-error` is emitted there instead of
+    `tool-output-error`.
+    """
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -240,20 +250,38 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         )
 
     async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseChunk]:
-        part = event.part
-        provider_metadata = dump_provider_metadata(
-            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
-        )
+        async for chunk in self._handle_tool_call(event):
+            yield chunk
 
+    async def handle_output_tool_call(self, event: OutputToolCallEvent) -> AsyncIterator[BaseChunk]:
+        async for chunk in self._handle_tool_call(event):
+            yield chunk
+
+    async def _handle_tool_call(self, event: ToolCallEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+
+        # Validation failed: suppress `tool-input-available` and remember the part so
+        # `_handle_tool_result` can emit `tool-input-error` (with the validation message)
+        # when the matching `RetryPromptPart` arrives.
         if event.args_valid is False:
-            self._invalid_function_tool_calls[part.tool_call_id] = part
-        else:
-            yield ToolInputAvailableChunk(
-                tool_call_id=part.tool_call_id,
-                tool_name=part.tool_name,
-                input=part.args_as_dict(),
-                provider_metadata=provider_metadata,
-            )
+            self._invalidated_tool_calls[part.tool_call_id] = part
+            return
+
+        # `args_valid is None` covers resume of non-`ToolApproved` deferred results
+        # (`ToolDenied`, `ModelRetry`, direct return) and the output-tool
+        # end-strategy-skipped path. The original `tool-input-available` already fired
+        # on the first agent run; re-emitting here would be misleading.
+        if event.args_valid is None:
+            return
+
+        yield ToolInputAvailableChunk(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            input=part.args_as_dict(),
+            provider_metadata=dump_provider_metadata(
+                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            ),
+        )
 
     async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseChunk]:
         yield ToolInputAvailableChunk(
@@ -293,25 +321,24 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id
 
+        invalidated_part = self._invalidated_tool_calls.pop(tool_call_id, None)
+
         if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
+        elif isinstance(part, RetryPromptPart) and invalidated_part is not None:
+            yield ToolInputErrorChunk(
+                tool_call_id=tool_call_id,
+                tool_name=invalidated_part.tool_name,
+                input=invalidated_part.args_as_dict(),
+                provider_metadata=dump_provider_metadata(
+                    id=invalidated_part.id,
+                    provider_name=invalidated_part.provider_name,
+                    provider_details=invalidated_part.provider_details,
+                ),
+                error_text=part.model_response(),
+            )
         elif isinstance(part, RetryPromptPart):
-            if part.tool_call_id in self._invalid_function_tool_calls:
-                tool_call_part = self._invalid_function_tool_calls.pop(part.tool_call_id)
-                provider_metadata = dump_provider_metadata(
-                    id=part.tool_call_id,
-                    provider_name=tool_call_part.provider_name,
-                    provider_details=tool_call_part.provider_details,
-                )
-                yield ToolInputErrorChunk(
-                    tool_call_id=part.tool_call_id,
-                    tool_name=tool_call_part.tool_name,
-                    input=tool_call_part.args_as_dict(),
-                    provider_metadata=provider_metadata,
-                    error_text=part.model_response(),
-                )
-            else:
-                yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:

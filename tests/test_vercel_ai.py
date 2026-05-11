@@ -28,6 +28,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -2272,15 +2274,6 @@ async def test_run_stream_response_error():
                 'toolCallId': IsStr(),
                 'toolName': 'unknown_tool',
                 'input': {},
-                'errorText': """\
-Unknown tool name: 'unknown_tool'. No tools available.
-
-Fix the errors and try again.\
-""",
-            },
-            {
-                'type': 'tool-output-error',
-                'toolCallId': IsStr(),
                 'errorText': """\
 Unknown tool name: 'unknown_tool'. No tools available.
 
@@ -6264,8 +6257,9 @@ async def test_event_stream_text_with_provider_metadata():
 
 
 async def test_event_stream_tool_input_error_with_provider_metadata():
-    """`FunctionToolCallEvent` with `args_valid=False` should produce `tool-input-error` carrying
-    the validation error text and the part's provider metadata."""
+    """`FunctionToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
+    matching `FunctionToolResultEvent(RetryPromptPart)` then produces a `tool-input-error` chunk
+    carrying the part's raw args, provider metadata, and the retry prompt as `errorText`."""
 
     async def event_generator():
         part = ToolCallPart(
@@ -6279,6 +6273,9 @@ async def test_event_stream_tool_input_error_with_provider_metadata():
         yield PartStartEvent(index=0, part=part)
         yield PartEndEvent(index=0, part=part)
         yield FunctionToolCallEvent(part, args_valid=False)
+        yield FunctionToolResultEvent(
+            RetryPromptPart(content='Validation failed: bad arg', tool_name='my_tool', tool_call_id='tc_err')
+        )
 
     request = SubmitMessage(
         id='foo',
@@ -6359,6 +6356,142 @@ async def test_event_stream_tool_call_part_end_does_not_emit_input_available():
     assert 'tool-input-error' not in chunk_types
     assert chunk_types == snapshot(
         ['start', 'start-step', 'tool-input-start', 'tool-input-delta', 'finish-step', 'finish']
+    )
+
+
+async def test_event_stream_function_tool_args_valid_none_does_not_emit_input_chunk():
+    """A `FunctionToolCallEvent` with `args_valid=None` (resume of `ToolDenied` / `ModelRetry` /
+    direct return deferred result) must not emit `tool-input-available` — the chunk already
+    fired on the original agent run, and re-announcing it on resume would be misleading."""
+
+    async def event_generator():
+        part = ToolCallPart(tool_name='my_tool', tool_call_id='tc_none', args={'key': 'value'})
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    chunk_types: list[str] = [e['type'] for e in events if isinstance(e, dict)]
+    assert 'tool-input-available' not in chunk_types
+    assert 'tool-input-error' not in chunk_types
+
+
+async def test_event_stream_output_tool_input_available():
+    """An `OutputToolCallEvent` with `args_valid=True` produces `tool-input-available` post-validation,
+    matching the function-tool path so output tools surface uniformly to the frontend."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_ok',
+            args={'value': 'hello'},
+            id='output_tool_id',
+            provider_name='openai',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=True)
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_ok',
+                'toolName': 'final_result',
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'output_tool_id', 'provider_name': 'openai'},
+                },
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_ok', 'inputTextDelta': '{"value":"hello"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'out_ok',
+                'toolName': 'final_result',
+                'input': {'value': 'hello'},
+                'providerMetadata': {
+                    'pydantic_ai': {'id': 'output_tool_id', 'provider_name': 'openai'},
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_output_tool_input_error():
+    """An `OutputToolCallEvent` with `args_valid=False` suppresses `tool-input-available`; the
+    matching `OutputToolResultEvent(RetryPromptPart)` produces `tool-input-error` (not
+    `tool-output-error`) so the chunk type reflects the actual cause (validation, not execution)."""
+
+    async def event_generator():
+        part = ToolCallPart(
+            tool_name='final_result',
+            tool_call_id='out_err',
+            args={'value': 'bad'},
+            id='output_tool_id',
+        )
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield OutputToolCallEvent(part, args_valid=False)
+        yield OutputToolResultEvent(
+            RetryPromptPart(content='Output validation failed', tool_name='final_result', tool_call_id='out_err')
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'out_err',
+                'toolName': 'final_result',
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_err', 'inputTextDelta': '{"value":"bad"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'out_err',
+                'toolName': 'final_result',
+                'input': {'value': 'bad'},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'errorText': 'Output validation failed\n\nFix the errors and try again.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
     )
 
 

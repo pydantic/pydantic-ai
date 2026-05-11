@@ -1653,10 +1653,7 @@ async def process_tool_calls(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
             validated_calls[call.tool_call_id] = validated
-            yield _messages.FunctionToolCallEvent(
-                call,
-                args_valid=validated.args_valid,
-            )
+            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
         async for event in _call_tools(
             tool_manager=tool_manager,
@@ -1692,10 +1689,7 @@ async def process_tool_calls(  # noqa: C901
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
-                yield _messages.FunctionToolCallEvent(
-                    call,
-                    args_valid=validated.args_valid,
-                )
+                yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
                 if validated.args_valid:
                     if call in tool_calls_by_kind['external']:
