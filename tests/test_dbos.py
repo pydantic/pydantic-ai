@@ -58,7 +58,9 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio  # pyright: ignore[reportDeprecated]
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPServerStdio, MCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -1607,6 +1609,43 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
 
     instructions = await _uninit_instructions_toolset.get_instructions(run_context)
     assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
+
+
+# Parallel to `mcp_instructions_agent` above, using `MCPToolset` instead of `MCPServerStdio`.
+# Exercises the `DBOSMCPToolset` wrapper's `get_instructions` step path.
+mcptoolset_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcptoolset_instructions_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            include_instructions=True,
+            id='mcp',
+        )
+    ],
+)
+mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)
+
+
+async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
+    """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper.
+
+    Parallel to `test_dbos_mcp_toolset_instructions_propagate`; exercises the new
+    `MCPToolset`/`DBOSMCPToolset` path instead of the legacy `MCPServerStdio`/`DBOSMCPServer`.
+    """
+    result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
+    assert result.output == snapshot('Be a helpful assistant.')
+
+
+def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
+    """`DBOSAgent` wraps `MCPToolset` in `DBOSMCPToolset`."""
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
+
+    toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
+    agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
+    dbos_agent = DBOSAgent(agent)
+    wrapped = next(ts for ts in dbos_agent._toolsets if isinstance(ts, DBOSMCPToolset))  # pyright: ignore[reportPrivateUsage]
+    assert wrapped.wrapped is toolset
 
 
 fastmcp_agent = Agent(

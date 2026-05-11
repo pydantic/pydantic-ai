@@ -88,6 +88,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
+    from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
@@ -113,7 +114,9 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP  # pyright: ignore[reportDeprecated]
+    from fastmcp.client.transports import StdioTransport
+
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP, MCPToolset  # pyright: ignore[reportDeprecated]
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -1347,6 +1350,56 @@ async def test_mcp_dynamic_toolset_in_workflow(allow_model_requests: None, clien
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
 
 
+# Parallel to `mcp_dynamic_toolset_agent` above, but using `MCPToolset` instead of
+# `MCPServerStreamableHTTP`. Exercises `TemporalMCPToolset` inside a `DynamicToolset`.
+mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
+
+
+@mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
+def my_mcptoolset_dynamic_toolset(ctx: RunContext[None]) -> MCPToolset[None]:
+    """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
+    return MCPToolset('https://mcp.deepwiki.com/mcp')
+
+
+mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(
+    mcptoolset_dynamic_toolset_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MCPToolsetDynamicToolsetAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcptoolset_dynamic_toolset_temporal_agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.skip(
+    reason='Needs a recorded cassette for the deepwiki MCP call. Record locally with '
+    '`pytest --record-mode=once tests/test_temporal.py::test_mcptoolset_dynamic_toolset_in_workflow`.'
+)
+async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None, client: Client):
+    """`@agent.toolset` returning an `MCPToolset` works in a Temporal workflow.
+
+    Parallel to `test_mcp_dynamic_toolset_in_workflow`; verifies the `MCPToolset`/`TemporalMCPToolset`
+    pair handles `DynamicToolset` lifecycle the same way the legacy `MCPServerStreamableHTTP` does.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPToolsetDynamicToolsetAgentWorkflow],
+        plugins=[AgentPlugin(mcptoolset_dynamic_toolset_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPToolsetDynamicToolsetAgentWorkflow.run,
+            args=['Can you tell me about the pydantic/pydantic-ai repo? Keep it short.'],
+            id='test_mcptoolset_dynamic_toolset_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
 async def test_temporal_agent():
     assert isinstance(complex_temporal_agent.model, TemporalModel)
     assert complex_temporal_agent.model.wrapped == complex_agent.model
@@ -2534,6 +2587,63 @@ async def test_temporal_mcp_toolset_instructions_propagate(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('Be a helpful assistant.')
+
+
+# Parallel to `mcp_instructions_agent` above, but using `MCPToolset` instead of the legacy
+# `MCPServerStdio`. Exercises the `TemporalMCPToolset` wrapper's `get_instructions` activity path.
+mcptoolset_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcptoolset_instructions_agent',
+    toolsets=[
+        MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+            include_instructions=True,
+            id='mcp',
+        )
+    ],
+)
+
+mcptoolset_instructions_temporal_agent = TemporalAgent(
+    mcptoolset_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG
+)
+
+
+@workflow.defn
+class MCPToolsetInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcptoolset_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_temporal_mcptoolset_instructions_propagate(client: Client):
+    """`MCPToolset` instructions propagate through the `TemporalMCPToolset` wrapper.
+
+    Parallel to `test_temporal_mcp_toolset_instructions_propagate` above; exercises the
+    `MCPToolset`/`TemporalMCPToolset` path instead of the legacy `MCPServerStdio`/`TemporalMCPServer`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPToolsetInstructionsWorkflow],
+        plugins=[AgentPlugin(mcptoolset_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPToolsetInstructionsWorkflow.run,
+            args=['Use MCP instructions'],
+            id=MCPToolsetInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('Be a helpful assistant.')
+
+
+def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
+    """`temporalize_toolset` wraps `MCPToolset` in `TemporalMCPToolset`."""
+    toolset = MCPToolset('https://example.com/mcp', id='test_dispatch')
+    agent = Agent(model=model, name='dispatch_agent', toolsets=[toolset])
+    temporal = TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+    wrapped = next(ts for ts in temporal.toolsets if isinstance(ts, TemporalMCPToolset))
+    assert wrapped.wrapped is toolset
 
 
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
