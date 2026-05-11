@@ -50,7 +50,11 @@ class Instrumentation(AbstractCapability[Any]):
 
     settings: InstrumentationSettings
 
-    # Per-run state (set in for_run, not user-provided)
+    # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
+    # returns a shallow copy via `replace(self)` for per-run isolation. These fields
+    # are updated as the run progresses and assume sequential model requests within
+    # a run — if the agent loop ever issues concurrent model requests, accesses to
+    # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)

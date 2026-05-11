@@ -9,9 +9,10 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import Json, TypeAdapter, ValidationError
-from pydantic_core import SchemaValidator
+from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar
 
+from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
@@ -391,10 +392,6 @@ async def execute_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
-    from pydantic_core import to_json
-
-    from pydantic_ai._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
-
     instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes: dict[str, Any] = {
