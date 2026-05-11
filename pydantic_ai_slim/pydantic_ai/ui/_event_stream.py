@@ -380,9 +380,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FilePart():
                 async for e in self.handle_file(part):
                     yield e
-            case CompactionPart():  # pragma: no cover
-                async for e in self.handle_compaction(part):
-                    yield e
+            case CompactionPart():
+                async for e in self.handle_compaction(part):  # pragma: no cover
+                    yield e  # pragma: no cover
             case AgentContextPart():  # pragma: no branch
                 async for e in self.handle_agent_context(part):
                     yield e
@@ -497,7 +497,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Override this to inject custom events at the start of the response.
         """
-        return  # pragma: no cover
+        return  # pragma: lax no cover
         yield  # Make this an async generator
 
     async def after_response(self) -> AsyncIterator[EventT]:

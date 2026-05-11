@@ -43,7 +43,7 @@ from .openai import OpenAIResponsesModel
 
 try:
     from httpx_sse import EventSource, ServerSentEvent
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install the `httpx_sse` package to use `OpenResponsesModel`, '
         'you can use the `responses` optional group — `pip install "pydantic-ai-slim[responses]"`'
@@ -430,9 +430,9 @@ class OpenResponsesStreamedResponse(StreamedResponse):
             return
         try:
             payload = json.loads(sse.data)
-        except json.JSONDecodeError:  # pragma: no cover
+        except json.JSONDecodeError:
             return
-        if not is_str_dict(payload):  # pragma: no cover
+        if not is_str_dict(payload):
             return
 
         event_type = payload.get('type', sse.event)
