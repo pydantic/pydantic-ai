@@ -646,9 +646,13 @@ async def test_build_headers_handles_missing_api_key_and_non_string_extra_header
 
 
 async def test_streamed_response_handles_invalid_json_data(allow_model_requests: None) -> None:
-    """SSE frames with non-JSON `data` payloads short-circuit cleanly."""
+    """SSE frames with non-JSON `data` or non-object JSON short-circuit cleanly."""
 
-    body = 'event: response.created\ndata: not-json\n\nevent: done\ndata: \n\n'
+    body = (
+        'event: response.created\ndata: not-json\n\n'  # JSONDecodeError branch
+        'event: response.created\ndata: ["valid-but-not-an-object"]\n\n'  # is_str_dict False branch
+        'event: done\ndata: \n\n'
+    )
 
     async def handler(_request: Request) -> Response:
         return Response(body, media_type='text/event-stream')
