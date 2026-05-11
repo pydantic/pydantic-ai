@@ -1470,7 +1470,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_strict = strict
 
         max_retries_overrides: dict[str, int] = {}
-        tool_output_max_retries: int | None = None
+        tool_max_retries: int | None = None
 
         multiple = len(outputs) > 1
         for output in outputs:
@@ -1482,7 +1482,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
-                tool_output_max_retries = output.max_retries
+                tool_max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1522,9 +1522,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
             processors[name] = processor
             tool_defs.append(tool_def)
-            if tool_output_max_retries is not None:
-                max_retries_overrides[name] = tool_output_max_retries
-            tool_output_max_retries = None
+            if tool_max_retries is not None:
+                max_retries_overrides[name] = tool_max_retries
+            tool_max_retries = None
 
         return cls(processors=processors, tool_defs=tool_defs, max_retries_overrides=max_retries_overrides)
 

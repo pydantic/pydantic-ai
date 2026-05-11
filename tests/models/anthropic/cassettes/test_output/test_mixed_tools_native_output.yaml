@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '789'
+      - '872'
       content-type:
       - application/json
       host:
@@ -22,22 +22,23 @@ interactions:
           type: text
         role: user
       model: claude-sonnet-4-5
-      output_format:
-        schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        type: json_schema
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
       stream: false
       tool_choice:
         type: auto
@@ -69,30 +70,39 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '597'
+      - '759'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '59'
+      server-timing:
+      - x-originResponse;dur=18229
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
-      - id: toolu_01KCWvriJsuFsmTnovktbWYC
+      - caller:
+          type: direct
+        id: toolu_01XhRHVXkKSCMGnaoHjpKax8
         input:
           city: Tokyo
         name: lookup_country
         type: tool_use
-      - id: toolu_01EZRUqkThpxFVpSmH3pg2t2
+      - caller:
+          type: direct
+        id: toolu_01DrZpF6pdh3dMMQ2rLTeM3E
         input:
           city: Tokyo
         name: get_founded_year
         type: tool_use
-      id: msg_016o1gkvM1DPYV7S77Z3UWoX
+      id: msg_01JfgjuexRyuXAyNZ75nd7f8
       model: claude-sonnet-4-5-20250929
       role: assistant
+      stop_details: null
       stop_reason: tool_use
       stop_sequence: null
       type: message
@@ -102,6 +112,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 797
         output_tokens: 91
         service_tier: standard
@@ -113,11 +124,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1275'
+      - '1454'
       content-type:
       - application/json
       host:
@@ -131,44 +142,49 @@ interactions:
           type: text
         role: user
       - content:
-        - id: toolu_01KCWvriJsuFsmTnovktbWYC
+        - id: toolu_01XhRHVXkKSCMGnaoHjpKax8
           input:
             city: Tokyo
           name: lookup_country
           type: tool_use
-        - id: toolu_01EZRUqkThpxFVpSmH3pg2t2
+        - id: toolu_01DrZpF6pdh3dMMQ2rLTeM3E
           input:
             city: Tokyo
           name: get_founded_year
           type: tool_use
         role: assistant
       - content:
-        - content: Japan
+        - content:
+          - text: Japan
+            type: text
           is_error: false
-          tool_use_id: toolu_01KCWvriJsuFsmTnovktbWYC
+          tool_use_id: toolu_01XhRHVXkKSCMGnaoHjpKax8
           type: tool_result
-        - content: '1457'
+        - content:
+          - text: '1457'
+            type: text
           is_error: false
-          tool_use_id: toolu_01EZRUqkThpxFVpSmH3pg2t2
+          tool_use_id: toolu_01DrZpF6pdh3dMMQ2rLTeM3E
           type: tool_result
         role: user
       model: claude-sonnet-4-5
-      output_format:
-        schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        type: json_schema
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
       stream: false
       tool_choice:
         type: auto
@@ -200,22 +216,27 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '478'
+      - '566'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '41'
+      server-timing:
+      - x-originResponse;dur=3187
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
-      - text: '{"city": "Tokyo", "country": "Japan", "population": 13960000}'
+      - text: '{"city": "Tokyo", "country": "Japan", "population": 14000000}'
         type: text
-      id: msg_01PBmg5uHcJXFZZBnbPFyCUC
+      id: msg_01THiSZ2f8NDq45ZvuhP4ek2
       model: claude-sonnet-4-5-20250929
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
@@ -225,6 +246,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 957
         output_tokens: 23
         service_tier: standard

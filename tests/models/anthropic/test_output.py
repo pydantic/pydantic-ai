@@ -397,13 +397,18 @@ def test_strict_false_tool_native_output(
     """Tool with strict=False, NativeOutput → output_config."""
     model = anthropic_model('claude-sonnet-4-5')
     agent = Agent(model, output_type=NativeOutput(CityInfo))
+    tool_called = False
 
     @agent.tool_plain(strict=False)
     def get_currency(country: str) -> str:
+        nonlocal tool_called
+        tool_called = True
         return 'Mexican Peso (MXN)' if country == 'Mexico' else 'Unknown'
 
-    result = agent.run_sync('Give me details about Mexico City')
+    result = agent.run_sync('Give me details about Mexico City. Use available background tools where helpful.')
 
+    # Ensure the cassette keeps exercising the tool-result turn.
+    assert tool_called
     assert isinstance(result.output, CityInfo)
 
 

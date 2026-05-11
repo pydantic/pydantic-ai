@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '393'
+      - '440'
       content-type:
       - application/json
       host:
@@ -22,22 +22,23 @@ interactions:
           type: text
         role: user
       model: claude-sonnet-4-5
-      output_format:
-        schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        type: json_schema
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -45,22 +46,27 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '475'
+      - '563'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '32'
+      server-timing:
+      - x-originResponse;dur=1463
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
-      - text: '{"city":"Berlin","country":"Germany","population":3645000}'
+      - text: '{"city":"Berlin","country":"Germany","population":3850809}'
         type: text
-      id: msg_017fV8ELMsyaMksJ96QqyGD8
+      id: msg_0114Wmc3eEygTHm4c67eQB8P
       model: claude-sonnet-4-5-20250929
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
@@ -70,6 +76,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 197
         output_tokens: 18
         service_tier: standard
