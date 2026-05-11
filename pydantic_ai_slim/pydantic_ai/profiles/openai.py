@@ -92,6 +92,14 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    openai_chat_supports_multiple_system_messages: bool = True
+    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
+
+    OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
+    Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
+    exactly one initial system message; consecutive system messages at the start will be merged into one
+    (joined with two newlines) before being sent."""
+
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 

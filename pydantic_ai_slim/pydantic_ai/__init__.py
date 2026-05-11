@@ -92,6 +92,8 @@ from .messages import (
     ModelResponseState,
     ModelResponseStreamEvent,
     MultiModalContent,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -102,8 +104,10 @@ from .messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
@@ -125,7 +129,7 @@ from .profiles import (
 )
 from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
-from .settings import ModelSettings
+from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .tools import (
     AgentBuiltinTool,
     DeferredToolRequests,
@@ -233,6 +237,8 @@ __all__ = (
     'ModelResponseState',
     'ModelResponseStreamEvent',
     'MultiModalContent',
+    'OutputToolCallEvent',
+    'OutputToolResultEvent',
     'PartDeltaEvent',
     'PartEndEvent',
     'PartStartEvent',
@@ -243,8 +249,10 @@ __all__ = (
     'TextPartDelta',
     'ThinkingPart',
     'ThinkingPartDelta',
+    'ToolCallEvent',
     'ToolCallPart',
     'ToolCallPartDelta',
+    'ToolResultEvent',
     'ToolReturn',
     'ToolReturnPart',
     'UploadedFile',
@@ -313,6 +321,8 @@ __all__ = (
     'ModelRequestContext',
     # settings
     'ModelSettings',
+    'ToolChoice',
+    'ToolOrOutput',
     # usage
     'RunUsage',
     'RequestUsage',

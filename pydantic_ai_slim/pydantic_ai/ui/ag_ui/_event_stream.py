@@ -16,6 +16,7 @@ from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FunctionToolResultEvent,
+    OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -240,7 +241,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
-        result = event.result
+        async for e in self._handle_tool_result(event.part):
+            yield e
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
+        async for e in self._handle_tool_result(event.part):
+            yield e
+
+    async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
         if isinstance(result, RetryPromptPart):
             output = result.model_response()
         else:
