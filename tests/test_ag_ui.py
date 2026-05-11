@@ -1060,6 +1060,63 @@ async def test_tool_local_parts() -> None:
     )
 
 
+async def test_output_tool() -> None:
+    """Output tool calls emit `TOOL_CALL_RESULT` via `handle_output_tool_result`."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"query":"hello"}', tool_call_id='out_1')}
+
+    def web_search(query: str) -> dict[str, str]:
+        return {'result': f'Searched for {query}'}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+
+    run_input = create_input(UserMessage(id='msg_1', content='Tell me about hello'))
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'final_result',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"query":"hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Final result processed.',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
 async def test_thinking() -> None:
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -2400,6 +2457,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
                 parts=[UserPromptPart(content='Hello!', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=(run_id := IsSameStr()),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -2408,6 +2466,7 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=run_id,
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2416,6 +2475,36 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
     assert messages[2].run_id == run_result.run_id
     assert messages[3].run_id == run_result.run_id
     assert run_result.new_messages() == messages[-1:]
+
+
+async def test_adapter_uses_run_input_thread_id_as_conversation_id() -> None:
+    """`RunAgentInput.threadId` is wired through to `gen_ai.conversation.id`."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    agent = Agent(TestModel())
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'), thread_id='thread-abc')
+
+    await run_and_collect_events(agent, run_input, on_complete=captured_results.append)
+
+    assert captured_results[0].conversation_id == 'thread-abc'
+    assert captured_results[0].all_messages()[-1].conversation_id == 'thread-abc'
+
+
+async def test_adapter_explicit_conversation_id_overrides_thread_id() -> None:
+    """Passing `conversation_id` explicitly to `run_stream_native` overrides `RunAgentInput.threadId`."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    agent = Agent(TestModel())
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'), thread_id='thread-abc')
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(
+        adapter.run_stream_native(conversation_id='explicit-conv-id'),
+        on_complete=captured_results.append,
+    ):
+        pass
+
+    assert captured_results[0].conversation_id == 'explicit-conv-id'
 
 
 async def test_callback_async() -> None:
@@ -3026,10 +3115,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+            part=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
+            part=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
         )
 
         yield PartStartEvent(
@@ -3070,10 +3159,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
+            part=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
+            part=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
         )
 
     run_input = create_input(
@@ -3239,7 +3328,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_status',
                 content='Status retrieved',
                 tool_call_id='call_1',
@@ -3470,7 +3559,7 @@ async def test_tool_return_with_files():
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_image',
                 content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
                 tool_call_id='call_1',
@@ -3478,7 +3567,7 @@ async def test_tool_return_with_files():
         )
         # Content with only a FileUrl - files property returns [ImageUrl]
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_url',
                 content=ImageUrl(url='https://example.com/image.jpg'),
                 tool_call_id='call_2',
@@ -4033,6 +4122,7 @@ async def test_system_prompt_with_ag_ui_adapter():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4041,6 +4131,7 @@ async def test_system_prompt_with_ag_ui_adapter():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4075,6 +4166,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4083,6 +4175,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4120,6 +4213,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4128,6 +4222,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4164,6 +4259,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4172,6 +4268,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4216,6 +4313,7 @@ async def test_frontend_system_prompt_only_request_dropped():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4224,6 +4322,7 @@ async def test_frontend_system_prompt_only_request_dropped():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4260,6 +4359,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4268,6 +4368,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4304,6 +4405,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4312,6 +4414,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4370,6 +4473,7 @@ async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4378,6 +4482,7 @@ async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4414,6 +4519,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4422,6 +4528,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4473,6 +4580,7 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
                 parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4481,6 +4589,7 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

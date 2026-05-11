@@ -17,9 +17,9 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -44,6 +44,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -59,6 +60,7 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
+from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -70,7 +72,7 @@ from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.output import NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -97,12 +99,14 @@ from .mock_xai import (
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
+    from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
+        XaiStreamedResponse,
         _extract_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.xai import XaiProvider
@@ -162,6 +166,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -172,11 +177,13 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -187,6 +194,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 provider_response_id='grok-123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -259,6 +267,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 timestamp=IsDatetime(),
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
@@ -270,6 +279,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -283,6 +293,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 timestamp=IsDatetime(),
                 instructions='Call `get_user_country` first, then call `final_result` with the JSON result.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -300,6 +311,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -312,6 +324,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -562,6 +575,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
@@ -573,6 +587,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -585,6 +600,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
@@ -596,6 +612,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -620,6 +637,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 parts=[UserPromptPart(content='What is the location of Lodon and London?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -639,6 +657,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -657,6 +676,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -677,6 +697,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -804,6 +825,110 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
                 'use_encrypted_content': False,
                 'include': [],
             }
+        ]
+    )
+
+
+async def test_tool_choice_none(allow_model_requests: None) -> None:
+    """Test that tool_choice='none' is passed to the API."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': 'none'}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == 'none'
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {'function': {'name': 'tool_a', 'parameters': '{"type": "object", "properties": {}}'}},
+            {'function': {'name': 'tool_b', 'parameters': '{"type": "object", "properties": {}}'}},
+        ]
+    )
+
+
+async def test_tool_choice_required(allow_model_requests: None) -> None:
+    """Test that tool_choice='required' is passed to the API."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': 'required'}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == 'required'
+
+
+async def test_tool_choice_specific_tool(allow_model_requests: None) -> None:
+    """Test that tool_choice with a single tool forces that specific tool."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='tool_a'), ToolDefinition(name='tool_b')],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': ['tool_a']}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == required_tool('tool_a')
+
+
+async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) -> None:
+    """Test that tool_choice with multiple tools filters the tool definitions."""
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_a'),
+            ToolDefinition(name='tool_b'),
+            ToolDefinition(name='tool_c'),
+        ],
+        allow_text_output=True,
+    )
+    settings: XaiModelSettings = {'tool_choice': ['tool_a', 'tool_c']}
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings=settings,
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tool_choice'] == 'required'
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {'function': {'name': 'tool_a', 'parameters': '{"type": "object", "properties": {}}'}},
+            {'function': {'name': 'tool_c', 'parameters': '{"type": "object", "properties": {}}'}},
         ]
     )
 
@@ -1096,6 +1221,7 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1111,6 +1237,7 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1132,6 +1259,7 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1147,6 +1275,7 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1257,6 +1386,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
@@ -1268,6 +1398,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1282,6 +1413,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
@@ -1293,6 +1425,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1681,6 +1814,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1731,6 +1865,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1771,6 +1906,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1827,6 +1963,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2042,6 +2179,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2083,6 +2221,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2120,6 +2259,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2152,6 +2292,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2253,6 +2394,7 @@ Return just the final number with no other text.\
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2307,6 +2449,7 @@ Return just the final number with no other text.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2363,6 +2506,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 timestamp=IsDatetime(),
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2386,6 +2530,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2399,6 +2544,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 timestamp=IsDatetime(),
                 instructions='Use tools to get the users city and then use the web search tool to find a famous landmark in that city.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2451,6 +2597,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2492,6 +2639,7 @@ async def test_xai_builtin_mcp_server_tool(allow_model_requests: None, xai_provi
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2591,6 +2739,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2642,6 +2791,7 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2715,6 +2865,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3062,6 +3213,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                 parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3075,6 +3227,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3096,6 +3249,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
                 parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='', signature='sig-abc', provider_name='xai'), TextPart(content='4')],
@@ -3106,6 +3260,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3164,6 +3319,7 @@ async def test_xai_stream_events_with_reasoning(allow_model_requests: None, xai_
                 parts=[UserPromptPart(content='What is the 10th prime number?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3193,6 +3349,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3389,6 +3546,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
                 parts=[UserPromptPart(content='Say test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3416,6 +3574,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3436,6 +3595,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                 parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3463,6 +3623,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3483,6 +3644,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                 parts=[UserPromptPart(content='Search for test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3510,6 +3672,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3535,6 +3698,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                 parts=[UserPromptPart(content='List issues', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3572,6 +3736,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3719,6 +3884,7 @@ First reasoning
                 parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='First reasoning'), TextPart(content='first response')],
@@ -3730,6 +3896,7 @@ First reasoning
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='')],
@@ -3749,6 +3916,7 @@ First reasoning
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
@@ -3760,6 +3928,7 @@ First reasoning
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3831,6 +4000,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3845,11 +4015,13 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
@@ -3861,6 +4033,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3927,6 +4100,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3941,11 +4115,13 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
@@ -3957,6 +4133,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4026,6 +4203,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4052,11 +4230,13 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The result was 4')],
@@ -4068,6 +4248,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4095,6 +4276,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4115,6 +4297,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4217,6 +4400,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
                 parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='I understand the tool failed')],
@@ -4228,6 +4412,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4671,6 +4856,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='First')],
@@ -4682,11 +4868,13 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Second')],
@@ -4698,6 +4886,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4734,6 +4923,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='No usage tracked')],
@@ -4745,6 +4935,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4794,6 +4985,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                 parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4813,6 +5005,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -4959,6 +5152,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -4985,11 +5179,13 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The search found results')],
@@ -5001,6 +5197,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5073,6 +5270,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5099,11 +5297,13 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='MCP returned data')],
@@ -5115,6 +5315,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5183,6 +5384,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
@@ -5194,6 +5396,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5439,6 +5642,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
                 parts=[UserPromptPart(content='Search my attachments', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5458,6 +5662,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5484,6 +5689,72 @@ content {
 }
 role: ROLE_USER
 """)
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                model_name='grok-4-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_xai_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = XaiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='grok-4-fast-non-reasoning',
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
+        _timestamp=datetime.now(timezone.utc),
+        _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()
 
 
 # End of tests

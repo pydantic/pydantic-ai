@@ -227,6 +227,47 @@ print(result.output)
 !!! note
     Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
 
+#### Using durable conversations
+
+OpenAI's [Conversations API](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#using-the-conversations-api) works with the Responses API to persist conversation state in a durable conversation object. If you already have an OpenAI conversation ID, pass it with [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model=model)
+
+model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
+result = agent.run_sync('What did we discuss last time?', model_settings=model_settings)
+print(result.output)
+```
+
+When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response.
+
+When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.2')
+agent = Agent(model=model)
+
+model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
+result = agent.run_sync('What did we discuss last time?', model_settings=model_settings)
+
+follow_up_settings = OpenAIResponsesModelSettings(openai_conversation_id='auto')
+result2 = agent.run_sync(
+    'Summarize the next step.',
+    message_history=result.new_messages(),
+    model_settings=follow_up_settings,
+)
+print(result2.output)
+```
+
+Pydantic AI does not create OpenAI conversations for you. Use the OpenAI client to create the conversation, then pass its ID to `openai_conversation_id`. The `conversation` and `previous_response_id` parameters are mutually exclusive in the OpenAI API, so `openai_conversation_id` cannot be combined with [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
+
 #### Message Compaction
 
 The Responses API supports [compacting message history](https://developers.openai.com/api/docs/guides/compaction) to reduce token usage in long conversations. Compaction produces an encrypted summary that replaces older messages while preserving context.
@@ -243,7 +284,7 @@ agent = Agent(
 )
 ```
 
-By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and server-side conversation state.
+By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
 
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 
@@ -272,7 +313,7 @@ agent = Agent(
 The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! tip
-    Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
+    Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 
 For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
 

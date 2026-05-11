@@ -294,6 +294,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         return cast('dict[str, Any]', state)
 
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
+        return self.run_input.thread_id
+
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""

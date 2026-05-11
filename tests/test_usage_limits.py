@@ -2,6 +2,7 @@ import asyncio
 import functools
 import operator
 import re
+from collections.abc import AsyncIterator
 from datetime import timezone
 from decimal import Decimal
 
@@ -103,6 +104,7 @@ async def test_streamed_text_limits() -> None:
                         parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
@@ -117,6 +119,7 @@ async def test_streamed_text_limits() -> None:
                         timestamp=IsNow(tz=timezone.utc),
                         provider_name='test',
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -129,6 +132,7 @@ async def test_streamed_text_limits() -> None:
                         ],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                 ]
             )
@@ -141,8 +145,31 @@ async def test_streamed_text_limits() -> None:
                 )
             )
             succeeded = True
+            async for _ in result.stream_text(debounce_by=None):
+                pass
 
     assert succeeded
+
+
+async def test_stream_text_enforces_output_token_limit_mid_stream() -> None:
+    # Regression: `_stream_response_text` previously iterated `self._raw_stream_response`
+    # directly, bypassing the usage-checking wrapper in `AgentStream.__aiter__`, so
+    # `UsageLimitExceeded` would not raise during `stream_text()` even when the output
+    # token limit was exceeded mid-stream.
+    async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'one'
+        yield 'two'
+        yield 'three'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    collected: list[str] = []
+    with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the output_tokens_limit of 2')):
+        async with agent.run_stream('hi', usage_limits=UsageLimits(output_tokens_limit=2)) as result:
+            async for text in result.stream_text(delta=True, debounce_by=None):
+                collected.append(text)
+
+    assert 0 < len(collected) < 3
 
 
 def test_usage_so_far() -> None:
@@ -182,6 +209,7 @@ async def test_multi_agent_usage_no_incr():
                 parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -195,6 +223,7 @@ async def test_multi_agent_usage_no_incr():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -207,6 +236,7 @@ async def test_multi_agent_usage_no_incr():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"delegate_to_other_agent1":0}')],
@@ -214,6 +244,7 @@ async def test_multi_agent_usage_no_incr():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -236,6 +267,7 @@ async def test_multi_agent_usage_no_incr():
                 parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -249,6 +281,7 @@ async def test_multi_agent_usage_no_incr():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -261,6 +294,7 @@ async def test_multi_agent_usage_no_incr():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"delegate_to_other_agent2":0}')],
@@ -268,6 +302,7 @@ async def test_multi_agent_usage_no_incr():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -304,6 +339,7 @@ async def test_multi_agent_usage_sync():
                 parts=[UserPromptPart(content='foobar', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -317,6 +353,7 @@ async def test_multi_agent_usage_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -329,6 +366,7 @@ async def test_multi_agent_usage_sync():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"delegate_to_other_agent":0}')],
@@ -336,6 +374,7 @@ async def test_multi_agent_usage_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -474,6 +513,7 @@ async def test_tool_call_limit() -> None:
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
@@ -481,6 +521,7 @@ async def test_tool_call_limit() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -493,6 +534,7 @@ async def test_tool_call_limit() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -500,6 +542,7 @@ async def test_tool_call_limit() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -524,6 +567,7 @@ async def test_output_tool_not_counted() -> None:
                 parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -535,6 +579,7 @@ async def test_output_tool_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -547,6 +592,7 @@ async def test_output_tool_not_counted() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"regular_tool":"a-processed"}')],
@@ -554,6 +600,7 @@ async def test_output_tool_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -573,6 +620,7 @@ async def test_output_tool_not_counted() -> None:
                 parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -586,6 +634,7 @@ async def test_output_tool_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -598,6 +647,7 @@ async def test_output_tool_not_counted() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -609,6 +659,7 @@ async def test_output_tool_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -621,6 +672,7 @@ async def test_output_tool_not_counted() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -664,6 +716,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='regular_tool', args={'x': 'test'}, tool_call_id='call_1')],
@@ -671,6 +724,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 model_name='function:call_output_after_regular:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -683,6 +737,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'result': 'success'}, tool_call_id='call_2')],
@@ -690,6 +745,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 model_name='function:call_output_after_regular:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -702,6 +758,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -730,6 +787,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -741,6 +799,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -753,6 +812,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='flaky_tool', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -760,6 +820,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -772,6 +833,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"flaky_tool":"a-success"}')],
@@ -779,6 +841,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 model_name='test',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

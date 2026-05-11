@@ -506,7 +506,7 @@ Instructions can also use [template strings](agent-spec.md#template-strings) (`T
 
 [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] returns [model settings](agent.md#model-run-settings) as a dict or a callable for per-step settings.
 
-When model settings need to vary per step — for example, enabling thinking only on retry — return a callable:
+When model settings need to vary per step — for example, enabling thinking only on retry, or forcing a specific [`tool_choice`](tools-advanced.md#dynamic-tool-choice-via-capabilities) until a tool has been called — return a callable:
 
 ```python {title="dynamic_settings.py"}
 from dataclasses import dataclass
@@ -727,7 +727,7 @@ Output validate and process hooks can raise [`ModelRetry`][pydantic_ai.exception
 Capabilities can filter or modify which tool definitions the model sees on each step via two hooks:
 
 - [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] — receives **function** tools only. Use this for filtering or modifications to tools the model can call directly.
-- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`max_result_retries`), matching the [output hook](#output-hooks) lifecycle.
+- [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] — receives [output tools][pydantic_ai.output.ToolOutput] only, with `ctx.retry`/`ctx.max_retries` reflecting the **output** retry budget (`output_retries`), matching the [output hook](#output-hooks) lifecycle.
 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
@@ -780,7 +780,7 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: RunContext, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]` | Observe, filter, or transform streamed events |
 
-```python {title="event_stream_example.py" test="skip"}
+```python {title="event_stream_example.py"}
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
@@ -788,10 +788,10 @@ from typing import Any
 from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     PartStartEvent,
     TextPart,
+    ToolCallEvent,
+    ToolResultEvent,
 )
 
 
@@ -806,14 +806,19 @@ class StreamAuditor(AbstractCapability[Any]):
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
         async for event in stream:
-            if isinstance(event, FunctionToolCallEvent):
+            if isinstance(event, ToolCallEvent):
                 print(f'Tool called: {event.part.tool_name}')
-            elif isinstance(event, FunctionToolResultEvent):
-                print(f'Tool result: {event.tool_return.content!r}')
+            elif isinstance(event, ToolResultEvent):
+                print(f'Tool result: {event.part.content!r}')
             elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                 print(f'Text: {event.part.content!r}')
             yield event
 ```
+
+Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently.
+
+!!! note "Migration from `FunctionToolCallEvent` / `FunctionToolResultEvent`"
+    For output tool calls, match `OutputToolCallEvent` / `OutputToolResultEvent` (or the shared `ToolCallEvent` / `ToolResultEvent` bases). `FunctionToolCallEvent` / `FunctionToolResultEvent` will stop firing for output tool calls in v2.
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
@@ -948,6 +953,60 @@ agent.run_sync('second run')
 print(counter.count)
 #> 0
 ```
+
+### Dynamically building a capability
+
+Capabilities can be built dynamically ahead of each agent run using a function that takes the agent [`RunContext`][pydantic_ai.tools.RunContext] and returns a capability or `None`. This is useful when the capability — its instructions, model settings, hooks, or contributed toolset — depends on information specific to a run, like its [dependencies](./dependencies.md).
+
+To register a dynamic capability, pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `capabilities` argument of the [`Agent`][pydantic_ai.Agent] constructor or [`agent.run()`][pydantic_ai.Agent.run]. Sync and async functions are both supported. The function is called once per run and the returned capability replaces it for the rest of the run, so its instructions, model settings, toolsets, builtin tools, and hooks all flow through normally.
+
+```python {title="dynamic_capability.py"}
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Skill(AbstractCapability[str]):
+    """Per-user skill loaded from a database at run time."""
+
+    name: str
+    role: Literal['admin', 'guest']
+
+    def get_instructions(self) -> str:
+        return f'You can use the {self.name} skill (role: {self.role}).'
+
+
+# Pretend this comes from a database keyed by user.
+SKILLS = {
+    'alice': Skill(name='refunds', role='admin'),
+    'bob': Skill(name='lookup', role='guest'),
+}
+
+
+def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
+    return SKILLS.get(ctx.deps)
+
+
+agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
+
+result = agent.run_sync('hi', deps='alice')
+print(result.all_messages()[0].instructions)
+#> You can use the refunds skill (role: admin).
+```
+
+_(This example is complete, it can be run "as is")_
+
+To return more than one capability from a single factory, wrap them in a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability].
+
+!!! note "Durable execution (Temporal, DBOS, Prefect)"
+
+    A dynamic capability whose resolved capability contributes only instructions, model settings, builtin tools, hooks, or `prepare_tools`/`get_wrapper_toolset` (i.e. no `get_toolset()` of its own) works seamlessly with durable execution — the factory runs in the workflow alongside the rest of the agent loop. This covers the common "load this user's skill from the database and add its instructions" pattern.
+
+    However, dynamic capabilities that contribute their own toolset via `get_toolset()` are not yet supported with durable execution. The toolset is only known at run time, so it bypasses the durable wrapper's construction-time toolset registration and would attempt I/O directly inside the workflow. As a workaround, register the toolsets statically via `Agent(toolsets=[...])` (where they get wrapped properly) and have the dynamic capability reference them indirectly — e.g. via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] to scope which tools are visible per-run, rather than constructing the toolset inside the factory. Full support is tracked in [#5253](https://github.com/pydantic/pydantic-ai/issues/5253).
 
 ### Composition and middleware semantics
 
