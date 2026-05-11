@@ -1327,6 +1327,194 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
     )
 
 
+async def test_bedrock_model_thinking_part_anthropic_legacy(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multi-turn thinking on pre-4.6 Claude via the unified `thinking` setting.
+
+    Sibling to `test_bedrock_model_thinking_part_anthropic_adaptive`. Proves the
+    legacy `{'type': 'enabled', 'budget_tokens': N}` translation path works
+    end-to-end on a non-adaptive model (Sonnet 4.5) when the user passes the
+    unified `thinking=True` setting (rather than the manual
+    `bedrock_additional_model_requests_fields` workaround the existing
+    `test_bedrock_model_thinking_part_anthropic` covers).
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='This is a straightforward question about crossing the street safely. I should provide practical safety advice for pedestrians.',
+                        signature='EqkCCkgIDRABGAIqQPUBXddf5oFtfQISm87nRz74H7uUTwDgg+h0YLLc3p/go3gpEXMfNHOTi6XbIIf1FqzmzRwPO3I5tNQwel4zDJsSDOH8dHCSFsa5/5wMgxoMyoNuL2Mch7do4OwvIjDiWYuBAMh88j45otVaBLl+sSioadFLRUSCdFo+QijHmwPPHprY7iqGWMetqej36OwqjgEuNJ2lzEjUXHRBfTWq7dVwpaidYPB8hwr5h6dakncxCcFTee4AtrwY8Wcq4dojKqGo/13KzWowF7k5SLmQhMOSAyPIyribxMEDS0TWBudZ9TmnNP2PpltcgueyrqsCubSG7/AISHrrqyADMOCPgGycPkE5TJALqh7tgxcBze3bb5hDTZSyt1F6MZjd6J7zGAE=',
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here's how to cross the street safely:
+
+## Basic Steps
+
+1. **Find a safe crossing spot**
+   - Use crosswalks, intersections, or pedestrian signals when available
+   - Avoid crossing between parked cars or on curves where drivers can't see you
+
+2. **Stop at the curb/edge**
+   - Don't step into the street yet
+
+3. **Look left, right, then left again**
+   - Keep looking while you cross
+
+4. **Listen for traffic**
+   - Remove headphones or turn down volume
+   - Listen for engines, horns, or warning sounds
+
+5. **Make eye contact with drivers**
+   - Ensure they see you before crossing
+
+6. **Wait for a safe gap in traffic**
+   - If there's a signal, wait for the "walk" signal
+   - Don't assume cars will stop
+
+7. **Walk, don't run**
+   - Stay alert and keep watching for cars
+   - Be visible--wear bright colors at night
+
+## Extra Tips
+- Put your phone away while crossing
+- Watch for turning vehicles
+- Be extra careful in bad weather or low light
+- Teach children to hold an adult's hand
+
+Is there a specific crossing situation you're dealing with?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=43, output_tokens=306),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the parallel challenges and solutions. Let me think about the key elements:
+
+Crossing a street:
+- Find safe crossing spots (crosswalks, intersections)
+- Look for hazards (traffic)
+- Use infrastructure when available
+- Timing and safety assessment
+- Stay alert during crossing
+
+Crossing a river:
+- Find safe crossing points (bridges, fords, ferries)
+- Look for hazards (current, depth, obstacles)
+- Use infrastructure when available
+- Assess conditions and safety
+- Stay alert during crossing
+
+This is a nice analogy! I should provide helpful, practical information about river crossing.\
+""",
+                        signature='EoMHCkgIDRABGAIqQP8Rojwvl6OxxHAHwqntIBwfOk4Jlf0UPqocHmQOT67FNzX5d+rL3Niv/TvsU2I5jJzzrMJHUp1UEZ/c0tQzP6kSDFnDqqPFpm0B+CRyEhoM3WPVanquGkZh86tQIjAWcf40Om1LHuCd5ZVKYgVBzboKZvuiAbgzFG4iKKcCVQLH/1gNhFnw63TscGyYxmIq6AWcYeBi6Bribs17hPXyCAGNDYSR8nq1nL/ja0qZBUQQlLFkIT1b3MDjfjV0pDaCr71RkVJ20fgBSGTBPeBK0luPOHgbVaiFj9e6A8TyRgczEmFodyGTTGvxvwrwoCztoU+8hovPCDvLLSzf4rD6fy2nDlGbPpfBkTVseXUpQ1/MSUZ6es14Wdn1PWz8uOeAOwweSzuV0wHHmuAg691QIH/+TnnD4Aq9mEGlVwrYUZzxpWm6AyfTGs3P8ATcma1KsxBNiceNW5c/DbeEpM+y5oRW20FIVS2jepbt/6bgDxDIWjXSzYGK2T3REtDdM90NKPNA2Nrkj5ZCojeOl0PP21ExVzIt0xLyQ1aQS3QMFGQeNgENNiKr/BxWsWqHSwg/pz3nDwbcLzrk65AAlBd/H+mCmxAX98NLCwWohJDsMOYkMdN+wzjqRVpxO9xGEQnPY531Bf/xMHHO5KFjiJe//SaBvJ5OYAjgFO2V7k5p/XdCh9WLQo6zU9wCV4/lWA/fUj6Uqe/SSZmcvjWzz1h4fC+X+hVWhZHxvUgPhSorvHsG26/8lXyJEs4EjmwsNIbrTuG7p1kFJqseR8UldKbrPq64mLkYKZu3RO0iBAH5gSv2UtOomGNv2UjtLimwViXOynhNrAf6AnbnhQrar6SiiBPUzekJraW8zdXeJ3nvYhhnIniMXn2POCUR13DAwSlhPmrqyvbzR2uoqy8uBn5tGZkOgXPtU78R6ykNVVxHUJAL7ykOVl96PNATwoKXFwJ/nGVIK3uDx6BRDqPPCPX1X0f2zFFTO5JquGhIXz/OvkFJodUwG1qeS3IT9EoFgiIydcKSfkiwjc0oASRS/C11ugQisriaVVAc3BQrwJWk4RgaZsAdCHM82USm4uaSl2AZMdnwT6r0s10F/ojayNEI/NN1koloRaMzQT1SyoamvuojOoOXaqAirlmTHzpsadcX/sYy9K5/tf/F5NgYhIXMvob6tWX/dl1h4GEYAQ==',
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Great analogy! Here's how the principles translate:
+
+## Find Safe Crossing Points
+
+**Like using crosswalks:**
+- **Bridges** - the "crosswalk" of rivers (safest option)
+- **Ferries or boats** - the "pedestrian signal" \n\
+- **Fords** - shallow areas (like a quiet intersection)
+- **Stepping stones** - natural crossing infrastructure
+
+## Assess Before Crossing
+
+**Like looking for traffic:**
+- Check water **depth** and **current speed**
+- Look for hazards: debris, slippery rocks, drop-offs
+- Consider **weather** - recent rain means faster current
+- Scout up and downstream for easier spots
+
+## Cross Safely
+
+**Like walking alertly:**
+- Use a **walking stick** for balance (test depth)
+- Cross at an **angle downstream** - don't fight the current
+- **Unbuckle backpack straps** - so you can ditch weight if needed
+- **Never cross alone** if it's risky
+- Turn sideways to reduce resistance in strong current
+
+## Know When NOT to Cross
+
+**Like waiting for traffic to clear:**
+- Water above your knees = dangerous current
+- Fast-moving or murky water
+- Cold water (hypothermia risk)
+- If unsure, find another way
+
+**The key similarity**: Use infrastructure when available, assess the hazards, and don't take unnecessary risks!
+
+What kind of river crossing did you have in mind?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=341, output_tokens=501),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_bedrock_model_thinking_part_anthropic_adaptive(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
