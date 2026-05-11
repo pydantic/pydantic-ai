@@ -12,17 +12,26 @@ import json
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TypeVar, cast
 
 import pytest
+import yaml
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
+from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._tool_search import synthesize_local_tool_search_messages
-from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
+from pydantic_ai._tool_search import (
+    synthesize_local_from_builtin_call,
+    synthesize_local_from_builtin_return,
+    synthesize_local_tool_search_messages,
+)
+from pydantic_ai.builtin_tools.tool_search import ToolSearchMatch, ToolSearchTool
+from pydantic_ai.capabilities import CAPABILITY_TYPES
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -32,14 +41,18 @@ from pydantic_ai.messages import (
     BuiltinToolSearchCallPart,
     BuiltinToolSearchReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
+    ToolSearchReturnContent,
     ToolSearchReturnPart,
     UserPromptPart,
+    _model_request_part_discriminator,  # pyright: ignore[reportPrivateUsage]
+    _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -49,8 +62,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
+    keywords_search_fn,
 )
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import try_import
 
@@ -61,6 +75,51 @@ with try_import() as evals_available:
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    from anthropic.types.beta import (
+        BetaServerToolUseBlock,
+        BetaTextBlock,
+        BetaToolSearchToolResultBlock,
+        BetaUsage,
+    )
+    from anthropic.types.beta.beta_server_tool_use_block import BetaDirectCaller
+    from anthropic.types.beta.beta_tool_search_tool_result_error import BetaToolSearchToolResultError
+
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
+        _build_tool_search_replay_block,  # pyright: ignore[reportPrivateUsage]
+        _collect_orphan_tool_search_call_ids,  # pyright: ignore[reportPrivateUsage]
+        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
+        _map_server_tool_use_block,  # pyright: ignore[reportPrivateUsage]
+        _map_tool_search_tool_result_block,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+with try_import() as openai_available:
+    from openai.types.responses import (
+        FunctionTool,
+        ResponseFunctionToolCallParam,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseToolSearchCall,
+        ResponseToolSearchOutputItem,
+    )
+    from openai.types.responses.file_search_tool import FileSearchTool
+
+    from pydantic_ai.models.openai import (
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+        _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
+        _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
+        _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
+        _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as google_available:
     import google.genai  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -156,15 +215,20 @@ def _extract_tool_calls(result: AgentRunResult[str]) -> list[str]:
 
 
 def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
-    """Extract parsed keyword args dicts from search_tools calls."""
+    """Extract parsed keyword args dicts from search_tools calls.
+
+    Matches on `tool_name == 'search_tools'` rather than `isinstance(ToolSearchCallPart)`
+    because tooling that builds the part from the wire (e.g. legacy cassettes) may not
+    set `tool_kind` and so won't promote to the typed subclass; the local function-tool
+    name is the durable contract here.
+    """
     args_list: list[dict[str, str]] = []
     for msg in result.all_messages():
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools' and part.args is not None:
                     parsed = json.loads(part.args) if isinstance(part.args, str) else part.args
-                    raw_args = cast('dict[str, Any]', parsed)
-                    args_list.append({k: str(v) for k, v in raw_args.items()})
+                    args_list.append({k: str(v) for k, v in parsed.items()})
     return args_list
 
 
@@ -500,7 +564,7 @@ async def test_tool_search_toolset_search_is_case_insensitive():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'STOCK'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv = cast('dict[str, Any]', result.return_value)
+    rv = cast(ToolSearchReturnContent, result.return_value)
     assert len(rv['discovered_tools']) == 1
     assert rv['discovered_tools'][0]['name'] == 'stock_price'
 
@@ -516,7 +580,7 @@ async def test_tool_search_toolset_search_matches_description():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'cryptocurrency'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv = cast('dict[str, Any]', result.return_value)
+    rv = cast(ToolSearchReturnContent, result.return_value)
     assert len(rv['discovered_tools']) == 1
     assert rv['discovered_tools'][0]['name'] == 'crypto_price'
 
@@ -674,7 +738,7 @@ async def test_tool_search_toolset_max_results():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'tool'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv = cast('dict[str, Any]', result.return_value)
+    rv = cast(ToolSearchReturnContent, result.return_value)
     assert len(rv['discovered_tools']) == 10
 
 
@@ -834,7 +898,6 @@ async def test_explicit_tool_search_not_duplicated():
 
 def test_tool_search_in_capability_registry():
     """ToolSearch is a public, spec-constructible capability."""
-    from pydantic_ai.capabilities import CAPABILITY_TYPES
 
     assert ToolSearch.get_serialization_name() == 'ToolSearch'
     assert CAPABILITY_TYPES['ToolSearch'] is ToolSearch
@@ -1143,13 +1206,6 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     builtin.
     """
     pytest.importorskip('anthropic')
-    from pathlib import Path
-
-    import yaml
-
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model=model)
@@ -1228,11 +1284,6 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     ``tool_result`` is formatted as ``tool_reference`` blocks so the discovered tool
     gets unlocked for the next turn."""
     pytest.importorskip('anthropic')
-    import yaml
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
 
     def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
@@ -1292,8 +1343,6 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     # Wire-level checks against the cassette: the deferred corpus ships with
     # `defer_loading: true`, the model's `search_tools` call appears in the response,
     # and our tool result is formatted as `tool_reference` blocks (not plain text).
-    from pathlib import Path
-    from typing import cast
 
     cassette_path = (
         Path(__file__).parent / 'cassettes' / 'test_tool_search' / 'test_anthropic_custom_callable_round_trip.yaml'
@@ -1340,13 +1389,6 @@ async def test_anthropic_promotes_local_search_history_round_trip(
     ``tool_search_tool_*`` call.
     """
     pytest.importorskip('anthropic')
-    from pathlib import Path
-
-    import yaml
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
@@ -1443,13 +1485,6 @@ async def test_openai_promotes_local_search_history_round_trip(allow_model_reque
     ``execution='client'``, and the model dispatches the discovered tool directly.
     """
     pytest.importorskip('openai')
-    from pathlib import Path
-
-    import yaml
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
@@ -1524,13 +1559,6 @@ async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests:
     native tool search tool rather than BM25, and the live API accepts the request.
     """
     pytest.importorskip('anthropic')
-    from pathlib import Path
-
-    import yaml
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
@@ -1569,18 +1597,6 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
     downgrading ``tool_search_tool_regex`` to ``tool_search_tool_bm25`` on a resend would
     silently run a different algorithm than the earlier turn."""
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import BetaServerToolUseBlock, BetaTextBlock, BetaUsage
-    from anthropic.types.beta.beta_server_tool_use_block import BetaDirectCaller
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolSearchReturnPart
-    from pydantic_ai.models.anthropic import (
-        AnthropicModel,
-        _map_server_tool_use_block,  # pyright: ignore[reportPrivateUsage]
-    )
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
     # Provider-side call used the regex variant; the adapter must round-trip that choice.
     # Anthropic's regex variant emits `pattern` (not `query`) in the wire input.
@@ -1646,8 +1662,6 @@ def test_collect_orphan_tool_search_call_ids_pairs_across_responses() -> None:
     *anywhere* in history. Anthropic sometimes delivers the return in a *later* `ModelResponse`
     (deferred-result behavior on the direct API), so the pairing check must span turns."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolSearchCallPart, BuiltinToolSearchReturnPart
-    from pydantic_ai.models.anthropic import _collect_orphan_tool_search_call_ids  # pyright: ignore[reportPrivateUsage]
 
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('do the thing'),
@@ -1684,14 +1698,6 @@ async def test_anthropic_drops_orphaned_tool_search_call_on_replay(allow_model_r
     @kclisp on PR #5143.
     """
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.messages import BuiltinToolSearchCallPart
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
     response = completion_message(
         [BetaTextBlock(text='ok', type='text')],
@@ -1742,13 +1748,6 @@ async def test_anthropic_cache_tool_definitions_skips_deferred_tools(allow_model
     caching``. Reported by @kclisp on PR #5143.
     """
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
     response = completion_message(
         [BetaTextBlock(text='ok', type='text')],
@@ -1789,13 +1788,6 @@ async def test_anthropic_cache_tool_definitions_skips_when_all_tools_deferred(al
     `cache_control` to any deferred tool would 400 the request.
     """
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import BetaTextBlock, BetaUsage
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
     response = completion_message(
         [BetaTextBlock(text='ok', type='text')],
@@ -1831,11 +1823,6 @@ async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: Non
     """OpenAI Responses has no bm25/regex concept — using one must error loudly rather
     than silently falling through to OpenAI's default server-side tool search."""
     pytest.importorskip('openai')
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    from .models.mock_openai import MockOpenAIResponses, response_message
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
@@ -1854,11 +1841,6 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
     the local `search_tools` function. Replay later detects the OpenAI native variant
     via the current request's builtin configuration plus a `provider_name` match."""
     pytest.importorskip('openai')
-    from openai.types.responses import ResponseToolSearchCall
-
-    from pydantic_ai.models.openai import (
-        _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
-    )
 
     call = ResponseToolSearchCall(
         id='ts_1',
@@ -1885,14 +1867,6 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
     canonical FallbackModel-style scenario the design calls for."""
     pytest.importorskip('openai')
     pytest.importorskip('anthropic')
-    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
     # Prior turn: Anthropic ran a native BM25 search and discovered `get_weather`.
     prior: list[ModelMessage] = [
@@ -1958,10 +1932,6 @@ def test_anthropic_tool_search_result_error_block_mapping():
     """An error result block (no `tool_references`) produces a
     `BuiltinToolReturnPart` without discovered tools in its metadata."""
     pytest.importorskip('anthropic')
-    from anthropic.types.beta import BetaToolSearchToolResultBlock
-    from anthropic.types.beta.beta_tool_search_tool_result_error import BetaToolSearchToolResultError
-
-    from pydantic_ai.models.anthropic import _map_tool_search_tool_result_block  # pyright: ignore[reportPrivateUsage]
 
     error_block = BetaToolSearchToolResultBlock(
         tool_use_id='srv_err',
@@ -1983,10 +1953,6 @@ def test_anthropic_custom_replay_blocks_malformed_content():
     written before the typed shape, or a hand-crafted return — rather than crashing or
     fabricating an empty discovery."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import ToolReturnPart
-    from pydantic_ai.models.anthropic import (
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-    )
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
     refs, message = _build_custom_tool_search_replay_blocks(
@@ -2007,8 +1973,6 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
     `test_anthropic_tool_search_result_error_block_mapping`.
     """
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart
-    from pydantic_ai.models.anthropic import _build_tool_search_replay_block  # pyright: ignore[reportPrivateUsage]
 
     return_part = BuiltinToolSearchReturnPart(
         provider_name='anthropic',
@@ -2033,17 +1997,6 @@ def test_openai_map_tool_search_call_unit():
     gate without burning a live API call. The end-to-end live cassette in
     `test_openai_native_tool_search_round_trip` exercises the same functions with
     real provider responses."""
-    from openai.types.responses import (
-        FunctionTool,
-        ResponseToolSearchCall,
-        ResponseToolSearchOutputItem,
-    )
-
-    from pydantic_ai.messages import BuiltinToolSearchCallPart, BuiltinToolSearchReturnPart
-    from pydantic_ai.models.openai import (
-        _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
-    )
 
     call = ResponseToolSearchCall(
         id='ts_1',
@@ -2079,7 +2032,6 @@ def test_openai_map_tool_search_call_unit():
     assert empty_return.provider_details == {'status': 'in_progress'}
 
     # Non-function tools in the output don't have a `name` attribute and are skipped.
-    from openai.types.responses.file_search_tool import FileSearchTool
 
     mixed_output = ResponseToolSearchOutputItem(
         id='tso_mix',
@@ -2110,13 +2062,6 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
     discovered deferred tool by its plain name, and the second-turn replay carries
     `defer_loading: true` on the corpus function tool plus a `tool_search_call` item.
     """
-    from pathlib import Path
-
-    import yaml
-
-    from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent: Agent[None, str] = Agent(model=model)
@@ -2194,9 +2139,6 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     ``tool_search_call`` with ``execution='client'`` whose arguments we dispatch to the
     local ``search_tools`` function, and the resulting ``ToolReturnPart`` is replayed
     as a ``tool_search_output`` (execution='client') carrying the discovered tool defs."""
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
@@ -2287,9 +2229,6 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
     deferred tool by its plain name, and the agent loop runs to a final text response."""
     pytest.importorskip('anthropic')
 
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent: Agent[None, str] = Agent(model=model)
 
@@ -2354,8 +2293,6 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
     through the part manager during ``agent.iter`` + ``node.stream``, the model invokes
     the discovered deferred tool by its plain name, and the agent loop runs to a final
     text response."""
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
     agent: Agent[None, str] = Agent(model=model)
@@ -2409,9 +2346,6 @@ async def test_openai_client_tool_search_streaming(allow_model_requests: None, o
     ``tool_search_call`` as a regular ``ToolCallPart``), the agent loop runs the
     callable strategy, the model follows up with the discovered deferred tool, and
     the run completes with a final text response."""
-    from pydantic_ai.capabilities import ToolSearch
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     def match_exchange_rate(ctx: RunContext[None], query: str, tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
@@ -2499,7 +2433,6 @@ async def test_agent_graph_without_builtin_tools(allow_model_requests: None, mon
     Auto-inject always adds `ToolSearchTool`, so the only way to exercise the empty
     branch is to disable auto-inject in the test.
     """
-    import pydantic_ai.agent as agent_module
 
     monkeypatch.setattr(agent_module, '_AUTO_INJECT_CAPABILITY_TYPES', ())
     agent: Agent[None, str] = Agent('test')
@@ -2510,7 +2443,6 @@ async def test_agent_graph_without_builtin_tools(allow_model_requests: None, mon
 async def test_tool_search_toolset_discovers_from_builtin_return_part():
     """Discovery metadata on a `BuiltinToolSearchReturnPart` from a native provider search
     is picked up so the local path recovers state on cross-provider handover."""
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart
 
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
@@ -2640,7 +2572,6 @@ async def test_tool_search_capability_named_strategy_wraps_with_tool_search_tool
 async def test_tool_search_named_strategy_raises_on_unsupported_model():
     """Named native strategies error on models that don't support ``ToolSearchTool``
     — there's no legal fallback for ``strategy='bm25'`` on e.g. GPT-4."""
-    from pydantic_ai.models.test import TestModel
 
     m = TestModel()
     with pytest.raises(UserError, match='not supported by this model'):
@@ -2653,8 +2584,6 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
 async def test_tool_search_keywords_ignores_builtin_support():
     """``strategy='keywords'`` never tries to use a native builtin — the swap is a
     no-op even on models that support ``ToolSearchTool``."""
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.tools import ToolDefinition
 
     class ToolSearchTestModel(TestModel):
         @classmethod
@@ -2675,8 +2604,6 @@ def test_with_builtin_undiscovered_drops_on_unsupported_model():
     """In `prepare_request`, `with_builtin` corpus members with `defer_loading=True`
     (still undiscovered) drop on a model that doesn't support the builtin — the model has
     no way to call them and the local `search_tools` fallback handles discovery."""
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.tools import ToolDefinition
 
     m = TestModel()
     # `optional=True` models the default auto path where the builtin is a best-effort
@@ -2699,8 +2626,6 @@ def test_with_builtin_undiscovered_drops_on_unsupported_model():
 def test_with_builtin_discovered_kept_on_unsupported_model():
     """A discovered corpus member (`defer_loading=False`) stays in the request even when
     the builtin is unsupported — the model can call it directly by name on the local path."""
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.tools import ToolDefinition
 
     m = TestModel()
     corpus_tool = ToolDefinition(name='deferred_tool', with_builtin='tool_search', defer_loading=False)
@@ -2719,8 +2644,6 @@ def test_with_builtin_discovered_kept_on_unsupported_model():
 def test_with_builtin_kept_on_supporting_model():
     """On a supporting model, managed tools are kept so the adapter can emit them
     with provider-specific wire-format tweaks."""
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.tools import ToolDefinition
 
     class ToolSearchTestModel(TestModel):
         @classmethod
@@ -2742,7 +2665,6 @@ def test_with_builtin_kept_on_supporting_model():
 
 def test_optional_builtin_dropped_with_empty_corpus():
     """An ``optional`` builtin is silently dropped when no managed corpus is in the request."""
-    from pydantic_ai.models.test import TestModel
 
     class ToolSearchTestModel(TestModel):
         @classmethod
@@ -2822,7 +2744,6 @@ def test_narrow_type_no_tool_kind_returns_input_unchanged() -> None:
 def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
     """Pydantic deserialization of a dict-shaped `ModelResponse` promotes
     `tool_search` builtin parts to typed subclasses via the discriminator."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
 
     raw: dict[str, Any] = {
         'kind': 'response',
@@ -2873,7 +2794,6 @@ def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
 
 def test_model_response_instance_round_trip_promotes_typed_subclasses() -> None:
     """Re-validation of a `ModelResponse` instance preserves typed builtin parts."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
 
     resp = ModelResponse(
         parts=[
@@ -3026,7 +2946,6 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     typed `ToolSearchReturnPart` subclass in place. Mirrors the response-side
     promotion so cross-provider history stays uniformly typed regardless of where
     the parts originated."""
-    from pydantic_ai.messages import ToolCallPart
 
     history: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'keywords': 'a'}, tool_call_id='c1')]),
@@ -3053,12 +2972,11 @@ def test_tool_search_toolset_parses_discovery_with_none_content() -> None:
     """A `BuiltinToolSearchReturnPart` with `content=None` (recoverable provider error
     path) leaves the discovered set empty without raising — `_collect_typed`
     short-circuits on missing content rather than dereferencing a `None` `discovered_tools`."""
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart as _BuiltinSearchReturn
 
     history: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                _BuiltinSearchReturn(
+                BuiltinToolSearchReturnPart(
                     provider_name='anthropic',
                     tool_call_id='srv_err',
                     content=None,
@@ -3186,7 +3104,6 @@ def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
     Promotion is keyed on `tool_kind`, not `tool_name` — a framework-emitted call carries
     `tool_kind='tool_search'` so it round-trips as the typed subclass.
     """
-    from pydantic_ai.messages import ToolCallPart
 
     part = ToolCallPart(
         tool_name='search_tools',
@@ -3202,7 +3119,6 @@ def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
 def test_narrow_type_local_passthrough_when_already_narrowed() -> None:
     """Narrowing an already-typed `ToolSearchCallPart` returns the input instance."""
     part = ToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')
-    from pydantic_ai.messages import ToolCallPart
 
     assert ToolCallPart.narrow_type(part) is part
 
@@ -3214,7 +3130,6 @@ def test_pydantic_validation_accepts_search_tools_collision_when_tool_kind_unset
     the part as a base `ToolReturnPart` regardless of args shape — no accidental
     auto-promotion to `ToolSearchReturnPart`, no spurious shape-validation failure.
     """
-    from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
 
     raw = [
         {
@@ -3242,7 +3157,6 @@ def test_pydantic_validation_promotes_local_tool_return_with_tool_kind_set() -> 
     `discovered_tools` payload is promoted to `ToolSearchReturnPart` by Pydantic's
     discriminated-union dispatch — the discriminator routes (part_kind, tool_kind)
     to the typed tag so deserialization rebuilds the typed subclass directly."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
 
     raw = [
         {
@@ -3271,7 +3185,6 @@ def test_pydantic_validation_accepts_search_tools_string_content_collision() -> 
     intact. This is the user-tool-collision-tolerance contract: dispatch never promotes
     based on `tool_name` alone.
     """
-    from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolReturnPart
 
     raw = [
         {
@@ -3295,8 +3208,6 @@ def test_pydantic_validation_accepts_search_tools_string_content_collision() -> 
 
 def test_synthesize_local_from_builtin_call_str_args_passthrough() -> None:
     """Streaming partial-args (`str`) are passed through unchanged when translating."""
-    from pydantic_ai._tool_search import synthesize_local_from_builtin_call
-    from pydantic_ai.messages import BuiltinToolSearchCallPart
 
     part = BuiltinToolSearchCallPart(args='{"queries":', tool_call_id='c1')
     result = synthesize_local_from_builtin_call(part)
@@ -3306,31 +3217,25 @@ def test_synthesize_local_from_builtin_call_str_args_passthrough() -> None:
 
 def test_synthesize_local_from_builtin_call_none_args_falls_through() -> None:
     """`None` args remain `None` after translation."""
-    from pydantic_ai._tool_search import synthesize_local_from_builtin_call
-    from pydantic_ai.messages import BuiltinToolSearchCallPart
 
     part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1')
     result = synthesize_local_from_builtin_call(part)
     assert result.args is None
 
 
-def test_synthesize_local_from_builtin_return_none_content_defaults() -> None:
-    """A return part with `content=None` (legal per the typed signature) gets a
-    sensible empty-discoveries default. Covers the `else` branch in
-    `synthesize_local_from_builtin_return`."""
-    from pydantic_ai._tool_search import synthesize_local_from_builtin_return
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart
+def test_synthesize_local_from_builtin_return_preserves_none_content() -> None:
+    """A return part with `content=None` (legal per the typed signature, e.g. a recoverable
+    provider error path) passes through to the local-shape return unchanged. The synthesizer
+    trusts the typed contract — `None` means "no result content", not "empty discoveries"."""
 
     part = BuiltinToolSearchReturnPart(content=None, tool_call_id='c1')
     result = synthesize_local_from_builtin_return(part)
-    assert result.content == {'discovered_tools': []}
+    assert result.content is None
 
 
 def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
     """A response with only a `BuiltinToolSearchCallPart` (no return — streaming case)
     translates the call but doesn't synthesize a trailing `ModelRequest`."""
-    from pydantic_ai._tool_search import synthesize_local_tool_search_messages
-    from pydantic_ai.messages import BuiltinToolSearchCallPart
 
     history: list[ModelMessage] = [
         ModelResponse(parts=[BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1')]),
@@ -3346,8 +3251,6 @@ def test_synthesize_messages_response_with_only_call_part_no_lift() -> None:
 def test_synthesize_messages_response_with_only_return_part_no_response_kept() -> None:
     """A response with only a `BuiltinToolSearchReturnPart` (no remaining parts) — the
     response is dropped since it'd be empty, and the return is lifted onto a fresh request."""
-    from pydantic_ai._tool_search import synthesize_local_tool_search_messages
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart
 
     history: list[ModelMessage] = [
         ModelResponse(
@@ -3371,7 +3274,6 @@ def test_synthesize_messages_response_with_only_return_part_no_response_kept() -
 def test_synthesize_messages_request_with_unrelated_tool_return_passthrough() -> None:
     """A `ToolReturnPart` with `tool_name != 'search_tools'` doesn't get promoted —
     the request is returned unchanged."""
-    from pydantic_ai._tool_search import synthesize_local_tool_search_messages
 
     request = ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='c1')])
     result = synthesize_local_tool_search_messages([request])
@@ -3525,7 +3427,6 @@ def test_synthesize_messages_metadata_kept_on_first_split_only() -> None:
     the original identity; subsequent splits get fresh/blank fields so downstream
     consumers don't double-count usage or find two responses for the same API call.
     """
-    from pydantic_ai.usage import RequestUsage
 
     history: list[ModelMessage] = [
         ModelResponse(
@@ -3566,7 +3467,6 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     the original `Request([UserPromptPart])` merge into a single `ModelRequest`, preserving
     strict user/assistant alternation for adapters that require it.
     """
-    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 
     history: list[ModelMessage] = [
         ModelResponse(
@@ -3635,7 +3535,6 @@ def test_model_request_part_discriminator_recognizes_tool_search_return_instance
     already matches one of the tagged variants by isinstance, so this exercises the
     function directly rather than via `ModelMessagesTypeAdapter`.
     """
-    from pydantic_ai.messages import _model_request_part_discriminator  # pyright: ignore[reportPrivateUsage]
 
     part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
     assert _model_request_part_discriminator(part) == 'tool-search-return'
@@ -3644,7 +3543,6 @@ def test_model_request_part_discriminator_recognizes_tool_search_return_instance
 def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch() -> None:
     """A dict-shaped `ToolCallPart` with `tool_kind='tool_search'` gets dispatched to
     `ToolSearchCallPart` via the discriminator (covers the `'tool-call'` branch)."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter
 
     raw = [
         {
@@ -3668,7 +3566,6 @@ def test_model_response_part_discriminator_recognizes_local_call_dict_dispatch()
 
 def test_model_response_part_discriminator_passthrough_for_unknown_part_kind() -> None:
     """Instance dispatch falls through to `getattr(v, 'part_kind', ...)` for other types."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter, TextPart
 
     resp = ModelResponse(parts=[TextPart(content='hello')])
     [revalidated] = ModelMessagesTypeAdapter.validate_python([resp])
@@ -3686,7 +3583,6 @@ def test_model_response_part_discriminator_recognizes_typed_instances() -> None:
     directly. This locks in the contract for any future caller (or pydantic version
     that changes its short-circuit behavior).
     """
-    from pydantic_ai.messages import _model_response_part_discriminator  # pyright: ignore[reportPrivateUsage]
 
     builtin_call = BuiltinToolSearchCallPart(args={'queries': ['x']}, tool_call_id='c1', provider_name='anthropic')
     assert _model_response_part_discriminator(builtin_call) == 'builtin-tool-search-call'
@@ -3726,10 +3622,6 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
     helper returns `([], message)`. The `_map_message` flow then renders the message
     as a single text block (Anthropic rejects empty `tool_result.content`)."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import ToolSearchReturnPart
-    from pydantic_ai.models.anthropic import (
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-    )
 
     empty = ToolSearchReturnPart(
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
@@ -3745,10 +3637,6 @@ def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
     helper returns `(None, None)` so the caller falls through to default text formatting.
     This is the typed-trust contract — the framework only re-shapes typed parts."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import ToolReturnPart
-    from pydantic_ai.models.anthropic import (
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-    )
 
     base_part = ToolReturnPart(
         tool_name='search_tools',
@@ -3768,12 +3656,6 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
     native `tool_search_tool_search_result.tool_references` — must filter against the
     set of tools the current turn will actually send."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchMatch, ToolSearchReturnContent
-    from pydantic_ai.messages import BuiltinToolSearchReturnPart, ToolSearchReturnPart
-    from pydantic_ai.models.anthropic import (
-        _build_custom_tool_search_replay_blocks,  # pyright: ignore[reportPrivateUsage]
-        _build_tool_search_replay_block,  # pyright: ignore[reportPrivateUsage]
-    )
 
     discovered: list[ToolSearchMatch] = [
         {'name': 'still_here', 'description': 'a'},
@@ -3807,10 +3689,6 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_a
     """Already-canonical `ToolSearchArgs` dict passes through unchanged — the typed
     contract guarantees `queries`, so re-running normalization would corrupt the data."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolSearchCallPart
-    from pydantic_ai.models.anthropic import (
-        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
-    )
 
     part = BuiltinToolSearchCallPart(
         args={'queries': ['mortgage']},
@@ -3825,10 +3703,6 @@ def test_anthropic_finalize_streamed_tool_search_call_part_with_canonical_dict_a
 def test_anthropic_finalize_streamed_tool_search_call_part_with_none_args() -> None:
     """`args=None` finalizes to a normalized empty `queries` list."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.messages import BuiltinToolSearchCallPart
-    from pydantic_ai.models.anthropic import (
-        _finalize_streamed_tool_search_call_part,  # pyright: ignore[reportPrivateUsage]
-    )
 
     part = BuiltinToolSearchCallPart(args=None, tool_call_id='c1', provider_name='anthropic')
     result = _finalize_streamed_tool_search_call_part(part)
@@ -3841,12 +3715,6 @@ async def test_anthropic_map_message_empty_search_renders_message_text_block():
     fallthrough). Anthropic rejects empty `tool_result.content` arrays — this is the
     spec-compliant path for the custom-search empty-results case."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic
 
     model = AnthropicModel(
         'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(()))
@@ -3894,13 +3762,6 @@ async def test_anthropic_map_message_replays_tool_search_call_without_queries():
     `args_as_dict()` to the wire `input`. Covers the `else: wire_input = args_dict`
     branch where the cross-provider `queries` slot isn't populated."""
     pytest.importorskip('anthropic')
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
-    from pydantic_ai.messages import BuiltinToolSearchCallPart, BuiltinToolSearchReturnPart
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic
 
     model = AnthropicModel(
         'claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(()))
@@ -3945,7 +3806,6 @@ def test_openai_normalize_tool_search_args_handles_non_dict_input() -> None:
     """OpenAI's `_normalize_tool_search_args` falls through to an empty `queries` list
     for any non-dict input (e.g. raw `None` from an empty server tool-search call)."""
     pytest.importorskip('openai')
-    from pydantic_ai.models.openai import _normalize_tool_search_args  # pyright: ignore[reportPrivateUsage]
 
     assert _normalize_tool_search_args(None) == {'queries': []}
     assert _normalize_tool_search_args('') == {'queries': []}
@@ -3985,12 +3845,6 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
     discovered tools stay hidden and the model has to re-search.
     """
     pytest.importorskip('anthropic')
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic
 
     model = AnthropicModel(
         'claude-sonnet-4-6',
@@ -4045,12 +3899,6 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
     request carries it, the historical local-shape parts get the native wire.
     """
     pytest.importorskip('anthropic')
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    from .models.test_anthropic import MockAnthropic
 
     model = AnthropicModel(
         'claude-sonnet-4-6',
@@ -4108,15 +3956,6 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
     the active builtin), so the default-native case never activates the promotion.
     """
     pytest.importorskip('openai')
-    from openai.types.responses import ResponseFunctionToolCallParam
-
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.tools import ToolDefinition
-
-    from .models.mock_openai import MockOpenAIResponses
 
     model = OpenAIResponsesModel(
         'gpt-5.4-mini',
@@ -4158,8 +3997,6 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
         builtin_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
-
-    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
     _system, openai_messages = await model._map_messages(history, OpenAIResponsesModelSettings(), params)  # pyright: ignore[reportPrivateUsage]
 
@@ -4251,13 +4088,6 @@ async def test_openai_promotes_mixed_native_and_local_history_a_b_c_chain() -> N
     shouldn't have to re-search anything it discovered earlier.
     """
     pytest.importorskip('openai')
-    from pydantic_ai.builtin_tools.tool_search import ToolSearchTool
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.tools import ToolDefinition
-
-    from .models.mock_openai import MockOpenAIResponses
 
     model = OpenAIResponsesModel(
         'gpt-5.4-mini',
@@ -4356,7 +4186,6 @@ def test_keywords_search_fn_returns_empty_for_no_tokens() -> None:
     (whitespace / punctuation only), instead of raising. Callers (`_run_search_fn`
     in the toolset) translate that into the empty-discoveries `_empty_return` shape.
     """
-    from pydantic_ai.toolsets._tool_search import keywords_search_fn
 
     ctx = _build_run_context(None)
     assert keywords_search_fn(ctx, '   ', []) == []

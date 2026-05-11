@@ -26,7 +26,7 @@ from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 import pydantic
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, TypedDict, assert_never
 
 from . import messages as _messages
 
@@ -303,15 +303,8 @@ def synthesize_local_from_builtin_call(part: BuiltinToolSearchCallPart) -> ToolS
     Preserves `tool_call_id` so the matching return part links up; drops
     `provider_*` because the local-shape part is provider-agnostic.
     """
-    args = part.args
-    if isinstance(args, dict):
-        normalized: ToolSearchArgs | None = {'queries': list(args.get('queries', []))}
-    elif isinstance(args, str):
-        normalized = args  # pyright: ignore[reportAssignmentType] -- streaming-string passthrough
-    else:
-        normalized = None
     return ToolSearchCallPart(
-        args=normalized,
+        args=part.args,
         tool_call_id=part.tool_call_id,
     )
 
@@ -324,13 +317,8 @@ def synthesize_local_from_builtin_return(part: BuiltinToolSearchReturnPart) -> T
     and `metadata`; drops `provider_*` because the local-shape part is
     provider-agnostic.
     """
-    content: ToolSearchReturnContent | None
-    if isinstance(part.content, dict):
-        content = part.content
-    else:
-        content = {'discovered_tools': []}
     return ToolSearchReturnPart(
-        content=content,
+        content=part.content,
         tool_call_id=part.tool_call_id,
         metadata=part.metadata,
         timestamp=part.timestamp,
@@ -422,7 +410,7 @@ def synthesize_local_tool_search_messages(messages: list[ModelMessage]) -> list[
                 out.append(replace(msg, parts=new_request_parts))
             else:
                 out.append(msg)
-        else:  # pragma: no cover - exhaustive over ModelMessage union
-            out.append(msg)
+        else:
+            assert_never(msg)
 
     return out

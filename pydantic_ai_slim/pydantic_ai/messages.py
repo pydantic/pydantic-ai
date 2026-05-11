@@ -1086,20 +1086,22 @@ class BaseToolReturnPart:
     tool_kind: str | None = None
     """Identifier for the framework or builtin that emitted this return.
 
-    `None` for parts emitted by user-defined tools — the safe default that prevents accidental
-    promotion to a typed subclass when a user tool happens to share a name with a framework-emitted
-    one (e.g. `search_tools`). Framework-emitted parts set this explicitly:
+    `None` for any part the framework hasn't promoted to a typed subclass — including all
+    user-defined tools and all builtins without a dedicated typed subclass. The current set of
+    typed subclasses that override this with a `Literal` default is:
 
-    * Typed local-fallback subclasses (e.g.
-      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]) override with a
-      `Literal` default matching the emitter (e.g. `'tool_search'`).
-    * Builtin tools mirror their [`AbstractBuiltinTool.kind`][pydantic_ai.builtin_tools.AbstractBuiltinTool.kind]
-      (e.g. `'tool_search'`, `'web_search_preview'`).
-    * MCP server tools use `'mcp_server'` (the per-server label stays in `tool_name`).
+    * [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] /
+      [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] — `'tool_search'`
+    * [`BuiltinToolSearchCallPart`][pydantic_ai.messages.BuiltinToolSearchCallPart] /
+      [`BuiltinToolSearchReturnPart`][pydantic_ai.messages.BuiltinToolSearchReturnPart] — `'tool_search'`
 
     Drives the [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] /
     [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart] discriminator alongside
-    `part_kind` so dispatch is by emitter identity rather than tool name.
+    `part_kind` so dispatch promotes a base part to its typed subclass when both fields match.
+    Builtins without a typed subclass (web search, code execution, file search, image generation,
+    MCP server tools, etc.) keep `tool_kind=None` because their payloads are not validated
+    against a cross-provider typed shape — the discriminator only promotes when there's a
+    validated subclass to promote into.
     """
 
     metadata: Any = None
@@ -1751,7 +1753,8 @@ class BaseToolCallPart:
 
     See [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind] for
     the full semantics. Drives the [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart]
-    discriminator alongside `part_kind` so dispatch is by emitter identity rather than tool name.
+    discriminator alongside `part_kind` so dispatch promotes a base part to its typed subclass
+    when both fields match.
     """
 
     id: str | None = None
