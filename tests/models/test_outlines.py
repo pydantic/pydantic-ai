@@ -594,9 +594,9 @@ def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable
 
 @skip_if_llama_cpp_imports_unsuccessful
 def test_tool_definition(llamacpp_model: OutlinesModel) -> None:  # pragma: lax no cover
-    # builtin tools
+    # native tools
     agent = Agent(llamacpp_model, capabilities=[NativeTool(WebSearchTool())])
-    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
+    with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         agent.run_sync('Hello')
 
     # function tools
