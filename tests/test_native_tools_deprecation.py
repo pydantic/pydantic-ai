@@ -7,6 +7,8 @@ so the surface stays stable until removal in v2.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import TypeAdapter
 
@@ -402,3 +404,239 @@ def test_agent_override_builtin_tools_kwarg_deprecated():
 
     assert model.last_model_request_parameters is not None
     assert model.last_model_request_parameters.native_tools == [CodeExecutionTool()]
+
+
+def test_agent_override_native_tools_wins_when_both_passed():
+    """`agent.override(native_tools=..., builtin_tools=...)` warns and the explicit `native_tools=` wins."""
+    model = TestModel()
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`builtin_tools=` is deprecated, use `native_tools=`',
+    ):
+        with (
+            agent.override(
+                native_tools=[CodeExecutionTool()],
+                builtin_tools=[WebSearchTool()],
+            ),
+            pytest.raises(UserError, match='TestModel does not support built-in tools'),
+        ):
+            agent.run_sync('hi')
+
+    # The explicit `native_tools=` wins; the legacy `builtin_tools=` is discarded.
+    assert model.last_model_request_parameters is not None
+    assert model.last_model_request_parameters.native_tools == [CodeExecutionTool()]
+
+
+# --- Class-method constructors: `Agent.from_spec` / `Agent.from_file` ---
+
+
+def test_agent_from_spec_builtin_tools_kwarg_deprecated():
+    """`Agent.from_spec(spec, builtin_tools=[...])` warns and registers as a native tool capability."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Agent\.from_spec\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        agent = Agent.from_spec(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+            {'model': 'test'},
+            builtin_tools=[WebSearchTool()],
+        )
+
+    native_tools: list[Any] = list(agent._cap_native_tools)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(native_tools) == 1
+    assert isinstance(native_tools[0], WebSearchTool)
+
+
+def test_agent_from_file_builtin_tools_kwarg_deprecated(tmp_path: Any):
+    """`Agent.from_file(path, builtin_tools=[...])` warns and registers as a native tool capability."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text('model: test\n')
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Agent\.from_file\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        agent = Agent.from_file(  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+            spec_path,
+            builtin_tools=[WebSearchTool()],
+        )
+
+    native_tools: list[Any] = list(agent._cap_native_tools)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(native_tools) == 1
+    assert isinstance(native_tools[0], WebSearchTool)
+
+
+# --- Additional streaming entry-point deprecations ---
+
+
+def test_agent_run_stream_sync_builtin_tools_kwarg_deprecated():
+    """`agent.run_stream_sync(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
+    agent = Agent(TestModel())
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`agent\.run_stream_sync\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+            agent.run_stream_sync('hi', builtin_tools=[WebSearchTool()])  # pyright: ignore[reportCallIssue]
+
+
+async def test_agent_run_stream_events_builtin_tools_kwarg_deprecated():
+    """`agent.run_stream_events(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
+    agent = Agent(TestModel())
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`agent\.run_stream_events\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+            async with agent.run_stream_events('hi', builtin_tools=[WebSearchTool()]) as stream:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+                async for _ in stream:  # pyright: ignore[reportUnknownVariableType]  # pragma: no cover
+                    pass
+
+
+async def test_wrapper_agent_iter_builtin_tools_kwarg_deprecated():
+    """`WrapperAgent(agent).iter(..., builtin_tools=[...])` warns and routes through `capabilities=[NativeTool(...)]`."""
+    from pydantic_ai.agent import WrapperAgent
+
+    agent = Agent(TestModel())
+    wrapped = WrapperAgent(agent)
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`agent\.iter\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+            async with wrapped.iter('hi', builtin_tools=[WebSearchTool()]) as agent_run:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
+                async for _ in agent_run:  # pyright: ignore[reportUnknownVariableType]  # pragma: no cover
+                    pass
+
+
+# --- Override path where BOTH `native_tools=` and `builtin_tools=` are passed ---
+
+
+def test_native_or_local_tool_native_wins_when_both_kwargs_passed():
+    """`WebSearch(native=..., builtin=...)` warns and the explicit `native=` wins; the legacy `builtin=` is discarded."""
+    explicit_native = WebSearchTool()
+    legacy_builtin = WebSearchTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`WebSearch\(builtin=\.\.\.\)` is deprecated, use `native=`',
+    ):
+        cap = WebSearch(
+            native=explicit_native,
+            builtin=legacy_builtin,  # pyright: ignore[reportCallIssue]
+            local=False,
+        )
+    assert cap.native is explicit_native
+
+
+def test_native_or_local_tool_getattr_unknown_attribute_raises():
+    """Accessing an unknown attribute on a `NativeOrLocalTool` raises `AttributeError` (not a deprecation warning)."""
+    cap = WebSearch(local=False)
+    with pytest.raises(AttributeError, match='definitely_not_a_real_attr'):
+        cap.definitely_not_a_real_attr
+
+
+# --- `ModelRequestParameters` constructor: both kwargs passed ---
+
+
+def test_model_request_parameters_native_tools_wins_when_both_kwargs_passed():
+    """`ModelRequestParameters(native_tools=..., builtin_tools=...)` warns and the explicit `native_tools=` wins."""
+    explicit = WebSearchTool()
+    legacy = CodeExecutionTool()
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`ModelRequestParameters\(builtin_tools=\.\.\.\)` is deprecated, use `native_tools=`',
+    ):
+        params = ModelRequestParameters(
+            native_tools=[explicit],
+            builtin_tools=[legacy],  # pyright: ignore[reportCallIssue]
+        )
+
+    assert params.native_tools == [explicit]
+
+
+# --- `UIAdapter` deprecations ---
+
+
+async def test_ui_adapter_run_stream_native_capabilities_and_builtin_tools_kwarg():
+    """`UIAdapter.run_stream_native(capabilities=[...], builtin_tools=[...])` merges both into the run.
+
+    Exercises both the explicit `capabilities=` branch and the deprecated `builtin_tools=` branch
+    inside `run_stream_native` (`run_capabilities.extend(capabilities)` and
+    `run_capabilities.extend(extra_capabilities)`).
+    """
+    starlette = pytest.importorskip('starlette')
+    del starlette
+
+    from pydantic_ai.capabilities import ReinjectSystemPrompt
+    from pydantic_ai.messages import ModelRequest
+
+    from .test_ui import DummyUIAdapter, DummyUIRunInput
+
+    agent = Agent(model=TestModel())
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`UIAdapter\.run_stream_native\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        with pytest.raises(UserError, match='TestModel does not support built-in tools'):
+            async for _ in adapter.run_stream_native(
+                capabilities=[ReinjectSystemPrompt()],
+                builtin_tools=[WebSearchTool()],
+            ):
+                pass  # pragma: no cover
+
+
+async def test_ui_adapter_dispatch_request_builtin_tools_kwarg_deprecated():
+    """`UIAdapter.dispatch_request(..., builtin_tools=[...])` forwards the legacy kwarg through `run_stream_native`."""
+    starlette = pytest.importorskip('starlette')
+    del starlette
+
+    from starlette.requests import Request as _StarletteRequest
+    from starlette.responses import StreamingResponse as _StreamingResponse
+
+    from pydantic_ai.messages import ModelRequest
+
+    from .test_ui import DummyUIAdapter, DummyUIRunInput
+
+    agent = Agent(model=TestModel())
+    request_body = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': request_body.model_dump_json().encode('utf-8')}
+
+    starlette_request = _StarletteRequest(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+
+    # The deprecation warning fires synchronously inside `dispatch_request` when it
+    # forwards `builtin_tools=` through to `run_stream_native`. Reaching it confirms the
+    # legacy kwarg was extracted from `**kwargs` before forwarding to `from_request`.
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`UIAdapter\.run_stream_native\(builtin_tools=\.\.\.\)` is deprecated, '
+        r'use `capabilities=\[NativeTool\(\.\.\.\)\]`',
+    ):
+        response = await DummyUIAdapter.dispatch_request(
+            starlette_request,
+            agent=agent,
+            builtin_tools=[WebSearchTool()],
+        )
+    assert isinstance(response, _StreamingResponse)
