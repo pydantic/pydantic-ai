@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -383,25 +383,18 @@ def _merge_leading_system_messages(
     if system_prompt_role not in ('system', 'developer'):
         return openai_messages
 
-    leading: list[chat.ChatCompletionMessageParam] = []
-    for m in openai_messages:
-        if m.get('role') != system_prompt_role:
-            break
-        leading.append(m)
-    if len(leading) < 2:
+    leading_count = next(
+        (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role),
+        len(openai_messages),
+    )
+    if leading_count < 2:
         return openai_messages
 
-    contents: list[str] = []
-    for m in leading:
-        content = m.get('content')
-        if isinstance(content, str):
-            contents.append(content)
-        elif isinstance(content, Iterable):
-            for part in content:
-                if isinstance(part, Mapping) and part.get('type') == 'text':
-                    contents.append(str(part.get('text', '')))
-    merged: chat.ChatCompletionMessageParam = {**leading[0], 'content': '\n\n'.join(contents)}  # type: ignore[typeddict-item]
-    return [merged, *openai_messages[len(leading) :]]
+    # Content is always `str` here: it originates from `SystemPromptPart.content` or instruction
+    # `TextPart.content`, both of which are typed as `str`.
+    merged_content = '\n\n'.join(m['content'] for m in openai_messages[:leading_count])  # type: ignore[misc]
+    merged: chat.ChatCompletionMessageParam = {**openai_messages[0], 'content': merged_content}  # type: ignore[typeddict-item]
+    return [merged, *openai_messages[leading_count:]]
 
 
 def _drop_sampling_params_for_reasoning(
