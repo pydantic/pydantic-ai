@@ -36,7 +36,16 @@ def test_starts_one_thread():
     assert _running_threads() == 1
 
 
-def test_swallows_failure_and_retries(monkeypatch: pytest.MonkeyPatch):
+def test_swallows_failure(monkeypatch: pytest.MonkeyPatch):
+    def boom(self: UpdatePrices, *, wait: bool | float = False) -> None:
+        raise RuntimeError
+
+    monkeypatch.setattr(UpdatePrices, 'start', boom)
+    prices.update_in_background()
+    assert _running_threads() == 0
+
+
+def test_retries_after_failure(monkeypatch: pytest.MonkeyPatch):
     real_start = UpdatePrices.start
 
     def boom(self: UpdatePrices, *, wait: bool | float = False) -> None:
@@ -44,7 +53,6 @@ def test_swallows_failure_and_retries(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(UpdatePrices, 'start', boom)
     prices.update_in_background()
-    assert _running_threads() == 0
 
     monkeypatch.setattr(UpdatePrices, 'start', real_start)
     prices.update_in_background()
