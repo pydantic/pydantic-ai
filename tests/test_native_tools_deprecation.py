@@ -383,7 +383,7 @@ async def test_agent_iter_builtin_tools_kwarg_deprecated():
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             async with agent.iter('hi', builtin_tools=[WebSearchTool()]) as agent_run:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
-                async for _ in agent_run:  # pyright: ignore[reportUnknownVariableType]  # pragma: no cover
+                async for _ in agent_run:  # pyright: ignore[reportUnknownVariableType]
                     pass
 
 
@@ -496,7 +496,7 @@ async def test_agent_run_stream_events_builtin_tools_kwarg_deprecated():
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             async with agent.run_stream_events('hi', builtin_tools=[WebSearchTool()]) as stream:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
-                async for _ in stream:  # pyright: ignore[reportUnknownVariableType]  # pragma: no cover
+                async for _ in stream:  # pyright: ignore[reportUnknownVariableType]
                     pass
 
 
@@ -514,7 +514,7 @@ async def test_wrapper_agent_iter_builtin_tools_kwarg_deprecated():
     ):
         with pytest.raises(UserError, match='TestModel does not support built-in tools'):
             async with wrapped.iter('hi', builtin_tools=[WebSearchTool()]) as agent_run:  # pyright: ignore[reportCallIssue,reportUnknownVariableType]
-                async for _ in agent_run:  # pyright: ignore[reportUnknownVariableType]  # pragma: no cover
+                async for _ in agent_run:  # pyright: ignore[reportUnknownVariableType]
                     pass
 
 
