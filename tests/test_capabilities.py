@@ -10785,6 +10785,73 @@ async def test_enqueue_from_system_prompt_callback_with_reinject():
     assert found, 'enqueued follow-up did not reach the conversation'
 
 
+async def test_enqueue_coerces_string_to_user_prompt():
+    """A bare string passed to `enqueue` is wrapped in a `UserPromptPart`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('steering as plain string')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart) and part.content == 'steering as plain string'
+    ]
+    assert len(injected) == 1, 'string-coerced enqueue did not land as a UserPromptPart'
+
+
+async def test_enqueue_accepts_mixed_strings_and_parts():
+    """Mixed positional args — strings and explicit parts — are coerced item-by-item."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('user-style update', SystemPromptPart(content='system-style update'))
+        return 'ok'
+
+    result = await agent.run('Hello')
+    steering_request = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(
+            isinstance(p, SystemPromptPart) and p.content == 'system-style update'
+            for p in msg.parts
+        )
+    )
+    kinds = [type(p).__name__ for p in steering_request.parts]
+    assert kinds == ['UserPromptPart', 'SystemPromptPart']
+
+
 # --- Output hook tests ---
 
 

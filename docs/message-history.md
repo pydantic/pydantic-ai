@@ -398,11 +398,17 @@ that the agent should know about — a tool wants to add follow-up context, an e
 event needs to redirect the agent's plan, or background work needs to reach the agent
 when it completes.
 
-Enqueued parts are bundled into a [`PendingMessage`][pydantic_ai.messages.PendingMessage]
+Enqueued items are bundled into a [`PendingMessage`][pydantic_ai.messages.PendingMessage]
 and drained automatically based on a `priority`:
 
 - `'steering'` (default): drained into the next [`ModelRequest`][pydantic_ai.messages.ModelRequest] before the model call. Use when the new context should influence the agent's *next* step.
 - `'follow_up'`: drained only when the agent would otherwise end. The agent run continues with a new model request that includes the follow-up parts. Use when the agent shouldn't stop while there's still pending work.
+
+Each positional argument to `enqueue` accepts the same shape as `Agent.run(user_prompt=...)` —
+a `str` or `Sequence[UserContent]` is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart].
+Pass an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) when you need something
+other than user-style content.
 
 ### From inside a tool or hook
 
@@ -410,14 +416,14 @@ Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
 `RunContext` in scope:
 
 ```python {title="enqueue_from_tool.py"}
-from pydantic_ai import Agent, RunContext, SystemPromptPart
+from pydantic_ai import Agent, RunContext
 
 agent = Agent('openai:gpt-5.2')
 
 
 @agent.tool
 def trigger_alert(ctx: RunContext[None]) -> str:
-    ctx.enqueue(SystemPromptPart('Alert: production is degraded, prioritize triage.'))
+    ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 ```
 
@@ -430,7 +436,7 @@ Use [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] when you're driving a
 from outside (e.g. forwarding events from a webhook, chat platform, or job queue):
 
 ```python {title="enqueue_from_agent_run.py"}
-from pydantic_ai import Agent, UserPromptPart
+from pydantic_ai import Agent
 from pydantic_graph import End
 
 agent = Agent('openai:gpt-5.2')
@@ -442,7 +448,7 @@ async def main():
         # When the agent would otherwise finish, the follow-up redirects it
         # into a fresh model request so it can incorporate the new context.
         agent_run.enqueue(
-            UserPromptPart('A new error was just reported — include it in the summary.'),
+            'A new error was just reported — include it in the summary.',
             priority='follow_up',
         )
         node = agent_run.next_node

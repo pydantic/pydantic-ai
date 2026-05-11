@@ -414,17 +414,22 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     def enqueue(
         self,
-        *parts: _messages.ModelRequestPart,
+        *content: _messages.EnqueueContent,
         priority: _messages.PendingMessagePriority = 'steering',
     ) -> None:
-        """Enqueue message parts to be injected into the conversation.
+        """Enqueue content to be injected into the conversation.
 
         Args:
-            *parts: One or more message parts (e.g. `SystemPromptPart`, `UserPromptPart`).
+            *content: One or more items. Each is coerced to a [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]:
+                a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
+                is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart];
+                an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]
+                (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is used as-is.
             priority: When to inject:
                 `'steering'` (default) — before the next model request.
                 `'follow_up'` — when the agent would otherwise end.
         """
+        parts = tuple(_messages.coerce_enqueue_item(item) for item in content)
         self._graph_run.state.pending_messages.append(_messages.PendingMessage(parts=parts, priority=priority))
 
 

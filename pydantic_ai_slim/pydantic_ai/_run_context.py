@@ -13,7 +13,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from .messages import PendingMessage, PendingMessagePriority
+from .messages import EnqueueContent, PendingMessage, PendingMessagePriority, coerce_enqueue_item
 
 if TYPE_CHECKING:
     from .agent.abstract import AbstractAgent
@@ -127,17 +127,22 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     def enqueue(
         self,
-        *parts: _messages.ModelRequestPart,
+        *content: EnqueueContent,
         priority: PendingMessagePriority = 'steering',
     ) -> None:
-        """Enqueue message parts to be injected into the conversation.
+        """Enqueue content to be injected into the conversation.
 
         Args:
-            *parts: One or more message parts (e.g. `SystemPromptPart`, `UserPromptPart`).
+            *content: One or more items. Each is coerced to a [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]:
+                a `str` or `Sequence[UserContent]` (same shape `Agent.run(user_prompt=...)` accepts)
+                is wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart];
+                an explicit [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]
+                (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is used as-is.
             priority: When to inject:
                 `'steering'` (default) — before the next model request.
                 `'follow_up'` — when the agent would otherwise end.
         """
+        parts = tuple(coerce_enqueue_item(item) for item in content)
         self.pending_messages.append(PendingMessage(parts=parts, priority=priority))
 
     __repr__ = _utils.dataclasses_no_defaults_repr

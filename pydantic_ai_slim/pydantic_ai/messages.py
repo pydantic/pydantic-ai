@@ -2079,6 +2079,32 @@ PendingMessagePriority = Literal['steering', 'follow_up']
 """
 
 
+EnqueueContent: TypeAlias = 'str | Sequence[UserContent] | ModelRequestPart'
+"""A single item accepted by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
+and [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
+
+- `str` or `Sequence[UserContent]`: wrapped in a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]
+    (matching the shape of `Agent.run(user_prompt=...)`).
+- [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]: used as-is — pass an explicit part
+    (e.g. [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) when wrapping in `UserPromptPart`
+    isn't what you want.
+"""
+
+
+_MODEL_REQUEST_PART_TYPES = (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart)
+
+
+def coerce_enqueue_item(item: EnqueueContent) -> ModelRequestPart:
+    """Coerce an [`EnqueueContent`][pydantic_ai.messages.EnqueueContent] item to a [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+
+    Used internally by [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] and
+    [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue].
+    """
+    if isinstance(item, _MODEL_REQUEST_PART_TYPES):
+        return item
+    return UserPromptPart(content=item)
+
+
 @dataclass
 class PendingMessage:
     """A message queued for injection into the agent conversation.
