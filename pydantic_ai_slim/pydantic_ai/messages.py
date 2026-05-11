@@ -1792,6 +1792,12 @@ class AgentContextPart:
     Surfaces on an agent's response stream so outer-layer clients can see what the agent
     contributed beyond direct user-facing text. Round-trips through the OpenResponses wire
     as `pydantic_ai:agent_context` items.
+
+    Outbound only: this part is part of the `ModelResponsePart` union. On the *inbound*
+    side, `pydantic_ai:agent_context` input items currently map to a `SystemPromptPart`
+    with prefix-encoded provenance (`[from <slug>, role=<role>] <content>`); a dedicated
+    inbound part may be introduced once a concrete layered-stacking client surfaces the
+    need for richer inbound handling.
     """
 
     content: str

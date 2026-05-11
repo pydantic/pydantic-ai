@@ -107,10 +107,14 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     )
     # OpenResponses-mode extension items can't go through the SDK's pydantic union; we hold
     # the raw `pydantic_ai:custom_tool_call` dicts here and emit them via encode_event's
-    # raw-dict path. Keyed by tool_call_id.
+    # raw-dict path. Keyed by tool_call_id. Popped on finalize.
     _open_backend_calls: dict[str, tuple[dict[str, Any], int]] = field(
         default_factory=dict[str, tuple[dict[str, Any], int]]
     )
+    # Set of tool_call_ids for which we've emitted a `pydantic_ai:custom_tool_call` extension
+    # item. Unlike `_open_backend_calls` this is never popped — it lets `handle_function_tool_result`
+    # know whether to pair a `pydantic_ai:custom_tool_call_output` even after the call finalized.
+    _emitted_backend_call_ids: set[str] = field(default_factory=set[str])
 
     @property
     def content_type(self) -> str:
@@ -120,6 +124,8 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         # Override the base uuid4 with uuid7 so emitted IDs share format with `RunContext.run_id`.
         # Storage backends keyed by `previous_response_id` end up with the same
         # lexicographic-time ordering as the agent's own run records.
+        # TODO: once `Agent.iter(run_id=...)` lands, pre-generate the response id here and
+        # pass it into the run so `_response_id == RunContext.run_id` (full A8 correlation).
         self.message_id = str(uuid7())
         return self.message_id
 
@@ -348,6 +354,7 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
                 'status': 'in_progress',
             }
             self._open_backend_calls[part.tool_call_id] = (item, output_index)
+            self._emitted_backend_call_ids.add(part.tool_call_id)
             yield {
                 'type': 'response.output_item.added',
                 'output_index': output_index,
@@ -456,11 +463,11 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
         part = event.part
         if not isinstance(part, ToolReturnPart):
             return
-        if part.tool_call_id not in self._open_backend_calls and part.tool_call_id not in {*self._open_function_calls}:
-            # Only emit the extension output for tools we already started as extension items.
-            # Frontend `function_call` tools execute on the client; their `function_call_output`
-            # comes back over the wire on the next request, not in this stream.
-            pass
+        if part.tool_call_id not in self._emitted_backend_call_ids:
+            # Only emit the extension output for backend tools we already started as extension
+            # items. Frontend `function_call` tools execute on the client; their
+            # `function_call_output` comes back over the wire on the next request, not here.
+            return
         output_index = self._output_index
         output_item: dict[str, Any] = {
             'type': 'pydantic_ai:custom_tool_call_output',

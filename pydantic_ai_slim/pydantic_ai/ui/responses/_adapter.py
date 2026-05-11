@@ -22,7 +22,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
 )
-from ...output import NativeOutput, OutputDataT, OutputSpec, StructuredDict
+from ...output import OutputDataT, OutputSpec, StructuredDict
 from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
 
@@ -249,17 +249,15 @@ class ResponsesAdapter(UIAdapter[ResponseCreateParamsStreaming, ResponseInputIte
                 return None
             name_raw = format_cfg.get('name')
             description_raw = format_cfg.get('description')
-            strict_raw = format_cfg.get('strict')
-            structured = StructuredDict(
+            # Return bare `StructuredDict` so the agent's normal mode resolution
+            # (native → tool → prompted) picks the right path for the configured model.
+            # Wrapping in `NativeOutput` would hard-error on non-native-capable models.
+            # The request's `strict` flag is dropped for now; honoring it requires a
+            # `StructuredDict(strict=...)` extension (follow-up).
+            return StructuredDict(
                 schema,
                 name=name_raw if isinstance(name_raw, str) else None,
                 description=description_raw if isinstance(description_raw, str) else None,
-            )
-            return NativeOutput(
-                structured,
-                name=name_raw if isinstance(name_raw, str) else None,
-                description=description_raw if isinstance(description_raw, str) else None,
-                strict=strict_raw if isinstance(strict_raw, bool) else None,
             )
         if format_type == 'json_object':
             return dict[str, Any]

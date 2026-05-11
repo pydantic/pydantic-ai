@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from dirty_equals import IsFloat
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.messages import (
@@ -1398,10 +1399,13 @@ async def test_to_ag_ui_accepts_deps_factory() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_text_format_json_schema_resolves_to_native_output_with_strict() -> None:
-    """`text.format=json_schema` request → `NativeOutput(StructuredDict(...))` w/ strict flag."""
-    from pydantic_ai.output import NativeOutput
+def test_text_format_json_schema_resolves_to_structured_dict() -> None:
+    """`text.format=json_schema` request → bare `StructuredDict(...)` so the agent picks mode.
 
+    Wrapping in `NativeOutput` would hard-error on non-native-capable models; bare
+    `StructuredDict` lets the agent's normal mode resolution (native → tool → prompted)
+    pick the right path for the configured model.
+    """
     schema = {
         'type': 'object',
         'properties': {'city': {'type': 'string'}, 'temp_c': {'type': 'number'}},
@@ -1426,10 +1430,12 @@ def test_text_format_json_schema_resolves_to_native_output_with_strict() -> None
     adapter = ResponsesAdapter[None, Any](agent=Agent('test'), run_input=ResponsesAdapter.build_run_input(body))
 
     parsed = adapter.request_output_type
-    assert isinstance(parsed, NativeOutput)
-    assert parsed.name == 'Weather'
-    assert parsed.description == 'Weather payload.'
-    assert parsed.strict is True
+    assert isinstance(parsed, type)
+    assert issubclass(parsed, dict)
+    json_schema = TypeAdapter(parsed).json_schema()  # pyright: ignore[reportUnknownArgumentType]
+    assert json_schema['title'] == 'Weather'
+    assert json_schema['description'] == 'Weather payload.'
+    assert json_schema['properties'] == schema['properties']
 
 
 def test_text_format_json_object_resolves_to_dict_type() -> None:
