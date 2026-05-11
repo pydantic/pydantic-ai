@@ -4,7 +4,7 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -367,6 +367,41 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
         except ValidationError:
             pass
     return None
+
+
+def _merge_leading_system_messages(
+    openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
+) -> list[chat.ChatCompletionMessageParam]:
+    """Merge consecutive messages with `system_prompt_role` at the start of the list into a single message.
+
+    Required by strict OpenAI-compatible backends (some LiteLLM/vLLM deployments) that reject more than one
+    initial system message with `System message must be at the beginning.`
+
+    Only applies when system prompts are sent as `'system'` or `'developer'` role; with `'user'` role we
+    can't distinguish a system prompt cast as user from an actual user turn.
+    """
+    if system_prompt_role not in ('system', 'developer'):
+        return openai_messages
+
+    leading: list[chat.ChatCompletionMessageParam] = []
+    for m in openai_messages:
+        if m.get('role') != system_prompt_role:
+            break
+        leading.append(m)
+    if len(leading) < 2:
+        return openai_messages
+
+    contents: list[str] = []
+    for m in leading:
+        content = m.get('content')
+        if isinstance(content, str):
+            contents.append(content)
+        elif isinstance(content, Iterable):
+            for part in content:
+                if isinstance(part, Mapping) and part.get('type') == 'text':
+                    contents.append(str(part.get('text', '')))
+    merged: chat.ChatCompletionMessageParam = {**leading[0], 'content': '\n\n'.join(contents)}  # type: ignore[typeddict-item]
+    return [merged, *openai_messages[len(leading) :]]
 
 
 def _drop_sampling_params_for_reasoning(
@@ -1343,8 +1378,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role or 'system'
             system_prompt_count = next(
                 (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
             )
@@ -1363,6 +1399,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        if not profile.openai_chat_supports_multiple_system_messages:
+            openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
 
     @staticmethod

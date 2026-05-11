@@ -362,7 +362,8 @@ model = OpenAIChatModel(
     ),
     profile=OpenAIModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class on a plain ModelProfile
-        openai_supports_strict_tool_definition=False  # Supported by OpenAIModel only, requires OpenAIModelProfile
+        openai_supports_strict_tool_definition=False,  # Supported by OpenAIModel only, requires OpenAIModelProfile
+        openai_chat_supports_multiple_system_messages=False,  # For strict providers (e.g. some vLLM/LiteLLM setups) that require exactly one initial system message
     )
 )
 agent = Agent(model)
