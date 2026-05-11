@@ -4804,7 +4804,7 @@ async def test_run_stream_consumer_exception_captures_partial_response():
     with capture_run_messages() as messages:
         with pytest.raises(ValueError, match='consumer-failure'):
             async with agent.run_stream_events('Hello') as stream:
-                async for event in stream:
+                async for event in stream:  # pragma: no branch
                     # Raise after a part has been fully assembled so we can assert content.
                     if isinstance(event, PartEndEvent):
                         raise ValueError('consumer-failure')
