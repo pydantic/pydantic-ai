@@ -102,7 +102,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     disallows_sampling_settings = model_name.startswith('claude-opus-4-7')
 
     # Sonnet 4.6+ and Opus 4.6+ support dynamic filtering (20260209 web search/fetch)
-    supports_dynamic_filtering = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6'))
+    supports_dynamic_filtering = model_name.startswith(('claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7'))
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),

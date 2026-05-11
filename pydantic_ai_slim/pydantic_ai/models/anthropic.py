@@ -928,57 +928,51 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
                 )
                 if use_dynamic_filtering(tool):
-                    tools.append(
-                        BetaWebSearchTool20260209Param(
-                            name='web_search',
-                            type='web_search_20260209',
-                            max_uses=tool.max_uses,
-                            allowed_domains=tool.allowed_domains,
-                            blocked_domains=tool.blocked_domains,
-                            user_location=user_location,
-                        )
+                    web_search_tool = BetaWebSearchTool20260209Param(
+                        name='web_search',
+                        type='web_search_20260209',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        user_location=user_location,
                     )
                 else:
-                    tools.append(
-                        BetaWebSearchTool20250305Param(
-                            name='web_search',
-                            type='web_search_20250305',
-                            max_uses=tool.max_uses,
-                            allowed_domains=tool.allowed_domains,
-                            blocked_domains=tool.blocked_domains,
-                            user_location=user_location,
-                        )
+                    web_search_tool = BetaWebSearchTool20250305Param(
+                        name='web_search',
+                        type='web_search_20250305',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        user_location=user_location,
                     )
+                tools.append(web_search_tool)
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.add('code-execution-2025-05-22')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 if use_dynamic_filtering(tool):
-                    tools.append(
-                        BetaWebFetchTool20260209Param(
-                            name='web_fetch',
-                            type='web_fetch_20260209',
-                            max_uses=tool.max_uses,
-                            allowed_domains=tool.allowed_domains,
-                            blocked_domains=tool.blocked_domains,
-                            citations=citations,
-                            max_content_tokens=tool.max_content_tokens,
-                        )
+                    web_fetch_tool = BetaWebFetchTool20260209Param(
+                        name='web_fetch',
+                        type='web_fetch_20260209',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        citations=citations,
+                        max_content_tokens=tool.max_content_tokens,
                     )
                 else:
-                    tools.append(
-                        BetaWebFetchTool20250910Param(
-                            name='web_fetch',
-                            type='web_fetch_20250910',
-                            max_uses=tool.max_uses,
-                            allowed_domains=tool.allowed_domains,
-                            blocked_domains=tool.blocked_domains,
-                            citations=citations,
-                            max_content_tokens=tool.max_content_tokens,
-                        )
+                    web_fetch_tool = BetaWebFetchTool20250910Param(
+                        name='web_fetch',
+                        type='web_fetch_20250910',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        citations=citations,
+                        max_content_tokens=tool.max_content_tokens,
                     )
                     beta_features.add('web-fetch-2025-09-10')
+                tools.append(web_fetch_tool)
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")

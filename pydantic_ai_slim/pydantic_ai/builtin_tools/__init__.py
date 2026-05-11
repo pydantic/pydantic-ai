@@ -159,9 +159,10 @@ class WebSearchTool(AbstractBuiltinTool):
     When enabled, the model uses server-side filtering to refine search results before they enter
     context, improving accuracy and reducing token usage.
 
-    * `None` (default): auto-detect based on model capabilities when `CodeExecutionTool` is also enabled
-    * `True`: force dynamic filtering on (uses 20260209 tool version and requires `CodeExecutionTool`)
-    * `False`: force dynamic filtering off (uses 20250305 tool version)
+    * `None` (default): auto-detect based on model capabilities when the agent's builtin tools also include
+      `CodeExecutionTool`
+    * `True`: force dynamic filtering on (uses the `20260209` tool version and requires `CodeExecutionTool`)
+    * `False`: force dynamic filtering off (uses the `20250305` tool version)
 
     Supported by:
 
@@ -364,9 +365,10 @@ class WebFetchTool(AbstractBuiltinTool):
     When enabled, the model uses server-side filtering to refine fetched content before it enters
     context, improving accuracy and reducing token usage.
 
-    * `None` (default): auto-detect based on model capabilities when `CodeExecutionTool` is also enabled
-    * `True`: force dynamic filtering on (uses 20260209 tool version and requires `CodeExecutionTool`)
-    * `False`: force dynamic filtering off (uses 20250910 tool version)
+    * `None` (default): auto-detect based on model capabilities when the agent's builtin tools also include
+      `CodeExecutionTool`
+    * `True`: force dynamic filtering on (uses the `20260209` tool version and requires `CodeExecutionTool`)
+    * `False`: force dynamic filtering off (uses the `20250910` tool version)
 
     Supported by:
 
