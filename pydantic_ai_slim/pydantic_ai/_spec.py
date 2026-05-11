@@ -377,7 +377,7 @@ def resolve_capability_path(path: str) -> type[AbstractCapability[Any]]:
         p = Path(source)
         spec = importlib.util.spec_from_file_location(f'__pydantic_ai_capability_{p.stem}', str(p.resolve()))
         if spec is None or spec.loader is None:
-            raise ValueError(f'Could not load module from {source!r}')
+            raise ValueError(f'Could not load module from {source!r}') # pragma: no cover
         mod = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
