@@ -247,7 +247,7 @@ class _ChatCompletion(chat.ChatCompletion):
     model_config = {'title': 'ChatCompletion'}
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
-    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+    """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
 
 
 class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
@@ -256,7 +256,7 @@ class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnused
     model_config = {'title': 'ChatCompletionChunk'}
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
-    """OpenAI-compatible providers can return arbitrary ``service_tier`` values (e.g. ``"standard"``, ``"on_demand"``)."""
+    """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
 
 
 class _AzureContentFilterResultDetail(BaseModel):
@@ -3511,28 +3511,30 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     provide: passing any stateless-only parameter (`message_count_threshold`
     or `trigger`) implies `stateless=True`; otherwise stateful mode is used.
 
-    Example usage::
+    Example usage:
 
-        from pydantic_ai import Agent
-        from pydantic_ai.models.openai import OpenAICompaction
+    ```python {test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAICompaction
 
-        # Stateful mode with OpenAI's server-side default threshold:
-        agent = Agent(
-            'openai-responses:gpt-5.2',
-            capabilities=[OpenAICompaction()],
-        )
+    # Stateful mode with OpenAI's server-side default threshold:
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[OpenAICompaction()],
+    )
 
-        # Stateful mode with a custom token threshold:
-        agent = Agent(
-            'openai-responses:gpt-5.2',
-            capabilities=[OpenAICompaction(token_threshold=100_000)],
-        )
+    # Stateful mode with a custom token threshold:
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[OpenAICompaction(token_threshold=100_000)],
+    )
 
-        # Stateless mode for ZDR environments or explicit control:
-        agent = Agent(
-            'openai-responses:gpt-5.2',
-            capabilities=[OpenAICompaction(message_count_threshold=20)],
-        )
+    # Stateless mode for ZDR environments or explicit control:
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        capabilities=[OpenAICompaction(message_count_threshold=20)],
+    )
+    ```
     """
 
     def __init__(
@@ -3744,7 +3746,7 @@ def _support_tool_forcing(
 
 
 def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
-    """Convert an OpenAI ``ResponseCompactionItem`` to a ``CompactionPart``."""
+    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`."""
     return CompactionPart(
         content=None,
         id=item.id,

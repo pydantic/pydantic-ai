@@ -2877,7 +2877,7 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (Tool
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
     """Ensure all auto-injected infrastructure capabilities are present.
 
-    Each capability's own ``CapabilityOrdering`` (e.g. ``position='outermost'``)
+    Each capability's own `CapabilityOrdering` (e.g. `position='outermost'`)
     determines its final placement, so insertion order here doesn't matter.
     """
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
