@@ -6,7 +6,7 @@ for registering hook functions.
 
 Hook functions are registered via the `hooks.on` namespace:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 hooks = Hooks()
 
 @hooks.on.before_model_request
@@ -317,7 +317,7 @@ class _HookRegistration(Generic[AgentDepsT]):
     Accessed via `hooks.on`. Each method corresponds to a lifecycle hook and
     can be used as a bare decorator or a parameterized decorator:
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     @hooks.on.before_model_request
     async def my_hook(ctx, request_context):
         return request_context
@@ -720,7 +720,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     Example using decorators:
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     hooks = Hooks()
 
     @hooks.on.before_model_request
@@ -733,7 +733,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     Example using constructor kwargs:
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     agent = Agent('openai:gpt-5', capabilities=[
         Hooks(before_model_request=log_request)
     ])
