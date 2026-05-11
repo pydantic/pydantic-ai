@@ -1359,7 +1359,7 @@ async def test_bedrock_model_thinking_part_anthropic_legacy(
                 parts=[
                     ThinkingPart(
                         content='This is a straightforward question about crossing the street safely. I should provide practical safety advice for pedestrians.',
-                        signature='EqkCCkgIDRABGAIqQPUBXddf5oFtfQISm87nRz74H7uUTwDgg+h0YLLc3p/go3gpEXMfNHOTi6XbIIf1FqzmzRwPO3I5tNQwel4zDJsSDOH8dHCSFsa5/5wMgxoMyoNuL2Mch7do4OwvIjDiWYuBAMh88j45otVaBLl+sSioadFLRUSCdFo+QijHmwPPHprY7iqGWMetqej36OwqjgEuNJ2lzEjUXHRBfTWq7dVwpaidYPB8hwr5h6dakncxCcFTee4AtrwY8Wcq4dojKqGo/13KzWowF7k5SLmQhMOSAyPIyribxMEDS0TWBudZ9TmnNP2PpltcgueyrqsCubSG7/AISHrrqyADMOCPgGycPkE5TJALqh7tgxcBze3bb5hDTZSyt1F6MZjd6J7zGAE=',
+                        signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
@@ -1455,7 +1455,7 @@ Crossing a river:
 
 This is a nice analogy! I should provide helpful, practical information about river crossing.\
 """,
-                        signature='EoMHCkgIDRABGAIqQP8Rojwvl6OxxHAHwqntIBwfOk4Jlf0UPqocHmQOT67FNzX5d+rL3Niv/TvsU2I5jJzzrMJHUp1UEZ/c0tQzP6kSDFnDqqPFpm0B+CRyEhoM3WPVanquGkZh86tQIjAWcf40Om1LHuCd5ZVKYgVBzboKZvuiAbgzFG4iKKcCVQLH/1gNhFnw63TscGyYxmIq6AWcYeBi6Bribs17hPXyCAGNDYSR8nq1nL/ja0qZBUQQlLFkIT1b3MDjfjV0pDaCr71RkVJ20fgBSGTBPeBK0luPOHgbVaiFj9e6A8TyRgczEmFodyGTTGvxvwrwoCztoU+8hovPCDvLLSzf4rD6fy2nDlGbPpfBkTVseXUpQ1/MSUZ6es14Wdn1PWz8uOeAOwweSzuV0wHHmuAg691QIH/+TnnD4Aq9mEGlVwrYUZzxpWm6AyfTGs3P8ATcma1KsxBNiceNW5c/DbeEpM+y5oRW20FIVS2jepbt/6bgDxDIWjXSzYGK2T3REtDdM90NKPNA2Nrkj5ZCojeOl0PP21ExVzIt0xLyQ1aQS3QMFGQeNgENNiKr/BxWsWqHSwg/pz3nDwbcLzrk65AAlBd/H+mCmxAX98NLCwWohJDsMOYkMdN+wzjqRVpxO9xGEQnPY531Bf/xMHHO5KFjiJe//SaBvJ5OYAjgFO2V7k5p/XdCh9WLQo6zU9wCV4/lWA/fUj6Uqe/SSZmcvjWzz1h4fC+X+hVWhZHxvUgPhSorvHsG26/8lXyJEs4EjmwsNIbrTuG7p1kFJqseR8UldKbrPq64mLkYKZu3RO0iBAH5gSv2UtOomGNv2UjtLimwViXOynhNrAf6AnbnhQrar6SiiBPUzekJraW8zdXeJ3nvYhhnIniMXn2POCUR13DAwSlhPmrqyvbzR2uoqy8uBn5tGZkOgXPtU78R6ykNVVxHUJAL7ykOVl96PNATwoKXFwJ/nGVIK3uDx6BRDqPPCPX1X0f2zFFTO5JquGhIXz/OvkFJodUwG1qeS3IT9EoFgiIydcKSfkiwjc0oASRS/C11ugQisriaVVAc3BQrwJWk4RgaZsAdCHM82USm4uaSl2AZMdnwT6r0s10F/ojayNEI/NN1koloRaMzQT1SyoamvuojOoOXaqAirlmTHzpsadcX/sYy9K5/tf/F5NgYhIXMvob6tWX/dl1h4GEYAQ==',
+                        signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
@@ -1545,7 +1545,7 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive(
                 parts=[
                     ThinkingPart(
                         content='The user is asking a simple, practical question about how to cross the street safely.',
-                        signature='Ev8BCkgIDRABGAIqQA94zfb4uEVoCu7iX9s3XhxDSQeO+T4eEebWFazipXUbG6UnmE4yM4RHrXY1hCjki6b6oNT0RlcBph7RbqHHGEUSDPYZ51rMvqLhfyOBwhoMOJoutnDrBSjsVrKJIjDDKzEIg5ehbDml3SpQx5G9rl0bdfUxN6SB+Ha+VwIKaMEr84u/q/NXhF0Ev9FM5XoqZdkS5S3W/TrYQPcMj5Gci4Q5mPdMdN1KvJua3pC6q8F3uDxczAd5NLdAHhQNye3OOlYs+ZS4AWEGQrN/X9BDDll2Vo8oPU0SHq+Ec9/WMDu20Hyr7Iu430/e0YF//XwEPWAoImgaGAE=',
+                        signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
@@ -1634,7 +1634,7 @@ Let me map the concepts:
 
 - Now I'm considering how these principles apply differently depending on the crossing method--whether I'm using a bridge, wading through a ford, taking a boat, or swimming across.\
 """,
-                        signature='EqQICkgIDRABGAIqQEovsWt4+ZD8NIcyiJTeMreRI6UH9Iq+k2yYfU4eQ9MjovVJNWuQc6noK4ihZcQo8JHjs+hV7AKWCgRWk8Q0AFMSDLi6CJ9HE8vCHijVJRoML/dhvRC6t6seTzggIjCRgiAGoknwZwPvJ3949hpWQSqk1Vxaa1NZGJd+OIRRWzoGKNKj9N5q/PioM2X/RWQqiQeJA1+a4VJzm5zQKODwPLx3BXzKt22Q/alYB4rLIr6hf/OuzwViUAc+u2EtD71ZHrW1CkCOJN+KQD2LuHyRQI8yg3uSaLpWu3VYU8ZCLNuzNL8WAi/EWX4g/3G+qQJTB/4giMWxeHMAhC3+z3t42kBf35DWXO9ElULp50OYyFR3/8CUPuKPfNV0FnmNazycy7JSBzycKFT+DZhARjvodiSygbxc73g7t4XKowR+Tv523yjdbgMoy0Vd5uMQkDksiG2E/NRtfS4v1KvPsgjjWN8/jRkofrgtZM7Si9l3dix7ZcC8gEBrbnWOxDsI3tGCOV7ChWuQIIxki+lOgrYlNidbLOqdWmIYnsQ2Vr7vScEK1qNjQJ9QfXAcsnASBrp5xnY7rxojn/dXlqZKSZCj2iI37ox6Qlx0sqQnWU4DYwRh8bGCvT0cLDcrQMrJx0fWSn3S/0NBQzaUqR+O6MNxBAmGg8uKQH1g7fjG4RoTjCLsdUiUCDEKnr3+1xO0j3Xp5nwSoRu/tfqvEOTdKUsr/7IAVNRjGIwLyViUeiK4ZV9+GUB1bc+b4CA4CCA8nBc01z8gRFh5GHIK48Iq8RMe823XdxrmrRY9tqeWNdi4wslrhCWOYTXopxBId6/qxyZvQs3CSXxWvS8RkBlvcOX8163ewBuD7N1K5UzOTUbpbPg3xmxiEYTWEPgmGE0OE+1ac8X6IXyZJ8RHloywpbvBzOCl2x7Oj4y4wBpIKYrz6dTidjtFW6RZ5ZC2ncl/2lTRp8ZjhJvvCbbI6fQoRegE/HbHq3aogl6krGevSRatl3ylnxwsadV9bPsMZ1HUXaB99TXUNhVW4OFIubkypN3qzStrMeWHkckC47c6RLc72uw94VxHDD1uJ8sop0/X/60TncgzGZJMX3xRMJdueMvbiRUHOmQgQZqq/CXl6mDUMvy0gsdH6kNxQhnNzv9RU6j5bj9kvtFY8gNz44qNdCP1aMZYTelf4DGbhfYgB8XvFgpO5H1U3Vh8NIlXiNrBN4IvmSIRJkXyegwehwoGrd9KmzwbxUNGMI3zqxteuryARbq2ZGpsj9rmqSOweNZZYpRXCJfyZUQ4QpNMEAHmHdbSnJS2YnU15vORD1Mj/d0xkH+/BC2cwWWfdNhFG1JZWQNcIndrq9CZ+zfhpmyuawHUn+NclmpHbdy+3fez2xQBX8veA92r025UXSLJ/RgB',
+                        signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
