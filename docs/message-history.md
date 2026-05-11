@@ -275,22 +275,24 @@ in `result.all_messages()` for `run_stream`) with `state='interrupted'`:
 - A partial [`ModelRequest`][pydantic_ai.messages.ModelRequest] holds the tool returns that completed
   before a tool raised or the run was cancelled.
 
-```python {title="capture_interrupted_run.py" test="skip" lint="skip"}
+```python {title="capture_interrupted_run.py" test="skip"}
 from pydantic_ai import Agent, ModelRequest, ModelResponse, capture_run_messages
 
 agent = Agent('openai:gpt-5.2')
 
-with capture_run_messages() as messages:
-    try:
-        await agent.run('Do the thing', message_history=...)
-    except Exception:
-        pass
 
-for message in messages:
-    if isinstance(message, ModelResponse) and message.state == 'interrupted':
-        print(f'partial response: {message.parts}')
-    elif isinstance(message, ModelRequest) and message.state == 'interrupted':
-        print(f'partial tool returns: {message.parts}')
+async def main():
+    with capture_run_messages() as messages:
+        try:
+            await agent.run('Do the thing', message_history=...)
+        except Exception:
+            pass
+
+    for message in messages:
+        if isinstance(message, ModelResponse) and message.state == 'interrupted':
+            print(f'partial response: {message.parts}')
+        elif isinstance(message, ModelRequest) and message.state == 'interrupted':
+            print(f'partial tool returns: {message.parts}')
 ```
 
 The `state` field is `'complete'` for normal messages and `'interrupted'` for partial captures, so
