@@ -443,19 +443,15 @@ class Instrumentation(AbstractCapability[Any]):
         output: Any,
         handler: WrapOutputProcessHandler,
     ) -> Any:
-        """Emit an `execute_tool` span for tool-mode output processing.
+        """Emit a span for output-function execution.
 
-        Output tools no longer go through `wrap_tool_execute`, so this hook restores
-        the outer "execute_tool {tool_name}" span that wraps the validated final-result
-        tool call. Output-function spans (emitted by `execute_output_function`) nest
-        inside this when present.
-
-        For non-tool output (text, native, prompted, image), no span is created here —
-        function execution still gets its own span via `execute_output_function`, and
-        plain text/image passthrough has nothing meaningful to span.
+        Output processing for plain validation (no function) is not span-worthy — the
+        validated value is the model's response itself, no user code ran. We open a
+        span only when an output function will execute, regardless of whether the
+        output arrived via a tool call. The span name reflects the function (or tool
+        name when the function name is unavailable, e.g. union processors).
         """
-        tool_call = output_context.tool_call
-        if tool_call is None:
+        if not output_context.has_function:
             return await handler(output)
 
         from pydantic_ai.models.instrumented import InstrumentedModel
@@ -463,10 +459,44 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         names = self._instrumentation_names
         include_content = settings.include_content
+        tool_call = output_context.tool_call
+        # Tool-mode output: the registered tool name (e.g. `final_result`) is what the
+        # model called, so use it as the span target. For non-tool output, fall back to
+        # the function name (when known) or a generic placeholder.
+        span_target = tool_call.tool_name if tool_call else (output_context.function_name or 'output_function')
+
+        attributes: dict[str, Any] = {
+            'gen_ai.operation.name': 'execute_tool',
+            'gen_ai.tool.name': span_target,
+            **get_agent_run_baggage_attributes(),
+            'logfire.msg': f'running output function: {span_target}',
+        }
+        if tool_call is not None and tool_call.tool_call_id:
+            attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
+        if include_content:
+            attributes[names.tool_arguments_attr] = json.dumps(output)
+
+        attributes['logfire.json_schema'] = json.dumps(
+            {
+                'type': 'object',
+                'properties': {
+                    **(
+                        {
+                            names.tool_arguments_attr: {'type': 'object'},
+                            names.tool_result_attr: {'type': 'object'},
+                        }
+                        if include_content
+                        else {}
+                    ),
+                    'gen_ai.tool.name': {},
+                    **({'gen_ai.tool.call.id': {}} if tool_call is not None and tool_call.tool_call_id else {}),
+                },
+            }
+        )
 
         with settings.tracer.start_as_current_span(
-            names.get_tool_span_name(tool_call.tool_name),
-            attributes=self._tool_span_attributes(tool_call),
+            names.get_output_tool_span_name(span_target),
+            attributes=attributes,
             record_exception=False,
             set_status_on_exception=False,
         ) as span:

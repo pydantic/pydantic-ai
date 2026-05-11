@@ -711,10 +711,7 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -725,14 +722,7 @@ def test_instructions_with_structured_output(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'execute_tool final_result',
-                                'message': 'running tool: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -935,10 +925,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'agent run',
                     'message': 'my_agent run',
-                    'children': [
-                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                        {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
-                    ],
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                 }
             ]
         )
@@ -949,10 +936,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     'id': 0,
                     'name': 'invoke_agent my_agent',
                     'message': 'my_agent run',
-                    'children': [
-                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                        {'id': 2, 'name': 'execute_tool final_result', 'message': 'running tool: final_result'},
-                    ],
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                 }
             ]
         )
@@ -1514,15 +1498,8 @@ def test_logfire_output_function_v2_v3(
                         {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
                         {
                             'id': 2,
-                            'name': 'running tool',
-                            'message': 'running tool: final_result',
-                            'children': [
-                                {
-                                    'id': 3,
-                                    'name': 'running output function',
-                                    'message': 'running output function: final_result',
-                                }
-                            ],
+                            'name': 'running output function',
+                            'message': 'running output function: final_result',
                         },
                     ],
                 }
@@ -1535,7 +1512,7 @@ def test_logfire_output_function_v2_v3(
                 'logfire.msg': 'running output function: final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'gen_ai.conversation.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -1574,14 +1551,7 @@ def test_logfire_output_function_v2_v3(
                         {
                             'id': 2,
                             'name': 'execute_tool final_result',
-                            'message': 'running tool: final_result',
-                            'children': [
-                                {
-                                    'id': 3,
-                                    'name': 'execute_tool final_result',
-                                    'message': 'running output function: final_result',
-                                }
-                            ],
+                            'message': 'running output function: final_result',
                         },
                     ],
                 }
@@ -1594,7 +1564,7 @@ def test_logfire_output_function_v2_v3(
                 'logfire.msg': 'running output function: final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'gen_ai.conversation.id': IsStr(),
-                'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
+                'gen_ai.tool.call.arguments': '"Mexico City"',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -1652,7 +1622,7 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
@@ -1727,7 +1697,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
@@ -1809,51 +1779,27 @@ def test_output_type_function_with_retry_logfire_attributes(
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.conversation.id': IsStr(),
-                    'tool_arguments': '{"city":"New York City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '"New York City"',
+                    'logfire.json_schema': '{"type": "object", "properties": {"tool_arguments": {"type": "object"}, "tool_response": {"type": "object"}, "gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
+                    'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.conversation.id': IsStr(),
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                    'gen_ai.tool.call.id': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '"Mexico City"',
+                    'logfire.json_schema': '{"type": "object", "properties": {"tool_arguments": {"type": "object"}, "tool_response": {"type": "object"}, "gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
+                    'logfire.span_type': 'span',
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -1864,29 +1810,25 @@ def test_output_type_function_with_retry_logfire_attributes(
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.conversation.id': IsStr(),
-                    'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
-                    ),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
+                    'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'final_result',
-                    'logfire.msg': 'running output function: final_result',
-                    'gen_ai.tool.call.id': IsStr(),
-                    'gen_ai.conversation.id': IsStr(),
-                    'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
-                    ),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
+                    'logfire.span_type': 'span',
                 },
             ]
         )
@@ -1927,7 +1869,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: get_weather',
                 'logfire.json_schema': IsJson(
@@ -2009,7 +1951,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
@@ -2092,7 +2034,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
@@ -2170,7 +2112,7 @@ def test_output_type_async_function_logfire_attributes(
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
+                'tool_arguments': '"Mexico City"',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
@@ -2249,7 +2191,7 @@ def test_text_output_function_logfire_attributes(
             {
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'upcase_text',
-                'tool_arguments': '{"text":"hello world"}',
+                'tool_arguments': '"hello world"',
                 'logfire.msg': 'running output function: upcase_text',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
@@ -2329,7 +2271,7 @@ def test_prompted_output_function_logfire_attributes(
             {
                 'gen_ai.operation.name': 'execute_tool',
                 'gen_ai.tool.name': 'upcase_text',
-                'tool_arguments': '{"text":"hello world"}',
+                'tool_arguments': '"hello world"',
                 'logfire.msg': 'running output function: upcase_text',
                 'gen_ai.conversation.id': IsStr(),
                 'logfire.json_schema': IsJson(
@@ -2409,47 +2351,25 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
-                    'tool_arguments': '{"city":"New York City"}',
-                    'logfire.msg': 'running output function: get_weather_with_retry',
-                    'gen_ai.conversation.id': IsStr(),
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'tool_arguments': '"New York City"',
+                    'logfire.json_schema': '{"type": "object", "properties": {"tool_arguments": {"type": "object"}, "tool_response": {"type": "object"}, "gen_ai.tool.name": {}}}',
+                    'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
-                    'tool_arguments': '{"city":"Mexico City"}',
-                    'logfire.msg': 'running output function: get_weather_with_retry',
-                    'gen_ai.conversation.id': IsStr(),
-                    'logfire.json_schema': IsJson(
-                        snapshot(
-                            {
-                                'type': 'object',
-                                'properties': {
-                                    'tool_arguments': {'type': 'object'},
-                                    'tool_response': {'type': 'object'},
-                                    'gen_ai.tool.name': {},
-                                },
-                            }
-                        )
-                    ),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'tool_arguments': '"Mexico City"',
+                    'logfire.json_schema': '{"type": "object", "properties": {"tool_arguments": {"type": "object"}, "tool_response": {"type": "object"}, "gen_ai.tool.name": {}}}',
+                    'logfire.span_type': 'span',
                     'tool_response': '{"temperature": 28.7, "description": "sunny"}',
                 },
             ]
@@ -2460,23 +2380,23 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
-                    'logfire.msg': 'running output function: get_weather_with_retry',
-                    'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
-                    'gen_ai.conversation.id': IsStr(),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}}}',
+                    'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 },
                 {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'get_weather_with_retry',
-                    'logfire.msg': 'running output function: get_weather_with_retry',
-                    'logfire.json_schema': IsJson(snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}}})),
-                    'gen_ai.conversation.id': IsStr(),
-                    'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'gen_ai.conversation.id': IsStr(),
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}}}',
+                    'logfire.span_type': 'span',
                 },
             ]
         )
@@ -2612,10 +2532,7 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -2626,14 +2543,7 @@ def test_static_function_instructions_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'execute_tool final_result',
-                                'message': 'running tool: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -2876,7 +2786,6 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                             {'id': 2, 'name': 'running tool', 'message': 'running tool: my_tool'},
                             {'id': 3, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 4, 'name': 'running tool', 'message': 'running tool: final_result'},
                         ],
                     }
                 ]
@@ -2892,11 +2801,6 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                             {'id': 2, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'},
                             {'id': 3, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 4,
-                                'name': 'execute_tool final_result',
-                                'message': 'running tool: final_result',
-                            },
                         ],
                     }
                 ]
@@ -3173,10 +3077,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'agent run',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 2, 'name': 'running tool', 'message': 'running tool: final_result'},
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )
@@ -3187,14 +3088,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                         'id': 0,
                         'name': 'invoke_agent my_agent',
                         'message': 'my_agent run',
-                        'children': [
-                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'execute_tool final_result',
-                                'message': 'running tool: final_result',
-                            },
-                        ],
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
                     }
                 ]
             )

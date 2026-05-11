@@ -773,7 +773,6 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
-                        BasicSpan(content='running tool: final_result'),
                         BasicSpan(
                             content='StartActivity:agent__complex_agent__event_stream_handler',
                             children=[
